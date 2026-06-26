@@ -81,16 +81,97 @@
 
     <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div>
-            <h2 class="text-2xl font-bold">PAJ {{ meta.paj }}</h2>
-            <p class="text-lg text-base-content/80 mt-1">{{ meta.assistido_caixa or '—' }}</p>
-            <div class="flex flex-wrap gap-2 mt-2">
-                {% set area = meta.foro_detectado %}
-                <span class="badge {% if area == 'Criminal' %}badge-error{% elif area == 'Civel' %}badge-info{% elif area == 'Previdenciario' %}badge-warning{% elif area == 'Saude' %}badge-success{% else %}badge-ghost{% endif %}">
-                    {{ area | formatar_area or '?' }}
+            <div class="flex items-center gap-2">
+                <h2 class="text-2xl font-bold">PAJ {{ meta.paj }}</h2>
+                <button data-copy="{{ meta.paj }}" data-label="PAJ" onclick="copiar(this.dataset.copy, this.dataset.label)"
+                        class="text-base-content/30 hover:text-base-content/70 transition-colors"
+                        title="Copiar número do PAJ">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+                {% if meta.adicionado_manualmente %}
+                <button type="button"
+                        onclick="removerPajManual('{{ paj_norm }}')"
+                        class="text-[11px] text-error/40 hover:text-error underline-offset-2 hover:underline ml-1"
+                        title="Remove este PAJ do painel (foi adicionado manualmente)">
+                    ✕ remover PAJ
+                </button>
+                {% endif %}
+            </div>
+            <!-- Assistidos (suporta lista meta.assistidos ou fallback para campos legados) -->
+            {% set _assistidos = meta.assistidos if (meta.assistidos and meta.assistidos|length > 0) else ([{'nome': meta.assistido_caixa, 'cpf': meta.cpf or '', 'tipo': 'Assistido'}] if meta.assistido_caixa else []) %}
+            {% for a in _assistidos %}
+            {% set _atipo = a.tipo or 'Assistido' %}
+            {% set _anome = a.nome or '' %}
+            {% set _acpf  = a.cpf  or '' %}
+            <div class="flex items-center flex-wrap gap-1 mt-1 text-sm text-base-content/60">
+                <span class="font-semibold">{{ _atipo }}:</span>
+                <span class="{{ 'text-base-content/85 font-medium' if _anome else 'italic text-base-content/40' }}">{{ _anome or '—' }}</span>
+                {% if _anome %}
+                <button data-copy="{{ _anome|e }}" data-label="{{ _atipo|e }}" onclick="copiar(this.dataset.copy, this.dataset.label)"
+                        class="text-base-content/30 hover:text-base-content/70 transition-colors"
+                        title="Copiar nome">
+                    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+                {% endif %}
+                <span class="text-base-content/25 mx-0.5">—</span>
+                <span class="font-mono text-xs text-base-content/50">CPF:</span>
+                <span class="font-mono text-xs {{ 'text-base-content/80' if _acpf else 'italic text-base-content/35' }}">{{ _acpf or 'não informado' }}</span>
+                {% if _acpf %}
+                <button data-copy="{{ _acpf|e }}" data-label="CPF" onclick="copiar(this.dataset.copy, this.dataset.label)"
+                        class="text-base-content/30 hover:text-base-content/70 transition-colors"
+                        title="Copiar CPF">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                </button>
+                {% endif %}
+                {% set _arg = a.rg if a.rg is defined else (meta.rg or '') %}
+                {% if _arg %}
+                <span class="text-base-content/25 mx-0.5">—</span>
+                <span class="font-mono text-xs text-base-content/50">RG:</span>
+                <span class="font-mono text-xs text-base-content/80">{{ _arg }}</span>
+                {% endif %}
+            </div>
+            {% endfor %}
+            <!-- Processo Judicial / Chave / Juízo -->
+            {% set _proc  = meta.processo_judicial or '' %}
+            {% set _chave = meta.chave_acesso or '' %}
+            {% set _juizo = meta.foro_detalhado or meta.juizo or '' %}
+            {% set _data_inclusao = meta.data_inclusao_processo or '' %}
+            <div class="flex items-center flex-wrap gap-x-2 gap-y-0.5 mt-1 text-xs font-mono text-base-content/50">
+                <span class="flex items-center gap-1">
+                    <span>Processo Judicial:</span>
+                    <span class="{{ 'text-base-content/80' if _proc else 'italic' }}">{{ _proc or 'não informado' }}</span>
+                    {% if _proc %}
+                    <button data-copy="{{ _proc|e }}" data-label="Processo" onclick="copiar(this.dataset.copy, this.dataset.label)"
+                            class="text-base-content/30 hover:text-base-content/70 transition-colors"
+                            title="Copiar número do processo">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    </button>
+                    {% endif %}
                 </span>
-                <span class="badge badge-outline">{{ meta.pretensao or meta.classificacao or '—' }}</span>
-                {% if meta.processo_judicial %}
-                <span class="badge badge-ghost font-mono text-xs">{{ meta.processo_judicial }}</span>
+                <span class="text-base-content/25">—</span>
+                <span class="flex items-center gap-1">
+                    <span>Chave:</span>
+                    <span class="{{ 'text-base-content/80' if _chave else 'italic' }}">{{ _chave or 'não informado' }}</span>
+                    {% if _chave %}
+                    <button data-copy="{{ _chave|e }}" data-label="Chave de acesso" onclick="copiar(this.dataset.copy, this.dataset.label)"
+                            class="text-base-content/30 hover:text-base-content/70 transition-colors"
+                            title="Copiar chave de acesso">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+                    </button>
+                    {% endif %}
+                </span>
+                <span class="text-base-content/25">—</span>
+                <span class="font-sans">Juízo/Órgão Julgador: <span class="{{ 'text-base-content/70' if _juizo else 'italic' }}">{{ _juizo or 'não informado' }}</span></span>
+                {% if _data_inclusao %}
+                <span class="text-base-content/25">—</span>
+                <span class="font-sans">Inclusão: <span class="text-base-content/70">{{ _data_inclusao }}</span></span>
+                {% endif %}
+            </div>
+            <div class="flex flex-wrap gap-2 mt-2">
+                {% set subtipo_hdr = meta.subtipo_ia or meta.pretensao or meta.classificacao %}
+                {% if subtipo_hdr %}
+                <span class="badge badge-sm font-medium border subtipo-header-badge"
+                      data-subtipo="{{ subtipo_hdr }}">{{ subtipo_hdr }}</span>
                 {% endif %}
                 {% if meta.oficio_caixa %}
                 <span class="badge badge-ghost text-xs">{{ meta.oficio_caixa }}</span>
@@ -98,7 +179,7 @@
             </div>
             <button type="button"
                     onclick="(function(){ try { localStorage.removeItem('paj_seen_{{ paj_norm }}'); showToast('Marcado como não lido — recarregue para ver os destaques', 'info'); } catch(e){} })()"
-                    class="text-[11px] text-base-content/40 hover:text-info mt-2 underline-offset-2 hover:underline"
+                    class="text-[11px] text-base-content/40 hover:text-info underline-offset-2 hover:underline mt-2"
                     title="Esquece a visita atual; movs e anexos voltam a ser destacados como novos no próximo refresh">
                 ↺ marcar como não lido
             </button>
@@ -108,6 +189,29 @@
              Linha 1 = sincronizacao deste PAJ (split button).
              Linha 2 = controles de elaboracao (skills + Elaborar + Ver Resumo). -->
         <div class="flex flex-col gap-2 sm:items-end">
+
+            <!-- Linha 1: Analisar PAJ (IA) + Sincronizar PAJ -->
+            <div class="flex items-center gap-2 flex-wrap">
+
+            <!-- Analisar PAJ: botão amarelo que dispara análise IA em background -->
+            <div x-data="analisarApp('{{ paj_norm }}')" x-init="init()">
+                <template x-if="status !== 'running'">
+                    <button class="btn btn-sm btn-warning normal-case gap-1.5"
+                            @click="iniciar()"
+                            title="Analisa o PAJ com IA usando os arquivos sincronizados (sisdpu.txt + documentos OCR)">
+                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
+                        </svg>
+                        Analisar PAJ
+                    </button>
+                </template>
+                <template x-if="status === 'running'">
+                    <button class="btn btn-sm btn-warning" disabled>
+                        <span class="loading loading-spinner loading-xs"></span>
+                        <span x-text="lastAction || 'Analisando...'"></span>
+                    </button>
+                </template>
+            </div>
 
             <!-- Sincronizar PAJ: split button (com anexos por padrao) -->
             <div class="join">
@@ -143,6 +247,7 @@
                     </ul>
                 </div>
             </div>
+            </div><!-- fim flex Analisar+Sincronizar -->
 
             <!-- Watchlist toggle -->
             <div x-data="watchlistToggle('{{ paj_norm }}')" x-init="init()" class="flex items-center gap-2">
@@ -246,9 +351,32 @@
 
 {% include "partials/sync_modal.html" %}
 {% include "partials/limpeza_modal.html" %}
+{% include "partials/analise_modal.html" %}
+
+<!-- Banner de elaboração em andamento -->
+<div x-data="elaborarApp('{{ paj_norm }}')" x-init="init()">
+    <div x-show="status === 'running'"
+         x-transition:enter="transition ease-out duration-300"
+         x-transition:enter-start="opacity-0 -translate-y-2"
+         x-transition:enter-end="opacity-100 translate-y-0"
+         class="mb-6 rounded-xl border-2 border-warning bg-warning/10 px-5 py-4 flex items-center gap-4">
+        <span class="loading loading-spinner loading-md text-warning flex-shrink-0"></span>
+        <div class="min-w-0">
+            <p class="text-sm font-semibold text-warning">Elaboração em andamento</p>
+            <p class="text-xs text-base-content/60 truncate" x-text="lastAction || 'Claude está trabalhando...'"></p>
+        </div>
+        <div class="ml-auto flex-shrink-0">
+            <span class="badge badge-warning badge-outline animate-pulse text-xs">rodando</span>
+        </div>
+    </div>
+</div>
 
 <!-- Info cards -->
-<div class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6">
+<div class="grid grid-cols-2 md:grid-cols-5 gap-4 mb-6">
+    <div class="bg-base-200 rounded-lg border border-base-300 p-4">
+        <div class="text-xs text-base-content/50 mb-1">Data de abertura</div>
+        <div class="font-semibold">{{ meta.data_abertura | data_br or '—' }}</div>
+    </div>
     <div class="bg-base-200 rounded-lg border border-base-300 p-4">
         <div class="text-xs text-base-content/50 mb-1">Status SISDPU</div>
         <div class="font-semibold">{{ det.status_paj or 'Ativo' }}</div>
@@ -256,6 +384,10 @@
     <div class="bg-base-200 rounded-lg border border-base-300 p-4">
         <div class="text-xs text-base-content/50 mb-1">Última movimentação</div>
         <div class="font-semibold">{{ meta.data_mov_caixa | data_br }}</div>
+    </div>
+    <div class="bg-base-200 rounded-lg border border-base-300 p-4">
+        <div class="text-xs text-base-content/50 mb-1">Decurso</div>
+        <div class="font-semibold">{{ meta.decurso or '—' }}</div>
     </div>
     <div class="bg-base-200 rounded-lg border border-base-300 p-4">
         <div class="text-xs text-base-content/50 mb-1">Última sincronização</div>
@@ -283,9 +415,14 @@
 {% endif %}
 
 <!-- Tabs -->
-<div x-data="{ tab: 'resumo' }" class="mt-4">
+<div x-data="{ tab: 'narrativa' }" class="mt-4">
     <div role="tablist" class="tabs tabs-bordered mb-4">
-        <a role="tab" class="tab" :class="tab === 'resumo' && 'tab-active'" @click="tab = 'resumo'">Resumo</a>
+        <a role="tab" class="tab" :class="tab === 'analise_ia' && 'tab-active'"
+           @click="tab = 'analise_ia'"
+           title="Análise jurídica gerada por IA com base nos arquivos sincronizados">
+            ✦ Análise IA
+        </a>
+        <a role="tab" class="tab" :class="tab === 'narrativa' && 'tab-active'" @click="tab = 'narrativa'">Narrativa</a>
         <a role="tab" class="tab" :class="tab === 'movs' && 'tab-active'" @click="tab = 'movs'">
             Movimentações <span class="badge badge-ghost badge-xs ml-1">{{ dados.movimentacoes|length }}</span>
         </a>
@@ -405,30 +542,72 @@
         </template>
     </div>
 
-    <!-- Tab: Resumo -->
-    <div x-show="tab === 'resumo'" class="bg-base-200 rounded-lg border border-base-300 p-6">
-        <h3 class="text-lg font-semibold mb-4">Última movimentação</h3>
-        <p class="text-sm text-base-content/80 whitespace-pre-wrap mb-6">{{ meta.desc_mov_caixa or '—' }}</p>
+    <!-- Tab: Análise IA -->
+    <div x-show="tab === 'analise_ia'"
+         x-data="analiseIaTab('{{ paj_norm }}')"
+         x-init="init()"
+         @analisar-concluido.window="carregar()"
+         class="bg-base-200 rounded-lg border border-base-300 p-6">
 
-        <h3 class="text-lg font-semibold mb-4">Dados do processo</h3>
-        <div class="overflow-x-auto">
-            <table class="table table-sm">
-                <tbody>
-                    <tr><td class="text-base-content/50 w-48">PAJ</td><td class="font-mono">{{ meta.paj }}</td></tr>
-                    <tr><td class="text-base-content/50">Processo judicial</td><td class="font-mono">{{ meta.processo_judicial or '—' }}</td></tr>
-                    {% if meta.foro_detalhado %}
-                    <tr><td class="text-base-content/50">Foro detalhado</td><td>{{ meta.foro_detalhado }}</td></tr>
-                    {% endif %}
-                    <tr><td class="text-base-content/50">Área temática</td><td>{{ meta.foro_detectado | formatar_area or '—' }}</td></tr>
-                    <tr><td class="text-base-content/50">Pretensão</td><td>{{ meta.pretensao or '—' }}</td></tr>
-                    <tr><td class="text-base-content/50">Assistido</td><td>{{ meta.assistido_caixa or '—' }}</td></tr>
-                    <tr><td class="text-base-content/50">Ofício</td><td>{{ meta.oficio_caixa or '—' }}</td></tr>
-                    <tr><td class="text-base-content/50">Status</td><td>{{ det.status_paj or '—' }}</td></tr>
-                    <tr><td class="text-base-content/50">Data abertura</td><td>{{ meta.data_abertura | data_br }}</td></tr>
-                    <tr><td class="text-base-content/50">Decurso</td><td>{{ meta.decurso or '—' }}</td></tr>
-                </tbody>
-            </table>
-        </div>
+        <!-- Estado: rodando -->
+        <template x-if="status === 'running'">
+            <div class="flex flex-col items-center justify-center py-16 gap-4">
+                <span class="loading loading-dots loading-lg text-warning"></span>
+                <p class="text-sm text-base-content/60" x-text="lastAction || 'Analisando o PAJ...'"></p>
+            </div>
+        </template>
+
+        <!-- Estado: erro -->
+        <template x-if="status === 'error'">
+            <div class="alert alert-error">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 14l2-2m0 0l2-2m-2 2l-2-2m2 2l2 2m7-2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
+                <div>
+                    <p class="font-semibold">Erro na análise</p>
+                    <p class="text-sm mt-1" x-text="error"></p>
+                </div>
+            </div>
+        </template>
+
+        <!-- Estado: sem análise -->
+        <template x-if="status === 'idle'">
+            <div class="flex flex-col items-center justify-center py-16 gap-3 text-base-content/40">
+                <svg class="w-12 h-12 opacity-30" fill="none" stroke="currentColor" stroke-width="1.5" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z" />
+                </svg>
+                <p class="text-sm italic">Análise ainda não realizada.</p>
+                <p class="text-xs">Clique em <strong class="text-warning">Analisar PAJ</strong> para gerar.</p>
+            </div>
+        </template>
+
+        <!-- Estado: concluído -->
+        <template x-if="status === 'done' && analise">
+            <div>
+                <div class="flex items-center justify-between mb-2">
+                    <h3 class="text-lg font-semibold">Análise IA</h3>
+                    <button class="btn btn-xs btn-ghost text-warning"
+                            @click="$dispatch('analisar-concluido')"
+                            title="Recarregar análise do disco">
+                        ↺ atualizar
+                    </button>
+                </div>
+                <template x-if="cabecalhoData">
+                    <p class="text-xs text-base-content/50 italic mb-4" x-text="cabecalhoData"></p>
+                </template>
+                <pre class="text-sm text-base-content/85 whitespace-pre-wrap leading-relaxed font-sans" x-text="analise"></pre>
+            </div>
+        </template>
+    </div>
+
+    <!-- Tab: Narrativa -->
+    <div x-show="tab === 'narrativa'" class="bg-base-200 rounded-lg border border-base-300 p-6">
+        <h3 class="text-lg font-semibold mb-4">Narrativa</h3>
+        {% if meta.narrativa %}
+        <p class="text-sm text-base-content/80 whitespace-pre-wrap">{{ meta.narrativa }}</p>
+        {% else %}
+        <p class="text-sm text-base-content/40 italic">Narrativa não disponível — sincronize o PAJ para extrair do SISDPU.</p>
+        {% endif %}
     </div>
 
     <!-- Tab: Movimentacoes -->
@@ -467,6 +646,12 @@
         <div class="flex items-start justify-between gap-4 mb-1">
             <h3 class="text-lg font-semibold">Anexos SISDPU</h3>
             <div class="flex gap-2">
+                <button class="btn btn-ghost btn-sm gap-1.5"
+                        onclick="fetch('/api/paj/{{ paj_norm }}/abrir-pasta',{method:'POST'}).then(r=>r.json()).then(d=>{if(!d.ok)showToast(d.erro||'Erro ao abrir pasta','error');}).catch(e=>showToast('Erro: '+e,'error'))"
+                        title="Abre a pasta do PAJ no Explorer">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v8.25m19.5 0v.188a2.25 2.25 0 0 1-2.244 2.062H4.494A2.25 2.25 0 0 1 2.25 14.438V14.25"/></svg>
+                    Abrir Pasta
+                </button>
                 {% if dados.anexos_sisdpu %}
                 <button class="btn btn-warning btn-sm"
                         onclick="abrirLimpezaModal('{{ paj_norm }}')"
@@ -632,7 +817,7 @@
             <table class="table table-sm">
                 <thead>
                     <tr class="bg-base-300/50">
-                        <th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>Ações</th>
+                        <th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>Criado/Modificado</th><th>Ações</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -645,6 +830,7 @@
                             </span>
                         </td>
                         <td class="text-sm">{{ (p.tamanho / 1024)|round(1) }} KB</td>
+                        <td class="text-xs text-base-content/60 whitespace-nowrap">{{ p.modificado | mtime_br }}</td>
                         <td>
                             <div class="flex flex-wrap gap-1">
                                 {% if p.tipo in ('pdf', 'docx', 'doc') %}
@@ -843,6 +1029,17 @@ function copiarTxt() {
 // Anexos com mtime > snapshot.ts ganham bullet azul (todos, individualmente —
 // nao ha equivalente de "corte" pra eles aqui).
 document.addEventListener('DOMContentLoaded', function () {
+    // Colorir badge de subtipo no cabeçalho (mesma paleta do dashboard)
+    document.querySelectorAll('.subtipo-header-badge').forEach(function(el) {
+        var s = (el.dataset.subtipo || '').toLowerCase();
+        var c = {'bpc idoso':'#10b981','bpc deficiente':'#0ea5e9','bpc':'#94a3b8','bi':'#f59e0b','apos. idade':'#8b5cf6','apos. tc':'#6366f1','apos. pcd':'#06b6d4','aux. doença':'#3b82f6','aux. acidente':'#f97316','aux. reclusão':'#ef4444','aux. inclusão':'#a855f7','pensão morte':'#64748b','ben. sociais':'#14b8a6','sal. maternidade':'#ec4899','reab. profissional':'#78716c','cobrança':'#f43f5e'};
+        var hex = c[s] || '#94a3b8';
+        var r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+        el.style.backgroundColor='rgba('+r+','+g+','+b+',0.12)';
+        el.style.color=hex;
+        el.style.borderColor='rgba('+r+','+g+','+b+',0.35)';
+    });
+
     const snap = window._prevPajSnapshot;
     const semSnap = !snap;
     const maxSeq = snap ? (snap.max_seq || 0) : 0;
@@ -952,6 +1149,125 @@ function discutirPaj(pajNorm) {
 // outra janela). O componente escuta `@recarregar-conversas-paj.window`.
 function carregarConversasPaj(pajNorm) {
     window.dispatchEvent(new CustomEvent('recarregar-conversas-paj'));
+}
+
+// =====================================================================
+// Análise IA — botão Analisar PAJ
+// =====================================================================
+function analisarApp(pajNorm) {
+    return {
+        status: 'idle',
+        lastAction: '',
+        _pollTimer: null,
+
+        async init() {
+            try {
+                var resp = await fetch('/api/analisar-paj/status/' + pajNorm);
+                var d = await resp.json();
+                this.status = d.status;
+                this.lastAction = d.last_action || '';
+                if (d.status === 'running') this._startPolling();
+            } catch (e) {}
+        },
+
+        async iniciar() {
+            try {
+                var resp = await fetch('/api/analisar-paj/' + pajNorm, { method: 'POST' });
+                var d = await resp.json();
+                if (d.ok) {
+                    this.status = 'running';
+                    this.lastAction = 'Iniciando...';
+                    this._startPolling();
+                    if (typeof abrirAnaliseModal === 'function') abrirAnaliseModal(pajNorm);
+                } else {
+                    showToast(d.msg || 'Não foi possível iniciar a análise.', 'warning');
+                }
+            } catch (e) {
+                showToast('Erro ao iniciar análise: ' + e, 'error');
+            }
+        },
+
+        _startPolling() {
+            if (this._pollTimer) return;
+            this._pollTimer = setInterval(async () => {
+                try {
+                    var resp = await fetch('/api/analisar-paj/status/' + pajNorm);
+                    var d = await resp.json();
+                    this.status = d.status;
+                    this.lastAction = d.last_action || '';
+                    if (d.status !== 'running') {
+                        clearInterval(this._pollTimer);
+                        this._pollTimer = null;
+                        if (d.status === 'done') {
+                            window.dispatchEvent(new CustomEvent('analisar-concluido'));
+                            showToast('Análise IA concluída!', 'success');
+                        } else if (d.status === 'error') {
+                            showToast('Erro na análise: ' + (d.error || '?'), 'error');
+                        }
+                    }
+                } catch (e) {}
+            }, 2000);
+        }
+    };
+}
+
+// =====================================================================
+// Análise IA — conteúdo da aba
+// =====================================================================
+function analiseIaTab(pajNorm) {
+    return {
+        status: 'idle',
+        lastAction: '',
+        analise: '',
+        error: '',
+        dataAnalise: '',
+        modeloAnalise: '',
+        _pollTimer: null,
+
+        get cabecalhoData() {
+            if (!this.dataAnalise) return '';
+            // ISO "YYYY-MM-DDTHH:MM" → "DD/MM/AAAA HH:MM"
+            try {
+                var d = new Date(this.dataAnalise);
+                var dd = String(d.getDate()).padStart(2,'0');
+                var mm = String(d.getMonth()+1).padStart(2,'0');
+                var aaaa = d.getFullYear();
+                var hh = String(d.getHours()).padStart(2,'0');
+                var mi = String(d.getMinutes()).padStart(2,'0');
+                var modelo = this.modeloAnalise ? ' · modelo ' + this.modeloAnalise : '';
+                return 'Análise feita em ' + dd + '/' + mm + '/' + aaaa + ' às ' + hh + ':' + mi + modelo;
+            } catch(e) { return ''; }
+        },
+
+        async init() {
+            await this.carregar();
+            if (this.status === 'running') this._startPolling();
+        },
+
+        async carregar() {
+            try {
+                var resp = await fetch('/api/analisar-paj/status/' + pajNorm);
+                var d = await resp.json();
+                this.status = d.status;
+                this.lastAction = d.last_action || '';
+                this.analise = d.analise || '';
+                this.error = d.error || '';
+                this.dataAnalise = d.data_analise || '';
+                this.modeloAnalise = d.modelo_analise || '';
+                if (d.status === 'running') this._startPolling();
+                else this._stopPolling();
+            } catch (e) {}
+        },
+
+        _startPolling() {
+            if (this._pollTimer) return;
+            this._pollTimer = setInterval(() => this.carregar(), 2000);
+        },
+
+        _stopPolling() {
+            if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null; }
+        }
+    };
 }
 </script>
 {% endblock %}

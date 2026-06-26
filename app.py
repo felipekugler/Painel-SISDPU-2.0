@@ -22,12 +22,14 @@ from routes.busca import router as busca_router
 from routes.calendar import router as calendar_router
 from routes.chat import router as chat_router
 from routes.chat_livre import router as chat_livre_router
+from routes.configuracoes import router as configuracoes_router
 from routes.dashboard import router as dashboard_router
 from routes.docgen import router as docgen_router
 from routes.files import router as files_router
 from routes.paj import router as paj_router
 from routes.pipeline_monitor import router as pipeline_monitor_router
 from routes.prazos import router as prazos_router
+from routes.analise_ia import router as analise_ia_router
 from routes.sync import router as sync_router
 from routes.watchlist import router as watchlist_router
 from services.ambiente_service import verificar_ambiente
@@ -60,10 +62,30 @@ def _configurar_logging() -> None:
 
 _configurar_logging()
 
+# Diagnóstico de startup: escreve APPDATA e caminho do Claude CLI resolvido num
+# arquivo de diagnóstico para depuração (independe do stdout da janela minimizada).
+import os as _os
+_diag_log = logging.getLogger("startup")
+try:
+    from services.chat_service import _resolver_claude_cmd as _diag_resolver
+    _claude_cmd_diag = _diag_resolver()
+    _diag_msg = (
+        f"Claude CLI: {' '.join(_claude_cmd_diag)} | "
+        f"APPDATA={_os.environ.get('APPDATA','?')} | "
+        f"USERPROFILE={_os.environ.get('USERPROFILE','?')}"
+    )
+    _diag_log.info("[startup-diag] %s", _diag_msg)
+    # Escreve também em arquivo separado (legível independente do log handler)
+    (Path(__file__).parent / "logs" / "startup_diag.txt").write_text(
+        _diag_msg + "\n", encoding="utf-8"
+    )
+except Exception as _e:
+    _diag_log.warning("[startup-diag] ERRO ao resolver Claude CLI: %s", _e)
+
 # Versao do painel — fonte unica. Usada pelo FastAPI (OpenAPI/docs) e tambem
 # exposta a todos os templates via Jinja globals (renderizada no rodape da
 # sidebar). Para incrementar: mude aqui e so aqui.
-APP_VERSION = "0.3.14"
+APP_VERSION = "0.3.15"
 
 app = FastAPI(title="oficio-geral-ui", version=APP_VERSION)
 app.state.jinja = jinja2.Environment(
@@ -75,6 +97,10 @@ app.state.jinja = jinja2.Environment(
 app.state.jinja.globals["app_version"] = APP_VERSION
 # Descricao da unidade (sub-titulo na sidebar) — configuravel via OFICIO_DESCRICAO no .env
 app.state.jinja.globals["oficio_descricao"] = OFICIO_DESCRICAO
+# Expoe a funcao de leitura de config do painel a todos os templates — usada
+# pelo base.html para controlar visibilidade de itens de menu (ex: Prazos).
+from services.config_painel_service import ler_config as _ler_painel_config
+app.state.jinja.globals["get_painel_config"] = _ler_painel_config
 
 # Mapeamento de exibicao para nomes de area (foro). Os valores armazenados em
 # metadata.json vem sem acentos (parser do SISDPU); o front-end formata para
@@ -133,9 +159,19 @@ def _data_hora_br(valor) -> str:
     return _data_br(s)
 
 
+def _mtime_br(ts) -> str:
+    """Converte Unix timestamp (float) em DD/MM/AAAA HH:MM."""
+    import datetime as _dt
+    try:
+        return _dt.datetime.fromtimestamp(float(ts)).strftime("%d/%m/%Y %H:%M")
+    except Exception:
+        return "—"
+
+
 app.state.jinja.filters["formatar_area"] = _formatar_area
 app.state.jinja.filters["data_br"] = _data_br
 app.state.jinja.filters["data_hora_br"] = _data_hora_br
+app.state.jinja.filters["mtime_br"] = _mtime_br
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 app.include_router(dashboard_router)
 app.include_router(paj_router)
@@ -143,12 +179,14 @@ app.include_router(files_router)
 app.include_router(chat_router)
 app.include_router(chat_livre_router)
 app.include_router(docgen_router)
+app.include_router(analise_ia_router)
 app.include_router(sync_router)
 app.include_router(busca_router)
 app.include_router(calendar_router)
 app.include_router(prazos_router)
 app.include_router(watchlist_router)
 app.include_router(pipeline_monitor_router)
+app.include_router(configuracoes_router)
 
 # Healthcheck de dependencias externas — expoe em app.state.ambiente pra
 # o dashboard renderizar banner quando algo falta.

@@ -1,0 +1,129 @@
+<!-- Modal de progresso da análise IA -->
+<dialog id="analise-modal" class="modal">
+    <div class="modal-box w-11/12 max-w-lg bg-base-300">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="font-bold text-lg">Análise IA do PAJ</h3>
+            <div class="flex gap-2 items-center">
+                <span id="analise-modal-badge" class="badge badge-sm badge-warning">em andamento</span>
+                <form method="dialog">
+                    <button class="btn btn-sm btn-ghost" id="analise-close-btn">✕</button>
+                </form>
+            </div>
+        </div>
+
+        <!-- Passos -->
+        <ul class="steps steps-vertical w-full gap-1" id="analise-steps">
+            <li class="step step-neutral" id="step-lendo">
+                <span class="text-sm text-left pl-2">Lendo arquivos do PAJ (sisdpu.txt, documentos OCR...)</span>
+            </li>
+            <li class="step step-neutral" id="step-analisando">
+                <span class="text-sm text-left pl-2">Analisando com Claude (pode demorar alguns minutos)</span>
+            </li>
+            <li class="step step-neutral" id="step-salvando">
+                <span class="text-sm text-left pl-2">Salvando análise (analise_ia.md)</span>
+            </li>
+        </ul>
+
+        <!-- Mensagem de status -->
+        <div id="analise-modal-msg" class="mt-4 text-sm text-base-content/70 italic text-center"></div>
+
+        <p class="text-xs text-base-content/50 mt-4">
+            O painel recarrega automaticamente ao concluir.
+        </p>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
+</dialog>
+
+<script>
+(function () {
+    let _analiseTimer = null;
+    let _analiseStep = 0;
+
+    function _stepClass(index) {
+        // 0=lendo, 1=analisando, 2=salvando
+        if (_analiseStep > index) return 'step-success';
+        if (_analiseStep === index) return 'step-warning';
+        return 'step-neutral';
+    }
+
+    function _renderSteps() {
+        const ids = ['step-lendo', 'step-analisando', 'step-salvando'];
+        ids.forEach((id, i) => {
+            const el = document.getElementById(id);
+            if (!el) return;
+            el.className = 'step ' + _stepClass(i);
+        });
+    }
+
+    function _setMsg(txt) {
+        const el = document.getElementById('analise-modal-msg');
+        if (el) el.textContent = txt;
+    }
+
+    function _setBadge(label, cls) {
+        const b = document.getElementById('analise-modal-badge');
+        if (!b) return;
+        b.className = 'badge badge-sm ' + cls;
+        b.textContent = label;
+    }
+
+    function _stopPoll() {
+        if (_analiseTimer) { clearInterval(_analiseTimer); _analiseTimer = null; }
+    }
+
+    window.abrirAnaliseModal = function (pajNorm) {
+        _analiseStep = 0;
+        _renderSteps();
+        _setBadge('em andamento', 'badge-warning');
+        _setMsg('Iniciando...');
+        document.getElementById('analise-modal').showModal();
+        _stopPoll();
+
+        _analiseTimer = setInterval(async () => {
+            try {
+                const r = await fetch('/api/analisar-paj/status/' + pajNorm);
+                const d = await r.json();
+                const action = (d.last_action || '').toLowerCase();
+
+                if (d.status === 'running') {
+                    if (action.includes('lendo') || action.includes('arquivos')) {
+                        _analiseStep = 0;
+                    } else if (action.includes('analis') || action.includes('claude')) {
+                        _analiseStep = 1;
+                    } else if (action.includes('salv')) {
+                        _analiseStep = 2;
+                    } else {
+                        _analiseStep = Math.max(_analiseStep, 1);
+                    }
+                    _renderSteps();
+                    _setMsg(d.last_action || 'Processando...');
+
+                } else if (d.status === 'done') {
+                    _analiseStep = 3;
+                    _renderSteps();
+                    _setBadge('concluído', 'badge-success');
+                    _setMsg('Análise concluída! Recarregando...');
+                    _stopPoll();
+                    setTimeout(() => {
+                        document.getElementById('analise-modal').close();
+                        window.location.reload();
+                    }, 1500);
+
+                } else if (d.status === 'error') {
+                    _setBadge('erro', 'badge-error');
+                    _setMsg('Erro: ' + (d.error || '?'));
+                    _stopPoll();
+                }
+            } catch (e) { /* ignora falhas de poll */ }
+        }, 2000);
+    };
+
+    // Fechar o modal encerra o poll (não cancela a análise em background)
+    document.addEventListener('DOMContentLoaded', () => {
+        const modal = document.getElementById('analise-modal');
+        if (modal) {
+            modal.addEventListener('close', _stopPoll);
+        }
+    });
+})();
+</script>

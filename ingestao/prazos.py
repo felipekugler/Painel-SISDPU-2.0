@@ -159,6 +159,7 @@ def detectar_prazos_novos(
                 "paj_norm": paj_norm,
                 "titulo": titulo,
                 "descricao": desc[:500],
+                "fases": (m.get("fases") or "").strip(),
                 "data_mov": data_mov.isoformat() if data_mov else "",
                 "prazo_dias": dias,
                 "data_alvo": data_alvo.isoformat() if data_alvo else "",

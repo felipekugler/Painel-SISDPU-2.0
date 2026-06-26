@@ -104,10 +104,19 @@ def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
     juizo = det.get("juizo", "")
     foro_detalhado = (det.get("foro_detalhado") or "").strip()
     decurso = (det.get("decurso") or "").strip()
+    narrativa = (det.get("narrativa") or "").strip().replace("\n", " ").replace("\r", "")
+    # Pega apenas o primeiro CPF (evita duplicatas quando o mesmo número aparece
+    # várias vezes na página do SISDPU)
+    cpf = (det.get("cpf") or "").strip()
+    if cpf:
+        cpf = cpf.split(",")[0].strip()
+    chave_acesso = (det.get("chave_acesso") or "").strip()
 
     linhas.append(f"PAJ: {paj_id}")
     if assistido:
         linhas.append(f"Assistido: {assistido}")
+    if cpf:
+        linhas.append(f"CPF: {cpf}")
     if status:
         linhas.append(f"Status: {status}")
     if pretensao:
@@ -116,6 +125,13 @@ def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
         linhas.append(f"Data de Abertura: {data_abertura}")
     if decurso:
         linhas.append(f"Decurso: {decurso}")
+    from services.config_painel_service import ler_config as _ler_cfg_painel
+    _cfg_painel = _ler_cfg_painel()
+    if _cfg_painel.get("download_narrativa", True):
+        if narrativa:
+            linhas.append(f"Narrativa: {narrativa}")
+    else:
+        linhas.append("Narrativa: Teor da narrativa desabilitado no painel de Configuração")
     if oficio:
         linhas.append(f"Ofício: {oficio}")
     if processo_judicial:
@@ -124,6 +140,8 @@ def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
         info_extra = foro_detalhado or juizo
         sufixo = f" ({info_extra})" if info_extra else ""
         linhas.append(f"PROCESSO JUDICIAL VINCULADO: {processo_judicial}{sufixo}")
+    if chave_acesso:
+        linhas.append(f"Chave de Acesso: {chave_acesso}")
 
     linhas.append("")
     linhas.append("MOVIMENTAÇÕES RELEVANTES:")
@@ -137,7 +155,7 @@ def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
     for m in movs:
         seq = (str(m.get("seq", "") or "")).strip()
         data = (m.get("data") or "").split()[0] if m.get("data") else ""
-        tipo = (m.get("movimentacao") or "").strip()
+        tipo = (m.get("fases") or "").strip()
         desc = (m.get("descricao") or "").strip()
         prefixo_seq = f"[seq={seq}] " if seq else ""
         bloco = f"{prefixo_seq}[{data}] {tipo + ': ' if tipo else ''}{desc}".strip()
@@ -166,8 +184,8 @@ def _sanitizar_nome(nome: str) -> str:
     return limpo or "anexo"
 
 
-def _nome_anexo(idx: int, descricao: str, arquivo: str) -> str:
-    """Nome determinista pro anexo baixado: <seq>_<descricao-slug>[_<nome-original>].
+def _nome_anexo(idx: int, descricao: str, arquivo: str, seq: str = "") -> str:
+    """Nome determinista pro anexo baixado: <idx>_[<seq_sisdpu>_]<descricao-slug>[_<nome-original>].
 
     Indice no inicio garante ordenacao estavel; descricao + nome_original ajudam
     a reconhecer visualmente na pasta. A EXTENSAO vai ser apendida depois pelo
@@ -175,8 +193,13 @@ def _nome_anexo(idx: int, descricao: str, arquivo: str) -> str:
 
     Quando `arquivo` ja traz extensao conhecida (.pdf/.docx/.jpg/etc), ela e'
     removida aqui pra nao duplicar — o cliente anexa a real no final.
+
+    O parametro `seq` (numero sequencial do SISDPU) e' incluido no stem para
+    garantir unicidade quando varios arquivos tem o mesmo nome e data (ex: 3 emails
+    identicos) — assim o `_stem_sem_prefixo_idx` do loop de "ja existe" nao colide.
     """
     prefixo = f"{idx:02d}"
+    seq_slug = _sanitizar_nome(seq)[:6].strip("_") if seq else ""
     desc_slug = _sanitizar_nome(descricao)[:40].strip("_") if descricao else ""
     # Remove qualquer extensao conhecida do nome_orig pra evitar "arquivo.pdf.pdf"
     nome_orig = _sanitizar_nome(arquivo) if arquivo else ""
@@ -197,6 +220,8 @@ def _nome_anexo(idx: int, descricao: str, arquivo: str) -> str:
         }:
             nome_orig = stem
     partes = [prefixo]
+    if seq_slug:
+        partes.append(seq_slug)
     if desc_slug:
         partes.append(desc_slug)
     if nome_orig:
@@ -472,7 +497,7 @@ async def _baixar_anexos_sisdpu(
             f"  [anexos] modo 'desde data': filtrando data >= "
             f"{filtro_data_min.isoformat()} → {len(lista_para_baixar)} de {total}"
         )
-    elif total > limite:
+    elif limite > 0 and total > limite:
         # Modo padrao com overflow: baixa os `limite` mais recentes
         lista_para_baixar = lista_ordenada[:limite]
         cortados = lista_ordenada[limite:]
@@ -530,7 +555,8 @@ async def _baixar_anexos_sisdpu(
 
         descricao = (item.get("descricao") or "").strip()
         arquivo = (item.get("arquivo") or "").strip()
-        nome = _nome_anexo(idx, descricao, arquivo)
+        seq_sisdpu = (item.get("tipo") or "").strip()
+        nome = _nome_anexo(idx, descricao, arquivo, seq=seq_sisdpu)
         destino = pasta_pecas / nome
 
         # Skip se ja foi baixado antes. A extensao so e' conhecida DEPOIS do
@@ -552,11 +578,15 @@ async def _baixar_anexos_sisdpu(
             log(f"    [anexo {idx}] já existe — pulando {existentes[0].name}")
             continue
 
+        href = (item.get("href") or "").strip()
         log(f"    [anexo {idx}] baixando {descricao[:60]} ({arquivo[:40]})")
         try:
-            salvo = await sisdpu_client.baixar_anexo_por_indice(
-                item.get("row_index", idx - 1), destino
-            )
+            if href:
+                salvo = await sisdpu_client.baixar_por_href(href, destino)
+            else:
+                salvo = await sisdpu_client.baixar_anexo_por_indice(
+                    item.get("row_index", idx - 1), destino
+                )
         except Exception as e:
             log(f"    [anexo {idx}] erro: {type(e).__name__}: {e}")
             salvo = None
@@ -713,6 +743,12 @@ async def _processar_paj_pos_detalhamento(
     texto_sisdpu = _montar_sisdpu_txt(item, det)
     (pasta / "sisdpu.txt").write_text(texto_sisdpu, encoding="utf-8")
 
+    from services.config_painel_service import ler_config as _ler_cfg_narrativa
+    if not _ler_cfg_narrativa().get("download_narrativa", True):
+        log("  [narrativa] detecção desativada nas configurações do painel — download pulado")
+    else:
+        log("  [narrativa] incluída no sisdpu.txt")
+
     try:
         metadata = parser.montar_metadata(paj_norm, texto_sisdpu)
     except Exception as e:
@@ -721,6 +757,12 @@ async def _processar_paj_pos_detalhamento(
 
     # Snapshot da estrutura bruta devolvida pelo SISDPU para diagnostico/posteridade
     metadata["sisdpu_raw"] = det
+
+    # Campos extras extraídos via DOM que o parser de texto não cobre
+    for _campo in ("nome_unidade", "rg", "data_inclusao_processo", "chave_acesso", "juizo", "foro_detalhado"):
+        _val = (det.get(_campo) or "").strip()
+        if _val:
+            metadata[_campo] = _val
 
     if via_busca_global:
         # Busca global nao da informacao sobre estar na caixa atual — preserva
@@ -732,6 +774,7 @@ async def _processar_paj_pos_detalhamento(
         # Campos de ciclo de vida que nao vem do detalhamento — preservar.
         for k in (
             "via_watchlist",
+            "adicionado_manualmente",
             "concluido_em",
             "arquivado_em",
             "n_anexos_removidos",
@@ -753,6 +796,8 @@ async def _processar_paj_pos_detalhamento(
 
     # Detecta prazos novos (intimacao/citacao/notificacao aparecidas nesta sync)
     # e grava no JSONL de pendentes pro calendar.
+    # A coleta sempre ocorre independente do toggle — o toggle controla apenas
+    # a visibilidade do menu Prazos no painel (ver base.html).
     try:
         from ingestao import prazos as _prazos_mod
         from services.calendar_service import append_prazo as _append_prazo
@@ -768,9 +813,12 @@ async def _processar_paj_pos_detalhamento(
             foro=metadata.get("foro_detectado", "") or "",
             classificacao=metadata.get("classificacao", "") or "",
         )
-        for p in prazos_detectados:
-            _append_prazo(p)
         if prazos_detectados:
+            for p in prazos_detectados:
+                try:
+                    _append_prazo(p)
+                except Exception as _e_ap:
+                    log(f"  [prazos] erro ao gravar: {type(_e_ap).__name__}: {_e_ap}")
             log(
                 f"  [prazos] {len(prazos_detectados)} prazo(s) novo(s) detectado(s) — aguardando /sync_calendar"
             )
@@ -955,6 +1003,8 @@ def _reconciliar_concluidos(
         # baixou manualmente via botao "Sincronizar". So entra no fluxo de
         # conclusao se um dia tiver sido visto na caixa (em_caixa_atual=True).
         if meta.get("via_watchlist") and meta.get("em_caixa_atual") is not True:
+            continue
+        if meta.get("adicionado_manualmente"):
             continue
 
         # Transicao ativo -> concluido
@@ -1702,6 +1752,11 @@ async def buscar_resumo_via_busca(
         }
 
     metadata["sisdpu_raw"] = det
+    # Campos extras extraídos via DOM que o parser de texto não cobre
+    for _campo in ("nome_unidade", "rg", "data_inclusao_processo", "chave_acesso", "juizo", "foro_detalhado"):
+        _val = (det.get(_campo) or "").strip()
+        if _val:
+            metadata[_campo] = _val
     # Marca origem: PAJ nao veio da caixa atual, foi puxado por busca explicita
     # do defensor (via watchlist). Dashboard usa essa flag para esconder.
     metadata["via_watchlist"] = True

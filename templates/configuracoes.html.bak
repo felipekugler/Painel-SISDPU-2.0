@@ -1,0 +1,156 @@
+{% extends "base.html" %}
+
+{% block title %}Configurações{% endblock %}
+
+{% block content %}
+<div class="max-w-2xl mx-auto" x-data="{
+    cfg: {
+        download_prazos: {{ 'true' if config.download_prazos else 'false' }},
+        download_narrativa: {{ 'true' if config.download_narrativa else 'false' }}
+    },
+    limpar: { download_narrativa: false },
+    modal: { aberto: false, feature: '' },
+    salvando: false,
+    mensagem: '',
+    mensagemErro: false,
+
+    onToggle(f, novoValor) {
+        this.cfg[f] = novoValor;
+        if (!novoValor && f === 'download_narrativa') {
+            this.modal.feature = f;
+            this.modal.aberto = true;
+        } else if (novoValor) {
+            this.limpar[f] = false;
+        }
+    },
+
+    confirmarDesativar() {
+        this.limpar[this.modal.feature] = true;
+        this.modal.aberto = false;
+    },
+
+    cancelarModal() {
+        this.cfg[this.modal.feature] = true;
+        this.modal.aberto = false;
+    },
+
+    async salvar() {
+        this.salvando = true;
+        this.mensagem = '';
+        this.mensagemErro = false;
+        try {
+            const payload = {
+                download_prazos: this.cfg.download_prazos,
+                download_narrativa: this.cfg.download_narrativa,
+                limpar_narrativa: this.limpar.download_narrativa,
+            };
+            const r = await fetch('/api/configuracoes', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify(payload)
+            });
+            const j = await r.json();
+            if (j.ok) {
+                this.limpar = { download_narrativa: false };
+                let msg = 'Configurações salvas com sucesso.';
+                if (j.limpeza && j.limpeza.narrativa !== undefined)
+                    msg += ` Narrativas limpas em ${j.limpeza.narrativa} PAJ(s).`;
+                this.mensagem = msg;
+            } else {
+                this.mensagem = 'Erro ao salvar.';
+                this.mensagemErro = true;
+            }
+        } catch(e) {
+            this.mensagem = 'Erro de comunicação com o servidor.';
+            this.mensagemErro = true;
+        } finally {
+            this.salvando = false;
+        }
+    }
+}">
+
+    <h2 class="text-2xl font-bold mb-6">Configurações do Painel</h2>
+
+    <div class="card bg-base-200 shadow">
+        <div class="card-body gap-6">
+
+            <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
+                Sincronização SISDPU
+            </h3>
+
+            <!-- Toggle: Narrativa -->
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="font-medium">Download da narrativa</p>
+                    <p class="text-sm text-base-content/60 mt-0.5">
+                        Extrai e armazena o teor da narrativa do PAJ durante a sincronização.
+                        Quando desativado, o campo fica com o texto padrão de aviso.
+                    </p>
+                </div>
+                <input type="checkbox" class="toggle toggle-primary mt-1 shrink-0"
+                       :checked="cfg.download_narrativa"
+                       @change="onToggle('download_narrativa', $event.target.checked)" />
+            </div>
+
+            <!-- Toggle: Prazos -->
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="font-medium">Controle de prazos processuais</p>
+                    <p class="text-sm text-base-content/60 mt-0.5">
+                        Habilita o menu <strong>Prazos</strong> na barra lateral.
+                        A detecção de prazos ocorre sempre durante a sincronização —
+                        este toggle apenas exibe ou oculta o acesso ao menu.
+                    </p>
+                </div>
+                <input type="checkbox" class="toggle toggle-primary mt-1 shrink-0"
+                       :checked="cfg.download_prazos"
+                       @change="onToggle('download_prazos', $event.target.checked)" />
+            </div>
+
+            <!-- Salvar -->
+            <div class="flex items-center gap-4 pt-2 border-t border-base-300">
+                <button class="btn btn-primary"
+                        :disabled="salvando"
+                        @click="salvar()">
+                    <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
+                    Salvar configurações
+                </button>
+                <p class="text-sm"
+                   :class="mensagemErro ? 'text-error' : 'text-success'"
+                   x-text="mensagem"
+                   x-show="mensagem"></p>
+            </div>
+
+        </div>
+    </div>
+
+    <p class="text-xs text-base-content/40 mt-4">
+        As alterações têm efeito imediato. Configurações armazenadas em
+        <code class="font-mono">painel_config.json</code> na raiz do projeto.
+    </p>
+
+    <!-- Modal de confirmação — apenas para desativar narrativa (apaga dados) -->
+    <div class="modal" :class="{'modal-open': modal.aberto}">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg">Desativar e apagar narrativas?</h3>
+            <p class="py-3 font-medium">Download da narrativa</p>
+            <p class="text-sm text-base-content/70">
+                As narrativas armazenadas nos arquivos de todos os PAJs serão removidas.
+            </p>
+            <p class="text-sm text-base-content/70 mt-2">
+                Para restaurar será necessária nova sincronização após reabilitar a função.
+            </p>
+            <div class="modal-action">
+                <button class="btn btn-warning" @click="confirmarDesativar()">
+                    Desativar e apagar narrativas
+                </button>
+                <button class="btn btn-ghost" @click="cancelarModal()">
+                    Cancelar
+                </button>
+            </div>
+        </div>
+        <div class="modal-backdrop" @click="cancelarModal()"></div>
+    </div>
+
+</div>
+{% endblock %}

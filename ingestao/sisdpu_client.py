@@ -39,6 +39,258 @@ _DEBUG_DIR = Path(__file__).resolve().parents[1] / "logs" / "sisdpu_debug"
 # pra investigar a janela ativa de problemas sem inflar o repositorio.
 _DEBUG_DIR_RETER = 20
 
+# ---------------------------------------------------------------------------
+# JS de extração unificado — usado por TODAS as funções que abrem a tela de
+# detalhamento de um PAJ (movimentacoes_paj, buscar_paj_global, etc.).
+# Deve ser a única fonte de verdade sobre quais campos são extraídos e como.
+# ---------------------------------------------------------------------------
+_JS_EXTRAIR_PAJ = """
+() => {
+    const r = {};
+    const body = document.body.innerText;
+
+    // ---------- Helpers ----------
+    const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim()
+                                  .toLowerCase().replace(/[:：]$/,'');
+
+    const LIXO_TABELA = /^(data de envio|remetente|prazo|descri[çc][ãa]o|tipo|status|data|seq|usu[áa]rio|fases|movimenta[çc][ãa]o|seq\\.?)\\b/i;
+
+    function valorParaLabel(rotulos) {
+        const alvos = rotulos.map(norm);
+        const candidatos = document.querySelectorAll(
+            'td, th, label, span, dt, dd, li, b, strong, div, p'
+        );
+        for (const el of candidatos) {
+            const txt = norm(el.textContent || '');
+            if (!alvos.includes(txt)) continue;
+            let next = el.nextElementSibling;
+            while (next) {
+                const v = (next.textContent || '').trim();
+                if (v) {
+                    const linha = v.split('\\n')[0].trim();
+                    if (linha && !LIXO_TABELA.test(linha) && linha.length < 250)
+                        return linha;
+                }
+                next = next.nextElementSibling;
+            }
+            const pai = el.parentElement;
+            if (pai) {
+                const fullPai = (pai.textContent || '').trim();
+                const idx = fullPai.toLowerCase().indexOf(txt);
+                if (idx >= 0) {
+                    const depois = fullPai.substring(idx + (el.textContent || '').length).trim();
+                    const linha = depois.split('\\n')[0].trim().replace(/^[:\\-\\s]+/, '');
+                    if (linha && !LIXO_TABELA.test(linha) && linha.length < 250)
+                        return linha;
+                }
+            }
+        }
+        return '';
+    }
+
+    // ---------- Cabeçalho ----------
+    r.assistido       = valorParaLabel(['Assistido(s)', 'Assistido', 'Assistidos']);
+    r.pretensao       = valorParaLabel(['Pretensão', 'Pretensao']);
+    r.data_abertura   = valorParaLabel(['Data de Abertura', 'Dt. Abertura', 'Dt Abertura', 'Dt.Abertura', 'Abertura']);
+    r.decurso         = valorParaLabel(['Data do Decurso de Prazo', 'Decurso de Prazo', 'Decurso', 'Decurso agendado', 'Decurso Agendado']);
+    r.nome_unidade    = valorParaLabel(['Nome da Unidade', 'Unidade']);
+    r.foro_detalhado  = valorParaLabel(['Foro Detalhado', 'Foro detalhado', 'Foro']);
+
+    // Ofício — itera elementos com label exato e rejeita valores que pareçam
+    // tipo de documento/pretensão (ex: "Documento/Pretensão").
+    {
+        const alvosOficio = ['ofício', 'oficio', 'ofício responsável', 'oficio responsavel',
+                             'ofício atual', 'oficio atual'];
+        const LIXO_OFICIO = /documento|pretens[ãa]o|peti[çc][ãa]o/i;
+        for (const el of document.querySelectorAll('td, th, label, span, dt, b, strong, div, p')) {
+            if (!alvosOficio.includes(norm(el.textContent || ''))) continue;
+            let v = '';
+            const next = el.nextElementSibling;
+            if (next) v = (next.textContent || '').trim().split('\\n')[0].trim();
+            if (!v) {
+                const pai = el.parentElement;
+                if (pai) {
+                    const full = (pai.textContent || '').trim();
+                    const elTxt = (el.textContent || '').trim();
+                    const idx = full.indexOf(elTxt);
+                    if (idx >= 0) {
+                        const depois = full.substring(idx + elTxt.length).trim().replace(/^[:\\-\\s]+/, '');
+                        v = depois.split('\\n')[0].trim();
+                    }
+                }
+            }
+            if (v && !LIXO_OFICIO.test(v) && v.length < 200) { r.oficio = v; break; }
+        }
+    }
+
+    // ---------- PAJ + status ----------
+    let pajMatch = body.match(/(\\d{4}\\/\\d{3}-\\d+)\\s*-\\s*PAJ\\s+([^\\n]+)/);
+    if (pajMatch) {
+        r.paj = pajMatch[1];
+        r.status_paj = pajMatch[2].trim();
+    } else {
+        pajMatch = body.match(/N[úu]mero\\s+do\\s+PAJ[\\s\\t]+(\\d{4}\\/\\d{3}-\\d+)/);
+        if (pajMatch) { r.paj = pajMatch[1]; r.status_paj = ''; }
+    }
+
+    // ---------- Processo Judicial ----------
+    r.processo_judicial = valorParaLabel([
+        'Processo Judicial', 'Número do Processo', 'Numero do Processo',
+        'Nº do Processo', 'No do Processo', 'Nº Processo', 'No Processo'
+    ]);
+    if (r.processo_judicial) {
+        const fmt = r.processo_judicial.replace(/\\s/g, '');
+        if (!/\\d{7}-\\d{2}\\.\\d{4}\\.\\d\\.\\d{2}\\.\\d{4}/.test(fmt)) {
+            const rawNum = fmt.match(/^(\\d{20})$/);
+            if (rawNum) {
+                const n = rawNum[1];
+                r.processo_judicial = n.slice(0,7)+'-'+n.slice(7,9)+'.'+n.slice(9,13)+'.'+n.slice(13,14)+'.'+n.slice(14,16)+'.'+n.slice(16,20);
+            } else {
+                r.processo_judicial = '';
+            }
+        }
+    }
+    if (!r.processo_judicial) {
+        // Fallback: regex no innerText da seção
+        const idxP = body.search(/Processo\\s+Judicial/i);
+        if (idxP >= 0) {
+            const sec = body.substring(idxP, idxP + 1200);
+            const m = sec.match(/(\\d{7}-\\d{2}\\.\\d{4}\\.\\d\\.\\d{2}\\.\\d{4})/)
+                   || sec.match(/\\b(\\d{20})\\b/);
+            if (m) {
+                const n = m[1];
+                r.processo_judicial = n.length === 20
+                    ? n.slice(0,7)+'-'+n.slice(7,9)+'.'+n.slice(9,13)+'.'+n.slice(13,14)+'.'+n.slice(14,16)+'.'+n.slice(16,20)
+                    : n;
+            }
+        }
+    }
+
+    // ---------- Juízo ----------
+    r.juizo = valorParaLabel([
+        'Juízo/Orgão Julgador', 'Juizo/Orgao Julgador',
+        'Juízo/Órgão Julgador', 'Juízo/Orgão', 'Juizo/Orgao'
+    ]);
+
+    // ---------- Data de Inclusão do processo ----------
+    r.data_inclusao_processo = valorParaLabel([
+        'Data de Inclusão', 'Data de Inclusao', 'Data Inclusão', 'Data Inclusao'
+    ]);
+
+    // ---------- Chave de acesso ----------
+    r.chave_acesso = valorParaLabel([
+        'Chave Processo', 'Chave para Consulta', 'Chave de Acesso', 'Chave',
+        'Observações', 'Observacoes', 'Observação', 'Observacao'
+    ]);
+    if (r.chave_acesso && !/^\\d{8,20}$/.test(r.chave_acesso.replace(/\\s/g,'')))
+        r.chave_acesso = '';
+
+    // ---------- CPF e RG (seção Assistido(s) Pessoa(s) Física) ----------
+    {
+        let idxA = body.search(/Assistido\\(s\\)\\s+Pessoa\\(s\\)\\s+F[ií]sica/i);
+        if (idxA < 0) idxA = body.search(/Assistido\\(s\\)\\s*Pessoa/i);
+        if (idxA < 0) idxA = body.search(/Assistido\\(s\\)/i);
+        const idxAp = body.search(/PAJ\\(s\\)\\s+Apensado\\(s\\)/i);
+        const fimA  = (idxAp > idxA && idxAp >= 0) ? idxAp : body.length;
+        const secA  = idxA >= 0 ? body.substring(idxA, Math.min(idxA + 800, fimA)) : '';
+        if (secA) {
+            const cpfRe = /CPF\\s*:?\\s*(\\d{3}[.\\s]?\\d{3}[.\\s]?\\d{3}[-\\s]?\\d{2}|\\d{11})/gi;
+            const cpfMs = [...secA.matchAll(cpfRe)];
+            if (cpfMs.length > 0) {
+                r.cpf = cpfMs[0][1].trim();
+            } else {
+                const cpfBare = secA.match(/\\b(\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2})\\b/);
+                if (cpfBare) r.cpf = cpfBare[1].trim();
+            }
+            const rgM = secA.match(/RG\\s*:?\\s*([A-Za-z0-9.\\/\\-]{4,20})/i);
+            if (rgM) r.rg = rgM[1].trim();
+        }
+    }
+
+    // ---------- Movimentações ----------
+    const movs = [];
+    for (const tr of document.querySelectorAll('table tbody tr')) {
+        const cells = tr.querySelectorAll('td');
+        if (cells.length >= 5) {
+            const seq = (cells[0]?.textContent || '').trim();
+            const dataHora = (cells[2]?.textContent || '').trim();
+            const movimentacao = (cells[3]?.textContent || '').trim();
+            const fases = (cells[4]?.textContent || '').trim();
+            const textoCompleto = cells[5]?.textContent || '';
+            const usuario = (cells[6]?.textContent || '').trim();
+            if (seq && /^\\d{1,4}$/.test(seq) && (textoCompleto.trim() || movimentacao)) {
+                const urls = textoCompleto.match(/https?:\\/\\/[^\\s]+/g) || [];
+                const links_decisao = urls.filter(u =>
+                    u.includes('stj.jus.br') || u.includes('stf.jus.br') ||
+                    u.includes('portal.stf') || u.includes('processo.stj') ||
+                    u.includes('eproc') || u.includes('downloadPeca') ||
+                    u.includes('documento') || u.includes('decisao') || u.endsWith('.pdf')
+                );
+                movs.push({ seq, data: dataHora, movimentacao, fases,
+                            descricao: textoCompleto.substring(0, 3000),
+                            links_decisao, usuario });
+            }
+        }
+    }
+    if (movs.length > 0) r.movimentacoes = movs;
+
+    // ---------- Narrativa ----------
+    (function() {
+        function textoEl(el) {
+            if (!el) return '';
+            if (el.tagName === 'TEXTAREA' || el.tagName === 'INPUT') return (el.value || '').trim();
+            return (el.innerText || el.textContent || '').trim();
+        }
+        for (const th of document.querySelectorAll('th, thead td')) {
+            if (!/^narrativa$/i.test(norm(th.textContent || ''))) continue;
+            const headerRow = th.closest('tr');
+            if (!headerRow) continue;
+            const headers = Array.from(headerRow.querySelectorAll('th, td'));
+            const colIdx = headers.indexOf(th);
+            if (colIdx < 0) continue;
+            const table = th.closest('table');
+            if (!table) continue;
+            const partes = [];
+            for (const tr of table.querySelectorAll('tbody tr')) {
+                const cells = tr.querySelectorAll('td');
+                if (cells[colIdx]) {
+                    const v = textoEl(cells[colIdx]);
+                    if (v && v.length > 3) partes.push(v);
+                }
+            }
+            if (partes.length > 0) { r.narrativa = partes.join('\\n'); return; }
+        }
+        for (const el of document.querySelectorAll('td, label, span, b, strong, legend')) {
+            if (!/^narrativa$/i.test(norm(el.textContent || ''))) continue;
+            let sib = el.nextElementSibling;
+            while (sib) {
+                const v = textoEl(sib);
+                if (v && v.length > 5 && !LIXO_TABELA.test(v.split('\\n')[0])
+                    && !/^narrativa$/i.test(v)) { r.narrativa = v; return; }
+                sib = sib.nextElementSibling;
+            }
+        }
+        for (const ta of document.querySelectorAll('textarea')) {
+            const v = (ta.value || ta.textContent || '').trim();
+            if (!v || v.length < 5) continue;
+            let anc = ta.parentElement;
+            for (let i = 0; i < 6 && anc; i++, anc = anc.parentElement) {
+                if (/narrativa/i.test(anc.getAttribute('id') || anc.getAttribute('class') || '')) {
+                    r.narrativa = v; return;
+                }
+            }
+        }
+    })();
+
+    // ---------- Filtro final ----------
+    for (const k of ['assistido','pretensao','oficio','juizo','foro_detalhado','decurso','data_abertura']) {
+        if (r[k] && LIXO_TABELA.test(r[k])) r[k] = '';
+    }
+
+    return r;
+}
+"""
+
 
 def _purgar_debug_dir_antigos(reter: int = _DEBUG_DIR_RETER) -> None:
     """Remove subpastas mais antigas de _DEBUG_DIR, mantendo apenas as `reter`
@@ -107,19 +359,34 @@ async def _get_page() -> Page:
             _ = _page.url
             return _page
         except Exception:
+            # Reseta TUDO — inclusive _playwright — para garantir que o proximo
+            # launch parta de um contexto limpo. Um _playwright stale pode fazer
+            # o launch falhar com "Executable doesn't exist" mesmo que o arquivo
+            # exista, pois o driver Node.js subjacente perdeu a conexao.
             _page = None
             _browser = None
+            try:
+                await _playwright.stop()
+            except Exception:
+                pass
+            _playwright = None
 
     if _playwright is None:
+        if not os.environ.get("PLAYWRIGHT_BROWSERS_PATH"):
+            _lad = os.environ.get("LOCALAPPDATA", "").strip()
+            if not _lad:
+                _lad = str(Path.home() / "AppData" / "Local")
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = str(Path(_lad) / "ms-playwright")
         _playwright = await async_playwright().start()
 
-    _browser = await _playwright.chromium.launch(
-        headless=True,
-        args=[
-            # Desabilita o PDF viewer interno do Chromium: PDFs viram download
+    _launch_kwargs: dict = {
+        "headless": True,
+        "args": [
             "--disable-features=PDFViewerUpdate,PdfUnseasoned",
         ],
-    )
+    }
+
+    _browser = await _playwright.chromium.launch(**_launch_kwargs)
     context = await _browser.new_context(
         viewport={"width": 1280, "height": 1024},
         accept_downloads=True,
@@ -336,97 +603,20 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
     await _wait_pf_ajax(page, timeout=15000)
     await page.wait_for_timeout(3000)
 
-    dados = await page.evaluate(
-        """
-        () => {
-            const r = {};
-            const body = document.body.innerText;
-
-            const assistidoMatch = body.match(
-                /Assistido\\(s\\)[\\t\\s]+([^\\n]+)/
-            );
-            if (assistidoMatch) r.assistido = assistidoMatch[1].trim();
-
-            const pajMatch = body.match(/(\\d{4}\\/\\d{3}-\\d+)\\s*-\\s*PAJ\\s+([^\\n]+)/);
-            if (pajMatch) {
-                r.paj = pajMatch[1];
-                r.status_paj = pajMatch[2].trim();
-            }
-
-            const oficioMatch = body.match(/Oficio[\\t\\s]+([^\\n]+)/) ||
-                                body.match(/Ofício[\\t\\s]+([^\\n]+)/);
-            if (oficioMatch) r.oficio = oficioMatch[1].trim();
-
-            // Pretensao — formato "Pretensão  Area >> Subarea >> ..."
-            const pretensaoMatch = body.match(
-                /Pretens[ãa]o[\\t\\s]+([^\\n]+)/
-            );
-            if (pretensaoMatch) r.pretensao = pretensaoMatch[1].trim();
-
-            // Data de abertura
-            const aberturaMatch = body.match(
-                /(?:Data\\s+de\\s+Abertura|Dt\\.?\\s*Abertura)[\\t\\s]+([^\\n]+)/i
-            );
-            if (aberturaMatch) r.data_abertura = aberturaMatch[1].trim();
-
-            const procMatch = body.match(
-                /(\\d{7}-\\d{2}\\.\\d{4}\\.\\d\\.\\d{2}\\.\\d{4})/
-            );
-            if (procMatch) r.processo_judicial = procMatch[1];
-
-            const juizoMatch = body.match(
-                /Juízo\\/Orgão Julgador\\s*\\n\\s*([^\\n]+)/
-            ) || body.match(/Juizo\\/Orgao Julgador\\s*\\n\\s*([^\\n]+)/);
-            if (juizoMatch) r.juizo = juizoMatch[1].trim();
-
-            // Tabela de movimentacoes
-            const movs = [];
-            const movRows = document.querySelectorAll('table tbody tr');
-            for (const tr of movRows) {
-                const cells = tr.querySelectorAll('td');
-                if (cells.length >= 5) {
-                    const seq = (cells[0]?.textContent || '').trim();
-                    const dataHora = (cells[2]?.textContent || '').trim();
-                    const movimentacao = (cells[3]?.textContent || '').trim();
-                    const fases = (cells[4]?.textContent || '').trim();
-                    const textoCompleto = cells[5]?.textContent || '';
-                    const usuario = (cells[6]?.textContent || '').trim();
-
-                    if (seq && /^\\d{1,4}$/.test(seq)
-                        && (textoCompleto.trim() || movimentacao)) {
-                        const urls = textoCompleto.match(/https?:\\/\\/[^\\s]+/g) || [];
-                        const links_decisao = urls.filter(u =>
-                            u.includes('stj.jus.br') ||
-                            u.includes('stf.jus.br') ||
-                            u.includes('portal.stf') ||
-                            u.includes('processo.stj') ||
-                            u.includes('eproc') ||
-                            u.includes('downloadPeca') ||
-                            u.includes('documento') ||
-                            u.includes('decisao') ||
-                            u.endsWith('.pdf')
-                        );
-                        movs.push({
-                            seq: seq,
-                            data: dataHora,
-                            movimentacao: movimentacao,
-                            fases: fases,
-                            descricao: textoCompleto.substring(0, 3000),
-                            links_decisao: links_decisao,
-                            usuario: usuario
-                        });
-                    }
-                }
-            }
-            if (movs.length > 0) r.movimentacoes = movs.slice(0, 50);
-
-            return r;
-        }
-        """
-    )
-
+    dados = await page.evaluate(_JS_EXTRAIR_PAJ)
     if not dados:
         dados = {}
+
+    conteudos_retorno = await _expandir_atendimentos_retorno(page)
+    if conteudos_retorno:
+        for mov in dados.get("movimentacoes", []) or []:
+            seq_str = str(mov.get("seq", ""))
+            if seq_str in conteudos_retorno:
+                mov["descricao"] = (
+                    conteudos_retorno[seq_str]
+                    + ("\n" + mov.get("descricao", "") if mov.get("descricao") else "")
+                ).strip()
+
     dados["paj_numero"] = numero
     dados["paj_ano"] = ano
     dados["paj_unidade"] = unidade
@@ -441,6 +631,109 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
         dados["urls_decisoes"] = todas_urls
 
     return dados
+
+
+async def _expandir_atendimentos_retorno(page: Page) -> dict[str, str]:
+    """Clica no ícone de expansão de cada linha 'Atendimento de retorno' e captura
+    o texto integral exibido no dialog/expansion. Retorna {seq_str: texto}.
+    Tolerante a falhas individuais — nao interrompe o fluxo principal."""
+    linhas_alvo = await page.evaluate(
+        """
+        () => {
+            const rows = Array.from(document.querySelectorAll('table tbody tr'));
+            const result = [];
+            for (let i = 0; i < rows.length; i++) {
+                const cells = rows[i].querySelectorAll('td');
+                if (cells.length < 4) continue;
+                const seq = (cells[0]?.textContent || '').trim();
+                const mov = (cells[3]?.textContent || '').trim();
+                if (/atendimento\\s+de\\s+retorno/i.test(mov) && /^\\d+$/.test(seq)) {
+                    result.push({ seq, row_idx: i });
+                }
+            }
+            return result;
+        }
+        """
+    )
+    conteudos: dict[str, str] = {}
+    if not linhas_alvo:
+        return conteudos
+
+    _log.debug("atendimentos de retorno: %d encontrado(s)", len(linhas_alvo))
+    for info in linhas_alvo:
+        seq = str(info.get("seq", ""))
+        row_idx = info.get("row_idx", 0)
+        try:
+            clicado = await page.evaluate(
+                """
+                (idx) => {
+                    const rows = document.querySelectorAll('table tbody tr');
+                    if (idx >= rows.length) return false;
+                    const row = rows[idx];
+                    const toggler = row.querySelector('.ui-row-toggler');
+                    if (toggler) { toggler.click(); return 'toggler'; }
+                    const els = row.querySelectorAll('a, button, span[role="button"], [onclick]');
+                    for (const el of els) {
+                        const txt = (el.textContent || el.title || '').trim().toLowerCase();
+                        if (txt === 'visualizar' || txt === '') continue;
+                        el.click();
+                        return 'el:' + txt.substring(0, 20);
+                    }
+                    const links = row.querySelectorAll('a[href="#"], a[onclick], a.ui-commandlink');
+                    if (links.length) { links[0].click(); return 'link'; }
+                    return false;
+                }
+                """,
+                row_idx,
+            )
+            if not clicado:
+                _log.debug("  seq=%s: nenhum elemento clicável na linha", seq)
+                continue
+
+            await page.wait_for_timeout(1500)
+            with contextlib.suppress(Exception):
+                await _wait_pf_ajax(page, timeout=5000)
+
+            texto = await page.evaluate(
+                """
+                () => {
+                    for (const d of document.querySelectorAll('.ui-dialog')) {
+                        if (d.getAttribute('aria-hidden') === 'true') continue;
+                        if (d.classList.contains('ui-overlay-hidden')) continue;
+                        const st = window.getComputedStyle(d);
+                        if (st.display === 'none' || st.visibility === 'hidden') continue;
+                        const content = d.querySelector('.ui-dialog-content');
+                        const txt = ((content || d).innerText || '').trim();
+                        if (txt && txt.length > 5) return txt;
+                    }
+                    const exp = document.querySelector('.ui-expanded-row-content');
+                    if (exp) { const txt = (exp.innerText || '').trim(); if (txt) return txt; }
+                    return '';
+                }
+                """
+            )
+            if texto:
+                conteudos[seq] = texto
+                _log.debug("  seq=%s: %d chars capturados", seq, len(texto))
+
+            await page.evaluate(
+                """
+                () => {
+                    for (const d of document.querySelectorAll('.ui-dialog')) {
+                        if (d.getAttribute('aria-hidden') === 'true') continue;
+                        if (d.classList.contains('ui-overlay-hidden')) continue;
+                        const btn = d.querySelector('.ui-dialog-titlebar-close');
+                        if (btn) btn.click();
+                    }
+                }
+                """
+            )
+            await page.wait_for_timeout(500)
+
+        except Exception as e:
+            _log.debug("  _expandir seq=%s: %s: %s", seq, type(e).__name__, e)
+
+    return conteudos
 
 
 # JS que dispara a busca rapida do SISDPU. Descobertas chave (vistas no
@@ -946,149 +1239,19 @@ async def buscar_paj_global(
     # (1) DOM-based para label/valor (mais robusto que regex no innerText)
     # (2) regex residual para padroes posicionais (numero CNJ, linha PAJ).
     # (3) filtros para descartar valores que sao claramente cabecalhos de tabela.
-    dados = await page.evaluate(
-        """
-        () => {
-            const r = {};
-            const body = document.body.innerText;
-
-            // ---------- Helper: encontra valor adjacente a um label ----------
-            // O regex inclui o ':' ASCII E o U+FF1A (fullwidth colon) porque labels
-            // do SISDPU aparecem com qualquer um dos dois, dependendo da fonte.
-            const norm = (s) => (s || '').replace(/\\s+/g, ' ').trim()
-                                          .toLowerCase().replace(/[:：]$/, '');
-
-            // Lixo conhecido — cabecalhos de tabelas do SISDPU que aparecem
-            // proximos a labels e foram capturados por engano antes.
-            const LIXO_TABELA = /^(data de envio|remetente|prazo|descri[çc][ãa]o|tipo|status|data|seq|usu[áa]rio|fases|movimenta[çc][ãa]o|seq\\.?)\\b/i;
-
-            function valorParaLabel(rotulos) {
-                const alvos = rotulos.map(norm);
-                const candidatos = document.querySelectorAll(
-                    'td, th, label, span, dt, dd, li, b, strong, div, p'
-                );
-                for (const el of candidatos) {
-                    const txt = norm(el.textContent || '');
-                    if (!alvos.includes(txt)) continue;
-
-                    // 1) Proximo sibling com texto util.
-                    let next = el.nextElementSibling;
-                    while (next) {
-                        const v = (next.textContent || '').trim();
-                        if (v) {
-                            const linha = v.split('\\n')[0].trim();
-                            if (linha && !LIXO_TABELA.test(linha) && linha.length < 250) {
-                                return linha;
-                            }
-                        }
-                        next = next.nextElementSibling;
-                    }
-
-                    // 2) Pai contendo label e valor juntos no innerText.
-                    const pai = el.parentElement;
-                    if (pai) {
-                        const fullPai = (pai.textContent || '').trim();
-                        const idx = fullPai.toLowerCase().indexOf(txt);
-                        if (idx >= 0) {
-                            const depois = fullPai.substring(idx + (el.textContent || '').length).trim();
-                            const linha = depois.split('\\n')[0].trim().replace(/^[:\\-\\s]+/, '');
-                            if (linha && !LIXO_TABELA.test(linha) && linha.length < 250) {
-                                return linha;
-                            }
-                        }
-                    }
-                }
-                return '';
-            }
-
-            // ---------- Campos do cabecalho (todos os que aparecem na aba Resumo) ----------
-            r.assistido = valorParaLabel(['Assistido(s)', 'Assistido', 'Assistidos']);
-            r.pretensao = valorParaLabel(['Pretensão', 'Pretensao']);
-            r.data_abertura = valorParaLabel([
-                'Data de Abertura', 'Dt. Abertura', 'Dt Abertura', 'Dt.Abertura', 'Abertura'
-            ]);
-            r.oficio = valorParaLabel([
-                'Ofício', 'Oficio', 'Ofício Responsável', 'Oficio Responsavel',
-                'Ofício responsável', 'Ofício atual'
-            ]);
-            r.juizo = valorParaLabel([
-                'Juízo/Orgão Julgador', 'Juizo/Orgao Julgador',
-                'Juízo/Órgão Julgador', 'Juízo', 'Juizo',
-                'Órgão Julgador', 'Orgao Julgador'
-            ]);
-            r.foro_detalhado = valorParaLabel([
-                'Foro Detalhado', 'Foro detalhado', 'Foro'
-            ]);
-            r.decurso = valorParaLabel([
-                'Decurso', 'Decurso agendado', 'Decurso Agendado'
-            ]);
-
-            // ---------- PAJ + status — duas variantes da tela ----------
-            //  a) Formato compacto: "AAAA/UUU-NNNNN - PAJ STATUS"
-            //  b) Formato tabular:  "Número do PAJ\tAAAA/UUU-NNNNN"  (nesta tela,
-            //     o status vem em outra linha, ex: "Urgente" / "Tutela Coletiva".
-            //     Deixamos status vazio se nao houver formato compacto.)
-            let pajMatch = body.match(/(\\d{4}\\/\\d{3}-\\d+)\\s*-\\s*PAJ\\s+([^\\n]+)/);
-            if (pajMatch) {
-                r.paj = pajMatch[1];
-                r.status_paj = pajMatch[2].trim();
-            } else {
-                pajMatch = body.match(/N[úu]mero\\s+do\\s+PAJ[\\s\\t]+(\\d{4}\\/\\d{3}-\\d+)/);
-                if (pajMatch) {
-                    r.paj = pajMatch[1];
-                    r.status_paj = '';
-                }
-            }
-
-            // ---------- Numero do processo judicial (padrao CNJ) ----------
-            const procMatch = body.match(
-                /(\\d{7}-\\d{2}\\.\\d{4}\\.\\d\\.\\d{2}\\.\\d{4})/
-            );
-            if (procMatch) r.processo_judicial = procMatch[1];
-
-            // ---------- Movimentacoes (tabela; mesma logica de antes) ----------
-            const movs = [];
-            const movRows = document.querySelectorAll('table tbody tr');
-            for (const tr of movRows) {
-                const cells = tr.querySelectorAll('td');
-                if (cells.length >= 5) {
-                    const seq = (cells[0]?.textContent || '').trim();
-                    const dataHora = (cells[2]?.textContent || '').trim();
-                    const movimentacao = (cells[3]?.textContent || '').trim();
-                    const fases = (cells[4]?.textContent || '').trim();
-                    const textoCompleto = cells[5]?.textContent || '';
-                    const usuario = (cells[6]?.textContent || '').trim();
-
-                    if (seq && /^\\d{1,4}$/.test(seq)
-                        && (textoCompleto.trim() || movimentacao)) {
-                        movs.push({
-                            seq: seq,
-                            data: dataHora,
-                            movimentacao: movimentacao,
-                            fases: fases,
-                            descricao: textoCompleto.substring(0, 3000),
-                            links_decisao: [],
-                            usuario: usuario
-                        });
-                    }
-                }
-            }
-            if (movs.length > 0) r.movimentacoes = movs.slice(0, 50);
-
-            // ---------- Filtro final: descarta qualquer campo que tenha vazado lixo ----------
-            for (const k of ['assistido', 'pretensao', 'oficio', 'juizo', 'foro_detalhado', 'decurso', 'data_abertura']) {
-                if (r[k] && LIXO_TABELA.test(r[k])) {
-                    r[k] = '';
-                }
-            }
-
-            return r;
-        }
-        """
-    )
-
+    dados = await page.evaluate(_JS_EXTRAIR_PAJ)
     if not dados:
         dados = {}
+
+    conteudos_retorno = await _expandir_atendimentos_retorno(page)
+    if conteudos_retorno:
+        for mov in dados.get("movimentacoes", []) or []:
+            seq_str = str(mov.get("seq", ""))
+            if seq_str in conteudos_retorno:
+                mov["descricao"] = (
+                    conteudos_retorno[seq_str]
+                    + ("\n" + mov.get("descricao", "") if mov.get("descricao") else "")
+                ).strip()
 
     n_movs = len(dados.get("movimentacoes", []) or [])
     _log.info(
@@ -1415,25 +1578,47 @@ async def listar_arquivos_paj(debug: bool = False) -> dict:
                     if (preenchidas < 1) continue;
                     const alvos = tr.querySelectorAll('a, button, span[role="button"]');
                     let temVis = false;
+                    let vizHref = '';
                     for (const a of alvos) {
-                        if (/visualizar/i.test((a.textContent || '').trim())) { temVis = true; break; }
+                        if (/visualizar/i.test((a.textContent || '').trim())) {
+                            temVis = true;
+                            vizHref = a.getAttribute('href') || '';
+                            break;
+                        }
                     }
                     if (!temVis) continue;
+                    // Tabela SISDPU: seq | data | tipo | categoria | arquivo | Visualizar
+                    // textos[4] = nome real do arquivo; textos[2] = tipo/descricao (pode ser ".")
+                    const nomeArq = textos[4] || textos[2] || '';
                     resultado.push({
                         row_index: idx++,
                         tipo: textos[0] || '',
                         descricao: textos[1] || '',
-                        arquivo: textos[2] || '',
+                        arquivo: nomeArq,
                         categoria: categoria,
                         todas_celulas: textos,
+                        href: vizHref,
                     });
                     diag.categorias[catIdx].linhas++;
                 }
                 try { snippets.push((tbl.outerHTML || '').slice(0, 800)); } catch (e) {}
             }
-            diag.linhas_filtradas = resultado.length;
+            // Deduplica por href: a pagina tem tabela-mestre + tabelas por categoria
+            // com os mesmos arquivos. Mantém apenas a primeira ocorrência de cada href.
+            const seenHref = new Set();
+            const deduped = [];
+            for (const item of resultado) {
+                const key = item.href || ('__noref_' + item.row_index);
+                if (!seenHref.has(key)) {
+                    seenHref.add(key);
+                    item.row_index = deduped.length;
+                    deduped.push(item);
+                }
+            }
+            diag.linhas_antes_dedup = resultado.length;
+            diag.linhas_filtradas = deduped.length;
             diag.html_snippet = snippets.join('\\n---\\n').slice(0, 2000);
-            return {resultado, diag};
+            return {resultado: deduped, diag};
         }
         """
     )
@@ -1561,10 +1746,21 @@ async def baixar_anexo_por_indice(row_index: int, destino):
         if not ext_sugerida:
             ext_sugerida = ".bin"
 
-        # Se o destino passado NAO tem extensao (ou tem .bin como placeholder),
-        # usa a extensao detectada. Caso contrario respeita o que veio.
-        if destino.suffix == "" or destino.suffix.lower() == ".bin":
+        # Extensoes que o SISDPU pode devolver — qualquer outro suffix no stem
+        # (ex: ".2026", ".br", ".DOCS...") nao e' extensao de arquivo e deve ser
+        # preservado como parte do nome, com a extensao real anexada ao final.
+        _KNOWN_EXTS = {
+            ".pdf", ".docx", ".doc", ".jpg", ".jpeg",
+            ".png", ".gif", ".xlsx", ".xls", ".txt", ".zip",
+        }
+        suffix_low = destino.suffix.lower()
+        if suffix_low == ".bin":
+            # Placeholder .bin deve ser substituido (com_suffix e' correto aqui)
             destino_final = destino.with_suffix(ext_sugerida)
+        elif suffix_low not in _KNOWN_EXTS:
+            # Sem extensao ou com sufixo que nao e' extensao real: ANEXAR ao nome
+            # completo (nao substituir) para preservar pontos internos do stem
+            destino_final = destino.parent / (destino.name + ext_sugerida)
         else:
             destino_final = destino
 
@@ -1574,6 +1770,80 @@ async def baixar_anexo_por_indice(row_index: int, destino):
         return None
 
     await _limpar_marker()
+
+    if destino_final.exists() and destino_final.stat().st_size > 0:
+        return destino_final
+    return None
+
+
+async def baixar_por_href(href_relativo: str, destino) -> "Path | None":
+    """Baixa arquivo diretamente pela URL do link 'Visualizar' (sem clicar no DOM).
+
+    Usa page.context.request.get() com os cookies de sessão do browser —
+    equivalente ao fetch({credentials:'include'}) da skill SISDPU-AnalisarPAJ2Cat.
+    Mais confiável que o mecanismo de clique porque não depende do estado do DOM.
+
+    Retorna Path do arquivo salvo ou None se falhou.
+    """
+    import re as _re
+    from pathlib import Path as _Path
+
+    if not href_relativo:
+        return None
+
+    destino = _Path(destino)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+
+    BASE = "https://sisdpu.dpu.def.br"
+    url = href_relativo if href_relativo.startswith("http") else BASE + href_relativo
+
+    page = await _get_page()
+    try:
+        response = await page.context.request.get(url, timeout=60000)
+    except Exception:
+        return None
+
+    if response.status != 200:
+        return None
+
+    body = await response.body()
+    if not body:
+        return None
+
+    # Extensão via Content-Disposition (mesmo critério de baixar_anexo_por_indice)
+    content_disp = (response.headers.get("content-disposition") or "").strip()
+    ext = ""
+    m = _re.search(r'filename[^;=\n]*=[\'"]*([^\'";\n]+)', content_disp, _re.I)
+    if m:
+        ext = _Path(m.group(1).strip()).suffix.lower()
+    if not ext:
+        _CT = {
+            "application/pdf": ".pdf",
+            "image/jpeg": ".jpg",
+            "image/jpg": ".jpg",
+            "image/png": ".png",
+            "application/msword": ".doc",
+            "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+        }
+        ct = (response.headers.get("content-type") or "").split(";")[0].strip().lower()
+        ext = _CT.get(ct, ".bin")
+
+    _KNOWN_EXTS = {
+        ".pdf", ".docx", ".doc", ".jpg", ".jpeg",
+        ".png", ".gif", ".xlsx", ".xls", ".txt", ".zip",
+    }
+    suffix_low = destino.suffix.lower()
+    if suffix_low == ".bin":
+        destino_final = destino.with_suffix(ext)
+    elif suffix_low not in _KNOWN_EXTS:
+        destino_final = destino.parent / (destino.name + ext)
+    else:
+        destino_final = destino
+
+    try:
+        destino_final.write_bytes(body)
+    except Exception:
+        return None
 
     if destino_final.exists() and destino_final.stat().st_size > 0:
         return destino_final

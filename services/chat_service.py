@@ -25,10 +25,60 @@ def _resolver_claude_cmd() -> list[str]:
     via PATH — so .exe — entao resolvemos o caminho completo via shutil.which
     (que respeita PATHEXT) e, se for batch, prefixamos com `cmd.exe /c`
     (exigencia do CreateProcess pra scripts .cmd/.bat).
+
+    Tambem tenta caminhos de instalacao conhecidos do Claude Code no Windows
+    quando shutil.which nao encontra via PATH.
     """
+    import logging as _log
+    import os
+    from pathlib import Path as _Path
+
+    _logger = _log.getLogger(__name__)
+
     resolved = shutil.which("claude")
+    if not resolved and sys.platform == "win32":
+        # Tenta caminhos conhecidos de instalação do Claude Code no Windows.
+        # Ordem: installer oficial (LOCALAPPDATA) → npm global (APPDATA\npm) →
+        # Claude Desktop legacy (APPDATA\Roaming\Claude\claude-code).
+        _appdata   = os.environ.get("APPDATA", "")
+        _localapp  = os.environ.get("LOCALAPPDATA", "")
+        _userprof  = os.environ.get("USERPROFILE", "")
+
+        _candidates: list[_Path] = []
+
+        # 1) Claude Code CLI standalone: %LOCALAPPDATA%\AnthropicClaude\claude-code\claude.exe
+        # ATENÇÃO: NÃO usar AnthropicClaude\claude.exe — esse é o Claude Desktop (GUI),
+        # não o Claude Code CLI. O Desktop app não aceita flags -p/--output-format etc.
+        if _localapp:
+            _candidates.append(_Path(_localapp) / "AnthropicClaude" / "claude-code" / "claude.exe")
+            # Instalador standalone (versão futura): AnthropicClaudeCode\claude.exe
+            _candidates.append(_Path(_localapp) / "AnthropicClaudeCode" / "claude.exe")
+
+        # 2) npm global: %APPDATA%\npm\claude.cmd
+        if _appdata:
+            _candidates.append(_Path(_appdata) / "npm" / "claude.cmd")
+
+        # 3) Claude Desktop legacy: %APPDATA%\Roaming\Claude\claude-code\<ver>\claude.exe
+        for _roaming in filter(None, [_appdata, str(_Path(_userprof) / "AppData" / "Roaming") if _userprof else ""]):
+            _base = _Path(_roaming) / "Claude" / "claude-code"
+            if not _base.exists():
+                continue
+            try:
+                for _ver in sorted((d for d in _base.iterdir() if d.is_dir()), key=lambda d: d.name, reverse=True):
+                    _candidates.append(_ver / "claude.exe")
+            except OSError:
+                pass
+
+        for _cand in _candidates:
+            if _cand.exists():
+                resolved = str(_cand)
+                break
+
+    _logger.info("[claude-resolver] shutil.which='%s' resolved='%s'", shutil.which("claude"), resolved)
     if not resolved:
+        _logger.warning("[claude-resolver] nao encontrado — retornando fallback ['claude']")
         return ["claude"]  # fallback — Popen vai falhar com mensagem clara
+    _logger.info("[claude-resolver] resolvido: %s", resolved)
     if sys.platform == "win32" and resolved.lower().endswith((".cmd", ".bat")):
         return ["cmd.exe", "/c", resolved]
     return [resolved]
@@ -182,8 +232,11 @@ class ChatSession:
         Retorna True se o processo foi aberto com sucesso; em caso de falha,
         preenche self.error e enfileira os eventos de erro/done.
         """
+        # Resolve o caminho do CLI freshlemente (evita usar valor capturado no
+        # import, que pode ter sido resolvido num contexto de ambiente diferente).
+        _cmd_claude = _resolver_claude_cmd()
         cmd = [
-            *CLAUDE_CMD,
+            *_cmd_claude,
             "-p",
             "--verbose",
             "--output-format",
@@ -219,11 +272,12 @@ class ChatSession:
             self._reader_thread = threading.Thread(target=self._read_output, daemon=True)
             self._reader_thread.start()
             return True
-        except FileNotFoundError:
+        except FileNotFoundError as e:
             self.status = "error"
             self.error = (
-                f"Comando Claude CLI não encontrado (tentou: {' '.join(CLAUDE_CMD)}). "
-                "Verifique se o `claude` está instalado e no PATH do processo do servidor."
+                f"Comando Claude CLI não encontrado — {type(e).__name__}: {e} "
+                f"(cmd: {' '.join(_cmd_claude)}). "
+                "Verifique se o `claude` está instalado e acessível."
             )
             self.output_queue.put({"type": "error", "text": self.error})
             self.output_queue.put({"type": "done"})
