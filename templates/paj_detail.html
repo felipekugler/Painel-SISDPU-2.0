@@ -553,11 +553,11 @@
             <h3 class="text-lg font-semibold">Movimentações Completas</h3>
 
             <!-- Filtros -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+            <div class="space-y-4">
                 <!-- Filtro Fases -->
                 <div class="form-control">
                     <label class="label">
-                        <span class="label-text text-sm">Filtrar por Fase</span>
+                        <span class="label-text text-sm font-medium">Filtrar por Fase</span>
                     </label>
                     <select class="select select-bordered select-sm" x-model="filtroFases">
                         <option value="">Todas as fases</option>
@@ -567,16 +567,21 @@
                     </select>
                 </div>
 
-                <!-- Filtro Tipo de Usuário -->
+                <!-- Filtro Tipo de Usuário (Checkboxes) -->
                 <div class="form-control">
                     <label class="label">
-                        <span class="label-text text-sm">Filtrar por Tipo de Usuário</span>
+                        <span class="label-text text-sm font-medium">Filtrar por Tipo de Usuário</span>
                     </label>
-                    <select class="select select-bordered select-sm" x-model="filtroUsuario">
-                        <option value="">Todos</option>
-                        <option value="Servidor">Servidor (servidor, terceirizado, estagiário)</option>
-                        <option value="Defensor">Defensor</option>
-                    </select>
+                    <div class="space-y-2">
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" class="checkbox checkbox-sm" x-model="filtroUsuarioServidor">
+                            <span class="text-sm">Servidor (servidor, terceirizado, estagiário)</span>
+                        </label>
+                        <label class="flex items-center gap-2 cursor-pointer">
+                            <input type="checkbox" class="checkbox checkbox-sm" x-model="filtroUsuarioDefensor">
+                            <span class="text-sm">Defensor</span>
+                        </label>
+                    </div>
                 </div>
             </div>
         </div>
@@ -1022,7 +1027,8 @@ function copiarTxt() {
 function tabelaMov2() {
     return {
         filtroFases: '',
-        filtroUsuario: '',
+        filtroUsuarioServidor: true,  // Por padrão selecionado
+        filtroUsuarioDefensor: true,  // Por padrão selecionado
         colunhaOrdenacao: 'seq',
         direcaoOrdenacao: 'desc',
         maxSeqAnterior: 0,
@@ -1048,11 +1054,6 @@ function tabelaMov2() {
             return Array.from(fases).sort();
         },
 
-        get tiposUsuario() {
-            // Retorna dois tipos: "Servidor" ou "Defensor"
-            return ['Servidor', 'Defensor'];
-        },
-
         get movimentacoesFiltradas() {
             let resultado = this.movimentacoes;
 
@@ -1063,21 +1064,24 @@ function tabelaMov2() {
                 );
             }
 
-            // Aplica filtro Tipo de Usuário (usando regex)
-            if (this.filtroUsuario) {
-                if (this.filtroUsuario === 'Servidor') {
-                    // Servidor: servidor, terceirizado, estagiário
+            // Aplica filtro Tipo de Usuário (com checkboxes)
+            // Se ambos estão desmarcados, mostra nenhum. Se qualquer um está marcado, filtra.
+            if (this.filtroUsuarioServidor || this.filtroUsuarioDefensor) {
+                resultado = resultado.filter(mov => {
+                    if (!mov.usuario) return false;
+
                     const regexServidor = /servidor|terceirizado|estagiário|SERVIDOR|TERCEIRIZADO|ESTAGIÁRIO/i;
-                    resultado = resultado.filter(mov =>
-                        mov.usuario && regexServidor.test(mov.usuario)
-                    );
-                } else if (this.filtroUsuario === 'Defensor') {
-                    // Defensor: qualquer usuário que tenha "Defensor" no nome
                     const regexDefensor = /defensor|Defensor/i;
-                    resultado = resultado.filter(mov =>
-                        mov.usuario && regexDefensor.test(mov.usuario)
-                    );
-                }
+
+                    const isServidor = regexServidor.test(mov.usuario);
+                    const isDefensor = regexDefensor.test(mov.usuario);
+
+                    // Retorna true se o tipo está selecionado
+                    if (this.filtroUsuarioServidor && isServidor) return true;
+                    if (this.filtroUsuarioDefensor && isDefensor) return true;
+
+                    return false;
+                });
             }
 
             // Ordena
