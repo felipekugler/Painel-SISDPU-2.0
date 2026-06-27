@@ -300,71 +300,57 @@
 <!-- Processo Judicial (se houver) -->
 {% set sisdpu_raw = meta.sisdpu_raw or {} %}
 {% if sisdpu_raw.processo_judicial %}
-<div class="bg-base-200 rounded-lg border border-base-300 p-6 mb-6">
-    <h3 class="text-lg font-semibold mb-4">Processo Judicial</h3>
-
-    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+<div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3 mb-6">
+    <div class="flex items-center gap-4 text-sm">
         <!-- Número do Processo -->
-        <div>
-            <div class="text-xs text-base-content/50 mb-2">Número do Processo</div>
-            <div class="flex items-center gap-2">
-                <code class="font-mono text-sm font-semibold bg-base-300/50 px-3 py-2 rounded flex-1">
-                    {{ sisdpu_raw.processo_judicial }}
-                </code>
-                <button class="btn btn-ghost btn-sm"
-                        onclick="navigator.clipboard.writeText('{{ sisdpu_raw.processo_judicial }}').then(() => {
-                            const btn = event.target;
-                            const text = btn.textContent;
-                            btn.innerHTML = '✓ Copiado';
-                            setTimeout(() => { btn.textContent = text; }, 2000);
-                        })"
-                        title="Copiar número para área de transferência">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
-                    </svg>
-                </button>
-            </div>
+        <div class="flex items-center gap-1">
+            <span class="text-xs text-base-content/50">Processo:</span>
+            <code class="font-mono font-semibold">{{ sisdpu_raw.processo_judicial }}</code>
+            <button class="btn btn-ghost btn-xs"
+                    onclick="navigator.clipboard.writeText('{{ sisdpu_raw.processo_judicial }}').then(() => {
+                        const btn = event.target;
+                        btn.innerHTML = '✓';
+                        setTimeout(() => { btn.innerHTML = '📋'; }, 2000);
+                    })"
+                    title="Copiar">
+                📋
+            </button>
         </div>
 
         <!-- Data de Inclusão -->
-        <div>
-            <div class="text-xs text-base-content/50 mb-2">Data de Inclusão</div>
-            <div class="text-sm font-semibold">{{ sisdpu_raw.data_inclusao }}</div>
+        <div class="flex items-center gap-1 border-l border-base-300 pl-4">
+            <span class="text-xs text-base-content/50">Data:</span>
+            <span class="font-semibold">{{ sisdpu_raw.data_inclusao }}</span>
         </div>
 
         <!-- Juízo -->
-        <div class="md:col-span-2">
-            <div class="text-xs text-base-content/50 mb-2">Juízo / Órgão Julgador</div>
-            <div class="text-sm font-semibold">{{ sisdpu_raw.juizo or '—' }}</div>
+        <div class="flex items-center gap-1 border-l border-base-300 pl-4 flex-1">
+            <span class="text-xs text-base-content/50">Juízo:</span>
+            <span class="font-semibold truncate">{{ sisdpu_raw.juizo or '—' }}</span>
         </div>
 
         <!-- Observações -->
         {% if sisdpu_raw.observacoes_processo %}
-        <div class="md:col-span-2">
-            <div class="text-xs text-base-content/50 mb-2">Observações</div>
-            <div class="text-sm bg-base-300/30 px-3 py-2 rounded">{{ sisdpu_raw.observacoes_processo }}</div>
+        <div class="flex items-center gap-1 border-l border-base-300 pl-4">
+            <span class="text-xs text-base-content/50">Obs:</span>
+            <span class="font-semibold">{{ sisdpu_raw.observacoes_processo }}</span>
         </div>
         {% endif %}
-    </div>
 
-    <!-- Status de Validação -->
-    {% set validacao = sisdpu_raw.validacao_processo or {} %}
-    <div class="mt-4 pt-4 border-t border-base-300">
-        {% if validacao.sucesso %}
-        <div class="badge badge-success gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
-            </svg>
-            Validado contra movimentações
+        <!-- Status de Validação -->
+        {% set validacao = sisdpu_raw.validacao_processo or {} %}
+        <div class="ml-auto border-l border-base-300 pl-4">
+            {% if validacao.sucesso %}
+            <span class="badge badge-success badge-sm gap-1">
+                <svg xmlns="http://www.w3.org/2000/svg" class="h-2.5 w-2.5" fill="currentColor" viewBox="0 0 20 20">
+                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                </svg>
+                OK
+            </span>
+            {% elif validacao.motivo %}
+            <span class="badge badge-warning badge-sm">{{ validacao.motivo }}</span>
+            {% endif %}
         </div>
-        {% elif validacao.motivo %}
-        <div class="badge badge-warning gap-2">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="currentColor" viewBox="0 0 20 20">
-                <path fill-rule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clip-rule="evenodd" />
-            </svg>
-            {{ validacao.motivo }}
-        </div>
-        {% endif %}
     </div>
 </div>
 {% endif %}
