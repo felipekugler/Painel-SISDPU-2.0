@@ -553,11 +553,11 @@
             <div class="w-[104px] shrink-0">
               <span class="badge badge-sm font-medium border"
                     :class="{
-                      'bg-error/15 text-error border-error/30': (paj.foro || '').toLowerCase() === 'criminal',
-                      'bg-info/15 text-info border-info/30': (paj.foro || '').toLowerCase() === 'civel',
-                      'bg-warning/15 text-warning border-warning/30': (paj.foro || '').toLowerCase() === 'previdenciario',
-                      'bg-success/15 text-success border-success/30': (paj.foro || '').toLowerCase() === 'saude',
-                      'bg-base-content/10 text-base-content/60 border-base-content/15': !['criminal','civel','previdenciario','saude'].includes((paj.foro || '').toLowerCase())
+                      'bg-error/20 text-error/70 border-error/20': (paj.foro || '').toLowerCase() === 'criminal',
+                      'bg-info/20 text-info/70 border-info/20': (paj.foro || '').toLowerCase() === 'civel',
+                      'bg-warning/20 text-warning/70 border-warning/20': (paj.foro || '').toLowerCase() === 'previdenciario',
+                      'bg-success/20 text-success/70 border-success/20': (paj.foro || '').toLowerCase() === 'saude',
+                      'bg-base-content/5 text-base-content/50 border-base-content/10': !['criminal','civel','previdenciario','saude'].includes((paj.foro || '').toLowerCase())
                     }"
                     x-text="formatarArea(paj.foro) || '—'"></span>
               <template x-if="paj.prazos_abertos && paj.prazos_abertos.length > 0">
@@ -981,40 +981,40 @@ function dashboardApp() {
         },
 
         corPretensao(pretensao) {
-            if (!pretensao) return 'bg-base-content/10 text-base-content/60 border-base-content/15';
+            if (!pretensao) return 'bg-base-content/5 text-base-content/50 border-base-content/10';
             const p = String(pretensao).toUpperCase().trim();
 
             // BENEFÍCIO POR INCAPACIDADE → Vermelho
             if (['AUXÍLIO-DOENÇA', 'APOSENTADORIA POR INVALIDEZ', 'AUXÍLIO-ACIDENTE', 'REABILITAÇÃO PROFISSIONAL'].some(x => p.includes(x))) {
-                return 'bg-error/15 text-error border-error/30';
+                return 'bg-error/20 text-error/70 border-error/20';
             }
 
             // PENSÃO E RECLUSÃO → Roxo
             if (['PENSÃO POR MORTE', 'AUXÍLIO-RECLUSÃO'].some(x => p.includes(x))) {
-                return 'bg-purple-100/30 text-purple-600 border-purple-300/30';
+                return 'bg-purple-500/20 text-purple-600/70 border-purple-500/20';
             }
 
             // OUTROS → Cinza
             if (['BENEFICIOS SOCIAIS', 'RESTITUIÇÃO', 'COBRANÇA'].some(x => p.includes(x))) {
-                return 'bg-base-content/10 text-base-content/60 border-base-content/15';
+                return 'bg-base-content/5 text-base-content/50 border-base-content/10';
             }
 
             // APOSENTADORIAS → Azul
             if (['APOSENTADORIA'].some(x => p.includes(x)) && !p.includes('INVALIDEZ')) {
-                return 'bg-info/15 text-info border-info/30';
+                return 'bg-info/20 text-info/70 border-info/20';
             }
 
             // BENEFÍCIOS ASSISTENCIAIS → Verde
             if (['BPC', 'AUXÍLIO INCLUSÃO', 'BENEFÍCIO ASSISTENCIAL'].some(x => p.includes(x))) {
-                return 'bg-success/15 text-success border-success/30';
+                return 'bg-success/20 text-success/70 border-success/20';
             }
 
             // SALÁRIO-MATERNIDADE → Laranja
             if (['SALÁRIO-MATERNIDADE', 'MATERNIDADE'].some(x => p.includes(x))) {
-                return 'bg-warning/15 text-warning border-warning/30';
+                return 'bg-warning/20 text-warning/70 border-warning/20';
             }
 
-            return 'bg-base-content/10 text-base-content/60 border-base-content/15';
+            return 'bg-base-content/5 text-base-content/50 border-base-content/10';
         },
 
         aplicarFiltros() {
