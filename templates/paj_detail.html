@@ -502,7 +502,7 @@
     <div x-show="tab === 'resumo'" class="bg-base-200 rounded-lg border border-base-300 p-6">
         <h3 class="text-lg font-semibold mb-4">Narrativa</h3>
         {% if dados.narrativa %}
-        <div class="text-sm text-base-content/80 prose prose-sm max-w-none">{{ dados.narrativa|safe }}</div>
+        <div class="text-sm text-base-content/80 leading-relaxed whitespace-pre-wrap break-words bg-base-100 p-4 rounded border border-base-300/50">{{ dados.narrativa }}</div>
         {% else %}
         <p class="text-sm text-base-content/50 italic">Narrativa não disponível para este PAJ</p>
         {% endif %}
