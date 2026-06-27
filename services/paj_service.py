@@ -242,6 +242,7 @@ def listar_pajs(incluir_concluidos: bool = False) -> list[dict]:
             "etiqueta": metadata.get("etiqueta_sisdpu", ""),
             "foro": metadata.get("foro_detectado", "?"),
             "classificacao": metadata.get("classificacao", "?"),
+            "pretensaopura": metadata.get("pretensaopura", ""),
             "data_caixa": metadata.get("data_mov_caixa", ""),
             "desc_caixa": metadata.get("desc_mov_caixa", ""),
             "processo_judicial": metadata.get("processo_judicial", ""),

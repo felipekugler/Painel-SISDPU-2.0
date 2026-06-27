@@ -146,7 +146,7 @@
                 <span class="badge {% if area == 'Criminal' %}badge-error{% elif area == 'Civel' %}badge-info{% elif area == 'Previdenciario' %}badge-warning{% elif area == 'Saude' %}badge-success{% else %}badge-ghost{% endif %}">
                     {{ area | formatar_area or '?' }}
                 </span>
-                <span class="badge badge-outline">{{ meta.pretensao or meta.classificacao or '—' }}</span>
+                <span class="badge badge-outline">{{ meta.pretensaopura or meta.classificacao or '—' }}</span>
                 {% if meta.oficio_caixa %}
                 <span class="badge badge-ghost text-xs">{{ meta.oficio_caixa }}</span>
                 {% endif %}
