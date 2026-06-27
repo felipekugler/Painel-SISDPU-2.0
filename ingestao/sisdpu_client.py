@@ -567,13 +567,13 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
                       // A narrativa está na próxima linha ou na célula seguinte
                       const proxLinha = linhas[i + 1];
                       if (proxLinha) {
-                        // Extrai texto plano e preserva espaços em branco
-                        narrativa = proxLinha.textContent.trim();
+                        // Extrai HTML para preservar formatação (negrito, itálicos, parágrafos, etc.)
+                        narrativa = proxLinha.innerHTML.trim();
                         break;
                       }
                     } else if (i > 0 && textoLinha && !textoLinha.includes('Editar')) {
-                      // Se encontrou texto após "Editar Narrativa", é a narrativa
-                      narrativa = linha.textContent.trim();
+                      // Se encontrou texto após "Editar Narrativa", é a narrativa com formatação HTML
+                      narrativa = linha.innerHTML.trim();
                       break;
                     }
                   }
