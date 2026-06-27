@@ -529,14 +529,14 @@
               </template>
             </div>
 
-            <!-- Assistido + pretensão -->
-            <div class="w-[380px] shrink min-w-0">
+            <!-- Assistido -->
+            <div class="w-[200px] shrink min-w-0">
               <div class="text-[13px] font-semibold truncate" x-text="paj.assistido || '—'"></div>
-              <div class="text-[11px] text-base-content/50 mt-0.5" x-text="normalizarOficio(paj.oficio) || ''"></div>
-              <div class="mt-1 text-[12px] text-base-content/70 truncate-1" :title="paj.classificacao">
-                <span class="text-base-content/40" x-text="(formatarArea(paj.foro) || '') + ' »'"></span>
-                <span x-text="' ' + (paj.classificacao || '')"></span>
-              </div>
+            </div>
+
+            <!-- Ofício -->
+            <div class="w-[160px] shrink min-w-0">
+              <div class="text-[12px] text-base-content/70 truncate" x-text="normalizarOficio(paj.oficio) || '—'"></div>
             </div>
 
             <!-- Badge de área -->
@@ -559,6 +559,11 @@
                   ⚠ PARCIAL
                 </span>
               </template>
+            </div>
+
+            <!-- Pretensão -->
+            <div class="w-[240px] shrink min-w-0">
+              <div class="text-[12px] text-base-content/70 truncate-1" :title="paj.classificacao" x-text="paj.classificacao || '—'"></div>
             </div>
 
             <!-- Data -->
