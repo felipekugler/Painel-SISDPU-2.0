@@ -317,12 +317,6 @@
             </button>
         </div>
 
-        <!-- Data de Inclusão -->
-        <div class="flex items-center gap-1 border-l border-base-300 pl-4">
-            <span class="text-xs text-base-content/50">Data:</span>
-            <span class="font-semibold">{{ sisdpu_raw.data_inclusao }}</span>
-        </div>
-
         <!-- Juízo -->
         <div class="flex items-center gap-1 border-l border-base-300 pl-4 flex-1">
             <span class="text-xs text-base-content/50">Juízo:</span>
@@ -336,6 +330,12 @@
             <span class="font-semibold">{{ sisdpu_raw.observacoes_processo }}</span>
         </div>
         {% endif %}
+
+        <!-- Data de Inclusão -->
+        <div class="flex items-center gap-1 border-l border-base-300 pl-4">
+            <span class="text-xs text-base-content/50">Data:</span>
+            <span class="font-semibold">{{ sisdpu_raw.data_inclusao }}</span>
+        </div>
 
         <!-- Status de Validação -->
         {% set validacao = sisdpu_raw.validacao_processo or {} %}
