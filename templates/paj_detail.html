@@ -382,11 +382,11 @@
 <div x-data="{ tab: 'resumo' }" class="mt-4">
     <div role="tablist" class="tabs tabs-bordered mb-4">
         <a role="tab" class="tab" :class="tab === 'resumo' && 'tab-active'" @click="tab = 'resumo'">Narrativa</a>
+        <a role="tab" class="tab" :class="tab === 'mov2' && 'tab-active'" @click="tab = 'mov2'">
+            Pesquisa Movimentações <span class="badge badge-ghost badge-xs ml-1">{{ dados.movimentacoes|length }}</span>
+        </a>
         <a role="tab" class="tab" :class="tab === 'movs' && 'tab-active'" @click="tab = 'movs'">
             Movimentações <span class="badge badge-ghost badge-xs ml-1">{{ dados.movimentacoes|length }}</span>
-        </a>
-        <a role="tab" class="tab" :class="tab === 'mov2' && 'tab-active'" @click="tab = 'mov2'">
-            MOV2 <span class="badge badge-ghost badge-xs ml-1">{{ dados.movimentacoes|length }}</span>
         </a>
         <a role="tab" class="tab" :class="tab === 'anexos' && 'tab-active'" @click="tab = 'anexos'"
            title="Documentos anexados ao PAJ no SISDPU (PDFs de petições, laudos, despachos, etc.)">
