@@ -23,6 +23,9 @@
       ts: Date.now() / 1000
     };
     try { localStorage.setItem(KEY, JSON.stringify(novoSnap)); } catch (e) {}
+
+    // Passa movimentações para Alpine.js na aba MOV2
+    window._paj_movimentacoes = {{ dados.movimentacoes | tojson }};
   })();
 </script>
 
@@ -545,7 +548,7 @@
 
     <!-- Tab: MOV2 - Tabela completa de movimentações com sorting e filtros -->
     <div x-show="tab === 'mov2'" class="bg-base-200 rounded-lg border border-base-300 p-6"
-         x-data="tabelaMov2({{ dados.movimentacoes | tojson }})">
+         x-data="tabelaMov2()">
         <div class="mb-4 space-y-4">
             <h3 class="text-lg font-semibold">Movimentações Completas</h3>
 
@@ -564,16 +567,15 @@
                     </select>
                 </div>
 
-                <!-- Filtro Usuário -->
+                <!-- Filtro Tipo de Usuário -->
                 <div class="form-control">
                     <label class="label">
-                        <span class="label-text text-sm">Filtrar por Usuário</span>
+                        <span class="label-text text-sm">Filtrar por Tipo de Usuário</span>
                     </label>
                     <select class="select select-bordered select-sm" x-model="filtroUsuario">
-                        <option value="">Todos os usuários</option>
-                        <template x-for="usuario in usuarios_unicos" :key="usuario">
-                            <option :value="usuario" x-text="usuario"></option>
-                        </template>
+                        <option value="">Todos</option>
+                        <option value="Servidor">Servidor (servidor, terceirizado, estagiário)</option>
+                        <option value="Defensor">Defensor</option>
                     </select>
                 </div>
             </div>
@@ -1017,14 +1019,18 @@ function copiarTxt() {
 // =====================================================================
 // ABA MOV2: Tabela interativa com sorting e filtros
 // =====================================================================
-function tabelaMov2(movimentacoes_json) {
+function tabelaMov2() {
     return {
-        movimentacoes: movimentacoes_json || [],
         filtroFases: '',
         filtroUsuario: '',
         colunhaOrdenacao: 'seq',
         direcaoOrdenacao: 'desc',
         maxSeqAnterior: 0,
+
+        // Dados vêm do escopo externo (Jinja2 passa window._paj_movimentacoes)
+        get movimentacoes() {
+            return window._paj_movimentacoes || [];
+        },
 
         init() {
             // Captura max_seq anterior para highlight
@@ -1042,14 +1048,9 @@ function tabelaMov2(movimentacoes_json) {
             return Array.from(fases).sort();
         },
 
-        get usuarios_unicos() {
-            const usuarios = new Set();
-            this.movimentacoes.forEach(mov => {
-                if (mov.usuario && mov.usuario.trim()) {
-                    usuarios.add(mov.usuario.trim());
-                }
-            });
-            return Array.from(usuarios).sort();
+        get tiposUsuario() {
+            // Retorna dois tipos: "Servidor" ou "Defensor"
+            return ['Servidor', 'Defensor'];
         },
 
         get movimentacoesFiltradas() {
@@ -1062,11 +1063,21 @@ function tabelaMov2(movimentacoes_json) {
                 );
             }
 
-            // Aplica filtro Usuário
+            // Aplica filtro Tipo de Usuário (usando regex)
             if (this.filtroUsuario) {
-                resultado = resultado.filter(mov =>
-                    mov.usuario === this.filtroUsuario
-                );
+                if (this.filtroUsuario === 'Servidor') {
+                    // Servidor: servidor, terceirizado, estagiário
+                    const regexServidor = /servidor|terceirizado|estagiário|SERVIDOR|TERCEIRIZADO|ESTAGIÁRIO/i;
+                    resultado = resultado.filter(mov =>
+                        mov.usuario && regexServidor.test(mov.usuario)
+                    );
+                } else if (this.filtroUsuario === 'Defensor') {
+                    // Defensor: qualquer usuário que tenha "Defensor" no nome
+                    const regexDefensor = /defensor|Defensor/i;
+                    resultado = resultado.filter(mov =>
+                        mov.usuario && regexDefensor.test(mov.usuario)
+                    );
+                }
             }
 
             // Ordena
