@@ -141,14 +141,17 @@
                 </span>
                 {% endif %}
             </p>
-            <div class="flex flex-wrap gap-2 mt-2">
+            <div class="flex flex-wrap gap-3 mt-2 text-sm font-medium">
                 {% set area = meta.foro_detectado %}
-                <span class="badge {% if area == 'Criminal' %}badge-error{% elif area == 'Civel' %}badge-info{% elif area == 'Previdenciario' %}badge-warning{% elif area == 'Saude' %}badge-success{% else %}badge-ghost{% endif %}">
+                <span class="{% if area == 'Criminal' %}text-error/60{% elif area == 'Civel' %}text-info/60{% elif area == 'Previdenciario' %}text-warning/60{% elif area == 'Saude' %}text-success/60{% else %}text-base-content/60{% endif %}">
                     {{ area | formatar_area or '?' }}
                 </span>
-                <span class="badge badge-outline">{{ meta.pretensaopura or meta.classificacao or '—' }}</span>
+                {% set pret = (meta.pretensaopura or meta.classificacao or '').upper() %}
+                <span class="{% if 'AUXÍLIO-DOENÇA' in pret or 'APOSENTADORIA POR INVALIDEZ' in pret or 'AUXÍLIO-ACIDENTE' in pret or 'REABILITAÇÃO' in pret %}text-error{% elif 'PENSÃO POR MORTE' in pret or 'AUXÍLIO-RECLUSÃO' in pret %}text-purple-600{% elif 'APOSENTADORIA' in pret and 'INVALIDEZ' not in pret %}text-info{% elif 'BPC' in pret or 'AUXÍLIO INCLUSÃO' in pret or 'BENEFÍCIO ASSISTENCIAL' in pret %}text-success{% elif 'SALÁRIO-MATERNIDADE' in pret or 'MATERNIDADE' in pret %}text-warning{% else %}text-base-content/60{% endif %}">
+                    {{ meta.pretensaopura or meta.classificacao or '—' }}
+                </span>
                 {% if meta.oficio_caixa %}
-                <span class="badge badge-ghost text-xs">{{ meta.oficio_caixa }}</span>
+                <span class="text-base-content/60 text-xs">{{ meta.oficio_caixa }}</span>
                 {% endif %}
             </div>
         </div>
