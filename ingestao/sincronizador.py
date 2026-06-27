@@ -64,6 +64,17 @@ def _iso_para_br(iso: str) -> str:
     return str(iso)
 
 
+def _remover_html(texto: str) -> str:
+    """Remove tags HTML de um texto. Preserva espaçamento entre tags."""
+    if not texto:
+        return ""
+    # Remove tags HTML, preservando espaços entre elementos
+    sem_html = re.sub(r'<[^>]+>', '', texto)
+    # Normaliza múltiplos espaços/quebras de linha em um único espaço
+    normalizado = re.sub(r'\s+', ' ', sem_html)
+    return normalizado.strip()
+
+
 def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
     """Monta sisdpu.txt no mesmo formato dos arquivos existentes.
 
@@ -125,11 +136,14 @@ def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
         sufixo = f" ({info_extra})" if info_extra else ""
         linhas.append(f"PROCESSO JUDICIAL VINCULADO: {processo_judicial}{sufixo}")
 
-    narrativa = (det.get("narrativa") or "").strip()
-    if narrativa:
+    narrativa_html = (det.get("narrativa") or "").strip()
+    if narrativa_html:
+        # Remover tags HTML para arquivo de texto (sisdpu.txt vai para IA)
+        # metadata.json mantém o HTML original para renderização no painel
+        narrativa_texto = _remover_html(narrativa_html)
         linhas.append("")
         linhas.append("NARRATIVA:")
-        linhas.append(narrativa)
+        linhas.append(narrativa_texto)
 
     linhas.append("")
     linhas.append("MOVIMENTAÇÕES RELEVANTES:")
