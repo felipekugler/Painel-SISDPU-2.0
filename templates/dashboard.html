@@ -486,7 +486,7 @@
           Ofício <span x-text="iconOrdem('oficio')"></span>
         </button>
       </div>
-      <div class="w-[104px]">Área</div>
+      <div class="w-[104px]">Área Temática</div>
       <div class="w-[240px]">
         <button class="flex items-center gap-1 hover:text-base-content/70 transition-colors" @click="ordenarPor('classificacao')">
           Pretensão <span x-text="iconOrdem('classificacao')"></span>
@@ -986,12 +986,12 @@ function dashboardApp() {
 
             // BENEFÍCIO POR INCAPACIDADE → Vermelho
             if (['AUXÍLIO-DOENÇA', 'APOSENTADORIA POR INVALIDEZ', 'AUXÍLIO-ACIDENTE', 'REABILITAÇÃO PROFISSIONAL'].some(x => p.includes(x))) {
-                return 'text-error/60';
+                return 'text-error';
             }
 
             // PENSÃO E RECLUSÃO → Roxo
             if (['PENSÃO POR MORTE', 'AUXÍLIO-RECLUSÃO'].some(x => p.includes(x))) {
-                return 'text-purple-600/60';
+                return 'text-purple-600';
             }
 
             // OUTROS → Cinza
@@ -1001,17 +1001,17 @@ function dashboardApp() {
 
             // APOSENTADORIAS → Azul
             if (['APOSENTADORIA'].some(x => p.includes(x)) && !p.includes('INVALIDEZ')) {
-                return 'text-info/60';
+                return 'text-info';
             }
 
             // BENEFÍCIOS ASSISTENCIAIS → Verde
             if (['BPC', 'AUXÍLIO INCLUSÃO', 'BENEFÍCIO ASSISTENCIAL'].some(x => p.includes(x))) {
-                return 'text-success/60';
+                return 'text-success';
             }
 
             // SALÁRIO-MATERNIDADE → Laranja
             if (['SALÁRIO-MATERNIDADE', 'MATERNIDADE'].some(x => p.includes(x))) {
-                return 'text-warning/60';
+                return 'text-warning';
             }
 
             return 'text-base-content/60';
