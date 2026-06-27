@@ -155,34 +155,24 @@ async def rodar_sync_paj(
     mesmo se ja saiu da caixa (concluido). PAJs nao-watchlist seguem pela
     caixa (`rodar_paj_unico`).
     """
-    async for linha in _rodar_com_cancel(
-        lambda emit: sincronizador.rodar_paj_via_busca_global(
-            paj_identificador,
-            emit,
-            deve_cancelar=deve_cancelar,
-            baixar_anexos=baixar_anexos,
-        ),
-        None,
-    ):
-        yield linha
-
-
-async def rodar_sync_avulso(
-    paj_identificador: str,
-    baixar_anexos: bool = True,
-) -> AsyncGenerator[str, None]:
-    """Sincroniza um PAJ avulso via busca global — funciona mesmo fora da caixa.
-
-    Após a sync, marca em_caixa_atual=True para que o PAJ apareça no dashboard,
-    e remove via_watchlist para não suprimir a exibição.
-    """
-    import json
-    from config import PAJS_DIR
-
     paj_norm = _paj_identificador_para_norm(paj_identificador)
+    na_watchlist = bool(paj_norm) and watchlist_service.is_watched(paj_norm)
+
+    if na_watchlist:
+        async for linha in _rodar_com_cancel(
+            lambda emit: sincronizador.rodar_paj_via_busca_global(
+                paj_identificador,
+                emit,
+                deve_cancelar=deve_cancelar,
+                baixar_anexos=baixar_anexos,
+            ),
+            None,
+        ):
+            yield linha
+        return
 
     async for linha in _rodar_com_cancel(
-        lambda emit: sincronizador.rodar_paj_via_busca_global(
+        lambda emit: sincronizador.rodar_paj_unico(
             paj_identificador,
             emit,
             deve_cancelar=deve_cancelar,
@@ -191,22 +181,6 @@ async def rodar_sync_avulso(
         None,
     ):
         yield linha
-
-    # Garante visibilidade no dashboard após sync avulsa
-    if paj_norm:
-        meta_path = PAJS_DIR / paj_norm / "metadata.json"
-        if meta_path.exists():
-            try:
-                meta = json.loads(meta_path.read_text(encoding="utf-8"))
-                meta["em_caixa_atual"] = True
-                meta["adicionado_manualmente"] = True
-                meta.pop("via_watchlist", None)
-                meta_path.write_text(
-                    json.dumps(meta, ensure_ascii=False, indent=2),
-                    encoding="utf-8",
-                )
-            except Exception:
-                pass
 
 
 async def rodar_sync_watchlist(

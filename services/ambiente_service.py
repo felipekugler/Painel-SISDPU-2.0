@@ -8,16 +8,11 @@ Barato (cache em memoria), nao refaz check durante a vida do processo.
 
 from __future__ import annotations
 
-import logging
 import os
 import shutil
-import subprocess
-import sys
 from pathlib import Path
 
 from config import validar_paths
-
-_log = logging.getLogger(__name__)
 
 
 _cache: dict | None = None
@@ -91,56 +86,14 @@ def _chromium_ok() -> tuple[bool, str]:
         # Precisa ter pelo menos um sub-diretorio chromium-*
         try:
             for sub in c.iterdir():
-                if sub.is_dir() and (
-                    sub.name.lower().startswith("chromium_headless_shell")
-                    or sub.name.lower().startswith("chromium")
-                ):
+                if sub.is_dir() and sub.name.lower().startswith("chromium"):
                     return (True, f"encontrado em {sub}")
         except Exception:
             continue
-    # Chromium ausente — tenta instalar automaticamente antes de desistir.
-    # Roda no startup (chamada sincrona em app.py), portanto bloqueia ate
-    # concluir. Tipicamente leva 30-90s na primeira vez.
-    print("[AMBIENTE] Chromium ausente — instalando automaticamente (aguarde)...")
-    _log.info("playwright install chromium: iniciando auto-instalacao")
-    try:
-        env = os.environ.copy()
-        # Propaga PLAYWRIGHT_BROWSERS_PATH para o subprocesso (pode ter sido
-        # definido via .env para um caminho fora do AppData).
-        _pbp = os.environ.get("PLAYWRIGHT_BROWSERS_PATH")
-        if _pbp:
-            env["PLAYWRIGHT_BROWSERS_PATH"] = _pbp
-        res = subprocess.run(
-            [sys.executable, "-m", "playwright", "install", "chromium"],
-            capture_output=True,
-            text=True,
-            timeout=300,
-            env=env,
-        )
-        if res.returncode == 0:
-            # Verifica novamente apos instalacao
-            for c in candidatos:
-                if not c.exists():
-                    continue
-                try:
-                    for sub in c.iterdir():
-                        if sub.is_dir() and (
-                            sub.name.lower().startswith("chromium_headless_shell")
-                            or sub.name.lower().startswith("chromium")
-                        ):
-                            _log.info("playwright install chromium: OK — %s", sub)
-                            print(f"[AMBIENTE] Chromium instalado em {sub}")
-                            return (True, f"auto-instalado em {sub}")
-                except Exception:
-                    continue
-            return (False, "playwright install chromium executou mas diretorio nao encontrado")
-        else:
-            detalhe = ((res.stderr or res.stdout) or "").strip()[-300:]
-            _log.warning("playwright install chromium falhou (rc=%d): %s", res.returncode, detalhe)
-            return (False, f"auto-instalacao falhou (rc={res.returncode}): {detalhe}")
-    except Exception as exc:
-        _log.warning("playwright install chromium: excecao: %s: %s", type(exc).__name__, exc)
-        return (False, f"auto-instalacao excecao: {type(exc).__name__}: {exc}")
+    return (
+        False,
+        "chromium do playwright nao encontrado — rode `python -m playwright install chromium`",
+    )
 
 
 def verificar_ambiente(forcar: bool = False) -> dict:

@@ -1,12 +1,8 @@
 """Rota de detalhe do PAJ."""
 
-import os
-import subprocess
-
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from config import PAJS_DIR
 from services.paj_service import (
     PajNorm,
     ler_paj,
@@ -74,19 +70,6 @@ def api_melhorar_ocr(paj_norm: PajNorm):
 async def api_notas_ler(paj_norm: PajNorm):
     """Le NOTAS.md do PAJ (string vazia se nao existe)."""
     return {"paj_norm": paj_norm, "texto": ler_notas(paj_norm)}
-
-
-@router.post("/api/paj/{paj_norm}/abrir-pasta", response_class=JSONResponse)
-async def abrir_pasta_paj(paj_norm: PajNorm):
-    """Abre a pasta do PAJ no Explorer."""
-    pasta = PAJS_DIR / paj_norm
-    if not pasta.exists():
-        return JSONResponse({"ok": False, "erro": f"Pasta não encontrada: {pasta}"}, status_code=404)
-    if os.name == "nt":
-        os.startfile(str(pasta))
-    else:
-        subprocess.Popen(["xdg-open", str(pasta)])
-    return {"ok": True}
 
 
 @router.post("/api/paj/{paj_norm}/notas", response_class=JSONResponse)

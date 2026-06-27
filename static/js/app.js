@@ -120,39 +120,6 @@ function showToast(msg, type) {
     }, 3000);
 }
 
-/* Copia texto para a área de transferência e mostra toast */
-function copiar(texto, label) {
-    if (!texto || !texto.trim()) return;
-    var t = texto.trim();
-    var ok_msg = (label ? label + ' copiado' : 'Copiado') + '!';
-
-    if (navigator.clipboard && window.isSecureContext) {
-        navigator.clipboard.writeText(t).then(function() {
-            showToast(ok_msg, 'success');
-        }).catch(function() {
-            _copiarFallback(t, ok_msg);
-        });
-    } else {
-        _copiarFallback(t, ok_msg);
-    }
-}
-
-function _copiarFallback(texto, ok_msg) {
-    try {
-        var ta = document.createElement('textarea');
-        ta.value = texto;
-        ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
-        document.body.appendChild(ta);
-        ta.focus();
-        ta.select();
-        var ok = document.execCommand('copy');
-        document.body.removeChild(ta);
-        showToast(ok ? ok_msg : 'Não foi possível copiar', ok ? 'success' : 'error');
-    } catch(e) {
-        showToast('Não foi possível copiar', 'error');
-    }
-}
-
 /* HTMX global event handlers */
 document.addEventListener('htmx:responseError', function(evt) {
     showToast('Erro na requisição: ' + evt.detail.xhr.status, 'error');
@@ -382,78 +349,6 @@ function sincronizarPaj(pajNorm, baixarAnexos) {
         _syncBtnCancel(false);
         if (_syncSource) { _syncSource.close(); _syncSource = null; }
     };
-}
-
-/* Adiciona um PAJ manualmente via busca global no SISDPU. */
-function adicionarPajManual() {
-    var raw = (document.getElementById('input-adicionar-paj').value || '').trim();
-    if (!raw) { showToast('Informe o número do PAJ', 'warning'); return; }
-
-    // Normaliza: aceita "2026/029-01789" ou "PAJ-2026-029-01789"
-    var norm = raw.toUpperCase();
-    if (!norm.startsWith('PAJ-')) {
-        norm = 'PAJ-' + norm.replace('/', '-');
-    }
-    if (!/^PAJ-\d{4}-\d{3}-\d{5}$/.test(norm)) {
-        showToast('Formato inválido. Use: 2026/029-01789', 'error');
-        return;
-    }
-
-    document.getElementById('modal-adicionar-paj').close();
-    document.getElementById('input-adicionar-paj').value = '';
-
-    // Reutiliza o modal de sync com a rota avulso
-    var modal = document.getElementById('sync-modal');
-    var logEl = document.getElementById('sync-log');
-    var statusEl = document.getElementById('sync-status');
-    var closeBtn = document.getElementById('sync-close-btn');
-    var cancelBtn = document.getElementById('sync-cancel-btn');
-    logEl.textContent = '';
-    statusEl.textContent = 'adicionando ' + norm + '...';
-    statusEl.className = 'badge badge-sm badge-warning';
-    closeBtn.disabled = true;
-    if (cancelBtn) { cancelBtn.disabled = false; }
-    modal.showModal();
-
-    if (_syncSource) { _syncSource.close(); _syncSource = null; }
-    _syncSource = new EventSource('/api/sync/avulso/' + encodeURIComponent(norm));
-
-    _syncSource.addEventListener('log', function(e) {
-        logEl.textContent += e.data + '\n';
-        logEl.scrollTop = logEl.scrollHeight;
-    });
-    _syncSource.addEventListener('done', function(e) {
-        logEl.textContent += '\n' + e.data + '\n';
-        statusEl.textContent = 'concluído';
-        statusEl.className = 'badge badge-sm badge-success';
-        closeBtn.disabled = false;
-        if (cancelBtn) cancelBtn.disabled = true;
-        if (_syncSource) { _syncSource.close(); _syncSource = null; }
-        setTimeout(function() {
-            modal.addEventListener('close', function once() {
-                modal.removeEventListener('close', once);
-                window.location.reload();
-            });
-        }, 500);
-    });
-    _syncSource.onerror = function() {
-        statusEl.textContent = 'erro/desconectado';
-        statusEl.className = 'badge badge-sm badge-error';
-        closeBtn.disabled = false;
-        if (_syncSource) { _syncSource.close(); _syncSource = null; }
-    };
-}
-
-/* Remove do painel um PAJ adicionado manualmente. */
-function removerPajManual(pajNorm) {
-    if (!confirm('Remover este PAJ do painel?\n\nOs arquivos na pasta serão mantidos — apenas o PAJ sairá da listagem.')) return;
-    fetch('/api/pajs/' + encodeURIComponent(pajNorm) + '/manual', { method: 'DELETE' })
-        .then(function(r) { return r.json(); })
-        .then(function(d) {
-            if (d.ok) { showToast('PAJ removido', 'success'); setTimeout(function(){ window.location.href = '/'; }, 800); }
-            else showToast(d.erro || 'Erro ao remover', 'error');
-        })
-        .catch(function() { showToast('Erro ao remover PAJ', 'error'); });
 }
 
 /* Baixar anexos antigos a partir de uma data — completa overflow do sync padrao.

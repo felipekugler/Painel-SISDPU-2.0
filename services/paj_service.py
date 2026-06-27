@@ -11,15 +11,11 @@ from __future__ import annotations
 
 import contextlib
 import json
-import logging
 import re
-import subprocess
 import time
 import unicodedata
 from pathlib import Path
 from typing import Annotated
-
-log = logging.getLogger(__name__)
 
 from fastapi import Path as FastApiPath
 
@@ -111,61 +107,6 @@ def _garantir_prompt_max(pasta: Path) -> None:
 
 
 MAX_CONCLUIDOS_VISIVEIS = 100
-
-# ---------------------------------------------------------------------------
-# Inferência de subtipo de benefício previdenciário
-# ---------------------------------------------------------------------------
-
-def _ascii_lower(s: str) -> str:
-    """Remove acentos e converte para minúsculo — para comparações de subtipo."""
-    return unicodedata.normalize("NFKD", s).encode("ascii", "ignore").decode("ascii").lower()
-
-
-_SUBTIPO_MAP = [
-    (re.compile(r"aposentadoria da pessoa com defici"),  "Apos. PCD"),
-    (re.compile(r"aposentadoria por idade"),             "Apos. Idade"),
-    (re.compile(r"aposentadoria por invalidez|incapacidade permanente"), "BI"),
-    (re.compile(r"aposentadoria por tempo de contribui"), "Apos. TC"),
-    (re.compile(r"auxilio.acidente"),                    "Aux. Acidente"),
-    (re.compile(r"auxilio.doenca|incapacidade tempor"),  "Aux. Doença"),
-    (re.compile(r"auxilio.reclusao"),                    "Aux. Reclusão"),
-    (re.compile(r"beneficios sociais"),                  "Ben. Sociais"),
-    (re.compile(r"bpc.+auxilio inclus|auxilio inclus"),  "Aux. Inclusão"),
-    (re.compile(r"bpc.+benefi|bpc.+assistencial"),       None),  # resolve via narrativa
-    (re.compile(r"pensao por morte"),                    "Pensão Morte"),
-    (re.compile(r"reabilitacao profissional"),           "Reab. Profissional"),
-    (re.compile(r"restituicao|cobranca"),                "Cobrança"),
-    (re.compile(r"salario.maternidade"),                 "Sal. Maternidade"),
-]
-
-_RE_BPC_IDOSO = re.compile(
-    r"bpc\s+idoso|assistencial\s+ao\s+idoso|criterio\s+etario|\bidoso\b|\b6[05]\s*anos\b"
-)
-_RE_BPC_DEFICIENTE = re.compile(
-    r"bpc\s+defici|pessoa\s+com\s+defici|deficiencia\s+de\s+longo|\bdeficiente\b"
-)
-
-
-def _inferir_subtipo(classificacao: str, narrativa: str) -> str:
-    """Retorna rótulo curto do subtipo de benefício a partir da classificação
-    do SISDPU. Para BPC, usa regex sobre a narrativa para distinguir
-    Idoso de Deficiente. Toda comparação é feita em ASCII lowercase."""
-    texto = _ascii_lower(classificacao or "")
-    partes = texto.split(">>")
-    subtipo_raw = partes[1].strip() if len(partes) > 1 else texto.strip()
-    for padrao, rotulo in _SUBTIPO_MAP:
-        if padrao.search(subtipo_raw) or padrao.search(texto):
-            if rotulo is not None:
-                return rotulo
-            # BPC — distingue via narrativa
-            narr = _ascii_lower(narrativa or "")
-            if _RE_BPC_IDOSO.search(narr):
-                return "BPC Idoso"
-            if _RE_BPC_DEFICIENTE.search(narr):
-                return "BPC Deficiente"
-            return "BPC"
-    return ""
-
 
 
 # Cache em memoria de listar_pajs() — dashboard chama isso a cada navegacao,
@@ -301,10 +242,6 @@ def listar_pajs(incluir_concluidos: bool = False) -> list[dict]:
             "etiqueta": metadata.get("etiqueta_sisdpu", ""),
             "foro": metadata.get("foro_detectado", "?"),
             "classificacao": metadata.get("classificacao", "?"),
-            "subtipo": metadata.get("subtipo_ia") or _inferir_subtipo(
-                metadata.get("classificacao", ""),
-                metadata.get("narrativa", "") or "",
-            ),
             "data_caixa": metadata.get("data_mov_caixa", ""),
             "desc_caixa": metadata.get("desc_mov_caixa", ""),
             "processo_judicial": metadata.get("processo_judicial", ""),
@@ -317,7 +254,6 @@ def listar_pajs(incluir_concluidos: bool = False) -> list[dict]:
             "ultima_mov_data": ultima_mov.get("data", ""),
             "status_sisdpu": (det.get("status_paj") or "").strip(),
             "em_caixa_atual": not esta_concluido,
-            "adicionado_manualmente": bool(metadata.get("adicionado_manualmente", False)),
             "concluido_em": _ler_concluido_em(metadata) if esta_concluido else "",
             "sync_incompleto": bool(metadata.get("sync_incompleto", False)),
             "sync_incompleto_motivo": metadata.get("sync_incompleto_motivo", ""),
@@ -362,10 +298,6 @@ def ler_paj(paj_norm: str) -> dict | None:
     metadata = _ler_json(pasta / "metadata.json")
     if not metadata:
         return None
-
-    # Normaliza CPF: pega apenas o primeiro valor (evita duplicatas de syncs antigos)
-    if metadata.get("cpf"):
-        metadata["cpf"] = metadata["cpf"].split(",")[0].strip()
 
     _garantir_prompt_max(pasta)
 

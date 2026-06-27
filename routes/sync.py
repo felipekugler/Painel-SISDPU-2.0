@@ -11,7 +11,6 @@ from sse_starlette.sse import EventSourceResponse
 from services.sync_service import (
     esta_rodando,
     rodar_sync,
-    rodar_sync_avulso,
     rodar_sync_paj,
     rodar_sync_anexos_desde_data,
     rodar_sync_watchlist,
@@ -84,17 +83,6 @@ async def sync_anexos_desde(paj_norm: str, data: str = ""):
     return EventSourceResponse(_stream_anexos_desde(paj_norm, data_inicio))
 
 
-@router.get("/sync/avulso/{paj_norm}")
-async def sync_avulso(paj_norm: str, anexos: int = 0):
-    """Adiciona e sincroniza um PAJ avulso via busca global — funciona mesmo
-    fora da caixa de entrada."""
-    async def _stream():
-        async for linha in rodar_sync_avulso(paj_norm, baixar_anexos=bool(anexos)):
-            yield {"event": "log", "data": linha.rstrip("\n")}
-        yield {"event": "done", "data": "PAJ sincronizado"}
-    return EventSourceResponse(_stream())
-
-
 @router.get("/sync/watchlist")
 async def sync_watchlist(anexos: int = 1):
     """Sincroniza todos os PAJs ativos da watchlist via busca global do SIS-DPU.
@@ -105,27 +93,6 @@ async def sync_watchlist(anexos: int = 1):
     ?anexos=0 => modo rapido (pula download/OCR dos anexos).
     """
     return EventSourceResponse(_stream_watchlist(baixar_anexos=bool(anexos)))
-
-
-@router.delete("/pajs/{paj_norm}/manual")
-async def remover_paj_manual(paj_norm: str):
-    """Remove do painel um PAJ adicionado manualmente (marca em_caixa_atual=False)."""
-    import json
-    from config import PAJS_DIR
-    meta_path = PAJS_DIR / paj_norm / "metadata.json"
-    if not meta_path.exists():
-        return JSONResponse({"ok": False, "erro": "PAJ não encontrado"}, status_code=404)
-    try:
-        meta = json.loads(meta_path.read_text(encoding="utf-8"))
-        if not meta.get("adicionado_manualmente"):
-            return JSONResponse({"ok": False, "erro": "PAJ não foi adicionado manualmente"}, status_code=400)
-        from datetime import datetime
-        meta["em_caixa_atual"] = False
-        meta["concluido_em"] = datetime.now().isoformat(timespec="seconds")
-        meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2), encoding="utf-8")
-        return {"ok": True}
-    except Exception as e:
-        return JSONResponse({"ok": False, "erro": str(e)}, status_code=500)
 
 
 @router.post("/sync/cancel")

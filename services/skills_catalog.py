@@ -34,10 +34,6 @@ GRUPOS = [
     "Petição inicial",
     "Peça processual",
     "Despacho SIS",
-    "CCR",
-    "SISDPU",
-    "Eproc",
-    "PAINEL",
     "Utilidades",
 ]
 
@@ -170,19 +166,6 @@ SKILL_OVERRIDES: dict[str, dict] = {
         "areas": ["*"],
         "grupo": "Utilidades",
     },
-    # --- CCR ---
-    "CCR-analisar-paj-geral": {"label": "Analisar PAJ (geral)", "areas": ["*"], "grupo": "CCR"},
-    "CCR-analisar-paj-urgentes": {"label": "Analisar PAJ (urgentes)", "areas": ["*"], "grupo": "CCR"},
-    "CCR-analisar-paj-antigos": {"label": "Analisar PAJ (antigos)", "areas": ["*"], "grupo": "CCR"},
-    "CCR-analisar-paj-votarnaohomologados": {"label": "Votar não homologados", "areas": ["*"], "grupo": "CCR"},
-    "CCR-concluir-paj-homologacaotacita": {"label": "Concluir homologação tácita", "areas": ["*"], "grupo": "CCR"},
-    # --- SISDPU ---
-    "SISDPU-AnalisarPAJ2Cat": {"label": "Analisar PAJ 2ª categoria", "areas": ["*"], "grupo": "SISDPU"},
-    "SISDPU-OrganizarDocAjuizamento": {"label": "Organizar docs para ajuizamento", "areas": ["*"], "grupo": "SISDPU"},
-    # --- Eproc ---
-    "Eproc-AnaliseProcessoIntegral": {"label": "Análise integral de processo", "areas": ["*"], "grupo": "Eproc"},
-    # --- PAINEL ---
-    "PAINEL-AnalisarPAJ": {"label": "Analisar PAJ (IA)", "areas": ["*"], "grupo": "PAINEL"},
     # --- Skills internas: nao expor no dropdown ---
     # `areas: []` sinaliza ao auto-discovery que estas devem ser escondidas.
     # Nao remove a skill do workspace — so nao aparece neste catalogo.
@@ -191,9 +174,6 @@ SKILL_OVERRIDES: dict[str, dict] = {
     "ocr-documentos": {"areas": []},
     "exportar-documento": {"areas": []},
     "sync_calendar": {"areas": []},
-    "eproc-login": {"areas": []},
-    "SISDPU-acesso-caixa": {"areas": []},
-    "PDF-Comprimir_Dividir": {"areas": []},
 }
 
 
@@ -234,31 +214,21 @@ def _label_padrao(slug: str) -> str:
     return slug.replace("-", " ").replace("_", " ").capitalize()
 
 
-def _diretorios_skills() -> list[Path]:
-    """Retorna os diretórios de skills a ler, sem duplicatas.
-
-    Ordem de precedência (o workspace sobrescreve o global quando mesmo slug):
-      1. Global: ~/.claude/skills/
-      2. Workspace: OFICIO_GERAL/.claude/skills/
-    """
-    global_dir = Path.home() / ".claude" / "skills"
-    workspace_dir = OFICIO_GERAL / ".claude" / "skills"
-    dirs = []
-    for d in (global_dir, workspace_dir):
-        if d.exists() and d.is_dir() and d not in dirs:
-            dirs.append(d)
-    return dirs
+def _diretorio_skills() -> Path:
+    return OFICIO_GERAL / ".claude" / "skills"
 
 
-def _signature_skills() -> tuple[float, ...]:
-    """Assinatura barata pra detectar mudancas estruturais em todos os dirs."""
-    sig: list[float] = []
-    for base in _diretorios_skills():
-        try:
-            sig.extend([base.stat().st_mtime, float(sum(1 for _ in base.iterdir()))])
-        except Exception:
-            sig.extend([0.0, 0.0])
-    return tuple(sig) if sig else (0.0,)
+def _signature_skills() -> tuple[float, int]:
+    """Assinatura barata pra detectar mudancas estruturais (skill nova,
+    removida, renomeada). Edicao interna de SKILL.md nao invalida — o TTL
+    de 60s cobre."""
+    base = _diretorio_skills()
+    if not base.exists():
+        return (0.0, 0)
+    try:
+        return (base.stat().st_mtime, sum(1 for _ in base.iterdir()))
+    except Exception:
+        return (0.0, 0)
 
 
 _skills_cache: dict = {"key": None, "ts": 0.0, "result": None}
@@ -267,38 +237,41 @@ _SKILLS_TTL_SEG = 60.0
 
 
 def _carregar_skills() -> list[dict]:
-    # Acumula por slug; workspace tem precedência sobre global (lido por último).
-    por_slug: dict[str, dict] = {}
-    for base in _diretorios_skills():
-        for sub in sorted(base.iterdir()):
-            if not sub.is_dir():
-                continue
-            skill_md = sub / "SKILL.md"
-            if not skill_md.exists():
-                continue
-            slug = sub.name
-            try:
-                texto = skill_md.read_text(encoding="utf-8", errors="replace")
-            except Exception:
-                continue
-            meta = _parse_frontmatter(texto)
-            descricao = (meta.get("description") or meta.get("Description") or "").strip()
+    base = _diretorio_skills()
+    if not base.exists() or not base.is_dir():
+        return []
+    skills: list[dict] = []
+    for sub in sorted(base.iterdir()):
+        if not sub.is_dir():
+            continue
+        skill_md = sub / "SKILL.md"
+        if not skill_md.exists():
+            continue
+        slug = sub.name
+        try:
+            texto = skill_md.read_text(encoding="utf-8", errors="replace")
+        except Exception:
+            continue
+        meta = _parse_frontmatter(texto)
+        descricao = (meta.get("description") or meta.get("Description") or "").strip()
 
-            override = SKILL_OVERRIDES.get(slug, {})
+        override = SKILL_OVERRIDES.get(slug, {})
 
-            # `areas: []` no override esconde a skill do dropdown (skills internas).
-            if "areas" in override and not override["areas"]:
-                continue
+        # `areas: []` no override esconde a skill do dropdown (skills internas).
+        if "areas" in override and not override["areas"]:
+            continue
 
-            areas = override.get("areas", ["*"])
-            por_slug[slug] = {
+        areas = override.get("areas", ["*"])
+        skills.append(
+            {
                 "slug": slug,
                 "label": override.get("label") or _label_padrao(slug),
                 "descricao": descricao or override.get("descricao", ""),
                 "areas": list(areas),
                 "grupo": override.get("grupo") or "Utilidades",
             }
-    return list(por_slug.values())
+        )
+    return skills
 
 
 def listar_skills() -> list[dict]:
