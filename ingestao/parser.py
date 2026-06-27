@@ -132,6 +132,41 @@ def extrair_assistido_da_linha_paj(linha_paj: str) -> str | None:
     return None
 
 
+def parsear_movimentacoes_estruturadas(movs_brutos: list[dict]) -> list[dict]:
+    """Converte movimentações estruturadas do sisdpu_client direto para metadata.
+
+    Entrada: lista de dicts com campos extraídos da tabela HTML (seq, anexo, data,
+    movimentacao, fases, descricao, links_decisao, usuario).
+
+    Saída: lista estruturada compatível com metadata.json, preservando todos os campos
+    originais sem perda de dados.
+    """
+    movs = []
+    for mov_bruto in (movs_brutos or []):
+        try:
+            seq_str = str(mov_bruto.get("seq", "")).strip()
+            seq = int(seq_str) if seq_str.isdigit() else len(movs) + 1
+
+            data_orig = mov_bruto.get("data", "")
+            data_iso = parse_data_br(data_orig.split()[0]) if data_orig else ""
+
+            mov = {
+                "seq": seq,
+                "data": data_iso,
+                "data_original": data_orig,
+                "descricao": (mov_bruto.get("descricao") or "")[:3000],
+                "movimentacao": mov_bruto.get("movimentacao", ""),
+                "fases": mov_bruto.get("fases", ""),
+                "usuario": mov_bruto.get("usuario", ""),
+                "links_decisao": mov_bruto.get("links_decisao", []),
+                "anexo": mov_bruto.get("anexo", ""),
+            }
+            movs.append(mov)
+        except Exception:
+            continue
+    return movs
+
+
 def parsear_movimentacoes(texto: str) -> list[dict]:
     """Extrai blocos de movimentacao do corpo do .txt.
 

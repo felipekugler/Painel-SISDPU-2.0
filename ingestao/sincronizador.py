@@ -742,6 +742,14 @@ async def _processar_paj_pos_detalhamento(
     # Snapshot da estrutura bruta devolvida pelo SISDPU para diagnostico/posteridade
     metadata["sisdpu_raw"] = det
 
+    # Se temos movimentacoes estruturadas do sisdpu_client, usa direto sem perda
+    # (evita parsing regex que perde campos como movimentacao, fases, usuario, anexo)
+    if det.get("movimentacoes"):
+        mov_estruturadas = parser.parsear_movimentacoes_estruturadas(det["movimentacoes"])
+        if "detalhes_sisdpu" not in metadata:
+            metadata["detalhes_sisdpu"] = {}
+        metadata["detalhes_sisdpu"]["movimentacoes"] = mov_estruturadas
+
     if via_busca_global:
         # Busca global nao da informacao sobre estar na caixa atual — preserva
         # o que tinhamos (se houver). Tambem nao tem acesso a etiqueta da
@@ -1722,6 +1730,14 @@ async def buscar_resumo_via_busca(
         }
 
     metadata["sisdpu_raw"] = det
+
+    # Se temos movimentacoes estruturadas do sisdpu_client, usa direto sem perda
+    if det.get("movimentacoes"):
+        mov_estruturadas = parser.parsear_movimentacoes_estruturadas(det["movimentacoes"])
+        if "detalhes_sisdpu" not in metadata:
+            metadata["detalhes_sisdpu"] = {}
+        metadata["detalhes_sisdpu"]["movimentacoes"] = mov_estruturadas
+
     # Marca origem: PAJ nao veio da caixa atual, foi puxado por busca explicita
     # do defensor (via watchlist). Dashboard usa essa flag para esconder.
     metadata["via_watchlist"] = True
