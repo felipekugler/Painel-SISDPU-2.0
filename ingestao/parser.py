@@ -77,6 +77,16 @@ def derivar_foro(pretensao: str) -> str:
     return AREAS_CANONICAS.get(token, m.group(1).title())
 
 
+def extrair_pretensao_pura(pretensao: str) -> str:
+    """Extrai apenas a parte após ' >> ' da pretensão, removendo a área temática."""
+    if not pretensao:
+        return ""
+    partes = pretensao.split(">>")
+    if len(partes) > 1:
+        return partes[1].strip()
+    return pretensao.strip()
+
+
 def parsear_header(linhas: list[str]) -> dict:
     """Extrai cabecalho estruturado das primeiras linhas (antes de 'MOVIMENTAÇÕES')."""
     header: dict = {}
@@ -250,6 +260,7 @@ def montar_metadata(paj_norm: str, texto_sisdpu: str) -> dict:
         "assistido_caixa": assistido,
         "oficio_caixa": header.get("oficio_responsavel", ""),
         "pretensao": pretensao,
+        "pretensaopura": extrair_pretensao_pura(pretensao),
         "foro_detectado": foro_area,
         "foro_detalhado": header.get("foro_detalhado", ""),
         "classificacao": pretensao or "?",
