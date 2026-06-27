@@ -551,13 +551,13 @@
 
             <!-- Badge de área -->
             <div class="w-[104px] shrink-0">
-              <span class="badge badge-sm font-medium border"
+              <span class="text-sm font-medium"
                     :class="{
-                      'bg-error/20 text-error/70 border-error/20': (paj.foro || '').toLowerCase() === 'criminal',
-                      'bg-info/20 text-info/70 border-info/20': (paj.foro || '').toLowerCase() === 'civel',
-                      'bg-warning/20 text-warning/70 border-warning/20': (paj.foro || '').toLowerCase() === 'previdenciario',
-                      'bg-success/20 text-success/70 border-success/20': (paj.foro || '').toLowerCase() === 'saude',
-                      'bg-base-content/5 text-base-content/50 border-base-content/10': !['criminal','civel','previdenciario','saude'].includes((paj.foro || '').toLowerCase())
+                      'text-error': (paj.foro || '').toLowerCase() === 'criminal',
+                      'text-info': (paj.foro || '').toLowerCase() === 'civel',
+                      'text-warning': (paj.foro || '').toLowerCase() === 'previdenciario',
+                      'text-success': (paj.foro || '').toLowerCase() === 'saude',
+                      'text-base-content/60': !['criminal','civel','previdenciario','saude'].includes((paj.foro || '').toLowerCase())
                     }"
                     x-text="formatarArea(paj.foro) || '—'"></span>
               <template x-if="paj.prazos_abertos && paj.prazos_abertos.length > 0">
@@ -573,7 +573,7 @@
 
             <!-- Pretensão -->
             <div class="w-[240px] shrink min-w-0">
-              <span class="inline-flex items-center badge badge-sm font-medium border"
+              <span class="text-sm font-medium truncate-1"
                     :class="corPretensao(paj.classificacao)"
                     :title="paj.classificacao"
                     x-text="extrairPretensao(paj.classificacao) || '—'"></span>
@@ -981,40 +981,40 @@ function dashboardApp() {
         },
 
         corPretensao(pretensao) {
-            if (!pretensao) return 'bg-base-content/5 text-base-content/50 border-base-content/10';
+            if (!pretensao) return 'text-base-content/60';
             const p = String(pretensao).toUpperCase().trim();
 
             // BENEFÍCIO POR INCAPACIDADE → Vermelho
             if (['AUXÍLIO-DOENÇA', 'APOSENTADORIA POR INVALIDEZ', 'AUXÍLIO-ACIDENTE', 'REABILITAÇÃO PROFISSIONAL'].some(x => p.includes(x))) {
-                return 'bg-error/20 text-error/70 border-error/20';
+                return 'text-error';
             }
 
             // PENSÃO E RECLUSÃO → Roxo
             if (['PENSÃO POR MORTE', 'AUXÍLIO-RECLUSÃO'].some(x => p.includes(x))) {
-                return 'bg-purple-500/20 text-purple-600/70 border-purple-500/20';
+                return 'text-purple-600';
             }
 
             // OUTROS → Cinza
             if (['BENEFICIOS SOCIAIS', 'RESTITUIÇÃO', 'COBRANÇA'].some(x => p.includes(x))) {
-                return 'bg-base-content/5 text-base-content/50 border-base-content/10';
+                return 'text-base-content/60';
             }
 
             // APOSENTADORIAS → Azul
             if (['APOSENTADORIA'].some(x => p.includes(x)) && !p.includes('INVALIDEZ')) {
-                return 'bg-info/20 text-info/70 border-info/20';
+                return 'text-info';
             }
 
             // BENEFÍCIOS ASSISTENCIAIS → Verde
             if (['BPC', 'AUXÍLIO INCLUSÃO', 'BENEFÍCIO ASSISTENCIAL'].some(x => p.includes(x))) {
-                return 'bg-success/20 text-success/70 border-success/20';
+                return 'text-success';
             }
 
             // SALÁRIO-MATERNIDADE → Laranja
             if (['SALÁRIO-MATERNIDADE', 'MATERNIDADE'].some(x => p.includes(x))) {
-                return 'bg-warning/20 text-warning/70 border-warning/20';
+                return 'text-warning';
             }
 
-            return 'bg-base-content/5 text-base-content/50 border-base-content/10';
+            return 'text-base-content/60';
         },
 
         aplicarFiltros() {
