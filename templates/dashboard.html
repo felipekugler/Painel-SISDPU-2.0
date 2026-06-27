@@ -476,12 +476,22 @@
           PAJ <span x-text="iconOrdem('paj')"></span>
         </button>
       </div>
-      <div class="w-[380px] shrink">
+      <div class="w-[200px]">
         <button class="flex items-center gap-1 hover:text-base-content/70 transition-colors" @click="ordenarPor('assistido')">
-          Assistido · Pretensão <span x-text="iconOrdem('assistido')"></span>
+          Assistido <span x-text="iconOrdem('assistido')"></span>
+        </button>
+      </div>
+      <div class="w-[160px]">
+        <button class="flex items-center gap-1 hover:text-base-content/70 transition-colors" @click="ordenarPor('oficio')">
+          Ofício <span x-text="iconOrdem('oficio')"></span>
         </button>
       </div>
       <div class="w-[104px]">Área</div>
+      <div class="w-[240px]">
+        <button class="flex items-center gap-1 hover:text-base-content/70 transition-colors" @click="ordenarPor('classificacao')">
+          Pretensão <span x-text="iconOrdem('classificacao')"></span>
+        </button>
+      </div>
       <div class="w-[88px]">
         <button class="flex items-center gap-1 hover:text-base-content/70 transition-colors" @click="ordenarPor('data_caixa')">
           Data <span x-text="iconOrdem('data_caixa')"></span>
