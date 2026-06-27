@@ -553,10 +553,10 @@
             <div class="w-[104px] shrink-0">
               <span class="text-sm font-medium"
                     :class="{
-                      'text-error': (paj.foro || '').toLowerCase() === 'criminal',
-                      'text-info': (paj.foro || '').toLowerCase() === 'civel',
-                      'text-warning': (paj.foro || '').toLowerCase() === 'previdenciario',
-                      'text-success': (paj.foro || '').toLowerCase() === 'saude',
+                      'text-error/60': (paj.foro || '').toLowerCase() === 'criminal',
+                      'text-info/60': (paj.foro || '').toLowerCase() === 'civel',
+                      'text-warning/60': (paj.foro || '').toLowerCase() === 'previdenciario',
+                      'text-success/60': (paj.foro || '').toLowerCase() === 'saude',
                       'text-base-content/60': !['criminal','civel','previdenciario','saude'].includes((paj.foro || '').toLowerCase())
                     }"
                     x-text="formatarArea(paj.foro) || '—'"></span>
@@ -986,12 +986,12 @@ function dashboardApp() {
 
             // BENEFÍCIO POR INCAPACIDADE → Vermelho
             if (['AUXÍLIO-DOENÇA', 'APOSENTADORIA POR INVALIDEZ', 'AUXÍLIO-ACIDENTE', 'REABILITAÇÃO PROFISSIONAL'].some(x => p.includes(x))) {
-                return 'text-error';
+                return 'text-error/60';
             }
 
             // PENSÃO E RECLUSÃO → Roxo
             if (['PENSÃO POR MORTE', 'AUXÍLIO-RECLUSÃO'].some(x => p.includes(x))) {
-                return 'text-purple-600';
+                return 'text-purple-600/60';
             }
 
             // OUTROS → Cinza
@@ -1001,17 +1001,17 @@ function dashboardApp() {
 
             // APOSENTADORIAS → Azul
             if (['APOSENTADORIA'].some(x => p.includes(x)) && !p.includes('INVALIDEZ')) {
-                return 'text-info';
+                return 'text-info/60';
             }
 
             // BENEFÍCIOS ASSISTENCIAIS → Verde
             if (['BPC', 'AUXÍLIO INCLUSÃO', 'BENEFÍCIO ASSISTENCIAL'].some(x => p.includes(x))) {
-                return 'text-success';
+                return 'text-success/60';
             }
 
             // SALÁRIO-MATERNIDADE → Laranja
             if (['SALÁRIO-MATERNIDADE', 'MATERNIDADE'].some(x => p.includes(x))) {
-                return 'text-warning';
+                return 'text-warning/60';
             }
 
             return 'text-base-content/60';
