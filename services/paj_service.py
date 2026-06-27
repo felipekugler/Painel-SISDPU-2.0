@@ -365,8 +365,13 @@ def ler_paj(paj_norm: str) -> dict | None:
                 }
             )
 
+    # Extrai narrativa de sisdpu_raw
+    sisdpu_raw = metadata.get("sisdpu_raw", {}) or {}
+    narrativa = sisdpu_raw.get("narrativa", "")
+
     return {
         "metadata": metadata,
+        "narrativa": narrativa,
         "prompt_max": prompt_max,
         "pecas": [],
         "pecas_por_categoria": [],

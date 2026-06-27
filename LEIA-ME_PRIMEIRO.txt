@@ -1,0 +1,232 @@
+================================================================================
+PAINEL SISDPU - DOCUMENTAÇÃO COMPLETA DE ARQUITETURA
+================================================================================
+
+Data da Análise: 27/06/2026
+Versão do Painel: 0.3.14
+Especialista: Análise Completa do Projeto
+
+================================================================================
+COMECE AQUI!
+================================================================================
+
+Esta pasta contém UMA DOCUMENTAÇÃO COMPLETA E PROFUNDA do projeto PAINEL SISDPU.
+
+Foram criados 5 documentos complementares (+ este arquivo):
+
+1. INDICE_DOCUMENTACAO.md ← COMECE POR AQUI
+   └─ Mapa completo de tudo que foi documentado
+   └─ Índice temático para encontrar rapidamente
+   └─ Percurso de aprendizado recomendado
+
+2. RESUMO_EXECUTOR.md (5 min)
+   └─ Leitura obrigatória - propósito, stack, arquitetura básica
+   └─ Use quando: precisa entender rápido
+
+3. ANALISE_ARQUITETURA.md (30 min)
+   └─ Análise profunda - como tudo funciona
+   └─ Use quando: quer entender completamente
+
+4. GUIA_RAPIDO_DESENVOLVIMENTO.md (20 min)
+   └─ Handbook prático - como fazer coisas
+   └─ Use quando: vai implementar feature
+
+5. EXEMPLOS_PRATICOS.md (15 min)
+   └─ Case studies - vê código funcionando
+   └─ Use quando: precisa de exemplo similar
+
+6. REFERENCIA_RAPIDA.md (10 min)
+   └─ Cheat sheet - snippets prontos
+   └─ Use quando: está codificando
+
+================================================================================
+RECOMENDAÇÃO DE LEITURA
+================================================================================
+
+PRIMEIRA VEZ (Total: ~50 minutos)
+────────────────────────────────────────────────────────────────────────────
+1. Leia este arquivo (2 min)
+   ↓
+2. Abra INDICE_DOCUMENTACAO.md (3 min)
+   └─ Veja o mapa visual
+
+3. Leia RESUMO_EXECUTOR.md (5 min)
+   └─ Entenda a proposta geral
+
+4. Leia ANALISE_ARQUITETURA.md (30 min)
+   └─ Seções 1-4: propósito, stack, estrutura, arquitetura
+
+5. Veja caso relevante em EXEMPLOS_PRATICOS.md (5 min)
+   └─ Escolha caso similar ao que precisa fazer
+
+✓ Pronto para trabalhar!
+
+
+QUANDO PRECISA FAZER ALGO ESPECÍFICO (Total: ~15 minutos)
+────────────────────────────────────────────────────────────────────────────
+1. Procure na seção "Tarefas Comuns" de GUIA_RAPIDO_DESENVOLVIMENTO.md
+
+2. Encontre caso similar em EXEMPLOS_PRATICOS.md
+
+3. Consulte snippets em REFERENCIA_RAPIDA.md
+
+4. Implemente
+
+
+QUANDO PRECISA DEBUGAR (Total: ~10 minutos)
+────────────────────────────────────────────────────────────────────────────
+1. Vá em GUIA_RAPIDO_DESENVOLVIMENTO.md → Troubleshooting
+
+2. Se não encontrar, procure em ANALISE_ARQUITETURA.md → Fluxos de Dados
+
+3. Use REFERENCIA_RAPIDA.md → Debug Avançado para comandos
+
+================================================================================
+ESTRUTURA DOS DOCUMENTOS
+================================================================================
+
+INDICE_DOCUMENTACAO.md
+├─ O que tem em cada doc
+├─ Mapa de leitura por cenário
+├─ Índice temático
+├─ Cross-references
+├─ Checklist de leitura
+└─ Percurso de aprendizado (3 níveis)
+
+RESUMO_EXECUTOR.md
+├─ Propósito em 1 frase
+├─ Stack em 1 linha
+├─ Estrutura mínima
+├─ Fluxo principal
+├─ Componentes chave
+├─ Regras de ouro
+└─ Checklist de competência
+
+ANALISE_ARQUITETURA.md
+├─ Visão geral completa (seção 1)
+├─ Stack tecnológico detalhado (seção 2)
+├─ Estrutura de diretórios anotada (seção 3)
+├─ Arquitetura em camadas (seção 4)
+├─ Componentes principais (seção 5)
+├─ Fluxos de dados com exemplos (seção 6)
+├─ Padrões e convenções (seção 7)
+└─ Como estender (seção 8)
+
+GUIA_RAPIDO_DESENVOLVIMENTO.md
+├─ Checklist inicial (antes de começar)
+├─ 6 tarefas comuns com solução completa
+├─ Debugging avançado
+├─ Testes
+├─ Estruturas de dados
+├─ Performance e otimizações
+├─ Troubleshooting (tabela)
+├─ Segurança
+├─ Deploy
+└─ Code review checklist
+
+EXEMPLOS_PRATICOS.md
+├─ Caso 1: Sincronizar caixa completa
+├─ Caso 2: Elaborar peça via chat
+├─ Caso 3: Busca textual
+├─ Caso 4: Monitoramento de prazos
+├─ Caso 5: Customização defensoria
+└─ Caso 6: Estender com nova feature
+
+REFERENCIA_RAPIDA.md
+├─ Imports comuns (padrão)
+├─ 14 snippets prontos para copiar
+├─ Frontend snippets
+├─ Estruturas de dados (JSON)
+├─ Config .env completa
+├─ Testes rápidos
+├─ Debug avançado
+├─ Linha de comando
+├─ Estrutura de pastas
+├─ Workflow de desenvolvimento
+└─ Checklist antes de commitar
+
+================================================================================
+QUICK START (5 MINUTOS)
+================================================================================
+
+Se você está com PRESSA:
+
+1. Leia RESUMO_EXECUTOR.md (5 min)
+   └─ Sabe do que se trata agora
+
+2. Depois:
+   - Se quer entender profundo: ANALISE_ARQUITETURA.md
+   - Se quer fazer algo: GUIA_RAPIDO_DESENVOLVIMENTO.md
+   - Se precisa de snippet: REFERENCIA_RAPIDA.md
+   - Se quer ver funcionando: EXEMPLOS_PRATICOS.md
+
+================================================================================
+INFORMAÇÕES IMPORTANTES
+================================================================================
+
+VERSÃO DO PAINEL
+└─ 0.3.14
+
+PYTHON
+└─ 3.11+ (veja em pyproject.toml)
+
+MAIN TECH STACK
+├─ FastAPI + Uvicorn (backend)
+├─ Jinja2 + DaisyUI + Alpine.js (frontend)
+├─ Playwright + Tesseract (ingestão)
+└─ Claude Code CLI (elaboração)
+
+ENTRADA PRINCIPAL
+└─ app.py (inicia servidor em http://localhost:8001)
+
+CONFIGURAÇÃO
+└─ .env (preencha com suas credenciais)
+
+DADOS
+└─ ~/OFICIO_GERAL/PAJs/ (local em seu computador)
+
+LOGS
+└─ logs/app.log (erros e eventos)
+
+================================================================================
+DOCUMENTAÇÃO ANTERIOR
+================================================================================
+
+Você também tem o README.md original do projeto:
+└─ PAINEL SISDPU/README.md
+   └─ Instruções de instalação e uso básico
+
+Use README.md para SETUP, use estes novos docs para DESENVOLVIMENTO.
+
+================================================================================
+RESUMO FINAL
+================================================================================
+
+Você recebeu:
+✓ 5 documentos complementares (todos em Markdown)
+✓ ~70 minutos de documentação estruturada
+✓ Cobertura completa: arquitetura, desenvolvimento, exemplos, referência
+✓ Padrões, conventions, troubleshooting, segurança
+
+Próximo passo:
+1. Abra INDICE_DOCUMENTACAO.md
+2. Escolha seu percurso de leitura
+3. Comece!
+
+================================================================================
+CONTATO COM DOCUMENTAÇÃO
+================================================================================
+
+Todos os docs estão nesta pasta:
+/c/Claude/DPU/PAINEL SISDPU/
+
+Abra em seu editor favorito (VS Code, Notepad++, etc).
+Todos são Markdown (.md) - renderizam bem em qualquer leitor.
+
+================================================================================
+
+BEM-VINDO! VOCÊ AGORA TEM TUDO PARA SE TORNAR ESPECIALISTA NO PROJETO.
+
+COMECE PELO: INDICE_DOCUMENTACAO.md
+
+================================================================================

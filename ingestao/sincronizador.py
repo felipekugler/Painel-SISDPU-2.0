@@ -125,6 +125,12 @@ def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
         sufixo = f" ({info_extra})" if info_extra else ""
         linhas.append(f"PROCESSO JUDICIAL VINCULADO: {processo_judicial}{sufixo}")
 
+    narrativa = (det.get("narrativa") or "").strip()
+    if narrativa:
+        linhas.append("")
+        linhas.append("NARRATIVA:")
+        linhas.append(narrativa)
+
     linhas.append("")
     linhas.append("MOVIMENTAÇÕES RELEVANTES:")
 

@@ -534,6 +534,59 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
             r.observacoes_processo = dadosProcesso.observacoes_processo;
             r.validacao_processo = dadosProcesso.validacao;
 
+            // Extração da Narrativa
+            const extrairNarrativa = () => {
+              let narrativa = null;
+
+              // Buscar tabelas na página
+              const tabelas = document.querySelectorAll('table.epaj_sistema_formulario_tabela');
+
+              for (const tabela of tabelas) {
+                // Buscar header com "Narrativa"
+                const headers = tabela.querySelectorAll('th.epaj_sistema_formulario_tabela_th_titulo');
+                let temNarrativa = false;
+
+                for (const th of headers) {
+                  if (th.textContent.includes('Narrativa')) {
+                    temNarrativa = true;
+                    break;
+                  }
+                }
+
+                if (temNarrativa) {
+                  // Encontrou a tabela de Narrativa
+                  // Procurar o conteúdo após "Editar Narrativa"
+                  const linhas = tabela.querySelectorAll('tbody tr');
+
+                  for (let i = 0; i < linhas.length; i++) {
+                    const linha = linhas[i];
+                    const textoLinha = linha.textContent;
+
+                    // Procurar por "Editar Narrativa"
+                    if (textoLinha.includes('Editar Narrativa')) {
+                      // A narrativa está na próxima linha ou na célula seguinte
+                      const proxLinha = linhas[i + 1];
+                      if (proxLinha) {
+                        narrativa = proxLinha.textContent.trim();
+                        break;
+                      }
+                    } else if (i > 0 && textoLinha && !textoLinha.includes('Editar')) {
+                      // Se encontrou texto após "Editar Narrativa", é a narrativa
+                      narrativa = textoLinha.trim();
+                      break;
+                    }
+                  }
+
+                  if (narrativa) break;
+                }
+              }
+
+              return narrativa;
+            };
+
+            const narrativa = extrairNarrativa();
+            if (narrativa) r.narrativa = narrativa;
+
             return r;
         }
         """
