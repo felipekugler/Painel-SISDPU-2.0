@@ -553,13 +553,13 @@
             <h3 class="text-lg font-semibold">Movimentações Completas</h3>
 
             <!-- Filtros -->
-            <div class="space-y-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 <!-- Filtro Fases -->
                 <div class="form-control">
-                    <label class="label">
-                        <span class="label-text text-sm font-medium">Filtrar por Fase</span>
+                    <label class="label py-1">
+                        <span class="label-text text-xs font-medium">Filtrar por Fase</span>
                     </label>
-                    <select class="select select-bordered select-sm" x-model="filtroFases">
+                    <select class="select select-bordered select-xs" x-model="filtroFases">
                         <option value="">Todas as fases</option>
                         <template x-for="fase in fases_unicas" :key="fase">
                             <option :value="fase" x-text="fase"></option>
@@ -569,17 +569,17 @@
 
                 <!-- Filtro Tipo de Usuário (Checkboxes) -->
                 <div class="form-control">
-                    <label class="label">
-                        <span class="label-text text-sm font-medium">Filtrar por Tipo de Usuário</span>
+                    <label class="label py-1">
+                        <span class="label-text text-xs font-medium">Filtrar por Tipo de Usuário</span>
                     </label>
-                    <div class="space-y-2">
-                        <label class="flex items-center gap-2 cursor-pointer">
-                            <input type="checkbox" class="checkbox checkbox-sm" x-model="filtroUsuarioServidor">
-                            <span class="text-sm">Servidor (servidor, terceirizado, estagiário)</span>
+                    <div class="flex gap-4">
+                        <label class="flex items-center gap-1 cursor-pointer">
+                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioServidor">
+                            <span class="text-xs">Servidor</span>
                         </label>
-                        <label class="flex items-center gap-2 cursor-pointer">
-                            <input type="checkbox" class="checkbox checkbox-sm" x-model="filtroUsuarioDefensor">
-                            <span class="text-sm">Defensor</span>
+                        <label class="flex items-center gap-1 cursor-pointer">
+                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioDefensor">
+                            <span class="text-xs">Defensor</span>
                         </label>
                     </div>
                 </div>
@@ -594,13 +594,13 @@
                         <th style="cursor: pointer;" @click="ordenarPor('seq')" class="hover:bg-base-400">
                             Seq <span x-show="colunhaOrdenacao === 'seq'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
                         </th>
-                        <th style="cursor: pointer;" @click="ordenarPor('anexo')" class="hover:bg-base-400">
+                        <th style="cursor: pointer; display: none;" @click="ordenarPor('anexo')" class="hover:bg-base-400">
                             Anexo <span x-show="colunhaOrdenacao === 'anexo'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
                         </th>
                         <th style="cursor: pointer;" @click="ordenarPor('data')" class="hover:bg-base-400">
                             Data/Hora <span x-show="colunhaOrdenacao === 'data'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
                         </th>
-                        <th style="cursor: pointer;" @click="ordenarPor('movimentacao')" class="hover:bg-base-400">
+                        <th style="cursor: pointer; display: none;" @click="ordenarPor('movimentacao')" class="hover:bg-base-400">
                             Movimentação <span x-show="colunhaOrdenacao === 'movimentacao'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
                         </th>
                         <th style="cursor: pointer;" @click="ordenarPor('fases')" class="hover:bg-base-400">
@@ -612,7 +612,7 @@
                         <th style="cursor: pointer;" @click="ordenarPor('usuario')" class="hover:bg-base-400">
                             Usuário <span x-show="colunhaOrdenacao === 'usuario'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
                         </th>
-                        <th style="cursor: pointer;" @click="ordenarPor('links_decisao')" class="hover:bg-base-400">
+                        <th style="cursor: pointer; display: none;" @click="ordenarPor('links_decisao')" class="hover:bg-base-400">
                             Links <span x-show="colunhaOrdenacao === 'links_decisao'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
                         </th>
                     </tr>
@@ -621,13 +621,13 @@
                     <template x-for="mov in movimentacoesFiltradas" :key="mov.seq">
                         <tr :class="['mov-item', mov.seq > maxSeqAnterior && 'mov-nova']" :data-mov-seq="mov.seq">
                             <td class="font-semibold" x-text="mov.seq || '?'"></td>
-                            <td x-text="mov.anexo || '-'"></td>
+                            <td style="display: none;" x-text="mov.anexo || '-'"></td>
                             <td class="text-xs" x-text="mov.data_original || mov.data || '?'"></td>
-                            <td class="text-sm font-medium" x-text="mov.movimentacao || '-'"></td>
+                            <td style="display: none;" class="text-sm font-medium" x-text="mov.movimentacao || '-'"></td>
                             <td class="text-sm" x-text="(mov.fases || '-').replace('°', '')"></td>
                             <td class="text-sm whitespace-normal break-words" x-text="mov.descricao || '-'"></td>
                             <td class="text-sm" x-text="mov.usuario || '-'"></td>
-                            <td>
+                            <td style="display: none;">
                                 <template x-if="mov.links_decisao && mov.links_decisao.length > 0">
                                     <a :href="mov.links_decisao[0]" target="_blank" class="link link-primary text-xs">
                                         <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4m-4-4l8-8m0 0H8m8 0v8"></path></svg>
