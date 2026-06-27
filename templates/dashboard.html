@@ -576,7 +576,7 @@
               <span class="inline-flex items-center badge badge-sm font-medium border"
                     :class="corPretensao(paj.classificacao)"
                     :title="paj.classificacao"
-                    x-text="paj.classificacao || '—'"></span>
+                    x-text="extrairPretensao(paj.classificacao) || '—'"></span>
             </div>
 
             <!-- Data -->
@@ -972,6 +972,12 @@ function dashboardApp() {
             o = o.replace(/^\s*[AE]\.\s+/i, '');
             o = o.replace(/\b0(\d+)º/, '$1º');
             return o.trim();
+        },
+
+        extrairPretensao(classificacao) {
+            if (!classificacao) return '';
+            const parte = String(classificacao).split('>>');
+            return parte.length > 1 ? parte[1].trim() : parte[0].trim();
         },
 
         corPretensao(pretensao) {
