@@ -457,8 +457,9 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
             const movRows = document.querySelectorAll('table tbody tr');
             for (const tr of movRows) {
                 const cells = tr.querySelectorAll('td');
-                if (cells.length >= 5) {
+                if (cells.length >= 8) {
                     const seq = (cells[0]?.textContent || '').trim();
+                    const anexo = (cells[1]?.textContent || '').trim();
                     const dataHora = (cells[2]?.textContent || '').trim();
                     const movimentacao = (cells[3]?.textContent || '').trim();
                     const fases = (cells[4]?.textContent || '').trim();
@@ -481,6 +482,7 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
                         );
                         movs.push({
                             seq: seq,
+                            anexo: anexo,
                             data: dataHora,
                             movimentacao: movimentacao,
                             fases: fases,
@@ -1232,8 +1234,9 @@ async def buscar_paj_global(
             const movRows = document.querySelectorAll('table tbody tr');
             for (const tr of movRows) {
                 const cells = tr.querySelectorAll('td');
-                if (cells.length >= 5) {
+                if (cells.length >= 8) {
                     const seq = (cells[0]?.textContent || '').trim();
+                    const anexo = (cells[1]?.textContent || '').trim();
                     const dataHora = (cells[2]?.textContent || '').trim();
                     const fases = (cells[3]?.textContent || '').trim();
                     const movimentacao = (cells[4]?.textContent || '').trim();
@@ -1244,6 +1247,7 @@ async def buscar_paj_global(
                         && (textoCompleto.trim() || fases)) {
                         movs.push({
                             seq: seq,
+                            anexo: anexo,
                             data: dataHora,
                             movimentacao: movimentacao,
                             fases: fases,
