@@ -573,7 +573,10 @@
 
             <!-- Pretensão -->
             <div class="w-[240px] shrink min-w-0">
-              <div class="text-[12px] text-base-content/70 truncate-1" :title="paj.classificacao" x-text="paj.classificacao || '—'"></div>
+              <span class="inline-flex items-center badge badge-sm font-medium border"
+                    :class="corPretensao(paj.classificacao)"
+                    :title="paj.classificacao"
+                    x-text="paj.classificacao || '—'"></span>
             </div>
 
             <!-- Data -->
@@ -969,6 +972,43 @@ function dashboardApp() {
             o = o.replace(/^\s*[AE]\.\s+/i, '');
             o = o.replace(/\b0(\d+)º/, '$1º');
             return o.trim();
+        },
+
+        corPretensao(pretensao) {
+            if (!pretensao) return 'bg-base-content/10 text-base-content/60 border-base-content/15';
+            const p = String(pretensao).toUpperCase().trim();
+
+            // BENEFÍCIO POR INCAPACIDADE → Vermelho
+            if (['AUXÍLIO-DOENÇA', 'APOSENTADORIA POR INVALIDEZ', 'AUXÍLIO-ACIDENTE', 'REABILITAÇÃO PROFISSIONAL'].some(x => p.includes(x))) {
+                return 'bg-error/15 text-error border-error/30';
+            }
+
+            // PENSÃO E RECLUSÃO → Roxo
+            if (['PENSÃO POR MORTE', 'AUXÍLIO-RECLUSÃO'].some(x => p.includes(x))) {
+                return 'bg-purple-100/30 text-purple-600 border-purple-300/30';
+            }
+
+            // OUTROS → Cinza
+            if (['BENEFICIOS SOCIAIS', 'RESTITUIÇÃO', 'COBRANÇA'].some(x => p.includes(x))) {
+                return 'bg-base-content/10 text-base-content/60 border-base-content/15';
+            }
+
+            // APOSENTADORIAS → Azul
+            if (['APOSENTADORIA'].some(x => p.includes(x)) && !p.includes('INVALIDEZ')) {
+                return 'bg-info/15 text-info border-info/30';
+            }
+
+            // BENEFÍCIOS ASSISTENCIAIS → Verde
+            if (['BPC', 'AUXÍLIO INCLUSÃO', 'BENEFÍCIO ASSISTENCIAL'].some(x => p.includes(x))) {
+                return 'bg-success/15 text-success border-success/30';
+            }
+
+            // SALÁRIO-MATERNIDADE → Laranja
+            if (['SALÁRIO-MATERNIDADE', 'MATERNIDADE'].some(x => p.includes(x))) {
+                return 'bg-warning/15 text-warning border-warning/30';
+            }
+
+            return 'bg-base-content/10 text-base-content/60 border-base-content/15';
         },
 
         aplicarFiltros() {
