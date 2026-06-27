@@ -382,6 +382,9 @@
         <a role="tab" class="tab" :class="tab === 'movs' && 'tab-active'" @click="tab = 'movs'">
             Movimentações <span class="badge badge-ghost badge-xs ml-1">{{ dados.movimentacoes|length }}</span>
         </a>
+        <a role="tab" class="tab" :class="tab === 'mov2' && 'tab-active'" @click="tab = 'mov2'">
+            MOV2 <span class="badge badge-ghost badge-xs ml-1">{{ dados.movimentacoes|length }}</span>
+        </a>
         <a role="tab" class="tab" :class="tab === 'anexos' && 'tab-active'" @click="tab = 'anexos'"
            title="Documentos anexados ao PAJ no SISDPU (PDFs de petições, laudos, despachos, etc.)">
             Anexos SISDPU <span class="badge badge-primary badge-xs ml-1">{{ dados.anexos_sisdpu|length }}</span>
@@ -538,6 +541,106 @@
         {% else %}
         <p class="text-base-content/50">Nenhuma movimentação registrada.</p>
         {% endif %}
+    </div>
+
+    <!-- Tab: MOV2 - Tabela completa de movimentações com sorting e filtros -->
+    <div x-show="tab === 'mov2'" class="bg-base-200 rounded-lg border border-base-300 p-6"
+         x-data="tabelaMov2({{ dados.movimentacoes | tojson }})">
+        <div class="mb-4 space-y-4">
+            <h3 class="text-lg font-semibold">Movimentações Completas</h3>
+
+            <!-- Filtros -->
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                <!-- Filtro Fases -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text text-sm">Filtrar por Fase</span>
+                    </label>
+                    <select class="select select-bordered select-sm" x-model="filtroFases">
+                        <option value="">Todas as fases</option>
+                        <template x-for="fase in fases_unicas" :key="fase">
+                            <option :value="fase" x-text="fase"></option>
+                        </template>
+                    </select>
+                </div>
+
+                <!-- Filtro Usuário -->
+                <div class="form-control">
+                    <label class="label">
+                        <span class="label-text text-sm">Filtrar por Usuário</span>
+                    </label>
+                    <select class="select select-bordered select-sm" x-model="filtroUsuario">
+                        <option value="">Todos os usuários</option>
+                        <template x-for="usuario in usuarios_unicos" :key="usuario">
+                            <option :value="usuario" x-text="usuario"></option>
+                        </template>
+                    </select>
+                </div>
+            </div>
+        </div>
+
+        <!-- Tabela com scroll horizontal em mobile -->
+        <div class="overflow-x-auto">
+            <table class="table table-sm table-zebra">
+                <thead class="bg-base-300">
+                    <tr>
+                        <th style="cursor: pointer;" @click="ordenarPor('seq')" class="hover:bg-base-400">
+                            Seq <span x-show="colunhaOrdenacao === 'seq'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th style="cursor: pointer;" @click="ordenarPor('anexo')" class="hover:bg-base-400">
+                            Anexo <span x-show="colunhaOrdenacao === 'anexo'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th style="cursor: pointer;" @click="ordenarPor('data')" class="hover:bg-base-400">
+                            Data/Hora <span x-show="colunhaOrdenacao === 'data'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th style="cursor: pointer;" @click="ordenarPor('movimentacao')" class="hover:bg-base-400">
+                            Movimentação <span x-show="colunhaOrdenacao === 'movimentacao'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th style="cursor: pointer;" @click="ordenarPor('fases')" class="hover:bg-base-400">
+                            Fases <span x-show="colunhaOrdenacao === 'fases'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th style="cursor: pointer;" @click="ordenarPor('descricao')" class="hover:bg-base-400">
+                            Descrição <span x-show="colunhaOrdenacao === 'descricao'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th style="cursor: pointer;" @click="ordenarPor('usuario')" class="hover:bg-base-400">
+                            Usuário <span x-show="colunhaOrdenacao === 'usuario'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                        <th style="cursor: pointer;" @click="ordenarPor('links_decisao')" class="hover:bg-base-400">
+                            Links <span x-show="colunhaOrdenacao === 'links_decisao'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
+                        </th>
+                    </tr>
+                </thead>
+                <tbody>
+                    <template x-for="mov in movimentacoesFiltradas" :key="mov.seq">
+                        <tr :class="['mov-item', mov.seq > maxSeqAnterior && 'mov-nova']" :data-mov-seq="mov.seq">
+                            <td class="font-semibold" x-text="mov.seq || '?'"></td>
+                            <td x-text="mov.anexo || '-'"></td>
+                            <td class="text-xs" x-text="mov.data_original || mov.data || '?'"></td>
+                            <td class="text-sm font-medium" x-text="mov.movimentacao || '-'"></td>
+                            <td class="text-sm" x-text="(mov.fases || '-').replace('°', '')"></td>
+                            <td class="text-sm max-w-xs truncate" :title="mov.descricao" x-text="mov.descricao || '-'"></td>
+                            <td class="text-sm" x-text="mov.usuario || '-'"></td>
+                            <td>
+                                <template x-if="mov.links_decisao && mov.links_decisao.length > 0">
+                                    <a :href="mov.links_decisao[0]" target="_blank" class="link link-primary text-xs">
+                                        <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4m-4-4l8-8m0 0H8m8 0v8"></path></svg>
+                                        <span x-text="mov.links_decisao.length"></span>
+                                    </a>
+                                </template>
+                                <span x-show="!mov.links_decisao || mov.links_decisao.length === 0" class="text-base-content/40">-</span>
+                            </td>
+                        </tr>
+                    </template>
+                </tbody>
+            </table>
+            <p x-show="movimentacoesFiltradas.length === 0" class="text-center text-base-content/50 py-4">
+                Nenhuma movimentação encontrada com os filtros selecionados.
+            </p>
+        </div>
+
+        <div class="mt-4 text-sm text-base-content/60">
+            Exibindo <span x-text="movimentacoesFiltradas.length"></span> de <span x-text="movimentacoes.length"></span> movimentações
+        </div>
     </div>
 
     <!-- Tab: Anexos SISDPU (arquivos baixados pelo sync do botao "Arquivos" do PAJ) -->
@@ -909,6 +1012,100 @@ function copiarTxt() {
     navigator.clipboard.writeText(el.textContent).then(() => {
         showToast('Copiado', 'success');
     });
+}
+
+// =====================================================================
+// ABA MOV2: Tabela interativa com sorting e filtros
+// =====================================================================
+function tabelaMov2(movimentacoes_json) {
+    return {
+        movimentacoes: movimentacoes_json || [],
+        filtroFases: '',
+        filtroUsuario: '',
+        colunhaOrdenacao: 'seq',
+        direcaoOrdenacao: 'desc',
+        maxSeqAnterior: 0,
+
+        init() {
+            // Captura max_seq anterior para highlight
+            const snap = window._prevPajSnapshot;
+            this.maxSeqAnterior = snap ? (snap.max_seq || 0) : -1;
+        },
+
+        get fases_unicas() {
+            const fases = new Set();
+            this.movimentacoes.forEach(mov => {
+                if (mov.fases && mov.fases.trim()) {
+                    fases.add(mov.fases.trim());
+                }
+            });
+            return Array.from(fases).sort();
+        },
+
+        get usuarios_unicos() {
+            const usuarios = new Set();
+            this.movimentacoes.forEach(mov => {
+                if (mov.usuario && mov.usuario.trim()) {
+                    usuarios.add(mov.usuario.trim());
+                }
+            });
+            return Array.from(usuarios).sort();
+        },
+
+        get movimentacoesFiltradas() {
+            let resultado = this.movimentacoes;
+
+            // Aplica filtro Fases
+            if (this.filtroFases) {
+                resultado = resultado.filter(mov =>
+                    mov.fases && mov.fases.includes(this.filtroFases)
+                );
+            }
+
+            // Aplica filtro Usuário
+            if (this.filtroUsuario) {
+                resultado = resultado.filter(mov =>
+                    mov.usuario === this.filtroUsuario
+                );
+            }
+
+            // Ordena
+            resultado = [...resultado].sort((a, b) => {
+                let valA = a[this.colunhaOrdenacao] || '';
+                let valB = b[this.colunhaOrdenacao] || '';
+
+                // Para números
+                if (this.colunhaOrdenacao === 'seq') {
+                    valA = parseInt(valA) || 0;
+                    valB = parseInt(valB) || 0;
+                }
+
+                // Para datas (YYYY-MM-DD)
+                if (this.colunhaOrdenacao === 'data') {
+                    valA = new Date(valA).getTime() || 0;
+                    valB = new Date(valB).getTime() || 0;
+                }
+
+                // Comparação
+                if (valA === valB) return 0;
+                const cmp = valA < valB ? -1 : 1;
+                return this.direcaoOrdenacao === 'asc' ? cmp : -cmp;
+            });
+
+            return resultado;
+        },
+
+        ordenarPor(coluna) {
+            if (this.colunhaOrdenacao === coluna) {
+                // Toggle direção se clicar na mesma coluna
+                this.direcaoOrdenacao = this.direcaoOrdenacao === 'asc' ? 'desc' : 'asc';
+            } else {
+                // Nova coluna: começa com asc
+                this.colunhaOrdenacao = coluna;
+                this.direcaoOrdenacao = 'asc';
+            }
+        }
+    }
 }
 
 // Aplica destaque "corte de visita": entre as movs com seq > snapshot.max_seq
