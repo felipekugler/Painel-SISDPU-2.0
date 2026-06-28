@@ -488,8 +488,6 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
                             if (toggler && toggler.getAttribute('aria-expanded') !== 'true') {
                                 // Se não expandido, clica para expandir
                                 toggler.click();
-                                // Aguarda a expansão da linha
-                                await new Promise(r => setTimeout(r, 500));
                             }
                             // Procura pela tr expandida imediatamente após
                             let nextRow = tr.nextElementSibling;
@@ -1272,8 +1270,6 @@ async def buscar_paj_global(
                             if (toggler && toggler.getAttribute('aria-expanded') !== 'true') {
                                 // Se não expandido, clica para expandir
                                 toggler.click();
-                                // Aguarda a expansão da linha
-                                await new Promise(r => setTimeout(r, 500));
                             }
                             // Procura pela tr expandida imediatamente após
                             let nextRow = tr.nextElementSibling;
