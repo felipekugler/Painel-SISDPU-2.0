@@ -480,6 +480,24 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
                             u.includes('decisao') ||
                             u.endsWith('.pdf')
                         );
+
+                        // Extrai descricao_retorno se houver "Atendimento de retorno"
+                        let descricao_retorno = '';
+                        if (fases.includes('Atendimento de retorno')) {
+                            const toggler = tr.querySelector('.ui-row-toggler');
+                            if (toggler && toggler.getAttribute('aria-expanded') !== 'true') {
+                                // Se não expandido, clica para expandir
+                                toggler.click();
+                                // Aguarda a expansão da linha
+                                await new Promise(r => setTimeout(r, 500));
+                            }
+                            // Procura pela tr expandida imediatamente após
+                            let nextRow = tr.nextElementSibling;
+                            if (nextRow && nextRow.classList.contains('ui-expanded-row-content')) {
+                                descricao_retorno = nextRow.innerHTML;
+                            }
+                        }
+
                         movs.push({
                             seq: seq,
                             anexo: anexo,
@@ -488,7 +506,8 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
                             fases: fases,
                             descricao: textoCompleto,
                             links_decisao: links_decisao,
-                            usuario: usuario
+                            usuario: usuario,
+                            descricao_retorno: descricao_retorno
                         });
                     }
                 }
@@ -1245,6 +1264,24 @@ async def buscar_paj_global(
 
                     if (seq && /^\\d{1,4}$/.test(seq)
                         && (textoCompleto.trim() || fases)) {
+
+                        // Extrai descricao_retorno se houver "Atendimento de retorno"
+                        let descricao_retorno = '';
+                        if (fases.includes('Atendimento de retorno')) {
+                            const toggler = tr.querySelector('.ui-row-toggler');
+                            if (toggler && toggler.getAttribute('aria-expanded') !== 'true') {
+                                // Se não expandido, clica para expandir
+                                toggler.click();
+                                // Aguarda a expansão da linha
+                                await new Promise(r => setTimeout(r, 500));
+                            }
+                            // Procura pela tr expandida imediatamente após
+                            let nextRow = tr.nextElementSibling;
+                            if (nextRow && nextRow.classList.contains('ui-expanded-row-content')) {
+                                descricao_retorno = nextRow.innerHTML;
+                            }
+                        }
+
                         movs.push({
                             seq: seq,
                             anexo: anexo,
@@ -1253,7 +1290,8 @@ async def buscar_paj_global(
                             fases: fases,
                             descricao: textoCompleto,
                             links_decisao: [],
-                            usuario: usuario
+                            usuario: usuario,
+                            descricao_retorno: descricao_retorno
                         });
                     }
                 }

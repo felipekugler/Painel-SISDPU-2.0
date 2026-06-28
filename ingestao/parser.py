@@ -160,6 +160,7 @@ def parsear_movimentacoes_estruturadas(movs_brutos: list[dict]) -> list[dict]:
                 "usuario": mov_bruto.get("usuario", ""),
                 "links_decisao": mov_bruto.get("links_decisao", []),
                 "anexo": mov_bruto.get("anexo", ""),
+                "descricao_retorno": mov_bruto.get("descricao_retorno", ""),
             }
             movs.append(mov)
         except Exception:
