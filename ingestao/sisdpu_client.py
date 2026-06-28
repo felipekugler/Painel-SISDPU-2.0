@@ -493,7 +493,7 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
                     }
                 }
             }
-            if (movs.length > 0) r.movimentacoes = movs.slice(0, 50);
+            if (movs.length > 0) r.movimentacoes = movs.slice(0, 500);
 
             // AGORA fazer a extração de Processo Judicial com validação cruzada
             // (após movimentações já estarem carregadas)
@@ -1258,7 +1258,7 @@ async def buscar_paj_global(
                     }
                 }
             }
-            if (movs.length > 0) r.movimentacoes = movs.slice(0, 50);
+            if (movs.length > 0) r.movimentacoes = movs.slice(0, 500);
 
             // ---------- Filtro final: descarta qualquer campo que tenha vazado lixo ----------
             for (const k of ['assistido', 'pretensao', 'oficio', 'juizo', 'foro_detalhado', 'decurso', 'data_abertura']) {

@@ -572,7 +572,7 @@
                     <label class="label py-1">
                         <span class="label-text text-xs font-medium">Filtrar por Tipo de Usuário</span>
                     </label>
-                    <div class="flex gap-4">
+                    <div class="flex flex-wrap gap-3">
                         <label class="flex items-center gap-1 cursor-pointer">
                             <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioTodos" @change="marcarTodos()">
                             <span class="text-xs font-medium">Todos</span>
@@ -584,6 +584,10 @@
                         <label class="flex items-center gap-1 cursor-pointer">
                             <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioDefensor" @change="atualizarTodos()">
                             <span class="text-xs">Defensor</span>
+                        </label>
+                        <label class="flex items-center gap-1 cursor-pointer">
+                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioSistema">
+                            <span class="text-xs">Sistema</span>
                         </label>
                     </div>
                 </div>
@@ -1034,6 +1038,7 @@ function tabelaMov2() {
         filtroUsuarioTodos: true,     // Por padrão selecionado
         filtroUsuarioServidor: true,  // Por padrão selecionado
         filtroUsuarioDefensor: true,  // Por padrão selecionado
+        filtroUsuarioSistema: false,  // Por padrão NÃO selecionado
         colunhaOrdenacao: 'seq',
         direcaoOrdenacao: 'desc',
         maxSeqAnterior: 0,
@@ -1070,20 +1075,23 @@ function tabelaMov2() {
             }
 
             // Aplica filtro Tipo de Usuário (com checkboxes)
-            // Se ambos estão desmarcados, mostra nenhum. Se qualquer um está marcado, filtra.
-            if (this.filtroUsuarioServidor || this.filtroUsuarioDefensor) {
+            // Se nenhum está selecionado, mostra nenhum. Se qualquer um está marcado, filtra.
+            if (this.filtroUsuarioServidor || this.filtroUsuarioDefensor || this.filtroUsuarioSistema) {
                 resultado = resultado.filter(mov => {
                     if (!mov.usuario) return false;
 
                     const regexServidor = /servidor|terceirizado|estagiário|SERVIDOR|TERCEIRIZADO|ESTAGIÁRIO/i;
                     const regexDefensor = /defensor|Defensor/i;
+                    const regexSistema = /sisdpu|sistema|SISDPU|SISTEMA/i;
 
                     const isServidor = regexServidor.test(mov.usuario);
                     const isDefensor = regexDefensor.test(mov.usuario);
+                    const isSistema = regexSistema.test(mov.usuario);
 
                     // Retorna true se o tipo está selecionado
                     if (this.filtroUsuarioServidor && isServidor) return true;
                     if (this.filtroUsuarioDefensor && isDefensor) return true;
+                    if (this.filtroUsuarioSistema && isSistema) return true;
 
                     return false;
                 });
