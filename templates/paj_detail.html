@@ -598,7 +598,7 @@
                             <td class="text-xs" x-text="mov.data_original || mov.data || '?'"></td>
                             <td style="display: none;" class="text-sm font-medium" x-text="mov.movimentacao || '-'"></td>
                             <td class="text-sm" x-text="(mov.fases || '-').replace('°', '')"></td>
-                            <td class="text-sm whitespace-normal break-words" x-text="mov.descricao || '-'"></td>
+                            <td class="text-sm whitespace-normal break-words" x-text="(mov.fases && mov.fases.includes('Atendimento de retorno') && mov.descricao_retorno) ? mov.descricao_retorno : (mov.descricao || '-')"></td>
                             <td class="text-sm" x-text="mov.usuario || '-'"></td>
                             <td style="display: none;">
                                 <template x-if="mov.links_decisao && mov.links_decisao.length > 0">

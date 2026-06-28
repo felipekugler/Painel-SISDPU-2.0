@@ -481,20 +481,8 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
                             u.endsWith('.pdf')
                         );
 
-                        // Extrai descricao_retorno se houver "Atendimento de retorno"
+                        // descricao_retorno será extraído em segunda passagem (após cliques)
                         let descricao_retorno = '';
-                        if (fases.includes('Atendimento de retorno')) {
-                            const toggler = tr.querySelector('.ui-row-toggler');
-                            if (toggler && toggler.getAttribute('aria-expanded') !== 'true') {
-                                // Se não expandido, clica para expandir
-                                toggler.click();
-                            }
-                            // Procura pela tr expandida imediatamente após
-                            let nextRow = tr.nextElementSibling;
-                            if (nextRow && nextRow.classList.contains('ui-expanded-row-content')) {
-                                descricao_retorno = nextRow.innerHTML;
-                            }
-                        }
 
                         movs.push({
                             seq: seq,
@@ -626,6 +614,81 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
                 todas_urls.append(u)
     if todas_urls:
         dados["urls_decisoes"] = todas_urls
+
+    # ===== SEGUNDA PASSAGEM: Extrair descricao_retorno para "Atendimento de retorno" =====
+    movimentacoes = dados.get("movimentacoes", []) or []
+
+    # 1. Encontrar e clicar em TODOS os toggles de "Atendimento de retorno"
+    await page.evaluate("""
+        () => {
+            const allTrs = document.querySelectorAll('table tbody tr');
+            for (const tr of allTrs) {
+                const cells = tr.querySelectorAll('td');
+                const fases = (cells[4]?.textContent || '').trim();
+
+                if (fases.includes('Atendimento de retorno')) {
+                    const toggler = tr.querySelector('.ui-row-toggler');
+                    if (toggler && toggler.getAttribute('aria-expanded') !== 'true') {
+                        toggler.click();
+                    }
+                }
+            }
+        }
+    """)
+
+    # 2. Aguardar que as requisições AJAX completem
+    await _wait_pf_ajax(page, timeout=5000)
+
+    # 3. Extrair seq -> conteúdo direto em JavaScript
+    mapa_conteudos = await page.evaluate("""
+        () => {
+            const resultado = {};
+            const allTrs = document.querySelectorAll('table tbody tr');
+
+            for (let i = 0; i < allTrs.length; i++) {
+                const tr = allTrs[i];
+                const cells = tr.querySelectorAll('td');
+                const seq = (cells[0]?.textContent || '').trim();
+                const fases = (cells[4]?.textContent || '').trim();
+
+                // Se esta TR tem "Atendimento de retorno"
+                if (fases.includes('Atendimento de retorno')) {
+                    // Procurar pela próxima TR (pode haver várias)
+                    for (let j = i + 1; j < Math.min(i + 5, allTrs.length); j++) {
+                        const proximaTr = allTrs[j];
+
+                        // Se encontrou uma TR expandida
+                        if (proximaTr.classList.contains('ui-expanded-row-content')) {
+                            const td = proximaTr.querySelector('td');
+                            if (td) {
+                                resultado[seq] = td.textContent.trim();
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return resultado;
+        }
+    """)
+
+    # 4. Aplicar os conteúdos extraídos às movimentações
+    for mov in movimentacoes:
+        if "Atendimento de retorno" in mov.get("fases", ""):
+            seq = str(mov.get("seq", "")).strip()
+
+            # Debug: testar diferentes formatos de chave
+            encontrou = False
+            for chave_mapa in mapa_conteudos.keys():
+                if str(chave_mapa).strip() == seq:
+                    mov["descricao_retorno"] = mapa_conteudos[chave_mapa]
+                    encontrou = True
+                    break
+
+            # Fallback: tentar direto
+            if not encontrou and seq in mapa_conteudos:
+                mov["descricao_retorno"] = mapa_conteudos[seq]
 
     return dados
 
@@ -1255,28 +1318,16 @@ async def buscar_paj_global(
                     const seq = (cells[0]?.textContent || '').trim();
                     const anexo = (cells[1]?.textContent || '').trim();
                     const dataHora = (cells[2]?.textContent || '').trim();
-                    const fases = (cells[3]?.textContent || '').trim();
-                    const movimentacao = (cells[4]?.textContent || '').trim();
+                    const movimentacao = (cells[3]?.textContent || '').trim();
+                    const fases = (cells[4]?.textContent || '').trim();
                     const textoCompleto = cells[5]?.textContent || '';
                     const usuario = (cells[6]?.textContent || '').trim();
 
                     if (seq && /^\\d{1,4}$/.test(seq)
                         && (textoCompleto.trim() || fases)) {
 
-                        // Extrai descricao_retorno se houver "Atendimento de retorno"
+                        // descricao_retorno será extraído em segunda passagem (após cliques)
                         let descricao_retorno = '';
-                        if (fases.includes('Atendimento de retorno')) {
-                            const toggler = tr.querySelector('.ui-row-toggler');
-                            if (toggler && toggler.getAttribute('aria-expanded') !== 'true') {
-                                // Se não expandido, clica para expandir
-                                toggler.click();
-                            }
-                            // Procura pela tr expandida imediatamente após
-                            let nextRow = tr.nextElementSibling;
-                            if (nextRow && nextRow.classList.contains('ui-expanded-row-content')) {
-                                descricao_retorno = nextRow.innerHTML;
-                            }
-                        }
 
                         movs.push({
                             seq: seq,
@@ -1339,6 +1390,81 @@ async def buscar_paj_global(
     dados["paj_ano"] = ano
     dados["paj_unidade"] = unidade
     dados["url"] = page.url
+
+    # ===== SEGUNDA PASSAGEM: Extrair descricao_retorno para "Atendimento de retorno" =====
+    movimentacoes = dados.get("movimentacoes", []) or []
+
+    # 1. Encontrar e clicar em TODOS os toggles de "Atendimento de retorno"
+    await page.evaluate("""
+        () => {
+            const allTrs = document.querySelectorAll('table tbody tr');
+            for (const tr of allTrs) {
+                const cells = tr.querySelectorAll('td');
+                const fases = (cells[4]?.textContent || '').trim();
+
+                if (fases.includes('Atendimento de retorno')) {
+                    const toggler = tr.querySelector('.ui-row-toggler');
+                    if (toggler && toggler.getAttribute('aria-expanded') !== 'true') {
+                        toggler.click();
+                    }
+                }
+            }
+        }
+    """)
+
+    # 2. Aguardar que as requisições AJAX completem
+    await _wait_pf_ajax(page, timeout=5000)
+
+    # 3. Extrair seq -> conteúdo direto em JavaScript
+    mapa_conteudos = await page.evaluate("""
+        () => {
+            const resultado = {};
+            const allTrs = document.querySelectorAll('table tbody tr');
+
+            for (let i = 0; i < allTrs.length; i++) {
+                const tr = allTrs[i];
+                const cells = tr.querySelectorAll('td');
+                const seq = (cells[0]?.textContent || '').trim();
+                const fases = (cells[4]?.textContent || '').trim();
+
+                // Se esta TR tem "Atendimento de retorno"
+                if (fases.includes('Atendimento de retorno')) {
+                    // Procurar pela próxima TR (pode haver várias)
+                    for (let j = i + 1; j < Math.min(i + 5, allTrs.length); j++) {
+                        const proximaTr = allTrs[j];
+
+                        // Se encontrou uma TR expandida
+                        if (proximaTr.classList.contains('ui-expanded-row-content')) {
+                            const td = proximaTr.querySelector('td');
+                            if (td) {
+                                resultado[seq] = td.textContent.trim();
+                            }
+                            break;
+                        }
+                    }
+                }
+            }
+
+            return resultado;
+        }
+    """)
+
+    # 4. Aplicar os conteúdos extraídos às movimentações
+    for mov in movimentacoes:
+        if "Atendimento de retorno" in mov.get("fases", ""):
+            seq = str(mov.get("seq", "")).strip()
+
+            # Debug: testar diferentes formatos de chave
+            encontrou = False
+            for chave_mapa in mapa_conteudos.keys():
+                if str(chave_mapa).strip() == seq:
+                    mov["descricao_retorno"] = mapa_conteudos[chave_mapa]
+                    encontrou = True
+                    break
+
+            # Fallback: tentar direto
+            if not encontrou and seq in mapa_conteudos:
+                mov["descricao_retorno"] = mapa_conteudos[seq]
 
     # Dump tambem em caso de sucesso durante esta fase de afinacao — ajuda
     # diagnosticar campos vazios sem precisar retentar. Pode ser desligado

@@ -149,21 +149,25 @@ def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
     linhas.append("MOVIMENTAÇÕES:")
 
     movs = det.get("movimentacoes", []) or []
-    # ordenadas: a tela ja devolve mais recentes no topo
-    for m in movs:
+    # Ordenar em ordem crescente por seq
+    movs_ordenadas = sorted(movs, key=lambda x: int(str(x.get("seq", 0) or 0).strip()) if str(x.get("seq", 0) or 0).strip().isdigit() else 0)
+    for m in movs_ordenadas:
         seq = (str(m.get("seq", "") or "")).strip()
         data_orig = (m.get("data_original") or "").strip()
         fases = (m.get("fases") or "").strip()
-        desc = (m.get("descricao") or "").strip()
+        descricao = (m.get("descricao") or "").strip()
+        descricao_retorno = (m.get("descricao_retorno") or "").strip()
 
         # Formata cada movimentação com quebras de linha para legibilidade
         if seq:
             linhas.append("")
-            linhas.append(f"[{seq}] {data_orig}")
+            linhas.append(f"[Seq {seq}] {data_orig}")
             if fases:
                 linhas.append(f"Fase: {fases}")
-            if desc:
-                linhas.append(f"Descrição: {desc}")
+            # Se for "Atendimento de retorno" com conteúdo expandido, usa descricao_retorno
+            descricao_final = descricao_retorno if ("Atendimento de retorno" in fases and descricao_retorno) else descricao
+            if descricao_final:
+                linhas.append(f"Descrição: {descricao_final}")
 
     return "\n".join(linhas) + "\n"
 
