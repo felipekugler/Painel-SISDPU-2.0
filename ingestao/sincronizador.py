@@ -149,19 +149,17 @@ def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
     linhas.append("MOVIMENTAÇÕES RELEVANTES:")
 
     movs = det.get("movimentacoes", []) or []
-    # ordenadas: a tela ja devolve mais recentes no topo. O `seq` capturado da
-    # tabela do SIS-DPU e' persistido como prefixo "[seq=N]" para que o parser
-    # restaure a numeracao real (em vez de renumerar 1..N localmente, perdendo
-    # a correspondencia com o SIS — relevante quando sync baixa so' parte do
-    # historico).
+    # ordenadas: a tela ja devolve mais recentes no topo
     for m in movs:
         seq = (str(m.get("seq", "") or "")).strip()
-        data = (m.get("data") or "").split()[0] if m.get("data") else ""
-        tipo = (m.get("movimentacao") or "").strip()
+        data_orig = (m.get("data_original") or "").strip()
+        fases = (m.get("fases") or "").strip()
         desc = (m.get("descricao") or "").strip()
-        prefixo_seq = f"[seq={seq}] " if seq else ""
-        bloco = f"{prefixo_seq}[{data}] {tipo + ': ' if tipo else ''}{desc}".strip()
-        linhas.append(bloco)
+
+        # Formata cada movimentação com os campos claros
+        if seq:
+            bloco = f"Seq: {seq} | Data: {data_orig} | Fase: {fases} | Descrição: {desc}"
+            linhas.append(bloco)
 
     return "\n".join(linhas) + "\n"
 
