@@ -539,19 +539,19 @@
                     </label>
                     <div class="flex flex-wrap gap-3">
                         <label class="flex items-center gap-1 cursor-pointer">
-                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioTodos">
+                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioTodos" @change="selecionarTodos()">
                             <span class="text-xs font-medium">Todos</span>
                         </label>
                         <label class="flex items-center gap-1 cursor-pointer">
-                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioServidor">
+                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioServidor" @change="selecionarIndividual()">
                             <span class="text-xs">Servidor</span>
                         </label>
                         <label class="flex items-center gap-1 cursor-pointer">
-                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioDefensor">
+                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioDefensor" @change="selecionarIndividual()">
                             <span class="text-xs">Defensor</span>
                         </label>
                         <label class="flex items-center gap-1 cursor-pointer">
-                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioSistema">
+                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioSistema" @change="selecionarIndividual()">
                             <span class="text-xs">Sistema</span>
                         </label>
                     </div>
@@ -1001,8 +1001,8 @@ function tabelaMov2() {
     return {
         filtroFases: '',
         filtroUsuarioTodos: true,     // Por padrão selecionado
-        filtroUsuarioServidor: true,  // Por padrão selecionado
-        filtroUsuarioDefensor: true,  // Por padrão selecionado
+        filtroUsuarioServidor: false, // Por padrão NÃO selecionado
+        filtroUsuarioDefensor: false, // Por padrão NÃO selecionado
         filtroUsuarioSistema: false,  // Por padrão NÃO selecionado
         colunhaOrdenacao: 'seq',
         direcaoOrdenacao: 'desc',
@@ -1097,6 +1097,25 @@ function tabelaMov2() {
                 // Nova coluna: começa com asc
                 this.colunhaOrdenacao = coluna;
                 this.direcaoOrdenacao = 'asc';
+            }
+        },
+
+        selecionarTodos() {
+            // Quando "Todos" é marcado, desmarcar os outros
+            if (this.filtroUsuarioTodos) {
+                this.filtroUsuarioServidor = false;
+                this.filtroUsuarioDefensor = false;
+                this.filtroUsuarioSistema = false;
+            }
+        },
+
+        selecionarIndividual() {
+            // Quando qualquer um dos três é marcado, desmarcar "Todos"
+            if (this.filtroUsuarioServidor || this.filtroUsuarioDefensor || this.filtroUsuarioSistema) {
+                this.filtroUsuarioTodos = false;
+            } else {
+                // Se todos os três estão desmarcados, reativar "Todos"
+                this.filtroUsuarioTodos = true;
             }
         }
     }
