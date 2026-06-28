@@ -146,7 +146,7 @@ def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
         linhas.append(narrativa_texto)
 
     linhas.append("")
-    linhas.append("MOVIMENTAÇÕES RELEVANTES:")
+    linhas.append("MOVIMENTAÇÕES:")
 
     movs = det.get("movimentacoes", []) or []
     # ordenadas: a tela ja devolve mais recentes no topo
@@ -156,10 +156,14 @@ def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
         fases = (m.get("fases") or "").strip()
         desc = (m.get("descricao") or "").strip()
 
-        # Formata cada movimentação com os campos claros
+        # Formata cada movimentação com quebras de linha para legibilidade
         if seq:
-            bloco = f"Seq: {seq} | Data: {data_orig} | Fase: {fases} | Descrição: {desc}"
-            linhas.append(bloco)
+            linhas.append("")
+            linhas.append(f"[{seq}] {data_orig}")
+            if fases:
+                linhas.append(f"Fase: {fases}")
+            if desc:
+                linhas.append(f"Descrição: {desc}")
 
     return "\n".join(linhas) + "\n"
 
