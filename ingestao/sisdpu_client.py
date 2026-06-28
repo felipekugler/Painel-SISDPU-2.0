@@ -486,7 +486,7 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
                             data: dataHora,
                             movimentacao: movimentacao,
                             fases: fases,
-                            descricao: textoCompleto.substring(0, 3000),
+                            descricao: textoCompleto,
                             links_decisao: links_decisao,
                             usuario: usuario
                         });
@@ -1251,7 +1251,7 @@ async def buscar_paj_global(
                             data: dataHora,
                             movimentacao: movimentacao,
                             fases: fases,
-                            descricao: textoCompleto.substring(0, 3000),
+                            descricao: textoCompleto,
                             links_decisao: [],
                             usuario: usuario
                         });
