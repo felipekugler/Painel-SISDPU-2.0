@@ -154,7 +154,7 @@ def parsear_movimentacoes_estruturadas(movs_brutos: list[dict]) -> list[dict]:
                 "seq": seq,
                 "data": data_iso,
                 "data_original": data_orig,
-                "descricao": (mov_bruto.get("descricao") or "")[:3000],
+                "descricao": mov_bruto.get("descricao") or "",
                 "movimentacao": mov_bruto.get("movimentacao", ""),
                 "fases": mov_bruto.get("fases", ""),
                 "usuario": mov_bruto.get("usuario", ""),
