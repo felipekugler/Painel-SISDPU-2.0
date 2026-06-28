@@ -1768,6 +1768,7 @@ async def listar_arquivos_paj(debug: bool = False) -> dict:
                     // Extrai nome do arquivo DIRETAMENTE do link "Visualizar" (fonte de verdade)
                     const linkVis = tr.querySelector('a, button, span[role="button"]');
                     let nome_arquivo = '';
+                    let href = '';
                     if (linkVis) {
                         // Tenta extrair em ordem de confiabilidade:
                         // 1. Atributo download (HTML5)
@@ -1775,7 +1776,13 @@ async def listar_arquivos_paj(debug: bool = False) -> dict:
                         // 3. Href com padrão comuns (ex: /download/123)
                         const downloadAttr = linkVis.getAttribute('download');
                         const dataNome = linkVis.getAttribute('data-filename');
-                        const href = linkVis.getAttribute('href') || '';
+                        let hrefAttr = linkVis.getAttribute('href') || '';
+
+                        // Torna href absoluto se for relativo
+                        if (hrefAttr && !hrefAttr.startsWith('http')) {
+                            hrefAttr = window.location.origin + (hrefAttr.startsWith('/') ? '' : '/sisdpu/') + hrefAttr;
+                        }
+                        href = hrefAttr;
 
                         if (downloadAttr) nome_arquivo = downloadAttr;
                         else if (dataNome) nome_arquivo = dataNome;
@@ -1794,6 +1801,7 @@ async def listar_arquivos_paj(debug: bool = False) -> dict:
                         descricao: textos[2] || '',
                         tipo_arquivo: textos[3] || '',
                         arquivo: nome_arquivo,
+                        href: href,
                         categoria: categoria,
                         todas_celulas: textos,
                     });
@@ -2069,12 +2077,16 @@ async def extrair_lista_arquivos_paj() -> list[dict]:
 
 async def baixar_todos_arquivos(
     pasta_destino: Path,
+    lista_arquivos: list[dict] | None = None,
     log: Callable[[str], None] | None = None,
 ) -> dict:
     """Baixa todos os arquivos do PAJ via JavaScript fetch + local server.
 
+    Se lista_arquivos não for fornecida, extrai via listar_arquivos_paj().
+    Caso contrário, usa a lista ja fornecida (cada item deve ter: arquivo, seq, data, href ou as keys esperadas).
+
     Estrategia:
-    1. Extrai lista de arquivos via extrair_lista_arquivos_paj()
+    1. Extrai lista de arquivos (ou usa fornecida)
     2. Inicia local server (download_server.py) na porta 8765
     3. Para cada arquivo: fetch() + Base64 + POST ao servidor local
     4. Servidor salva arquivo em disco
@@ -2094,8 +2106,33 @@ async def baixar_todos_arquivos(
     pasta_destino.mkdir(parents=True, exist_ok=True)
 
     # 1) Extrai lista de arquivos
-    _log("[fetch] extraindo lista de arquivos...")
-    docs = await extrair_lista_arquivos_paj()
+    _log("[fetch] preparando downloads...")
+    if lista_arquivos is None:
+        _log("[fetch] extraindo lista de arquivos...")
+        resultado = await listar_arquivos_paj()
+        docs = resultado.get("itens", []) if isinstance(resultado, dict) else (resultado or [])
+    else:
+        docs = lista_arquivos
+
+    # Normaliza para formato esperado pelo fetch (precisa de: seq, data, nomeArq, href)
+    # Converte da lista de listar_arquivos_paj que tem: seq, data, descricao, tipo_arquivo, arquivo
+    docs_normalizados = []
+    for doc in docs:
+        seq = doc.get("seq", "?")
+        data = doc.get("data", "")
+        # Nome do arquivo: tenta 'arquivo' primeiro (de listar_arquivos_paj), depois 'nomeArq' (de extrair_lista_arquivos_paj)
+        nome_arq = doc.get("arquivo") or doc.get("nomeArq", "arquivo")
+        # href: tenta 'href' direto ou reconstrói... deixa vazio se não houver
+        href = doc.get("href", "")
+
+        docs_normalizados.append({
+            "seq": seq,
+            "data": data,
+            "nomeArq": nome_arq,
+            "href": href,
+        })
+
+    docs = docs_normalizados
     _log(f"[fetch] {len(docs)} arquivo(s) encontrado(s)")
 
     if not docs:
@@ -2125,21 +2162,28 @@ async def baixar_todos_arquivos(
             stderr=subprocess.PIPE,
             cwd=str(cwd),
         )
-        _log(f"[fetch] servidor PID={proc.pid}")
         await asyncio.sleep(1)  # Aguarda servidor iniciar
     except Exception as e:
-        _log(f"[fetch] ERRO ao iniciar servidor: {type(e).__name__}: {e}")
+        _log(f"[fetch] ✗ falha ao iniciar servidor: {type(e).__name__}")
         if proc:
             with contextlib.suppress(Exception):
                 proc.terminate()
-        return {"baixados": 0, "erros": [f"falha ao iniciar servidor: {e}"], "total": len(docs)}
+        return {"baixados": 0, "erros": [f"falha ao iniciar servidor"], "total": len(docs)}
 
     page = await _get_page()
+    context = page.context
     baixados = 0
     erros = []
 
     try:
-        # 3) Download via fetch + Base64 + POST
+        # 3) Download via Playwright (usa cookies da session autenticada) + POST ao servidor
+        import httpx
+        import base64
+
+        # Extrai cookies do contexto Playwright para passar ao httpx
+        cookies_list = await context.cookies()
+        cookies_dict = {c["name"]: c["value"] for c in cookies_list}
+
         for idx, doc in enumerate(docs, start=1):
             seq = doc.get("seq", "?")
             data = doc.get("data", "")
@@ -2155,90 +2199,68 @@ async def baixar_todos_arquivos(
 
             nome_para_post = f"{data_iso} - {seq} - {nomeArq}"
 
-            _log(f"[fetch {idx}/{len(docs)}] {nomeArq}")
+            _log(f"[{idx}/{len(docs)}]   {nomeArq}")
+
+            # Se href estiver vazio, trata como erro
+            if not href:
+                _log(f"               ... ERRO     ✗ href vazio")
+                erros.append(f"{nomeArq}: href vazio")
+                continue
 
             try:
-                # Fetch do arquivo + conversao para Base64
-                resultado = await page.evaluate(
-                    """
-                    async (url) => {
-                        try {
-                            const resp = await fetch(url, { credentials: 'include' });
-                            if (!resp.ok) return {ok: false, erro: `HTTP ${resp.status}`};
-                            const blob = await resp.blob();
-                            const reader = new FileReader();
-                            return await new Promise((resolve) => {
-                                reader.onload = () => {
-                                    const b64 = reader.result.split(',')[1];
-                                    resolve({ok: true, data: b64, tamanho: blob.size});
-                                };
-                                reader.readAsDataURL(blob);
-                            });
-                        } catch (e) {
-                            return {ok: false, erro: e.message};
-                        }
-                    }
-                    """,
-                    href,
-                )
+                # Fetch do arquivo via Playwright (reutiliza cookies autenticados)
+                pasta_abs = str(pasta_destino).replace("\\", "/")
 
-                if not resultado or not resultado.get("ok"):
-                    erro = resultado.get("erro", "falha desconhecida") if resultado else "null"
-                    _log(f"  ERRO fetch: {erro}")
-                    erros.append(f"{nomeArq}: {erro}")
-                    continue
+                # Usa httpx síncrono com cookies do contexto do Playwright
+                async with httpx.AsyncClient(cookies=cookies_dict, verify=False) as client:
+                    # Fetch arquivo
+                    resp = await client.get(href, follow_redirects=True, timeout=30.0)
+                    if resp.status_code != 200:
+                        _log(f"               ... ERRO     ✗ HTTP {resp.status_code}")
+                        erros.append(f"{nomeArq}: HTTP {resp.status_code}")
+                        continue
 
-                b64_data = resultado.get("data", "")
-                tamanho = resultado.get("tamanho", 0)
+                    conteudo = resp.content
+                    tamanho = len(conteudo)
 
-                if not b64_data:
-                    _log(f"  ERRO: dados vazios")
-                    erros.append(f"{nomeArq}: dados vazios")
-                    continue
+                    if tamanho == 0:
+                        _log(f"               ... ERRO     ✗ vazio")
+                        erros.append(f"{nomeArq}: arquivo vazio")
+                        continue
 
-                # POST ao servidor local com Base64 + filename
-                # Envia a pasta relativa também para o servidor saber onde salvar
-                try:
-                    pasta_rel = str(pasta_destino.relative_to("C:/Claude")).replace("\\", "/")
-                except ValueError:
-                    # Se não está sob C:/Claude, tenta com Path absoluto
-                    pasta_rel = str(pasta_destino).replace("\\", "/")
+                    # Formata tamanho em KB/MB
+                    if tamanho < 1024 * 1024:
+                        tam_str = f"{tamanho / 1024:.1f} KB"
+                    else:
+                        tam_str = f"{tamanho / (1024 * 1024):.1f} MB"
 
-                post_resultado = await page.evaluate(
-                    """
-                    async (filename, b64, target) => {
-                        try {
-                            const resp = await fetch('http://127.0.0.1:8765', {
-                                method: 'POST',
-                                headers: {'Content-Type': 'application/json'},
-                                body: JSON.stringify({
-                                    filename: filename,
-                                    data: b64,
-                                    target: target
-                                })
-                            });
-                            return await resp.json();
-                        } catch (e) {
-                            return {ok: false, erro: e.message};
-                        }
-                    }
-                    """,
-                    nome_para_post,
-                    b64_data,
-                    pasta_rel,
-                )
+                    # Converte para Base64
+                    b64_data = base64.b64encode(conteudo).decode("ascii")
 
-                if post_resultado and post_resultado.get("ok"):
-                    _log(f"  OK ({tamanho} bytes)")
-                    baixados += 1
-                else:
-                    erro = post_resultado.get("erro", "falha desconhecida") if post_resultado else "erro POST"
-                    _log(f"  ERRO POST: {erro}")
-                    erros.append(f"{nomeArq}: {erro}")
+                    # POST ao servidor local
+                    try:
+                        post_resp = await client.post(
+                            "http://127.0.0.1:8765",
+                            json={
+                                "filename": nome_para_post,
+                                "data": b64_data,
+                                "target": pasta_abs,
+                            },
+                            timeout=10.0,
+                        )
+                        if post_resp.status_code == 200:
+                            _log(f"               ... Concluído    ✓ {tam_str}")
+                            baixados += 1
+                        else:
+                            _log(f"               ... ERRO     ✗ POST {post_resp.status_code}")
+                            erros.append(f"{nomeArq}: POST HTTP {post_resp.status_code}")
+                    except Exception as e:
+                        _log(f"               ... ERRO     ✗ {type(e).__name__}")
+                        erros.append(f"{nomeArq}: POST {type(e).__name__}")
 
             except Exception as e:
-                _log(f"  ERRO: {type(e).__name__}: {e}")
-                erros.append(f"{nomeArq}: {type(e).__name__}: {e}")
+                _log(f"               ... ERRO     ✗ {type(e).__name__}")
+                erros.append(f"{nomeArq}: {type(e).__name__}")
 
     finally:
         # 4) Mata o servidor
@@ -2246,15 +2268,16 @@ async def baixar_todos_arquivos(
             try:
                 proc.terminate()
                 proc.wait(timeout=2)
-                _log("[fetch] servidor encerrado")
-            except Exception as e:
-                _log(f"[fetch] aviso ao encerrar servidor: {e}")
+            except Exception:
                 try:
                     proc.kill()
                 except Exception:
                     pass
 
-    _log(f"[fetch] resultado: {baixados} baixados, {len(erros)} erro(s)")
+    if baixados == len(docs):
+        _log(f"[fetch] ✓ {baixados} arquivo(s) baixado(s) com sucesso")
+    else:
+        _log(f"[fetch] ⚠ {baixados}/{len(docs)} arquivo(s) baixado(s) — {len(erros)} erro(s)")
     return {
         "baixados": baixados,
         "erros": erros,

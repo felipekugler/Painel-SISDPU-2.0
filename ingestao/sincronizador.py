@@ -440,7 +440,7 @@ async def _baixar_anexos_sisdpu(
         resultado = await sisdpu_client.listar_arquivos_paj()
     except Exception as e:
         log(f"  [anexos] erro ao listar: {type(e).__name__}: {e}")
-        return (0, 0, 0)
+        return {"total_no_sisdpu": 0, "baixados": 0, "ocr_ok": 0, "overflow": None}
 
     # Nova assinatura: {"ok": bool, "itens": [...], "diag": {...}}
     lista = resultado.get("itens", []) if isinstance(resultado, dict) else (resultado or [])
@@ -480,7 +480,7 @@ async def _baixar_anexos_sisdpu(
     # Estabilidade: mantem ordem do DOM como tiebreaker (sorted e' stable).
     lista_ordenada = sorted(
         lista,
-        key=lambda i: _parse_data_arquivo(i.get("descricao", "")),
+        key=lambda i: _parse_data_arquivo(i.get("data", "")),
         reverse=True,
     )
 
@@ -492,18 +492,18 @@ async def _baixar_anexos_sisdpu(
         lista_para_baixar = [
             i
             for i in lista_ordenada
-            if _parse_data_arquivo(i.get("descricao", "")) >= filtro_data_min
+            if _parse_data_arquivo(i.get("data", "")) >= filtro_data_min
         ]
         log(
             f"  [anexos] modo 'desde data': filtrando data >= "
             f"{filtro_data_min.isoformat()} → {len(lista_para_baixar)} de {total}"
         )
-    elif total > limite:
+    elif limite > 0 and total > limite:
         # Modo padrao com overflow: baixa os `limite` mais recentes
         lista_para_baixar = lista_ordenada[:limite]
         cortados = lista_ordenada[limite:]
-        data_min_baixada = _parse_data_arquivo(lista_para_baixar[-1].get("descricao", ""))
-        data_min_disponivel = _parse_data_arquivo(cortados[-1].get("descricao", ""))
+        data_min_baixada = _parse_data_arquivo(lista_para_baixar[-1].get("data", ""))
+        data_min_disponivel = _parse_data_arquivo(cortados[-1].get("data", ""))
         overflow_info = {
             "total_no_sisdpu": total,
             "baixados": len(lista_para_baixar),
@@ -518,13 +518,12 @@ async def _baixar_anexos_sisdpu(
         log(
             f"  [anexos] {len(cortados)} anexos mais antigos NAO baixados "
             f"(data >= {data_min_disponivel.isoformat()} ate "
-            f"{_parse_data_arquivo(cortados[0].get('descricao', '')).isoformat()})"
+            f"{_parse_data_arquivo(cortados[0].get('data', '')).isoformat()})"
         )
     else:
         lista_para_baixar = lista_ordenada
 
     lista = lista_para_baixar
-
     baixados = 0
     ocr_ok = 0
 
@@ -541,83 +540,75 @@ async def _baixar_anexos_sisdpu(
 
     interrompido = False
 
-    for idx, item in enumerate(lista, start=1):
-        # Checkpoint de cancelamento ENTRE anexos: o usuario nao precisa esperar
-        # o PAJ inteiro terminar pra sincronizacao parar. Custo de espera fica
-        # limitado ao anexo atual (segundos) + OCR atual (que ja e' cancelavel
-        # pagina a pagina dentro do ocr.extrair_texto).
+    # Usa nova estrategia: fetch() + servidor local (mais robusto que Playwright clicks)
+    log(f"  [anexos] baixando {len(lista)} arquivo(s) via fetch...")
+    resultado_fetch = await sisdpu_client.baixar_todos_arquivos(pasta_pecas, lista_arquivos=lista, log=log)
+
+    if resultado_fetch.get("total", 0) > 0:
+        baixados = resultado_fetch.get("baixados", 0)
+        total = resultado_fetch['total']
+        erros_count = len(resultado_fetch.get("erros", []))
+        log("")
+        log(f"✓ {baixados}/{total} arquivo(s) baixado(s) com sucesso   /   {erros_count} erros")
+
+    # Apos downloads, processa OCR nos PDFs baixados (simples: itera todos os PDFs)
+    pdfs_pasta = sorted(
+        [p for p in pasta_pecas.glob("*.pdf")],
+        key=lambda p: p.stat().st_mtime,
+    )
+
+    if pdfs_pasta:
+        log(f"  [ocr] processando {len(pdfs_pasta)} PDF(s)...")
+        await asyncio.sleep(0.01)  # Permite que o asyncio processe/flush o log
+
+    for idx, pdf_arquivo in enumerate(pdfs_pasta, start=1):
+        # Checkpoint de cancelamento — usuario pode parar o OCR
         if deve_cancelar is not None and deve_cancelar():
             log(
-                f"  [anexos] CANCELADO pelo usuario apos {baixados} de "
-                f"{len(lista)} anexos — PAJ ficara com sincronizacao incompleta"
+                f"  ✗ OCR CANCELADO pelo usuario apos {ocr_ok}/{len(pdfs_pasta)}"
             )
             interrompido = True
             break
 
-        descricao = (item.get("descricao") or "").strip()
-        arquivo = (item.get("arquivo") or "").strip()
-        nome = _nome_anexo(idx, descricao, arquivo)
-        destino = pasta_pecas / nome
-
-        # Skip se ja foi baixado antes. A extensao so e' conhecida DEPOIS do
-        # download (vem do Content-Disposition), entao procuramos por qualquer
-        # arquivo na pasta cujo stem (sem prefixo NN_) bata com o nosso.
-        # Comparacao tolerante ao prefixo numerico — necessaria porque novos
-        # anexos no SISDPU podem renumerar a sequencia. Sem isso, qualquer
-        # categoria nova faria todos os anexos antigos serem re-baixados.
-        stem_alvo = _stem_sem_prefixo_idx(destino.stem)
-        existentes = [
-            p
-            for p in pasta_pecas.iterdir()
-            if p.is_file()
-            and p.suffix.lower() != ".txt"
-            and p.stat().st_size > 0
-            and _stem_sem_prefixo_idx(p.stem) == stem_alvo
-        ]
-        if existentes:
-            log(f"    [anexo {idx}] já existe — pulando {existentes[0].name}")
+        txt_path = pdf_arquivo.with_suffix(".txt")
+        if txt_path.exists() and txt_path.stat().st_size > 0:
+            log(f"    [{idx}/{len(pdfs_pasta)}] {pdf_arquivo.name[:50]} ... (já processado)")
+            await asyncio.sleep(0.01)
             continue
 
-        log(f"    [anexo {idx}] baixando {descricao[:60]} ({arquivo[:40]})")
+        if deve_cancelar is not None and deve_cancelar():
+            log(f"    [{idx}/{len(pdfs_pasta)}] {pdf_arquivo.name[:50]} ... cancelado")
+            await asyncio.sleep(0.01)
+            continue
+
+        # Log ANTES de começar o OCR
+        nome_curto = pdf_arquivo.name[:60]
+        log(f"    [{idx}/{len(pdfs_pasta)}] {nome_curto} ... processando")
+        await asyncio.sleep(0.01)
+
         try:
-            salvo = await sisdpu_client.baixar_anexo_por_indice(
-                item.get("row_index", idx - 1), destino
+            texto = ocr.extrair_texto(
+                pdf_arquivo,
+                deve_cancelar=deve_cancelar,
+                timeout_por_pagina_seg=TIMEOUT_OCR_POR_PAGINA_SEG,
             )
+            txt_path.write_text(texto, encoding="utf-8")
+
+            if "[OCR abortado pelo usuario" in texto:
+                log(f"             ... OCR abortado")
+            elif texto and "[OCR indisponivel" not in texto:
+                ocr_ok += 1
+                log(f"             ... OCR processado")
+            else:
+                log(f"             ... OCR indisponível")
         except Exception as e:
-            log(f"    [anexo {idx}] erro: {type(e).__name__}: {e}")
-            salvo = None
+            log(f"             ... ERRO  ✗ {type(e).__name__}")
 
-        if not salvo:
-            log(f"    [anexo {idx}] FALHA no download")
-            continue
-        baixados += 1
-        log(f"    [anexo {idx}] salvo: {salvo.name}")
+        await asyncio.sleep(0.01)
 
-        # OCR apenas em PDFs
-        if salvo.suffix.lower() == ".pdf":
-            txt_path = salvo.with_suffix(".txt")
-            if txt_path.exists() and txt_path.stat().st_size > 0:
-                continue
-            # Se ja cancelou ate chegar aqui, pula OCR (mas deixa o PDF salvo)
-            if deve_cancelar is not None and deve_cancelar():
-                log(f"    [anexo {idx}] OCR pulado (cancelado)")
-                continue
-            try:
-                texto = ocr.extrair_texto(
-                    salvo,
-                    deve_cancelar=deve_cancelar,
-                    timeout_por_pagina_seg=TIMEOUT_OCR_POR_PAGINA_SEG,
-                )
-                txt_path.write_text(texto, encoding="utf-8")
-                if "[OCR abortado pelo usuario" in texto:
-                    log(f"    [anexo {idx}] OCR abortado pelo usuário")
-                elif texto and "[OCR indisponivel" not in texto:
-                    ocr_ok += 1
-                    log(f"    [anexo {idx}] OCR ok ({len(texto)} chars)")
-                else:
-                    log(f"    [anexo {idx}] OCR indisponível")
-            except Exception as e:
-                log(f"    [anexo {idx}] erro OCR: {type(e).__name__}: {e}")
+    if pdfs_pasta:
+        log("")
+        log(f"✓ {ocr_ok}/{len(pdfs_pasta)} PDF(s) processado(s) com sucesso   /   {len(pdfs_pasta) - ocr_ok} erros")
 
     # Fecha o dialogo pra nao atrapalhar proximo PAJ (quando usado no loop)
     with contextlib.suppress(Exception):

@@ -6,7 +6,7 @@ Grava cada arquivo na pasta de destino com o nome informado.
 import http.server
 import json
 import base64
-import os
+from pathlib import Path
 
 received = []
 
@@ -19,27 +19,46 @@ class Handler(http.server.BaseHTTPRequestHandler):
         self.end_headers()
 
     def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
-        body = self.rfile.read(length)
-        data = json.loads(body)
-        filename = data["filename"]
-        b64 = data["data"]
-        # Suporta pasta de destino dinâmica via campo "target"
-        target = data.get("target", "")
-        # Adapta para o projeto PAINEL SISDPU
-        base_dir = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-        dest_dir = os.path.join(base_dir, target) if target else base_dir
-        os.makedirs(dest_dir, exist_ok=True)
-        filepath = os.path.join(dest_dir, filename)
-        with open(filepath, "wb") as f:
-            f.write(base64.b64decode(b64))
-        received.append(filename)
-        print(f"[OK] {filename} ({len(b64)} chars b64)")
-        self.send_response(200)
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Content-Type", "application/json")
-        self.end_headers()
-        self.wfile.write(json.dumps({"ok": True, "file": filename}).encode())
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+            body = self.rfile.read(length)
+            data = json.loads(body)
+            filename = data["filename"]
+            b64 = data["data"]
+            # Suporta pasta de destino dinâmica via campo "target"
+            target = data.get("target", "")
+
+            # Usa pathlib para caminho correto em Windows
+            if target:
+                # Converte slashes para backslashes em Windows
+                target_clean = target.replace("/", "\\")
+                dest_dir = Path(target_clean)
+                # Se o target for relativo (não começar com letra de drive), é relativo a base_dir
+                if not dest_dir.is_absolute():
+                    base_dir = Path(__file__).resolve().parents[1]  # sai de .claude
+                    dest_dir = base_dir / target_clean
+            else:
+                base_dir = Path(__file__).resolve().parents[1]  # sai de .claude
+                dest_dir = base_dir
+
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            filepath = dest_dir / filename
+
+            filepath.write_bytes(base64.b64decode(b64))
+            received.append(filename)
+            print(f"[OK] {filename} -> {filepath}")
+
+            self.send_response(200)
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": True, "file": filename}).encode())
+        except Exception as e:
+            print(f"[ERR] {e}")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            self.wfile.write(json.dumps({"ok": False, "error": str(e)}).encode())
 
     def log_message(self, format, *args):
         pass  # silenciar logs HTTP
