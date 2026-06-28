@@ -574,15 +574,15 @@
                     </label>
                     <div class="flex flex-wrap gap-3">
                         <label class="flex items-center gap-1 cursor-pointer">
-                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioTodos" @change="marcarTodos()">
+                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioTodos">
                             <span class="text-xs font-medium">Todos</span>
                         </label>
                         <label class="flex items-center gap-1 cursor-pointer">
-                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioServidor" @change="atualizarTodos()">
+                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioServidor">
                             <span class="text-xs">Servidor</span>
                         </label>
                         <label class="flex items-center gap-1 cursor-pointer">
-                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioDefensor" @change="atualizarTodos()">
+                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioDefensor">
                             <span class="text-xs">Defensor</span>
                         </label>
                         <label class="flex items-center gap-1 cursor-pointer">
@@ -1074,9 +1074,10 @@ function tabelaMov2() {
                 );
             }
 
-            // Aplica filtro Tipo de Usuário (com checkboxes)
-            // Se nenhum está selecionado, mostra nenhum. Se qualquer um está marcado, filtra.
-            if (this.filtroUsuarioServidor || this.filtroUsuarioDefensor || this.filtroUsuarioSistema) {
+            // Aplica filtro Tipo de Usuário
+            // Se "Todos" está marcado, NÃO filtra por usuário (mostra todos)
+            // Se "Todos" está desmarcado, aplica filtros individuais
+            if (!this.filtroUsuarioTodos) {
                 resultado = resultado.filter(mov => {
                     if (!mov.usuario) return false;
 
@@ -1131,28 +1132,6 @@ function tabelaMov2() {
                 // Nova coluna: começa com asc
                 this.colunhaOrdenacao = coluna;
                 this.direcaoOrdenacao = 'asc';
-            }
-        },
-
-        marcarTodos() {
-            // Quando "Todos" é marcado, marca ambos
-            if (this.filtroUsuarioTodos) {
-                this.filtroUsuarioServidor = true;
-                this.filtroUsuarioDefensor = true;
-            } else {
-                // Quando "Todos" é desmarcado, desmarcar ambos
-                this.filtroUsuarioServidor = false;
-                this.filtroUsuarioDefensor = false;
-            }
-        },
-
-        atualizarTodos() {
-            // Se ambos estão marcados, marca "Todos"
-            if (this.filtroUsuarioServidor && this.filtroUsuarioDefensor) {
-                this.filtroUsuarioTodos = true;
-            } else {
-                // Se qualquer um está desmarcado, desmarcar "Todos"
-                this.filtroUsuarioTodos = false;
             }
         }
     }
