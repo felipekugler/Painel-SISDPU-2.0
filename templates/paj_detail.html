@@ -574,11 +574,15 @@
                     </label>
                     <div class="flex gap-4">
                         <label class="flex items-center gap-1 cursor-pointer">
-                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioServidor">
+                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioTodos" @change="marcarTodos()">
+                            <span class="text-xs font-medium">Todos</span>
+                        </label>
+                        <label class="flex items-center gap-1 cursor-pointer">
+                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioServidor" @change="atualizarTodos()">
                             <span class="text-xs">Servidor</span>
                         </label>
                         <label class="flex items-center gap-1 cursor-pointer">
-                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioDefensor">
+                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioDefensor" @change="atualizarTodos()">
                             <span class="text-xs">Defensor</span>
                         </label>
                     </div>
@@ -1027,6 +1031,7 @@ function copiarTxt() {
 function tabelaMov2() {
     return {
         filtroFases: '',
+        filtroUsuarioTodos: true,     // Por padrão selecionado
         filtroUsuarioServidor: true,  // Por padrão selecionado
         filtroUsuarioDefensor: true,  // Por padrão selecionado
         colunhaOrdenacao: 'seq',
@@ -1118,6 +1123,28 @@ function tabelaMov2() {
                 // Nova coluna: começa com asc
                 this.colunhaOrdenacao = coluna;
                 this.direcaoOrdenacao = 'asc';
+            }
+        },
+
+        marcarTodos() {
+            // Quando "Todos" é marcado, marca ambos
+            if (this.filtroUsuarioTodos) {
+                this.filtroUsuarioServidor = true;
+                this.filtroUsuarioDefensor = true;
+            } else {
+                // Quando "Todos" é desmarcado, desmarcar ambos
+                this.filtroUsuarioServidor = false;
+                this.filtroUsuarioDefensor = false;
+            }
+        },
+
+        atualizarTodos() {
+            // Se ambos estão marcados, marca "Todos"
+            if (this.filtroUsuarioServidor && this.filtroUsuarioDefensor) {
+                this.filtroUsuarioTodos = true;
+            } else {
+                // Se qualquer um está desmarcado, desmarcar "Todos"
+                this.filtroUsuarioTodos = false;
             }
         }
     }
