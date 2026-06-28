@@ -385,9 +385,6 @@
         <a role="tab" class="tab" :class="tab === 'mov2' && 'tab-active'" @click="tab = 'mov2'">
             Pesquisa Movimentações <span class="badge badge-ghost badge-xs ml-1">{{ dados.movimentacoes|length }}</span>
         </a>
-        <a role="tab" class="tab" :class="tab === 'movs' && 'tab-active'" @click="tab = 'movs'">
-            Movimentações <span class="badge badge-ghost badge-xs ml-1">{{ dados.movimentacoes|length }}</span>
-        </a>
         <a role="tab" class="tab" :class="tab === 'anexos' && 'tab-active'" @click="tab = 'anexos'"
            title="Documentos anexados ao PAJ no SISDPU (PDFs de petições, laudos, despachos, etc.)">
             Anexos SISDPU <span class="badge badge-primary badge-xs ml-1">{{ dados.anexos_sisdpu|length }}</span>
@@ -514,39 +511,7 @@
         {% endif %}
     </div>
 
-    <!-- Tab: Movimentacoes -->
-    <div x-show="tab === 'movs'" class="bg-base-200 rounded-lg border border-base-300 p-6">
-        <h3 class="text-lg font-semibold mb-4">Movimentações ({{ dados.movimentacoes|length }})</h3>
-        {% if dados.movimentacoes %}
-        <div class="space-y-4">
-            {# Ordena por Seq. desc — a Seq. e' o numero real do SIS-DPU
-               (graças ao prefixo [seq=N] persistido no sisdpu.txt). Maior em
-               cima = movimentacao mais recente, batendo com a apresentacao
-               do proprio SIS-DPU. #}
-            {% for mov in dados.movimentacoes %}
-            <div class="border-l-2 border-primary/30 pl-4 hover:border-primary transition-colors mov-item space-y-1"
-                 data-mov-seq="{{ mov.seq or 0 }}">
-                <div class="text-sm text-base-content/70 flex items-center gap-2">
-                    <span class="font-semibold">Seq {{ mov.seq or '?' }}</span>  - Data <span class="text-base-content/60">{{ (mov.data_original or mov.data) | data_br }}</span>
-                    <span class="badge badge-xs badge-info novidade-flag" style="display: none">novo desde sua última visita</span>
-                </div>
-                {% if mov.fases and mov.descricao %}
-                <div class="text-sm text-base-content/80">
-                    <span class="font-semibold">{{ mov.fases.replace('°', '').strip() }}:</span>
-                    <span class="text-base-content/70">{{ mov.descricao }}</span>
-                </div>
-                {% elif mov.descricao %}
-                <div class="text-sm text-base-content/80">{{ mov.descricao }}</div>
-                {% endif %}
-            </div>
-            {% endfor %}
-        </div>
-        {% else %}
-        <p class="text-base-content/50">Nenhuma movimentação registrada.</p>
-        {% endif %}
-    </div>
-
-    <!-- Tab: MOV2 - Tabela completa de movimentações com sorting e filtros -->
+    <!-- Tab: Pesquisa Movimentações - Tabela completa com sorting e filtros -->
     <div x-show="tab === 'mov2'" class="bg-base-200 rounded-lg border border-base-300 p-6"
          x-data="tabelaMov2()">
         <div class="mb-4 space-y-4">
