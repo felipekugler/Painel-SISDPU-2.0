@@ -383,7 +383,7 @@
     <div role="tablist" class="tabs tabs-bordered mb-4">
         <a role="tab" class="tab" :class="tab === 'resumo' && 'tab-active'" @click="tab = 'resumo'">Narrativa</a>
         <a role="tab" class="tab" :class="tab === 'mov2' && 'tab-active'" @click="tab = 'mov2'">
-            Pesquisa Movimentações <span class="badge badge-ghost badge-xs ml-1">{{ dados.movimentacoes|length }}</span>
+            Movimentações <span class="badge badge-ghost badge-xs ml-1">{{ dados.movimentacoes|length }}</span>
         </a>
         <a role="tab" class="tab" :class="tab === 'anexos' && 'tab-active'" @click="tab = 'anexos'"
            title="Documentos anexados ao PAJ no SISDPU (PDFs de petições, laudos, despachos, etc.)">
@@ -592,7 +592,9 @@
                 </thead>
                 <tbody>
                     <template x-for="mov in movimentacoesFiltradas" :key="mov.seq">
-                        <tr :class="['mov-item', mov.seq > maxSeqAnterior && 'mov-nova']" :data-mov-seq="mov.seq">
+                        <tr :class="['mov-item', mov.seq > maxSeqAnterior && 'mov-nova']"
+                            :style="mov.fases && mov.fases.trim().toLowerCase().includes('atendimento de retorno') ? 'background-color: rgba(29, 158, 117, 0.15); border-left: 4px solid rgb(29, 158, 117);' : (mov.fases && mov.usuario && (mov.usuario.includes('DEFENSOR') || mov.usuario.includes('(d)')) ? 'background-color: rgba(216, 90, 48, 0.15); border-left: 4px solid rgb(216, 90, 48);' : '')"
+                            :data-mov-seq="mov.seq">
                             <td class="font-semibold" x-text="mov.seq || '?'"></td>
                             <td style="display: none;" x-text="mov.anexo || '-'"></td>
                             <td class="text-xs" x-text="mov.data_original || mov.data || '?'"></td>
