@@ -187,7 +187,7 @@
                             <a onclick="sincronizarPaj('{{ paj_norm }}', true)" class="text-sm">
                                 <div class="flex flex-col">
                                     <span class="font-semibold">Sincronizar (com anexos)</span>
-                                    <span class="text-xs text-base-content/60">baixa PDFs e roda OCR</span>
+                                    <span class="text-xs text-base-content/60">baixa os PDFs</span>
                                 </div>
                             </a>
                         </li>
@@ -198,6 +198,15 @@
                                     <span class="text-xs text-base-content/60">só movimentações e metadata</span>
                                 </div>
                             </a>
+                        </li>
+                        <li class="border-t border-base-content/10 mt-1 pt-1">
+                            <label class="flex items-center justify-between gap-2 text-sm cursor-pointer">
+                                <div class="flex flex-col">
+                                    <span class="font-semibold">OCR simples</span>
+                                    <span class="text-xs text-base-content/60">roda OCR rápido/fraco ao baixar — use "Melhorar OCR" depois se precisar</span>
+                                </div>
+                                <input type="checkbox" class="toggle toggle-xs toggle-primary ocr-simples-checkbox">
+                            </label>
                         </li>
                     </ul>
                 </div>
@@ -675,7 +684,7 @@
                                 <a onclick="sincronizarPaj('{{ paj_norm }}', true)" class="text-sm">
                                     <div class="flex flex-col">
                                         <span class="font-semibold">Sincronizar (com anexos)</span>
-                                        <span class="text-xs text-base-content/60">baixa PDFs e roda OCR</span>
+                                        <span class="text-xs text-base-content/60">baixa os PDFs</span>
                                     </div>
                                 </a>
                             </li>
@@ -686,6 +695,15 @@
                                         <span class="text-xs text-base-content/60">só movimentações e metadata</span>
                                     </div>
                                 </a>
+                            </li>
+                            <li class="border-t border-base-content/10 mt-1 pt-1">
+                                <label class="flex items-center justify-between gap-2 text-sm cursor-pointer">
+                                    <div class="flex flex-col">
+                                        <span class="font-semibold">OCR simples</span>
+                                        <span class="text-xs text-base-content/60">roda OCR rápido/fraco ao baixar — use "Melhorar OCR" depois se precisar</span>
+                                    </div>
+                                    <input type="checkbox" class="toggle toggle-xs toggle-primary ocr-simples-checkbox">
+                                </label>
                             </li>
                         </ul>
                     </div>

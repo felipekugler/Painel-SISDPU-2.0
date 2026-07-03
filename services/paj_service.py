@@ -248,6 +248,7 @@ def listar_pajs(incluir_concluidos: bool = False) -> list[dict]:
             "processo_judicial": metadata.get("processo_judicial", ""),
             "n_pecas": n_pecas_geradas,
             "n_anexos_sisdpu": n_anexos_sisdpu,
+            "n_documentos_indexados": metadata.get("n_documentos_indexados", 0) or 0,
             "n_decisoes": 0,
             "ultima_preparacao": metadata.get("migrado_em", ""),
             "prazos_abertos": metadata.get("prazos_abertos", []),

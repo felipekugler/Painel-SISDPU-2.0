@@ -157,6 +157,34 @@ function cancelarSync() {
         });
 }
 
+/* Preferencia persistente "OCR simples" (padrao: desabilitado — so baixa os
+ * anexos, sem rodar OCR de baixa qualidade na sincronizacao). Controlada por
+ * um checkbox replicado nos dropdowns de sync; usa localStorage pra nao
+ * precisar existir na tela exata onde o clique acontece. */
+function _ocrSimplesAtivo() {
+    return localStorage.getItem('ocrSimplesAtivo') === 'true';
+}
+
+function _syncUrlComOcr(url, temQuery) {
+    if (!_ocrSimplesAtivo()) return url;
+    return url + (temQuery ? '&' : '?') + 'ocr=1';
+}
+
+// Mantem todos os checkboxes ".ocr-simples-checkbox" da pagina (pode haver
+// mais de um dropdown de sync na mesma tela) sincronizados entre si e com
+// localStorage.
+document.addEventListener('DOMContentLoaded', function() {
+    const checkboxes = document.querySelectorAll('.ocr-simples-checkbox');
+    const ativo = _ocrSimplesAtivo();
+    checkboxes.forEach(function(cb) {
+        cb.checked = ativo;
+        cb.addEventListener('change', function() {
+            localStorage.setItem('ocrSimplesAtivo', cb.checked ? 'true' : 'false');
+            checkboxes.forEach(function(other) { other.checked = cb.checked; });
+        });
+    });
+});
+
 function sincronizarCaixa(baixarAnexos) {
     if (typeof baixarAnexos === 'undefined') baixarAnexos = true;
     let modal = document.getElementById('sync-modal');
@@ -180,6 +208,7 @@ function sincronizarCaixa(baixarAnexos) {
     }
 
     let url = baixarAnexos ? '/api/sync' : '/api/sync?anexos=0';
+    url = _syncUrlComOcr(url, !baixarAnexos);
     _syncSource = new EventSource(url);
 
     _syncSource.addEventListener('log', function(e) {
@@ -249,6 +278,7 @@ function sincronizarWatchlist(baixarAnexos) {
 
     let url = '/api/sync/watchlist';
     if (!baixarAnexos) url += '?anexos=0';
+    url = _syncUrlComOcr(url, !baixarAnexos);
     _syncSource = new EventSource(url);
 
     _syncSource.addEventListener('log', function(e) {
@@ -314,6 +344,7 @@ function sincronizarPaj(pajNorm, baixarAnexos) {
 
     let url = '/api/sync/paj/' + encodeURIComponent(pajNorm);
     if (!baixarAnexos) url += '?anexos=0';
+    url = _syncUrlComOcr(url, !baixarAnexos);
     _syncSource = new EventSource(url);
 
     _syncSource.addEventListener('log', function(e) {
@@ -383,6 +414,7 @@ function baixarAnexosDesde(pajNorm) {
 
     let url = '/api/sync/paj/' + encodeURIComponent(pajNorm)
             + '/anexos-desde?data=' + encodeURIComponent(data);
+    url = _syncUrlComOcr(url, true);
     _syncSource = new EventSource(url);
 
     _syncSource.addEventListener('log', function(e) {

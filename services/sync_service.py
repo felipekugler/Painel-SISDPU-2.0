@@ -125,16 +125,22 @@ async def _rodar_com_cancel(
             invalidar_cache_listagem()
 
 
-async def rodar_sync(baixar_anexos: bool = True) -> AsyncGenerator[str, None]:
+async def rodar_sync(
+    baixar_anexos: bool = True,
+    rodar_ocr: bool = False,
+) -> AsyncGenerator[str, None]:
     """Gera linhas de log da sincronizacao em tempo real.
 
     `baixar_anexos=False` pula o download/OCR dos anexos (sync rapido).
+    `rodar_ocr=False` (padrao) baixa os anexos mas pula o OCR simples —
+    use "Melhorar OCR" na aba Anexos SISDPU pra texto de qualidade.
     """
     async for linha in _rodar_com_cancel(
         lambda emit: sincronizador.rodar(
             emit,
             deve_cancelar=deve_cancelar,
             baixar_anexos=baixar_anexos,
+            rodar_ocr=rodar_ocr,
         ),
         None,
     ):
@@ -144,6 +150,7 @@ async def rodar_sync(baixar_anexos: bool = True) -> AsyncGenerator[str, None]:
 async def rodar_sync_paj(
     paj_identificador: str,
     baixar_anexos: bool = True,
+    rodar_ocr: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Sincroniza um unico PAJ via SSE (teste/refresh pontual).
 
@@ -165,6 +172,7 @@ async def rodar_sync_paj(
                 emit,
                 deve_cancelar=deve_cancelar,
                 baixar_anexos=baixar_anexos,
+                rodar_ocr=rodar_ocr,
             ),
             None,
         ):
@@ -177,6 +185,7 @@ async def rodar_sync_paj(
             emit,
             deve_cancelar=deve_cancelar,
             baixar_anexos=baixar_anexos,
+            rodar_ocr=rodar_ocr,
         ),
         None,
     ):
@@ -185,6 +194,7 @@ async def rodar_sync_paj(
 
 async def rodar_sync_watchlist(
     baixar_anexos: bool = True,
+    rodar_ocr: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Sincroniza TODOS os PAJs ativos da watchlist via SSE.
 
@@ -197,6 +207,7 @@ async def rodar_sync_watchlist(
             emit,
             deve_cancelar=deve_cancelar,
             baixar_anexos=baixar_anexos,
+            rodar_ocr=rodar_ocr,
         ),
         None,
     ):
@@ -259,6 +270,7 @@ async def buscar_resumo_paj(paj_identificador: str) -> dict:
 async def rodar_sync_anexos_desde_data(
     paj_identificador: str,
     data_inicio,
+    rodar_ocr: bool = False,
 ) -> AsyncGenerator[str, None]:
     """Baixa anexos de um PAJ a partir de uma data — SSE.
 
@@ -271,6 +283,7 @@ async def rodar_sync_anexos_desde_data(
             data_inicio,
             emit,
             deve_cancelar=deve_cancelar,
+            rodar_ocr=rodar_ocr,
         ),
         None,
     ):

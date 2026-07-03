@@ -396,6 +396,7 @@ async def _baixar_anexos_sisdpu(
     deve_cancelar: Callable[[], bool] | None = None,
     filtro_data_min=None,
     seq_por_file_id: dict[str, int] | None = None,
+    rodar_ocr: bool = False,
 ) -> dict:
     """Abre o dialogo 'Arquivos' do PAJ atual e baixa os anexos listados.
 
@@ -558,64 +559,69 @@ async def _baixar_anexos_sisdpu(
         log("")
         log(f"✓ {baixados}/{total} arquivo(s) baixado(s) com sucesso   /   {erros_count} erros")
 
-    # Apos downloads, processa OCR nos PDFs baixados (simples: itera todos os PDFs)
-    pdfs_pasta = sorted(
-        [p for p in pasta_pecas.glob("*.pdf")],
-        key=lambda p: p.stat().st_mtime,
-    )
+    # OCR simples (rapido, qualidade baixa) — desabilitado por padrao. Para
+    # texto de qualidade, use o botao "Melhorar OCR" (OCR local + Sonnet
+    # visao), que roda por fora deste fluxo, sob demanda.
+    if not rodar_ocr:
+        log("  [ocr] etapa desabilitada (ative 'OCR simples' se quiser rodar aqui)")
+    else:
+        pdfs_pasta = sorted(
+            [p for p in pasta_pecas.glob("*.pdf")],
+            key=lambda p: p.stat().st_mtime,
+        )
 
-    if pdfs_pasta:
-        log(f"  [ocr] processando {len(pdfs_pasta)} PDF(s)...")
-        await asyncio.sleep(0.01)  # Permite que o asyncio processe/flush o log
+        if pdfs_pasta:
+            log(f"  [ocr] processando {len(pdfs_pasta)} PDF(s)...")
+            await asyncio.sleep(0.01)  # Permite que o asyncio processe/flush o log
 
-    for idx, pdf_arquivo in enumerate(pdfs_pasta, start=1):
-        # Checkpoint de cancelamento — usuario pode parar o OCR
-        if deve_cancelar is not None and deve_cancelar():
-            log(
-                f"  ✗ OCR CANCELADO pelo usuario apos {ocr_ok}/{len(pdfs_pasta)}"
-            )
-            interrompido = True
-            break
+        for idx, pdf_arquivo in enumerate(pdfs_pasta, start=1):
+            # Checkpoint de cancelamento — usuario pode parar o OCR
+            if deve_cancelar is not None and deve_cancelar():
+                log(
+                    f"  ✗ OCR CANCELADO pelo usuario apos {ocr_ok}/{len(pdfs_pasta)}"
+                )
+                interrompido = True
+                break
 
-        txt_path = pdf_arquivo.with_suffix(".txt")
-        if txt_path.exists() and txt_path.stat().st_size > 0:
-            log(f"    [{idx}/{len(pdfs_pasta)}] {pdf_arquivo.name[:50]} ... (já processado)")
+            txt_path = pdf_arquivo.with_suffix(".txt")
+            if txt_path.exists() and txt_path.stat().st_size > 0:
+                log(f"    [{idx}/{len(pdfs_pasta)}] {pdf_arquivo.name[:50]} ... (já processado)")
+                await asyncio.sleep(0.01)
+                continue
+
+            if deve_cancelar is not None and deve_cancelar():
+                log(f"    [{idx}/{len(pdfs_pasta)}] {pdf_arquivo.name[:50]} ... cancelado")
+                await asyncio.sleep(0.01)
+                continue
+
+            # Log ANTES de começar o OCR
+            nome_curto = pdf_arquivo.name[:60]
+            log(f"    [{idx}/{len(pdfs_pasta)}] {nome_curto} ... processando")
             await asyncio.sleep(0.01)
-            continue
 
-        if deve_cancelar is not None and deve_cancelar():
-            log(f"    [{idx}/{len(pdfs_pasta)}] {pdf_arquivo.name[:50]} ... cancelado")
+            try:
+                texto = ocr.extrair_texto(
+                    pdf_arquivo,
+                    deve_cancelar=deve_cancelar,
+                    timeout_por_pagina_seg=TIMEOUT_OCR_POR_PAGINA_SEG,
+                )
+                txt_path.write_text(texto, encoding="utf-8")
+
+                if "[OCR abortado pelo usuario" in texto:
+                    log(f"             ... OCR abortado")
+                elif texto and "[OCR indisponivel" not in texto:
+                    ocr_ok += 1
+                    log(f"             ... OCR processado")
+                else:
+                    log(f"             ... OCR indisponível")
+            except Exception as e:
+                log(f"             ... ERRO  ✗ {type(e).__name__}")
+
             await asyncio.sleep(0.01)
-            continue
 
-        # Log ANTES de começar o OCR
-        nome_curto = pdf_arquivo.name[:60]
-        log(f"    [{idx}/{len(pdfs_pasta)}] {nome_curto} ... processando")
-        await asyncio.sleep(0.01)
-
-        try:
-            texto = ocr.extrair_texto(
-                pdf_arquivo,
-                deve_cancelar=deve_cancelar,
-                timeout_por_pagina_seg=TIMEOUT_OCR_POR_PAGINA_SEG,
-            )
-            txt_path.write_text(texto, encoding="utf-8")
-
-            if "[OCR abortado pelo usuario" in texto:
-                log(f"             ... OCR abortado")
-            elif texto and "[OCR indisponivel" not in texto:
-                ocr_ok += 1
-                log(f"             ... OCR processado")
-            else:
-                log(f"             ... OCR indisponível")
-        except Exception as e:
-            log(f"             ... ERRO  ✗ {type(e).__name__}")
-
-        await asyncio.sleep(0.01)
-
-    if pdfs_pasta:
-        log("")
-        log(f"✓ {ocr_ok}/{len(pdfs_pasta)} PDF(s) processado(s) com sucesso   /   {len(pdfs_pasta) - ocr_ok} erros")
+        if pdfs_pasta:
+            log("")
+            log(f"✓ {ocr_ok}/{len(pdfs_pasta)} PDF(s) processado(s) com sucesso   /   {len(pdfs_pasta) - ocr_ok} erros")
 
     # Fecha o dialogo pra nao atrapalhar proximo PAJ (quando usado no loop)
     with contextlib.suppress(Exception):
@@ -644,6 +650,7 @@ async def _processar_paj(
     log: Callable[[str], None],
     deve_cancelar: Callable[[], bool] | None = None,
     baixar_anexos: bool = True,
+    rodar_ocr: bool = False,
 ) -> tuple[str, bool]:
     """Processa um PAJ vindo da CAIXA DE ENTRADA. Retorna (paj_norm, novo_ou_atualizado).
 
@@ -652,6 +659,11 @@ async def _processar_paj(
 
     `baixar_anexos=False` pula o download/OCR da aba 'Arquivos' — util pra
     sincronizacao rapida (so movs/metadata).
+
+    `rodar_ocr=False` (padrao) pula o OCR simples nos PDFs baixados — so
+    baixa os arquivos. O OCR simples e' de qualidade baixa; para texto de
+    qualidade use o botao "Melhorar OCR" (OCR local + Sonnet visao) sob
+    demanda, ja disponivel na aba Anexos SISDPU.
 
     PRE-CONDICAO: o PAJ esta na caixa atual (item veio do scrape da caixa).
     Para PAJs fora da caixa (concluidos, ex: watchlist), use
@@ -682,6 +694,7 @@ async def _processar_paj(
         log,
         deve_cancelar=deve_cancelar,
         baixar_anexos=baixar_anexos,
+        rodar_ocr=rodar_ocr,
         via_busca_global=False,
     )
 
@@ -692,6 +705,7 @@ async def _processar_paj_pos_detalhamento(
     log: Callable[[str], None],
     deve_cancelar: Callable[[], bool] | None = None,
     baixar_anexos: bool = True,
+    rodar_ocr: bool = False,
     via_busca_global: bool = False,
 ) -> tuple[str, bool]:
     """Etapa pos-detalhamento: a page do Playwright ja esta no detalhamento do
@@ -885,6 +899,7 @@ async def _processar_paj_pos_detalhamento(
             limite=MAX_ANEXOS_POR_PAJ,
             deve_cancelar=deve_cancelar,
             seq_por_file_id=seq_por_file_id,
+            rodar_ocr=rodar_ocr,
         )
         total_anexos = resultado_anexos["total_no_sisdpu"]
         baixados = resultado_anexos["baixados"]
@@ -1075,6 +1090,7 @@ async def rodar(
     log_callback: Callable[[str], None],
     deve_cancelar: Callable[[], bool] | None = None,
     baixar_anexos: bool = True,
+    rodar_ocr: bool = False,
 ) -> dict:
     """Sincroniza caixa SISDPU com PAJs/<PAJ>/.
 
@@ -1082,6 +1098,8 @@ async def rodar(
     deve_cancelar: callback opcional consultado entre PAJs; se True,
         o laco abort e a funcao retorna o resumo parcial.
     baixar_anexos: se False, pula download/OCR dos anexos (sync rapido).
+    rodar_ocr: se True, roda o OCR simples nos PDFs baixados (padrao False —
+        so baixa; use "Melhorar OCR" na aba Anexos SISDPU pra texto de qualidade).
     Retorna dict com resumo: {"total_caixa": N, "processados": M, "erros": [...]}.
     """
 
@@ -1146,6 +1164,7 @@ async def rodar(
                 log,
                 deve_cancelar=_cancelado,
                 baixar_anexos=baixar_anexos,
+                rodar_ocr=rodar_ocr,
             )
             if paj_norm:
                 pajs_na_caixa.add(paj_norm)
@@ -1276,6 +1295,7 @@ async def rodar_anexos_desde_data(
     data_inicio,
     log_callback: Callable[[str], None],
     deve_cancelar: Callable[[], bool] | None = None,
+    rodar_ocr: bool = False,
 ) -> dict:
     """Baixa anexos de UM PAJ a partir de uma data de corte (inclusive).
 
@@ -1379,6 +1399,7 @@ async def rodar_anexos_desde_data(
         deve_cancelar=deve_cancelar,
         filtro_data_min=data_inicio,
         seq_por_file_id=seq_por_file_id,
+        rodar_ocr=rodar_ocr,
     )
 
     with contextlib.suppress(Exception):
@@ -1436,6 +1457,7 @@ async def rodar_paj_unico(
     log_callback: Callable[[str], None],
     deve_cancelar: Callable[[], bool] | None = None,
     baixar_anexos: bool = True,
+    rodar_ocr: bool = False,
 ) -> dict:
     """Sincroniza UM unico PAJ (util pra teste/re-sync pontual sem rodar a caixa inteira).
 
@@ -1497,6 +1519,7 @@ async def rodar_paj_unico(
             log,
             deve_cancelar=deve_cancelar,
             baixar_anexos=baixar_anexos,
+            rodar_ocr=rodar_ocr,
         )
         if ok:
             resumo["processado"] = True
@@ -1535,6 +1558,7 @@ async def rodar_paj_via_busca_global(
     log_callback: Callable[[str], None],
     deve_cancelar: Callable[[], bool] | None = None,
     baixar_anexos: bool = True,
+    rodar_ocr: bool = False,
 ) -> dict:
     """Sincroniza UM PAJ via o campo de pesquisa global do SIS-DPU.
 
@@ -1610,6 +1634,7 @@ async def rodar_paj_via_busca_global(
             log,
             deve_cancelar=deve_cancelar,
             baixar_anexos=baixar_anexos,
+            rodar_ocr=rodar_ocr,
             via_busca_global=True,
         )
         if ok:
@@ -1646,6 +1671,7 @@ async def rodar_watchlist(
     log_callback: Callable[[str], None],
     deve_cancelar: Callable[[], bool] | None = None,
     baixar_anexos: bool = True,
+    rodar_ocr: bool = False,
 ) -> dict:
     """Sincroniza todos os PAJs ATIVOS da watchlist via busca global do SIS-DPU.
 
@@ -1697,6 +1723,7 @@ async def rodar_watchlist(
                 log_callback,
                 deve_cancelar=deve_cancelar,
                 baixar_anexos=baixar_anexos,
+                rodar_ocr=rodar_ocr,
             )
             if r.get("processado"):
                 resumo["processados"] += 1
