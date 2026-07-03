@@ -37,7 +37,7 @@ Data: ~/OFICIO_GERAL/PAJs/PAJ-*/
   ├─ metadata.json (estruturado)
   ├─ sisdpu.txt (bruto)
   ├─ PROMPT_MAX.md (contexto para IA)
-  └─ pecas/*.txt (extraído com OCR)
+  └─ Arquivos/*.txt (extraído com OCR)
 ```
 
 ---
@@ -168,7 +168,7 @@ POST /api/chat/PAJ-2026-044-00311
 GET /api/busca?termo=xyz
   → busca_service.buscar()
     → Carrega TODOS metadata.json
-    → Busca em movimentações + pecas/*.txt
+    → Busca em movimentações + Arquivos/*.txt
     → Ordena por relevância
     → Retorna top 50
 ```

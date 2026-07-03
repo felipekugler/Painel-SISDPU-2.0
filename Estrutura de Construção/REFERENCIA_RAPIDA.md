@@ -479,7 +479,7 @@ find . -name "*.pyc" -delete
     │   ├── metadata.json
     │   ├── sisdpu.txt
     │   ├── PROMPT_MAX.md
-    │   ├── pecas/
+    │   ├── Arquivos/
     │   │   └── *.pdf + *.txt
     │   └── elaboracao.json
     └── ... (mais PAJs)

@@ -230,7 +230,7 @@ DPU-script-SIS/
 │  │ │       ├── PROMPT_MAX.md (contexto para IA)          │   │
 │  │ │       ├── elaboracao.json (ultima conclusao)        │   │
 │  │ │       ├── historico.jsonl (trilha de eventos)       │   │
-│  │ │       ├── pecas/ (PDFs + .txt extraído)             │   │
+│  │ │       ├── Arquivos/ (PDFs + .txt extraído)             │   │
 │  │ │       └── NOTAS.md (anotacoes do defensor)          │   │
 │  │ └── Peças Feitas/ (base de conhecimento)              │   │
 │  │ └── CLAUDE.md (diretrizes do defensor)                │   │
@@ -270,7 +270,7 @@ DPU-script-SIS/
        ├─→ metadata.json (metadados estruturados)
        ├─→ sisdpu.txt (movimentações)
        ├─→ prompt_builder.gerar_prompt_max() (contexto para IA)
-       ├─→ pecas/ (PDFs + .txt extraído)
+       ├─→ Arquivos/ (PDFs + .txt extraído)
        └─→ elaboracao.json (ultima conclusao, se houver)
    └─→ paj_detail.html renderiza abas (movs, peças, chat, notas)
 
@@ -411,7 +411,7 @@ app.py
 - Fallback OCR: quando Tesseract falha (texto vazio/ilegível)
 - Invoca Claude Sonnet (low effort) com visão para transcrever PDF
 - Processa em blocos (OCR_LLM_CHUNK_PAGINAS) para não explodir contexto
-- Resultado cacheado em `pecas/*.txt`
+- Resultado cacheado em `Arquivos/*.txt`
 
 #### **Mais:**
 - `busca_service.py` → full-text em movs + peças
@@ -533,7 +533,7 @@ Pipelines (em ordem de tentativa):
    └─ Processa em blocos: OCR_LLM_CHUNK_PAGINAS (default 40 pages)
    └─ Timeout: OCR_LLM_TIMEOUT_SEG (default 900s por bloco)
    └─ Custo: Sonnet low-effort (barato, puro OCR, não análise)
-   └─ Cacheado: resultado salvo em pecas/*.txt
+   └─ Cacheado: resultado salvo em Arquivos/*.txt
 
 Configuração via .env:
 OCR_PREPROC_ATIVO=1              # ativa ocrmypdf
@@ -562,7 +562,7 @@ OCR_LLM_MAX_PAGINAS=0            # 0=sem limite
 │   │   ├── NOTAS.md               # Anotações pessoais do defensor
 │   │   ├── elaboracao.json        # Última conclusão + status
 │   │   ├── historico.jsonl        # Trilha de eventos (1 evento/linha)
-│   │   ├── pecas/                 # PDFs baixados + .txt extraído
+│   │   ├── Arquivos/                 # PDFs baixados + .txt extraído
 │   │   │   ├── documento_1.pdf
 │   │   │   ├── documento_1.txt    # OCR extraído
 │   │   │   ├── documento_2.pdf
@@ -606,7 +606,7 @@ sincronizador.py (orquestrador)
 ~/OFICIO_GERAL/PAJs/PAJ-*/
     ├── sisdpu.txt ✓
     ├── metadata.json ✓
-    ├── pecas/*.pdf + .txt ✓
+    ├── Arquivos/*.pdf + .txt ✓
     └── elaboracao.json ✓ (quando Claude processa)
 ```
 
@@ -644,7 +644,7 @@ sync_service.rodar_sync(baixar_anexos=True) [async generator]
         │  │  │  └─ tenta ocrmypdf (ghostscript)
         │  │  │  └─ cai em Tesseract página a página
         │  │  │  └─ se ainda vazio: Sonnet + visão
-        │  │  └─ Salva em pecas/*.txt
+        │  │  └─ Salva em Arquivos/*.txt
         │  │
         │  ├─ txt = sincronizador._montar_sisdpu_txt(caixa[paj], det)
         │  ├─ metadata = parser.montar_metadata(paj_norm, txt)
@@ -683,7 +683,7 @@ chat_service.processar_instrucao(paj_norm, prompt, skill_slug)
     │     ├─ Últimas 8 movimentações
     │     ├─ "Memória" (conclusões anteriores se houver)
     │     ├─ Lista de peças anteriores do assistido
-    │     └─ Texto completo do sisdpu.txt + pecas/*.txt
+    │     └─ Texto completo do sisdpu.txt + Arquivos/*.txt
     │
     ├─ Invoca subprocess (Claude Code CLI):
     │  command: ["claude", "eval", "--model", ELABORACAO_MODELO,
@@ -735,11 +735,11 @@ Usuário digita termo (≥2 caracteres)
     ↓
 GET /api/busca?termo=xyz
     ↓
-busca_service.buscar(termo, tipos=["movimentacoes", "pecas"])
+busca_service.buscar(termo, tipos=["movimentacoes", "arquivos"])
     ├─ Carrega TODOS os metadata.json (cache em memória)
     ├─ Busca em:
     │  ├─ metadata.detalhes_sisdpu.movimentacoes[*].descricao (FTS)
-    │  └─ pecas/*.txt (lê arquivo, busca substring)
+    │  └─ Arquivos/*.txt (lê arquivo, busca substring)
     ├─ Retorna: [{ paj_norm, tipo, contexto, trecho }, ...]
     │  └─ Limite: 50 resultados
     │

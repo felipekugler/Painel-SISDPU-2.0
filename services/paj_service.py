@@ -221,9 +221,9 @@ def listar_pajs(incluir_concluidos: bool = False) -> list[dict]:
                 continue
             n_pecas_geradas += 1
 
-        # Contagem de ANEXOS SISDPU (baixados pelo sync em pecas/, excluindo
+        # Contagem de ANEXOS SISDPU (baixados pelo sync em Arquivos/, excluindo
         # os .txt de OCR — contamos so o arquivo-fonte, nao o OCR companion).
-        pasta_pecas = pasta / "pecas"
+        pasta_pecas = pasta / "Arquivos"
         n_anexos_sisdpu = 0
         if pasta_pecas.exists() and pasta_pecas.is_dir():
             for f in pasta_pecas.iterdir():
@@ -334,11 +334,11 @@ def ler_paj(paj_norm: str) -> dict | None:
     movs_sorted = sorted(movs, key=lambda m: int(m.get("seq", 0) or 0))
     max_seq_mov = max((int(m.get("seq", 0) or 0) for m in movs), default=0)
 
-    # Anexos SISDPU: arquivos em `pecas/` baixados pelo sincronizador.
+    # Anexos SISDPU: arquivos em `Arquivos/` baixados pelo sincronizador.
     # O OCR gera um `.txt` companion com o mesmo stem — associamos pro frontend
     # poder exibir "abrir PDF" + "ler OCR" lado a lado.
     anexos_sisdpu: list[dict] = []
-    pasta_pecas = pasta / "pecas"
+    pasta_pecas = pasta / "Arquivos"
     if pasta_pecas.exists() and pasta_pecas.is_dir():
         # Mapeia companheiros OCR por stem
         txts_ocr: dict[str, Path] = {}
@@ -356,12 +356,12 @@ def ler_paj(paj_norm: str) -> dict | None:
                 {
                     "nome": f.name,
                     # caminho relativo a pasta do PAJ (usado por /files/<paj>/<path>)
-                    "caminho": f"pecas/{f.name}",
+                    "caminho": f"Arquivos/{f.name}",
                     "tipo": f.suffix.lstrip(".").lower(),
                     "tamanho": f.stat().st_size,
                     "modificado": f.stat().st_mtime,
                     "tem_ocr": ocr_companion is not None and ocr_companion.stat().st_size > 0,
-                    "caminho_ocr": f"pecas/{ocr_companion.name}" if ocr_companion else None,
+                    "caminho_ocr": f"Arquivos/{ocr_companion.name}" if ocr_companion else None,
                 }
             )
 
@@ -423,7 +423,7 @@ def limpar_anexos_paj(
     Politica: so apaga o binario original (PDF/docx/imagem). MANTEM:
       - .txt OCR companion (texto extraido fica permanente)
       - metadata.json, sisdpu.txt, PROMPT_MAX.md (dados estruturais)
-      - qualquer arquivo fora de pecas/ (pecas geradas pelo Claude, etc)
+      - qualquer arquivo fora de Arquivos/ (pecas geradas pelo Claude, etc)
 
     Safeguards (consultados via dry_run; execute requer `forcar=True` se
     algum seguranca falhar):
@@ -455,7 +455,7 @@ def limpar_anexos_paj(
     metadata = _ler_json(pasta / "metadata.json") or {}
     em_caixa = metadata.get("em_caixa_atual", True)  # default: ativo
 
-    pasta_pecas = pasta / "pecas"
+    pasta_pecas = pasta / "Arquivos"
     arquivos_a_remover: list[dict] = []
     arquivos_preservados: list[dict] = []
 
@@ -484,7 +484,7 @@ def limpar_anexos_paj(
             arquivos_a_remover.append(
                 {
                     "nome": f.name,
-                    "caminho": f"pecas/{f.name}",
+                    "caminho": f"Arquivos/{f.name}",
                     "tamanho": f.stat().st_size,
                     "tem_ocr": tem_ocr,
                 }

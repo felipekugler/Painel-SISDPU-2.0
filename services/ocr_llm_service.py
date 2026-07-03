@@ -263,7 +263,7 @@ def melhorar_ocr_paj(paj_norm: str, log_fn=None) -> dict:
     if not OCR_LLM_ATIVO:
         return res
     pasta = PAJS_DIR / paj_norm
-    pecas = pasta / "pecas"
+    pecas = pasta / "Arquivos"
     if not pecas.is_dir():
         return res
 

@@ -141,7 +141,7 @@ DPU-script-SIS/
 ## Workspace Ofício Geral
 
 Este painel lê os dados da pasta apontada por `OFICIO_GERAL`, que contém:
-- `PAJs/PAJ-YYYY-NNN-XXXXX/` — uma subpasta por PAJ (NNN = código de 3 dígitos da unidade) com `sisdpu.txt`, `metadata.json`, `pecas/`, peças geradas
+- `PAJs/PAJ-YYYY-NNN-XXXXX/` — uma subpasta por PAJ (NNN = código de 3 dígitos da unidade) com `sisdpu.txt`, `metadata.json`, `Arquivos/`, peças geradas
 - `Peças Feitas/` — peças anteriores do Defensor (usadas como contexto no PROMPT_MAX)
 - `CLAUDE.md` — instruções do Defensor para o Claude Code
 - `gerar_docx.py` e `gerar_peticao.py` — scripts que o botão "Gerar DOCX/PDF" invoca

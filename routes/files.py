@@ -15,11 +15,19 @@ async def serve_file(paj_norm: PajNorm, path: str):
         return PlainTextResponse("Arquivo nao encontrado", status_code=404)
 
     if "pdf" in content_type:
-        return FileResponse(arquivo, media_type=content_type, filename=arquivo.name)
+        # content_disposition_type="inline" — sem isso, o Starlette manda
+        # "attachment" (forca download) sempre que `filename` e' informado,
+        # em vez de abrir no visualizador de PDF do navegador.
+        return FileResponse(
+            arquivo,
+            media_type=content_type,
+            filename=arquivo.name,
+            content_disposition_type="inline",
+        )
 
     # TXT, JSON, MD — retorna como texto
     if "text" in content_type or "json" in content_type:
         conteudo = arquivo.read_text(encoding="utf-8", errors="replace")
         return PlainTextResponse(conteudo, media_type=content_type)
 
-    return FileResponse(arquivo, media_type=content_type)
+    return FileResponse(arquivo, media_type=content_type, content_disposition_type="inline")

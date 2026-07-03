@@ -395,11 +395,16 @@ async def _baixar_anexos_sisdpu(
     limite: int,
     deve_cancelar: Callable[[], bool] | None = None,
     filtro_data_min=None,
+    seq_por_file_id: dict[str, int] | None = None,
 ) -> dict:
     """Abre o dialogo 'Arquivos' do PAJ atual e baixa os anexos listados.
 
     PRE-CONDICAO: a page do Playwright ja deve estar no detalhamento do PAJ
     (chamar `movimentacoes_paj(...)` antes).
+
+    `seq_por_file_id`: repassado a `sisdpu_client.baixar_todos_arquivos` pra
+    nomear os arquivos com a seq REAL da movimentacao (vinda da extracao por
+    seq), nao o indice desta listagem.
 
     Comportamento:
       - Lista TODAS as tabelas de anexos da pagina (multi-categoria).
@@ -542,7 +547,9 @@ async def _baixar_anexos_sisdpu(
 
     # Usa nova estrategia: fetch() + servidor local (mais robusto que Playwright clicks)
     log(f"  [anexos] baixando {len(lista)} arquivo(s) via fetch...")
-    resultado_fetch = await sisdpu_client.baixar_todos_arquivos(pasta_pecas, lista_arquivos=lista, log=log)
+    resultado_fetch = await sisdpu_client.baixar_todos_arquivos(
+        pasta_pecas, lista_arquivos=lista, log=log, seq_por_file_id=seq_por_file_id
+    )
 
     if resultado_fetch.get("total", 0) > 0:
         baixados = resultado_fetch.get("baixados", 0)
@@ -739,6 +746,10 @@ async def _processar_paj_pos_detalhamento(
     # Snapshot da estrutura bruta devolvida pelo SISDPU para diagnostico/posteridade
     metadata["sisdpu_raw"] = det
 
+    # Preenchido abaixo (se houver movimentacoes) e usado no bloco de anexos,
+    # mais adiante, pra nomear os arquivos baixados com a seq real.
+    seq_por_file_id: dict[str, int] = {}
+
     # Se temos movimentacoes estruturadas do sisdpu_client, usa direto sem perda
     # (evita parsing regex que perde campos como movimentacao, fases, usuario, anexo)
     if det.get("movimentacoes"):
@@ -746,6 +757,50 @@ async def _processar_paj_pos_detalhamento(
         if "detalhes_sisdpu" not in metadata:
             metadata["detalhes_sisdpu"] = {}
         metadata["detalhes_sisdpu"]["movimentacoes"] = mov_estruturadas
+
+        # Documentos por seq (icone de "Anexo" na tabela de movimentacoes).
+        # Incremental: so reextrai seqs que ainda nao tinham `documentos` no
+        # metadata anterior — evita reabrir popups de movimentacoes ja
+        # conhecidas a cada sync (roda em rapida e completa, sem gate em
+        # baixar_anexos, porque o custo por sync fica proporcional so ao que
+        # mudou desde a ultima vez).
+        documentos_conhecidos_por_seq = {
+            str(mov_antiga.get("seq")): mov_antiga["documentos"]
+            for mov_antiga in movs_antigas
+            if mov_antiga.get("documentos")
+        }
+        try:
+            resultado_docs = await sisdpu_client.extrair_documentos_por_seq(
+                seqs_conhecidos=list(documentos_conhecidos_por_seq.keys()),
+                deve_cancelar=deve_cancelar,
+                log=log,
+            )
+        except Exception as e:
+            log(f"  [docs] erro ao extrair documentos por seq: {type(e).__name__}: {e}")
+            resultado_docs = {}
+
+        docs_novos_por_seq = {
+            str(mov_doc.get("seq")): mov_doc.get("documentos", [])
+            for mov_doc in resultado_docs.get("movimentacoes_com_documentos", [])
+        }
+
+        n_documentos_indexados = 0
+        for mov in mov_estruturadas:
+            seq_str = str(mov.get("seq"))
+            documentos = docs_novos_por_seq.get(seq_str) or documentos_conhecidos_por_seq.get(seq_str) or []
+            mov["documentos"] = documentos
+            n_documentos_indexados += len(documentos)
+        metadata["n_documentos_indexados"] = n_documentos_indexados
+
+        # Mapa {id_do_arquivo -> seq_real}, usado na nomeacao dos arquivos
+        # baixados mais abaixo (bloco de anexos) — permite ao frontend casar
+        # o link da coluna "Documentos" com a copia local pelo ID, nao pelo
+        # nome (que pode se repetir).
+        for mov in mov_estruturadas:
+            for doc in mov.get("documentos", []):
+                file_id = sisdpu_client.extrair_id_arquivo(doc.get("urlDownload", ""))
+                if file_id:
+                    seq_por_file_id[file_id] = mov.get("seq")
 
     if via_busca_global:
         # Busca global nao da informacao sobre estar na caixa atual — preserva
@@ -825,10 +880,11 @@ async def _processar_paj_pos_detalhamento(
             return (paj_norm, True)
 
         resultado_anexos = await _baixar_anexos_sisdpu(
-            pasta / "pecas",
+            pasta / "Arquivos",
             log,
             limite=MAX_ANEXOS_POR_PAJ,
             deve_cancelar=deve_cancelar,
+            seq_por_file_id=seq_por_file_id,
         )
         total_anexos = resultado_anexos["total_no_sisdpu"]
         baixados = resultado_anexos["baixados"]
@@ -908,13 +964,13 @@ async def _processar_paj_pos_detalhamento(
 
 
 def _apagar_anexos_pasta(pasta: Path, log: Callable[[str], None]) -> tuple[int, int]:
-    """Apaga binarios em pasta/pecas/, preservando .txt OCR companions.
+    """Apaga binarios em pasta/Arquivos/, preservando .txt OCR companions.
 
     Retorna (n_removidos, bytes_liberados). Usado na transicao de PAJ para
     "concluido" (fora-da-caixa) — libera espaco mantendo OCR extraido e
     registros na raiz.
     """
-    pasta_pecas = pasta / "pecas"
+    pasta_pecas = pasta / "Arquivos"
     if not pasta_pecas.exists() or not pasta_pecas.is_dir():
         return (0, 0)
     removidos = 0
@@ -946,7 +1002,7 @@ def _reconciliar_concluidos(
     - PAJs na caixa ja foram marcados True durante _processar_paj.
     - PAJs no disco mas fora da caixa (antigos, concluidos, sairam do oficio): False.
     - Na TRANSICAO de ativo->concluido, apaga automaticamente os anexos
-      binarios (pecas/*.pdf, etc.), preservando OCR companions e registros
+      binarios (Arquivos/*.pdf, etc.), preservando OCR companions e registros
       na raiz.
     Retorna numero de PAJs concluidos nesta rodada.
     """
@@ -1294,15 +1350,35 @@ async def rodar_anexos_desde_data(
             await sisdpu_client.fechar()
         return {"erro": det["erro"]}
 
-    # 3) Baixa anexos com filtro por data (ignora limite)
     pasta = PAJS_DIR / alvo
+
+    # 2.5) Monta o mesmo mapa {id_do_arquivo -> seq_real} usado na sincronizacao
+    # normal, mas lendo do metadata.json JA EXISTENTE (populado numa completa
+    # anterior — e' assim que o overflow foi detectado em primeiro lugar).
+    # Evita reprocessar a extracao por seq so pra completar anexos antigos.
+    seq_por_file_id: dict[str, int] = {}
+    meta_path_existente = pasta / "metadata.json"
+    if meta_path_existente.exists():
+        try:
+            meta_existente = json.loads(meta_path_existente.read_text(encoding="utf-8"))
+            movs_existentes = meta_existente.get("detalhes_sisdpu", {}).get("movimentacoes", []) or []
+            for mov in movs_existentes:
+                for doc in mov.get("documentos", []) or []:
+                    file_id = sisdpu_client.extrair_id_arquivo(doc.get("urlDownload", ""))
+                    if file_id:
+                        seq_por_file_id[file_id] = mov.get("seq")
+        except Exception as e:
+            log(f"  [anexos-desde] aviso: nao foi possivel ler seqs do metadata existente: {e}")
+
+    # 3) Baixa anexos com filtro por data (ignora limite)
     pasta.mkdir(parents=True, exist_ok=True)
     resultado_anexos = await _baixar_anexos_sisdpu(
-        pasta / "pecas",
+        pasta / "Arquivos",
         log,
         limite=MAX_ANEXOS_POR_PAJ,  # ignorado quando filtro_data_min e' usado
         deve_cancelar=deve_cancelar,
         filtro_data_min=data_inicio,
+        seq_por_file_id=seq_por_file_id,
     )
 
     with contextlib.suppress(Exception):
@@ -1431,8 +1507,8 @@ async def rodar_paj_unico(
                 resumo["anexos"] = meta.get("n_anexos_sisdpu", 0)
             except Exception:
                 pass
-            # Conta arquivos em pecas/
-            pasta_pecas = pasta / "pecas"
+            # Conta arquivos em Arquivos/
+            pasta_pecas = pasta / "Arquivos"
             if pasta_pecas.exists():
                 resumo["baixados"] = sum(
                     1 for f in pasta_pecas.iterdir() if f.is_file() and f.suffix.lower() != ".txt"
@@ -1544,7 +1620,7 @@ async def rodar_paj_via_busca_global(
                 resumo["anexos"] = meta.get("n_anexos_sisdpu", 0)
             except Exception:
                 pass
-            pasta_pecas = pasta / "pecas"
+            pasta_pecas = pasta / "Arquivos"
             if pasta_pecas.exists():
                 resumo["baixados"] = sum(
                     1 for f in pasta_pecas.iterdir() if f.is_file() and f.suffix.lower() != ".txt"

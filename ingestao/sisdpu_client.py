@@ -1525,6 +1525,103 @@ async def baixar_arquivo(url: str, destino) -> bool:
         return False
 
 
+_EXTRACAO_DOCS_JS_PATH = Path(__file__).resolve().parent / "extrair_documentos_movimentacoes.js"
+
+
+async def extrair_documentos_por_seq(
+    seqs_conhecidos: list[str] | None = None,
+    deve_cancelar: Callable[[], bool] | None = None,
+    log: Callable[[str], None] | None = None,
+) -> dict:
+    """Extrai, por seq de movimentacao, os documentos anexados (via o icone de
+    "Anexo" de cada linha) do PAJ atualmente aberto.
+
+    PRE-CONDICAO: a page ja deve estar no detalhamento do PAJ (chamar
+    `movimentacoes_paj(...)` antes) — mesma pre-condicao de `listar_arquivos_paj`.
+
+    `seqs_conhecidos`: seqs (str) que ja possuem `documentos` no metadata da
+    sincronizacao anterior — sao excluidas da fila, entao so processamos seqs
+    novas desde a ultima sync (mantem o custo proporcional ao que mudou).
+
+    Pilota o script `extrair_documentos_movimentacoes.js` (copia adaptada em
+    `ingestao/`, NAO o original em C:\\Claude\\Scripts\\SISDPU\\) passo a passo:
+    INIT (monta a fila) -> N chamadas de __extracaoProximo() (uma por seq,
+    clica/le/fecha o popup) -> __extracaoFinalizar() (consolida o resultado).
+
+    Retorna dict: {paj, assistido, movimentacoes_com_documentos: [{seq,
+    dataHora, movimentacao, documentos: [{tipoArquivo, descricao, nomeArquivo,
+    urlDownload}]}], total_documentos, seqsPuladas, tabela_markdown}.
+    Em caso de erro ou tabela nao encontrada, retorna {"erro": "..."}.
+    """
+
+    def _log(msg: str) -> None:
+        if log:
+            with contextlib.suppress(Exception):
+                log(msg)
+
+    page = await _get_page()
+
+    js_source = _EXTRACAO_DOCS_JS_PATH.read_text(encoding="utf-8")
+    # Envolve o arquivo inteiro numa arrow function explicita — mesmo padrao
+    # usado em todo o resto deste modulo (ex: listar_arquivos_paj). Passar o
+    # conteudo bruto (que comeca com um comentario /** */) faz o Playwright
+    # nao reconhecer a string como "function-like", o que pode fazer as
+    # atribuicoes a `window.*` nao "pegarem" do jeito esperado entre chamadas
+    # seguintes de evaluate().
+    await page.evaluate("(src) => { (0, eval)(src); }", js_source)
+
+    async def _finalizar_seguro() -> dict:
+        tem_estado = await page.evaluate("() => !!window.__extracaoEstado")
+        if not tem_estado:
+            _log("  [docs] estado da extracao perdido (dialogo/pagina mudou) — resultado descartado")
+            return {"movimentacoes_com_documentos": [], "total_documentos": 0}
+        return await page.evaluate("window.__extracaoFinalizar()")
+
+    init = await page.evaluate(
+        "(seqs) => window.__extracaoInit(seqs)", list(seqs_conhecidos or [])
+    )
+
+    if init.get("erro"):
+        _log(f"  [docs] {init['erro']}")
+        return {"erro": init["erro"], "movimentacoes_com_documentos": [], "total_documentos": 0}
+
+    total_fila = init.get("totalFila", 0)
+    puladas = init.get("puladas", 0)
+    if puladas:
+        _log(f"  [docs] {puladas} seq(s) ja conhecida(s) — pulando")
+    if total_fila == 0:
+        _log("  [docs] nenhuma seq nova com anexo para extrair")
+        return await _finalizar_seguro()
+
+    _log(f"  [docs] extraindo documentos de {total_fila} seq(s) nova(s)...")
+
+    try:
+        while True:
+            if deve_cancelar is not None and deve_cancelar():
+                _log("  [docs] CANCELADO pelo usuario")
+                break
+            r = await page.evaluate("window.__extracaoProximo()")
+            if r.get("fim"):
+                break
+            progresso = r.get("progresso", "?")
+            erro = r.get("erro")
+            if erro:
+                _log(f"    [docs] seq {r.get('seq')}: {erro} ({progresso})")
+            else:
+                n_docs = len(r.get("documentos", []))
+                _log(f"    [docs] seq {r.get('seq')}: {n_docs} doc(s) ({progresso})")
+    except Exception as e:
+        _log(f"  [docs] erro durante extracao: {type(e).__name__}: {e}")
+        # Garante que nao fica popup aberto atrapalhando o proximo passo (ex:
+        # listar_arquivos_paj logo em seguida, no bloco de anexos).
+        with contextlib.suppress(Exception):
+            await page.evaluate(
+                "() => document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))"
+            )
+
+    return await _finalizar_seguro()
+
+
 async def listar_arquivos_paj(debug: bool = False) -> dict:
     """Clica no botao "Arquivos" do PAJ atualmente aberto e extrai a lista.
 
@@ -1965,6 +2062,21 @@ _EXTS_ARQUIVO = {
 }
 
 
+def extrair_id_arquivo(url: str) -> str:
+    """Extrai o ID numerico do documento a partir da URL de download do SISDPU.
+
+    Ex: '.../rest/download/pdf/42296157/Nome.pdf' -> '42296157'.
+    Esse ID pertence ao ARQUIVO (nao a seq/listagem) e e' o mesmo em qualquer
+    mecanismo que o descubra (listar_arquivos_paj ou extracao por seq de
+    movimentacao) — usado como chave de juncao para nomear os arquivos
+    baixados de forma que o frontend consiga casar o link da coluna
+    "Documentos" com a copia local ja baixada, sem depender do nome do
+    arquivo (que pode se repetir, ex: "email.pdf").
+    """
+    m = re.search(r"/(\d+)/[^/]*$", url or "")
+    return m.group(1) if m else ""
+
+
 def _ext_de_nome_arquivo(nome: str) -> str:
     """Extrai extensao do FINAL do nome de arquivo validando contra lista conhecida.
 
@@ -2079,11 +2191,18 @@ async def baixar_todos_arquivos(
     pasta_destino: Path,
     lista_arquivos: list[dict] | None = None,
     log: Callable[[str], None] | None = None,
+    seq_por_file_id: dict[str, int] | None = None,
 ) -> dict:
     """Baixa todos os arquivos do PAJ via JavaScript fetch + local server.
 
     Se lista_arquivos não for fornecida, extrai via listar_arquivos_paj().
     Caso contrário, usa a lista ja fornecida (cada item deve ter: arquivo, seq, data, href ou as keys esperadas).
+
+    `seq_por_file_id`: mapa {id_do_arquivo (str) -> seq_real (int)} vindo da
+    extracao por seq de movimentacao (`extrair_documentos_por_seq`). Usado
+    pra nomear o arquivo com a seq REAL da movimentacao — se o id do arquivo
+    (extraido do href) nao estiver no mapa, cai no `seq` fornecido pela lista
+    de origem (listar_arquivos_paj, que e' so um indice de listagem).
 
     Estrategia:
     1. Extrai lista de arquivos (ou usa fornecida)
@@ -2186,18 +2305,23 @@ async def baixar_todos_arquivos(
 
         for idx, doc in enumerate(docs, start=1):
             seq = doc.get("seq", "?")
-            data = doc.get("data", "")
             nomeArq = doc.get("nomeArq", "arquivo")
             href = doc.get("href", "")
 
-            # Formata nome para POST: YYYY-MM-DD - SEQ - NOME
-            # Converte data DD/MM/YYYY -> YYYY-MM-DD
-            data_iso = data
-            if data and len(data) == 10 and data[2] == "/" and data[5] == "/":
-                # DD/MM/YYYY -> YYYY-MM-DD
-                data_iso = f"{data[6:10]}-{data[3:5]}-{data[0:2]}"
+            # Formata nome para POST: seqNNN - ID - NOME
+            # O ID (extraido do href) e' a chave estavel que o frontend usa
+            # pra casar o link da coluna "Documentos" com este arquivo local
+            # — nao depende do nome (que pode se repetir, ex: "email.pdf").
+            # A seq usa a REAL (do mapa por id), com 3 digitos pra ordenar
+            # certo na pasta quando passar de 100 seqs.
+            file_id = extrair_id_arquivo(href)
+            seq_real = (seq_por_file_id or {}).get(file_id, seq)
+            try:
+                seq_fmt = f"{int(seq_real):03d}"
+            except (TypeError, ValueError):
+                seq_fmt = str(seq_real)
 
-            nome_para_post = f"{data_iso} - {seq} - {nomeArq}"
+            nome_para_post = f"seq{seq_fmt} - {file_id or '0'} - {nomeArq}"
 
             _log(f"[{idx}/{len(docs)}]   {nomeArq}")
 

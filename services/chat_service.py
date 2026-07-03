@@ -49,11 +49,11 @@ _DIRETRIZES_PROFUNDIDADE = (
     "ocupado pela DPU/assistido e as teses cabíveis; pondere alternativas e "
     "escolha a melhor.\n"
     "2. **Leia TODOS os anexos** baixados do SIS — estão listados na seção "
-    "'Anexos baixados do SIS' do contexto, como arquivos `pecas/*.txt` (texto "
+    "'Anexos baixados do SIS' do contexto, como arquivos `Arquivos/*.txt` (texto "
     "OCR). Não se baseie só nas movimentações: abra e leia cada anexo relevante "
     "na íntegra antes de decidir o produto.\n"
     "3. **OCR fraco/ausente**: para anexos assim sinalizados (ou cujo `.txt` "
-    "esteja ilegível/curto), **abra o PDF original em `pecas/` e leia com sua "
+    "esteja ilegível/curto), **abra o PDF original em `Arquivos/` e leia com sua "
     "capacidade de visão** — não confie apenas no OCR.\n\n"
 )
 

@@ -151,7 +151,7 @@ PAJs/
 ├── PAJ-2026-044-00311/
 │   ├── sisdpu.txt (nova versão)
 │   ├── metadata.json (nova versão)
-│   └── pecas/
+│   └── Arquivos/
 │       ├── documento_1.pdf (novo)
 │       └── documento_1.txt (novo, OCR)
 └── PAJ-2026-044-00312/
@@ -417,7 +417,7 @@ def gerar_prompt_max(paj_norm: str) -> str:
     ]
     
     # 6. Peças anexadas
-    pecas_dir = pasta / "pecas"
+    pecas_dir = pasta / "Arquivos"
     if pecas_dir.exists():
         lines += ["## Anexos Baixados do SIS", ""]
         for txt_file in sorted(pecas_dir.glob("*.txt")):
@@ -537,7 +537,7 @@ def buscar(termo: str, tipos: list[str] | None = None, limite: int = 50) -> dict
                 })
         
         # 2. Busca em peças (*.txt)
-        pecas_dir = pasta_paj / "pecas"
+        pecas_dir = pasta_paj / "Arquivos"
         if pecas_dir.exists():
             for txt_file in pecas_dir.glob("*.txt"):
                 conteudo = txt_file.read_text()

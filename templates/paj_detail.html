@@ -26,6 +26,10 @@
 
     // Passa movimentações para Alpine.js na aba MOV2
     window._paj_movimentacoes = {{ dados.movimentacoes | tojson }};
+    // Anexos ja baixados em Arquivos/ — usado pra casar o link da coluna
+    // "Documentos" com a copia local (por ID no nome do arquivo).
+    window._paj_anexos_sisdpu = {{ dados.anexos_sisdpu | tojson }};
+    window._paj_norm = '{{ paj_norm }}';
   })();
 </script>
 
@@ -515,10 +519,8 @@
     <div x-show="tab === 'mov2'" class="bg-base-200 rounded-lg border border-base-300 p-6"
          x-data="tabelaMov2()">
         <div class="mb-4 space-y-4">
-            <h3 class="text-lg font-semibold">Movimentações Completas</h3>
-
             <!-- Filtros -->
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 bg-base-300/50 rounded-lg p-4">
                 <!-- Filtro Fases -->
                 <div class="form-control">
                     <label class="label py-1">
@@ -532,12 +534,12 @@
                     </select>
                 </div>
 
-                <!-- Filtro Tipo de Usuário (Checkboxes) -->
+                <!-- Filtro Tipo de Usuário (Checkboxes) + Documentos -->
                 <div class="form-control">
                     <label class="label py-1">
                         <span class="label-text text-xs font-medium">Filtrar por Tipo de Usuário</span>
                     </label>
-                    <div class="flex flex-wrap gap-3">
+                    <div class="flex flex-wrap items-center gap-3">
                         <label class="flex items-center gap-1 cursor-pointer">
                             <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioTodos" @change="selecionarTodos()">
                             <span class="text-xs font-medium">Todos</span>
@@ -554,6 +556,10 @@
                             <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroUsuarioSistema" @change="selecionarIndividual()">
                             <span class="text-xs">Sistema</span>
                         </label>
+                        <label class="flex items-center gap-1 cursor-pointer border-l border-base-content/20 pl-3 ml-1">
+                            <input type="checkbox" class="checkbox checkbox-xs" x-model="filtroSoComDocumentos">
+                            <span class="text-xs">Mostrar só com documentos</span>
+                        </label>
                     </div>
                 </div>
             </div>
@@ -561,7 +567,7 @@
 
         <!-- Tabela com scroll horizontal em mobile -->
         <div class="overflow-x-auto">
-            <table class="table table-sm table-zebra">
+            <table class="table table-sm">
                 <thead class="bg-base-300">
                     <tr>
                         <th style="cursor: pointer;" @click="ordenarPor('seq')" class="hover:bg-base-400">
@@ -588,12 +594,13 @@
                         <th style="cursor: pointer; display: none;" @click="ordenarPor('links_decisao')" class="hover:bg-base-400">
                             Links <span x-show="colunhaOrdenacao === 'links_decisao'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
                         </th>
+                        <th>Documentos</th>
                     </tr>
                 </thead>
                 <tbody>
-                    <template x-for="mov in movimentacoesFiltradas" :key="mov.seq">
+                    <template x-for="(mov, idx) in movimentacoesFiltradas" :key="mov.seq">
                         <tr :class="['mov-item', mov.seq > maxSeqAnterior && 'mov-nova']"
-                            :style="mov.fases && mov.fases.trim().toLowerCase().includes('atendimento de retorno') ? 'background-color: rgba(29, 158, 117, 0.15); border-left: 4px solid rgb(29, 158, 117);' : (mov.fases && mov.usuario && (mov.usuario.includes('DEFENSOR') || mov.usuario.includes('(d)')) ? 'background-color: rgba(216, 90, 48, 0.15); border-left: 4px solid rgb(216, 90, 48);' : '')"
+                            :style="corLinhaMov(mov, idx)"
                             :data-mov-seq="mov.seq">
                             <td class="font-semibold" x-text="mov.seq || '?'"></td>
                             <td style="display: none;" x-text="mov.anexo || '-'"></td>
@@ -610,6 +617,23 @@
                                     </a>
                                 </template>
                                 <span x-show="!mov.links_decisao || mov.links_decisao.length === 0" class="text-base-content/40">-</span>
+                            </td>
+                            <td class="text-xs">
+                                <template x-if="mov.documentos && mov.documentos.length > 0">
+                                    <div class="flex flex-wrap gap-1">
+                                        <template x-for="doc in mov.documentos" :key="doc.urlDownload">
+                                            <a :href="temArquivoLocal(doc) ? linkDocumento(doc) : null" target="_blank"
+                                               @click="!temArquivoLocal(doc) && $event.preventDefault()"
+                                               class="badge badge-sm gap-1"
+                                               :class="temArquivoLocal(doc) ? corBadgeDocumento(doc.nomeArquivo) : 'badge-ghost opacity-50 cursor-not-allowed'"
+                                               :title="temArquivoLocal(doc) ? doc.nomeArquivo : doc.nomeArquivo + ' — ainda não baixado (sincronize com anexos)'">
+                                                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                                <span x-text="extDocumento(doc.nomeArquivo)"></span>
+                                            </a>
+                                        </template>
+                                    </div>
+                                </template>
+                                <span x-show="!mov.documentos || mov.documentos.length === 0" class="text-base-content/30">-</span>
                             </td>
                         </tr>
                     </template>
@@ -1006,6 +1030,7 @@ function tabelaMov2() {
         filtroUsuarioServidor: false, // Por padrão NÃO selecionado
         filtroUsuarioDefensor: false, // Por padrão NÃO selecionado
         filtroUsuarioSistema: false,  // Por padrão NÃO selecionado
+        filtroSoComDocumentos: false,
         colunhaOrdenacao: 'seq',
         direcaoOrdenacao: 'desc',
         maxSeqAnterior: 0,
@@ -1019,6 +1044,68 @@ function tabelaMov2() {
             // Captura max_seq anterior para highlight
             const snap = window._prevPajSnapshot;
             this.maxSeqAnterior = snap ? (snap.max_seq || 0) : -1;
+        },
+
+        // Cor de fundo da linha: prioriza Atendimento de retorno (verde) e
+        // movimentação de Defensor (laranja); nas demais, listra discreta
+        // alternada pela posição na lista (não pela seq, que pode ter buracos
+        // por causa dos filtros).
+        corLinhaMov(mov, idx) {
+            if (mov.fases && mov.fases.trim().toLowerCase().includes('atendimento de retorno')) {
+                return 'background-color: rgba(29, 158, 117, 0.15); border-left: 4px solid rgb(29, 158, 117);';
+            }
+            if (mov.fases && mov.usuario && (mov.usuario.includes('DEFENSOR') || mov.usuario.includes('(d)'))) {
+                return 'background-color: rgba(216, 90, 48, 0.15); border-left: 4px solid rgb(216, 90, 48);';
+            }
+            return idx % 2 === 0
+                ? 'background-color: rgba(255, 255, 255, 0.025);'
+                : 'background-color: rgba(255, 255, 255, 0.055);';
+        },
+
+        // Mapa {id_do_arquivo -> caminho local}, construído uma vez a partir
+        // dos anexos já baixados em Arquivos/ (nome: "seqNNN - ID - nome.ext").
+        // Usado pra abrir a cópia local em vez de ir buscar no SISDPU.
+        get _mapaArquivoLocalPorId() {
+            if (!this.__mapaArquivoLocal) {
+                const mapa = {};
+                (window._paj_anexos_sisdpu || []).forEach(a => {
+                    const m = (a.nome || '').match(/^seq\d+\s*-\s*(\d+)\s*-/);
+                    if (m) mapa[m[1]] = a.caminho;
+                });
+                this.__mapaArquivoLocal = mapa;
+            }
+            return this.__mapaArquivoLocal;
+        },
+
+        _idDocumento(doc) {
+            const m = (doc.urlDownload || '').match(/\/(\d+)\/[^/]*$/);
+            return m ? m[1] : null;
+        },
+
+        // Só é clicável quando a copia local ja foi baixada — evita abrir uma
+        // aba de erro tentando buscar direto no SISDPU (exige sessao/VPN).
+        temArquivoLocal(doc) {
+            const id = this._idDocumento(doc);
+            return !!(id && this._mapaArquivoLocalPorId[id]);
+        },
+
+        linkDocumento(doc) {
+            const id = this._idDocumento(doc);
+            const caminhoLocal = id ? this._mapaArquivoLocalPorId[id] : null;
+            return caminhoLocal ? `/files/${window._paj_norm}/${caminhoLocal}` : null;
+        },
+
+        extDocumento(nomeArquivo) {
+            const ext = (nomeArquivo || '').split('.').pop();
+            return (ext && ext.length <= 5 ? ext : 'doc').toUpperCase();
+        },
+
+        corBadgeDocumento(nomeArquivo) {
+            const ext = this.extDocumento(nomeArquivo).toLowerCase();
+            if (ext === 'pdf') return 'badge-error';
+            if (['doc', 'docx'].includes(ext)) return 'badge-info';
+            if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) return 'badge-warning';
+            return 'badge-ghost';
         },
 
         get fases_unicas() {
@@ -1039,6 +1126,11 @@ function tabelaMov2() {
                 resultado = resultado.filter(mov =>
                     mov.fases && mov.fases.includes(this.filtroFases)
                 );
+            }
+
+            // Aplica filtro "só com documentos"
+            if (this.filtroSoComDocumentos) {
+                resultado = resultado.filter(mov => mov.documentos && mov.documentos.length > 0);
             }
 
             // Aplica filtro Tipo de Usuário

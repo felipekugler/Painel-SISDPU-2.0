@@ -115,8 +115,8 @@ def _build_prompt(paj_norm: str, pasta: Path) -> str:
     status_paj = (meta.get("detalhes_sisdpu") or {}).get("status_paj") or "Ativo"
     paj_num = _paj_norm_to_numero(paj_norm)
 
-    # pecas/*.txt — documentos baixados com OCR
-    pecas_dir = pasta / "pecas"
+    # Arquivos/*.txt — documentos baixados com OCR
+    pecas_dir = pasta / "Arquivos"
     pecas_content = ""
     if pecas_dir.exists():
         for txt in sorted(pecas_dir.glob("*.txt")):

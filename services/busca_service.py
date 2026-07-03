@@ -1,6 +1,6 @@
 """Busca full-text no acervo de PAJs.
 
-Varre `sisdpu.txt` + `pecas/*.txt` (OCRs) + campos-chave do metadata.json.
+Varre `sisdpu.txt` + `Arquivos/*.txt` (OCRs) + campos-chave do metadata.json.
 Cache em memoria com TTL pra nao re-ler disco a cada pesquisa.
 
 Volume tipico: ~400 PAJs x ~50KB texto = ~20MB. Primeira busca 1-2s;
@@ -94,7 +94,7 @@ def _montar_corpus() -> list[dict]:
         sisdpu_blob = _ler_texto(sisdpu_txt) if sisdpu_txt.exists() else ""
 
         ocr_docs: list[dict] = []
-        pecas = pasta / "pecas"
+        pecas = pasta / "Arquivos"
         if pecas.exists() and pecas.is_dir():
             for f in sorted(pecas.iterdir()):
                 if f.is_file() and f.suffix.lower() == ".txt":
