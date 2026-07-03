@@ -1,8 +1,9 @@
 """Rota de detalhe do PAJ."""
 
-from fastapi import APIRouter, Body, Request
+from fastapi import APIRouter, Body, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from services.download_completo_service import gerar_pdf_consolidado
 from services.paj_service import (
     PajNorm,
     ler_paj,
@@ -50,6 +51,23 @@ async def limpar_anexos_executar(paj_norm: PajNorm, forcar: bool = False):
     if not resultado.get("ok"):
         return JSONResponse(resultado, status_code=400)
     return resultado
+
+
+@router.get("/api/paj/{paj_norm}/download-completo")
+def api_download_completo(paj_norm: PajNorm):
+    """Gera sob demanda (sem persistir em disco) um PDF unico com capa,
+    historico de movimentacoes e todos os anexos do PAJ. Sincrono de proposito
+    (roda em threadpool) — mesclar PDFs e' CPU-bound e nao deve travar o event
+    loop."""
+    pdf_bytes = gerar_pdf_consolidado(paj_norm)
+    if pdf_bytes is None:
+        return JSONResponse({"erro": "PAJ não encontrado"}, status_code=404)
+    nome_arquivo = f"{paj_norm} - Download Completo.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{nome_arquivo}"'},
+    )
 
 
 @router.post("/api/paj/{paj_norm}/melhorar-ocr", response_class=JSONResponse)
