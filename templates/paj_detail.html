@@ -170,13 +170,14 @@
 
             <div class="flex items-center gap-2">
                 <!-- Baixar PAJ Completo: PDF unico com capa, narrativa, historico de
-                     movimentacoes e todos os anexos deste PAJ -->
-                <a href="/api/paj/{{ paj_norm }}/download-completo"
-                   class="btn btn-sm btn-outline btn-secondary gap-1.5"
-                   title="Gera um único PDF com capa, narrativa, histórico de movimentações e todos os anexos deste PAJ, em ordem cronológica">
+                     movimentacoes e todos os anexos deste PAJ. Antes de gerar, verifica
+                     se a sincronizacao completa (com anexos) ja rodou — ver baixarPajCompleto() -->
+                <button onclick="baixarPajCompleto('{{ paj_norm }}')"
+                        class="btn btn-sm btn-outline btn-secondary gap-1.5"
+                        title="Gera um único PDF com capa, narrativa, histórico de movimentações e todos os anexos deste PAJ, em ordem cronológica">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 12m0 0 4.5-4.5M12 12V3"></path></svg>
                     Baixar PAJ Completo
-                </a>
+                </button>
 
                 <!-- Sincronizar PAJ: split button (com anexos por padrao) -->
                 <div class="join">

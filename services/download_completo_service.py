@@ -215,7 +215,7 @@ def _campo(page: fitz.Page, y: float, rotulo: str, valor: str) -> None:
     _texto(page, MARGEM + 145, y, A4.width - MARGEM, 20, str(valor or "-"), fontsize=10)
 
 
-def _escrever_capa(doc: fitz.Document, paj_norm: str, meta: dict, n_anexos: int) -> None:
+def _escrever_capa(doc: fitz.Document, paj_norm: str, meta: dict) -> None:
     page = _nova_pagina(doc)
     y = MARGEM
     _texto(
@@ -228,13 +228,11 @@ def _escrever_capa(doc: fitz.Document, paj_norm: str, meta: dict, n_anexos: int)
     campos = [
         ("Assistido", meta.get("assistido_caixa", "")),
         ("Ofício", meta.get("oficio_caixa", "")),
+        ("Área", meta.get("foro_detectado", "")),
         ("Pretensão", meta.get("pretensaopura") or meta.get("classificacao", "")),
         ("Processo judicial", meta.get("processo_judicial", "")),
-        ("Foro", meta.get("foro_detectado", "")),
         ("Status no SIS", det.get("status_paj", "")),
         ("Data de abertura", meta.get("data_abertura", "")),
-        ("Entrada na caixa", meta.get("data_mov_caixa", "")),
-        ("Total de anexos", str(n_anexos)),
     ]
     for rotulo, valor in campos:
         _campo(page, y, rotulo, valor)
@@ -633,6 +631,52 @@ def _anexar_item(doc: fitz.Document, paj_norm: str, rotulo_seq: str, pasta: Path
         return STATUS_ERRO_UNIFICACAO
 
 
+def verificar_sincronizacao_completa(paj_norm: str) -> dict | None:
+    """Verifica se da' pra gerar o Download Completo sem faltar anexo.
+
+    Reaproveita a MESMA logica de casamento documento-anexo do PDF
+    (`_montar_grupos`) — se algum documento listado numa movimentacao nao
+    tem anexo fisico baixado, ou se o sync foi marcado como incompleto
+    (`meta.sync_incompleto`, setado quando o usuario cancela no meio do
+    download de anexos), ha' anexos extras alem do limite ainda nao
+    baixados (`meta.anexos_extras`), ou o PAJ nunca passou pela extracao de
+    documentos por sequencia (`meta.n_documentos_indexados is None` — PAJ
+    so' teve a listagem basica da caixa, nunca uma sincronizacao de verdade),
+    a sincronizacao NAO esta' completa.
+
+    None se o PAJ nao existir."""
+    dados = ler_paj(paj_norm)
+    if not dados:
+        return None
+
+    meta = dados["metadata"]
+    movs = dados["movimentacoes"]
+    anexos = dados["anexos_sisdpu"]
+    grupos, orfaos = _montar_grupos(movs, anexos)
+
+    total = 0
+    faltando = 0
+    for itens in list(grupos.values()) + list(orfaos.values()):
+        for item in itens:
+            total += 1
+            if not item.get("anexo"):
+                faltando += 1
+
+    sync_incompleto = bool(meta.get("sync_incompleto"))
+    tem_overflow = bool(meta.get("anexos_extras"))
+    nunca_sincronizado = meta.get("n_documentos_indexados") is None or meta.get("n_anexos_sisdpu") is None
+
+    return {
+        "completo": not nunca_sincronizado and not sync_incompleto and not tem_overflow and faltando == 0,
+        "total_documentos": total,
+        "faltando": faltando,
+        "sync_incompleto": sync_incompleto,
+        "motivo_incompleto": meta.get("sync_incompleto_motivo"),
+        "tem_anexos_extras": tem_overflow,
+        "nunca_sincronizado": nunca_sincronizado,
+    }
+
+
 def gerar_pdf_consolidado(paj_norm: str) -> bytes | None:
     """Monta e retorna (em memoria) o PDF consolidado do PAJ. None se o PAJ
     nao existir."""
@@ -654,7 +698,7 @@ def gerar_pdf_consolidado(paj_norm: str) -> bytes | None:
     inicio = datetime.now()
 
     doc = fitz.open()
-    _escrever_capa(doc, paj_norm, meta, len(anexos))  # pagina 0 — o resumo e' escrito nela no final
+    _escrever_capa(doc, paj_norm, meta)  # pagina 0 — o resumo e' escrito nela no final
     _escrever_movimentacoes(doc, paj_norm, movs)
     _escrever_narrativa(doc, paj_norm, narrativa)  # logo antes da Sequencia 1
 

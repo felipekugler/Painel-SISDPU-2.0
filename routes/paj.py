@@ -3,7 +3,7 @@
 from fastapi import APIRouter, Body, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from services.download_completo_service import gerar_pdf_consolidado
+from services.download_completo_service import gerar_pdf_consolidado, verificar_sincronizacao_completa
 from services.paj_service import (
     PajNorm,
     ler_paj,
@@ -50,6 +50,17 @@ async def limpar_anexos_executar(paj_norm: PajNorm, forcar: bool = False):
     resultado = limpar_anexos_paj(paj_norm, dry_run=False, forcar=forcar)
     if not resultado.get("ok"):
         return JSONResponse(resultado, status_code=400)
+    return resultado
+
+
+@router.get("/api/paj/{paj_norm}/sincronizacao-completa", response_class=JSONResponse)
+async def api_sincronizacao_completa(paj_norm: PajNorm):
+    """Usado pelo botao 'Baixar PAJ Completo' pra decidir, ANTES de gerar o
+    PDF, se todos os documentos referenciados nas movimentacoes ja foram
+    baixados localmente — evita gerar um 'completo' faltando anexo."""
+    resultado = verificar_sincronizacao_completa(paj_norm)
+    if resultado is None:
+        return JSONResponse({"erro": "PAJ não encontrado"}, status_code=404)
     return resultado
 
 

@@ -382,6 +382,34 @@ function sincronizarPaj(pajNorm, baixarAnexos) {
     };
 }
 
+/* Baixar PAJ Completo — antes de gerar o PDF, confirma que a sincronizacao
+   completa (com download de anexos) ja rodou com sucesso. Sem isso o PDF
+   sairia "completo" faltando os documentos que nunca foram baixados. */
+async function baixarPajCompleto(pajNorm) {
+    let status;
+    try {
+        const resp = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/sincronizacao-completa');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        status = await resp.json();
+    } catch (e) {
+        showToast('Não foi possível verificar a sincronização do PAJ', 'error');
+        return;
+    }
+
+    if (!status.completo) {
+        const querSincronizar = confirm(
+            'Não é possível gerar arquivo completo do PAJ sem a sincronização completa ' +
+            'com download dos documentos. Deseja fazer a sincronização completa agora?'
+        );
+        if (querSincronizar) {
+            sincronizarPaj(pajNorm, true);
+        }
+        return;
+    }
+
+    window.location.href = '/api/paj/' + encodeURIComponent(pajNorm) + '/download-completo';
+}
+
 /* Baixar anexos antigos a partir de uma data — completa overflow do sync padrao.
    Reusa o modal de sync (sync-modal) para o log SSE. */
 function baixarAnexosDesde(pajNorm) {
