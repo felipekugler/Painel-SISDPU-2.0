@@ -478,177 +478,116 @@
   <!-- Lista de PAJs -->
   <section class="px-8 pb-8 flex-1 min-h-0 flex flex-col">
 
-    <!-- Cabeçalho da lista -->
-    <div class="px-4 py-2 flex items-center gap-3 text-[11px] text-base-content/40 font-semibold">
-      <div class="w-[148px]">
-        <button class="flex items-center gap-1 hover:text-base-content/70 transition-colors" @click="ordenarPor('paj')">
-          PAJ <span x-text="iconOrdem('paj')"></span>
-        </button>
-      </div>
-      <div class="w-[200px]">
-        <button class="flex items-center gap-1 hover:text-base-content/70 transition-colors" @click="ordenarPor('assistido')">
-          Assistido <span x-text="iconOrdem('assistido')"></span>
-        </button>
-      </div>
-      <div class="w-[160px]">
-        <button class="flex items-center gap-1 hover:text-base-content/70 transition-colors" @click="ordenarPor('oficio')">
-          Ofício <span x-text="iconOrdem('oficio')"></span>
-        </button>
-      </div>
-      <div class="w-[104px]">Área</div>
-      <div class="w-[240px]">
-        <button class="flex items-center gap-1 hover:text-base-content/70 transition-colors" @click="ordenarPor('classificacao')">
-          Pretensão <span x-text="iconOrdem('classificacao')"></span>
-        </button>
-      </div>
-      <div class="w-[88px]">
-        <button class="flex items-center gap-1 hover:text-base-content/70 transition-colors" @click="ordenarPor('data_caixa')">
-          Data <span x-text="iconOrdem('data_caixa')"></span>
-        </button>
-      </div>
-      <div class="w-[76px] text-center">Anexos</div>
-      <div class="w-5 shrink-0"></div>
-      <div class="w-[200px] text-right pr-1">Elaboração</div>
-    </div>
-
     <div class="bg-base-300 rounded-xl border border-base-content/5 flex-1 overflow-hidden flex flex-col">
-      <div class="list-scroll overflow-y-auto divide-y divide-base-content/5 flex-1 min-h-0">
+      <div class="overflow-y-auto flex-1 min-h-0">
 
-        <template x-for="paj in pajsFiltrados" :key="paj.paj_norm">
-          <div class="paj-row px-4 py-3 flex items-center gap-3 group cursor-pointer"
-               :class="novidadesDe(paj).tem ? 'border-l-2 border-l-info/70' : 'border-l-2 border-l-transparent'"
-               @click="window.location.href = '/paj/' + paj.paj_norm">
+        <table class="w-full border-collapse text-sm">
+          <thead class="sticky top-0 z-10 bg-base-100">
+            <tr class="text-[11px] text-base-content/40 font-semibold border-b border-base-content/10">
+              <th class="px-4 py-2 text-left w-[160px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('paj')">PAJ <span x-text="iconOrdem('paj')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[200px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('assistido')">Assistido <span x-text="iconOrdem('assistido')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[160px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('oficio')">Ofício <span x-text="iconOrdem('oficio')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[450px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('classificacao')">Pretensão <span x-text="iconOrdem('classificacao')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[88px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('data_caixa')">Data <span x-text="iconOrdem('data_caixa')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[76px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('n_documentos_indexados')">Anexos</button></th>
+              <th class="px-4 py-2 text-left flex-1">Elaboração</th>
+            </tr>
+          </thead>
+          <tbody class="divide-y divide-base-content/5">
+            <template x-for="paj in pajsFiltrados" :key="paj.paj_norm">
+              <tr class="paj-row group cursor-pointer hover:bg-base-200/50 transition-colors"
+                  :class="novidadesDe(paj).tem ? 'border-l-2 border-l-info/70' : 'border-l-2 border-l-transparent'"
+                  @click="window.location.href = '/paj/' + paj.paj_norm">
 
-            <!-- Número do PAJ -->
-            <div class="w-[148px] shrink-0">
-              <div class="flex items-center gap-1.5">
+              <!-- PAJ -->
+              <td class="px-4 py-3 align-top whitespace-nowrap">
                 <div class="font-mono text-sm font-semibold tracking-tight" x-text="paj.paj"></div>
-                <template x-if="novidadesDe(paj).tem">
-                  <span class="inline-flex items-center gap-0.5 text-[9.5px] font-bold text-info bg-info/15 rounded-full px-1.5 py-0.5 leading-none"
-                        :title="(novidadesDe(paj).novo ? 'Nunca visitado' : 'Mudanças desde sua última visita')">
-                    <span class="w-1 h-1 rounded-full bg-info"></span>
-                    <template x-if="novidadesDe(paj).movs > 0">
-                      <span x-text="'+' + novidadesDe(paj).movs + 'm'"></span>
-                    </template>
-                    <template x-if="novidadesDe(paj).anexos > 0">
-                      <span x-text="'+' + novidadesDe(paj).anexos + 'a'"></span>
-                    </template>
-                    <template x-if="novidadesDe(paj).novo">
-                      <span>novo</span>
-                    </template>
+                <div class="flex items-center gap-1 mt-0.5">
+                  <template x-if="novidadesDe(paj).tem">
+                    <span class="inline-flex items-center gap-0.5 text-[9px] font-bold text-info bg-info/15 rounded-full px-1 py-0.5 leading-none shrink-0" :title="(novidadesDe(paj).novo ? 'Nunca visitado' : 'Mudanças desde sua última visita')">
+                      <span class="w-0.5 h-0.5 rounded-full bg-info"></span>
+                      <template x-if="novidadesDe(paj).movs > 0"><span x-text="'+' + novidadesDe(paj).movs + 'm'"></span></template>
+                      <template x-if="novidadesDe(paj).anexos > 0"><span x-text="'+' + novidadesDe(paj).anexos + 'a'"></span></template>
+                      <template x-if="novidadesDe(paj).novo"><span>novo</span></template>
+                    </span>
+                  </template>
+                  <div class="font-mono text-[10.5px] text-base-content/40 truncate flex-1" x-text="paj.processo_judicial || ''"></div>
+                </div>
+                <template x-if="paj.etiqueta">
+                  <span class="inline-flex items-center gap-1 mt-1 text-[10px] font-medium text-accent/80 bg-accent/10 rounded px-1.5 py-0.5">
+                    <span class="w-1 h-1 rounded-full bg-accent"></span>
+                    <span x-text="paj.etiqueta"></span>
                   </span>
                 </template>
-              </div>
-              <div class="font-mono text-[10.5px] text-base-content/40 mt-0.5 truncate" x-text="paj.processo_judicial || ''"></div>
-              <template x-if="paj.etiqueta">
-                <span class="inline-flex items-center gap-1 mt-1 text-[10px] font-medium text-accent/80 bg-accent/10 rounded px-1.5 py-0.5">
-                  <span class="w-1 h-1 rounded-full bg-accent"></span>
-                  <span x-text="paj.etiqueta"></span>
-                </span>
-              </template>
-            </div>
+              </td>
 
-            <!-- Assistido -->
-            <div class="w-[200px] shrink min-w-0">
-              <div class="text-[13px] font-semibold truncate" x-text="paj.assistido || '—'"></div>
-            </div>
+              <!-- Assistido -->
+              <td class="px-4 py-3 align-top">
+                <div class="text-[13px] font-semibold truncate" x-text="paj.assistido || '—'"></div>
+              </td>
 
-            <!-- Ofício -->
-            <div class="w-[160px] shrink min-w-0">
-              <div class="text-[12px] text-base-content/70 truncate" x-text="normalizarOficio(paj.oficio) || '—'"></div>
-            </div>
+              <!-- Ofício -->
+              <td class="px-4 py-3 align-top">
+                <div class="text-[12px] text-base-content/70 truncate" x-text="normalizarOficio(paj.oficio) || '—'"></div>
+              </td>
 
-            <!-- Badge de área -->
-            <div class="w-[104px] shrink-0">
-              <span class="text-sm font-medium"
-                    :class="{
-                      'text-error/60': (paj.foro || '').toLowerCase() === 'criminal',
-                      'text-info/60': (paj.foro || '').toLowerCase() === 'civel',
-                      'text-warning/60': (paj.foro || '').toLowerCase() === 'previdenciario',
-                      'text-success/60': (paj.foro || '').toLowerCase() === 'saude',
-                      'text-base-content/60': !['criminal','civel','previdenciario','saude'].includes((paj.foro || '').toLowerCase())
-                    }"
-                    x-text="formatarArea(paj.foro) || '—'"></span>
-              <template x-if="paj.prazos_abertos && paj.prazos_abertos.length > 0">
-                <span class="badge badge-xs badge-error mt-0.5 block w-fit">PRAZO</span>
-              </template>
-              <template x-if="paj.sync_incompleto">
-                <span class="badge badge-xs badge-error mt-0.5 block w-fit"
-                      :title="paj.sync_incompleto_motivo || 'Sincronização incompleta — re-sincronize'">
-                  ⚠ PARCIAL
-                </span>
-              </template>
-            </div>
+              <!-- Pretensão -->
+              <td class="px-4 py-3 align-top">
+                <span class="pretensao-badge"
+                      :class="corPretensao(paj.pretensaopura)"
+                      :title="paj.pretensaopura"
+                      x-text="paj.pretensaopura || '—'"></span>
+              </td>
 
-            <!-- Pretensão -->
-            <div class="w-[240px] shrink min-w-0">
-              <span class="text-sm font-medium truncate-1"
-                    :class="corPretensao(paj.pretensaopura)"
-                    :title="paj.pretensaopura"
-                    x-text="paj.pretensaopura || '—'"></span>
-            </div>
+              <!-- Data -->
+              <td class="px-4 py-3 align-top">
+                <div class="font-mono text-xs text-base-content/80 tnum" x-text="formatarData(paj.data_caixa)"></div>
+                <div class="text-[10px] text-base-content/40 mt-0.5" x-text="dataRelativa(paj.data_caixa)"></div>
+              </td>
 
-            <!-- Data -->
-            <div class="w-[88px] shrink-0">
-              <div class="font-mono text-xs text-base-content/80 tnum" x-text="formatarData(paj.data_caixa)"></div>
-              <div class="text-[10px] text-base-content/40 mt-0.5" x-text="dataRelativa(paj.data_caixa)"></div>
-            </div>
-
-            <!-- Peças -->
-            <div class="w-[76px] shrink-0 flex justify-center">
-              <div x-show="(paj.n_documentos_indexados || 0) > 0 || paj.n_pecas > 0"
-                   class="inline-flex items-center gap-1 bg-base-200 rounded-md px-2 py-1">
-                <svg class="w-3 h-3 text-base-content/40" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 3.75h6l4.5 4.5v12a1.5 1.5 0 0 1-1.5 1.5h-9a1.5 1.5 0 0 1-1.5-1.5V5.25a1.5 1.5 0 0 1 1.5-1.5Z"></path></svg>
-                <span class="font-mono text-xs font-semibold tnum"
-                      :class="paj.n_anexos_sisdpu > 0 ? 'text-info' : 'text-base-content/40'"
-                      :title="paj.n_anexos_sisdpu > 0 ? 'anexos baixados' : 'anexos ainda não baixados'"
-                      x-show="(paj.n_documentos_indexados || 0) > 0"
-                      x-text="paj.n_documentos_indexados"></span>
-                <span class="text-base-content/20 text-xs" x-show="(paj.n_documentos_indexados || 0) > 0 && paj.n_pecas > 0">·</span>
-                <span class="font-mono text-xs font-semibold tnum text-success" x-show="paj.n_pecas > 0" x-text="paj.n_pecas + '✓'"></span>
-              </div>
-              <span class="text-xs text-base-content/30" x-show="!(paj.n_documentos_indexados > 0) && !paj.n_pecas">—</span>
-            </div>
-
-            <!-- Divisor -->
-            <div class="w-5 shrink-0 flex justify-center">
-              <div class="w-px h-7 bg-base-content/10"></div>
-            </div>
-
-            <!-- Elaboração (status em tempo real) -->
-            <div class="w-[200px] shrink-0 flex justify-end gap-1.5" @click.stop>
-              <template x-if="statusOf(paj.paj_norm).status === 'running'">
-                <div class="flex items-center gap-2">
-                  <span class="loading loading-spinner loading-xs text-warning"></span>
-                  <span class="text-xs text-base-content/70 truncate max-w-[140px]"
-                        x-text="statusOf(paj.paj_norm).last_action || 'trabalhando...'"></span>
+              <!-- Anexos -->
+              <td class="px-4 py-3 align-top">
+                <div x-show="(paj.n_documentos_indexados || 0) > 0 || paj.n_pecas > 0"
+                     class="inline-flex items-center gap-1 bg-base-200 rounded-md px-2 py-1">
+                  <svg class="w-3 h-3 text-base-content/40" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M7.5 3.75h6l4.5 4.5v12a1.5 1.5 0 0 1-1.5 1.5h-9a1.5 1.5 0 0 1-1.5-1.5V5.25a1.5 1.5 0 0 1 1.5-1.5Z"></path></svg>
+                  <span class="font-mono text-xs font-semibold tnum"
+                        :class="paj.n_anexos_sisdpu > 0 ? 'text-info' : 'text-base-content/40'"
+                        :title="paj.n_anexos_sisdpu > 0 ? 'anexos baixados' : 'anexos ainda não baixados'"
+                        x-show="(paj.n_documentos_indexados || 0) > 0"
+                        x-text="paj.n_documentos_indexados"></span>
+                  <span class="text-base-content/20 text-xs" x-show="(paj.n_documentos_indexados || 0) > 0 && paj.n_pecas > 0">·</span>
+                  <span class="font-mono text-xs font-semibold tnum text-success" x-show="paj.n_pecas > 0" x-text="paj.n_pecas + '✓'"></span>
                 </div>
-              </template>
-              <template x-if="statusOf(paj.paj_norm).status === 'queued'">
-                <span class="badge badge-ghost badge-sm">em fila</span>
-              </template>
-              <template x-if="statusOf(paj.paj_norm).status === 'done'">
-                <button class="btn btn-sm btn-success normal-case gap-1.5 font-medium"
-                        @click.stop="abrirResumoCaixa(paj.paj_norm)">
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.01 1.01 0 0 1 0-.644C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .644C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"></path></svg>
-                  Ver Resumo
-                </button>
-              </template>
-              <template x-if="statusOf(paj.paj_norm).status === 'error'">
-                <span class="badge badge-error badge-sm">erro</span>
-              </template>
-              <template x-if="!statusOf(paj.paj_norm).status || statusOf(paj.paj_norm).status === 'idle'">
-                <button class="btn btn-sm btn-ghost normal-case gap-1.5 text-base-content/50 border border-base-content/10
-                               hover:border-base-content/25 hover:bg-base-200
-                               opacity-0 group-hover:opacity-100 transition-opacity">
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M13.5 6H5.25A2.25 2.25 0 0 0 3 8.25v10.5A2.25 2.25 0 0 0 5.25 21h10.5A2.25 2.25 0 0 0 18 18.75V10.5m-10.5 6L21 3m0 0h-5.25M21 3v5.25"></path></svg>
-                  Abrir PAJ
-                </button>
-              </template>
-            </div>
+                <span class="text-xs text-base-content/30" x-show="!(paj.n_documentos_indexados > 0) && !paj.n_pecas">—</span>
+              </td>
 
-          </div>
-        </template>
+              <!-- Elaboração (status em tempo real) -->
+              <td class="px-4 py-3 align-top" @click.stop>
+                <template x-if="statusOf(paj.paj_norm).status === 'running'">
+                  <div class="flex items-center gap-2">
+                    <span class="loading loading-spinner loading-xs text-warning"></span>
+                    <span class="text-xs text-base-content/70 truncate max-w-[140px]"
+                          x-text="statusOf(paj.paj_norm).last_action || 'trabalhando...'"></span>
+                  </div>
+                </template>
+                <template x-if="statusOf(paj.paj_norm).status === 'queued'">
+                  <span class="badge badge-ghost badge-sm">em fila</span>
+                </template>
+                <template x-if="statusOf(paj.paj_norm).status === 'done'">
+                  <button class="btn btn-sm btn-success normal-case gap-1.5 font-medium"
+                          @click.stop="abrirResumoCaixa(paj.paj_norm)">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.01 1.01 0 0 1 0-.644C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .644C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"></path></svg>
+                    Ver Resumo
+                  </button>
+                </template>
+                <template x-if="statusOf(paj.paj_norm).status === 'error'">
+                  <span class="badge badge-error badge-sm">erro</span>
+                </template>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+        </table>
 
         <!-- Estado vazio -->
         <div x-show="pajsFiltrados.length === 0" class="px-6 py-16 text-center">
@@ -994,40 +933,40 @@ function dashboardApp() {
         },
 
         corPretensao(pretensao) {
-            if (!pretensao) return 'text-base-content/60';
+            if (!pretensao) return 'outro';
             const p = String(pretensao).toUpperCase().trim();
 
             // BENEFÍCIO POR INCAPACIDADE → Vermelho
             if (['AUXÍLIO-DOENÇA', 'APOSENTADORIA POR INVALIDEZ', 'AUXÍLIO-ACIDENTE', 'REABILITAÇÃO PROFISSIONAL'].some(x => p.includes(x))) {
-                return 'text-error';
+                return 'incapacidade';
             }
 
             // PENSÃO E RECLUSÃO → Roxo
             if (['PENSÃO POR MORTE', 'AUXÍLIO-RECLUSÃO'].some(x => p.includes(x))) {
-                return 'text-purple-600';
+                return 'pensao';
             }
 
             // OUTROS → Cinza
             if (['BENEFICIOS SOCIAIS', 'RESTITUIÇÃO', 'COBRANÇA'].some(x => p.includes(x))) {
-                return 'text-base-content/60';
+                return 'outro';
             }
 
             // APOSENTADORIAS → Azul
             if (['APOSENTADORIA'].some(x => p.includes(x)) && !p.includes('INVALIDEZ')) {
-                return 'text-info';
+                return 'aposentadoria';
             }
 
             // BENEFÍCIOS ASSISTENCIAIS → Verde
             if (['BPC', 'AUXÍLIO INCLUSÃO', 'BENEFÍCIO ASSISTENCIAL'].some(x => p.includes(x))) {
-                return 'text-success';
+                return 'assistencial';
             }
 
             // SALÁRIO-MATERNIDADE → Laranja
             if (['SALÁRIO-MATERNIDADE', 'MATERNIDADE'].some(x => p.includes(x))) {
-                return 'text-warning';
+                return 'maternidade';
             }
 
-            return 'text-base-content/60';
+            return 'outro';
         },
 
         aplicarFiltros() {

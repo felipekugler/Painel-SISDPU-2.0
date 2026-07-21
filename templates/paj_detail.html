@@ -150,11 +150,11 @@
             </p>
             <div class="flex flex-wrap gap-3 mt-2 text-sm font-medium">
                 {% set area = meta.foro_detectado %}
-                <span class="{% if area == 'Criminal' %}text-error/60{% elif area == 'Civel' %}text-info/60{% elif area == 'Previdenciario' %}text-warning/60{% elif area == 'Saude' %}text-success/60{% else %}text-base-content/60{% endif %}">
+                <span class="area-badge {% if area == 'Criminal' %}criminal{% elif area == 'Civel' %}civel{% elif area == 'Previdenciario' %}previdenciario{% elif area == 'Saude' %}saude{% else %}default{% endif %}">
                     {{ area | formatar_area or '?' }}
                 </span>
                 {% set pret = (meta.pretensaopura or meta.classificacao or '').upper() %}
-                <span class="{% if 'AUXÍLIO-DOENÇA' in pret or 'APOSENTADORIA POR INVALIDEZ' in pret or 'AUXÍLIO-ACIDENTE' in pret or 'REABILITAÇÃO' in pret %}text-error{% elif 'PENSÃO POR MORTE' in pret or 'AUXÍLIO-RECLUSÃO' in pret %}text-purple-600{% elif 'APOSENTADORIA' in pret and 'INVALIDEZ' not in pret %}text-info{% elif 'BPC' in pret or 'AUXÍLIO INCLUSÃO' in pret or 'BENEFÍCIO ASSISTENCIAL' in pret %}text-success{% elif 'SALÁRIO-MATERNIDADE' in pret or 'MATERNIDADE' in pret %}text-warning{% else %}text-base-content/60{% endif %}">
+                <span class="pretensao-badge {% if 'AUXÍLIO-DOENÇA' in pret or 'APOSENTADORIA POR INVALIDEZ' in pret or 'AUXÍLIO-ACIDENTE' in pret or 'REABILITAÇÃO' in pret %}incapacidade{% elif 'PENSÃO POR MORTE' in pret or 'AUXÍLIO-RECLUSÃO' in pret %}pensao{% elif 'APOSENTADORIA' in pret and 'INVALIDEZ' not in pret %}aposentadoria{% elif 'BPC' in pret or 'AUXÍLIO INCLUSÃO' in pret or 'BENEFÍCIO ASSISTENCIAL' in pret %}assistencial{% elif 'SALÁRIO-MATERNIDADE' in pret or 'MATERNIDADE' in pret %}maternidade{% else %}outro{% endif %}">
                     {{ meta.pretensaopura or meta.classificacao or '—' }}
                 </span>
                 {% if meta.oficio_caixa %}
@@ -628,7 +628,7 @@
                             <td class="text-xs" x-text="mov.data_original || mov.data || '?'"></td>
                             <td style="display: none;" class="text-sm font-medium" x-text="mov.movimentacao || '-'"></td>
                             <td class="text-sm" x-text="(mov.fases || '-').replace('°', '')"></td>
-                            <td class="text-sm whitespace-normal break-words" x-text="(mov.fases && mov.fases.includes('Atendimento de retorno') && mov.descricao_retorno) ? mov.descricao_retorno : (mov.descricao || '-')"></td>
+                            <td class="text-sm whitespace-normal break-words" x-html="(mov.fases && mov.fases.includes('Atendimento de retorno') && mov.descricao_retorno) ? mov.descricao_retorno : (mov.descricao || '-')"></td>
                             <td class="text-sm" x-text="mov.usuario || '-'"></td>
                             <td style="display: none;">
                                 <template x-if="mov.links_decisao && mov.links_decisao.length > 0">
@@ -1080,14 +1080,19 @@ function tabelaMov2() {
 
         // Cor de fundo da linha: prioriza Atendimento de retorno (verde) e
         // movimentação de Defensor (laranja); nas demais, listra discreta
-        // alternada pela posição na lista (não pela seq, que pode ter buracos
-        // por causa dos filtros).
+        // alternada pela posição na lista. Usa variáveis CSS para auto-ajustar
+        // contraste em modo claro/escuro.
         corLinhaMov(mov, idx) {
+            const style = getComputedStyle(document.documentElement);
             if (mov.fases && mov.fases.trim().toLowerCase().includes('atendimento de retorno')) {
-                return 'background-color: rgba(29, 158, 117, 0.15); border-left: 4px solid rgb(29, 158, 117);';
+                const cor = style.getPropertyValue('--cor-retorno').trim();
+                const bg = style.getPropertyValue('--cor-retorno-bg').trim();
+                return `background-color: ${bg}; border-left: 4px solid ${cor};`;
             }
             if (mov.fases && mov.usuario && (mov.usuario.includes('DEFENSOR') || mov.usuario.includes('(d)'))) {
-                return 'background-color: rgba(216, 90, 48, 0.15); border-left: 4px solid rgb(216, 90, 48);';
+                const cor = style.getPropertyValue('--cor-defensor').trim();
+                const bg = style.getPropertyValue('--cor-defensor-bg').trim();
+                return `background-color: ${bg}; border-left: 4px solid ${cor};`;
             }
             return idx % 2 === 0
                 ? 'background-color: rgba(255, 255, 255, 0.025);'
