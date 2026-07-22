@@ -29,12 +29,74 @@ def ler_config() -> dict:
     return dict(DEFAULTS)
 
 
-def salvar_config(config: dict) -> dict:
-    merged = {k: bool(config.get(k, DEFAULTS[k])) for k in DEFAULTS}
+def _ler_raw() -> dict:
+    """Lê o JSON cru (preserva TODAS as chaves, inclusive as fora de DEFAULTS)."""
+    if os.path.isfile(_CONFIG_FILE_STR):
+        try:
+            return json.loads(_CONFIG_FILE.read_text(encoding="utf-8"))
+        except Exception:
+            pass
+    return {}
+
+
+def _salvar_raw(data: dict) -> None:
     _CONFIG_FILE.write_text(
-        json.dumps(merged, indent=2, ensure_ascii=False), encoding="utf-8"
+        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
     )
-    return merged
+
+
+def salvar_config(config: dict) -> dict:
+    # Preserva chaves extras (ex.: preferências de tramitação) ao gravar os toggles.
+    raw = _ler_raw()
+    for k in DEFAULTS:
+        raw[k] = bool(config.get(k, raw.get(k, DEFAULTS[k])))
+    _salvar_raw(raw)
+    return {k: raw[k] for k in DEFAULTS}
+
+
+# --- Preferências de tramitação (caixas favoritas + prazo padrão) ---
+GRUPOS_FAVORITOS_MAX = 3
+PRAZO_TRAMITACAO_DEFAULT = 15
+
+
+def get_prazo_tramitacao_padrao() -> int:
+    try:
+        v = int(_ler_raw().get("prazo_tramitacao_padrao", PRAZO_TRAMITACAO_DEFAULT))
+    except Exception:
+        v = PRAZO_TRAMITACAO_DEFAULT
+    return min(365, max(1, v))
+
+
+def set_prazo_tramitacao_padrao(dias: int) -> int:
+    v = min(365, max(1, int(dias)))
+    raw = _ler_raw()
+    raw["prazo_tramitacao_padrao"] = v
+    _salvar_raw(raw)
+    return v
+
+
+def get_grupos_favoritos() -> list[str]:
+    g = _ler_raw().get("grupos_favoritos", [])
+    return [str(x) for x in g][:GRUPOS_FAVORITOS_MAX] if isinstance(g, list) else []
+
+
+def add_grupo_favorito(grupo: str) -> list[str]:
+    grupo = (grupo or "").strip()
+    favs = get_grupos_favoritos()
+    if grupo and grupo not in favs and len(favs) < GRUPOS_FAVORITOS_MAX:
+        favs.append(grupo)
+        raw = _ler_raw()
+        raw["grupos_favoritos"] = favs
+        _salvar_raw(raw)
+    return favs
+
+
+def del_grupo_favorito(grupo: str) -> list[str]:
+    favs = [g for g in get_grupos_favoritos() if g != (grupo or "").strip()]
+    raw = _ler_raw()
+    raw["grupos_favoritos"] = favs
+    _salvar_raw(raw)
+    return favs
 
 
 def limpar_dados_prazos() -> int:

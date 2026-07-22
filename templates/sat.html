@@ -1,0 +1,551 @@
+{% extends "base.html" %}
+
+{% block title %}Arquivos SAT{% endblock %}
+
+{% block content %}
+<div x-data="satPage()" x-init="init()">
+
+    <div class="flex items-center justify-between mb-2">
+        <h2 class="text-2xl font-bold">
+            Arquivos SAT
+            <span class="text-base-content/50 text-lg" x-show="!carregando" x-text="'(' + pendentes.length + ')'"></span>
+        </h2>
+        <div class="flex items-center gap-2">
+            <label class="label cursor-pointer gap-2 text-sm">
+                <span class="text-base-content/70">Simular (dry-run)</span>
+                <input type="checkbox" class="toggle toggle-sm toggle-primary" x-model="dryRun">
+            </label>
+            <button class="btn btn-sm btn-ghost" @click="recarregar()" :disabled="carregando">
+                <span x-show="carregando" class="loading loading-spinner loading-xs"></span>
+                Atualizar
+            </button>
+        </div>
+    </div>
+
+    <div class="text-sm text-base-content/60 mb-4">
+        Relação de PAJs da Caixa de Entrada que contém o trâmite
+        <em>"…para juntada dos documentos do SAT Central. Após, tramitar à DIVPREV."</em>
+        <div class="mt-2">Esta aba permite:</div>
+        <ul class="list-disc ml-6 mt-1 space-y-0.5">
+            <li>Baixar os documentos, visualizar a lista de baixados, excluir arquivos desnecessários</li>
+            <li>Anexar os arquivos ao PAJ com movimentação → tramitação → conclusão da Caixa de Entrada</li>
+            <li>Você será chamado a fazer <strong>login no SAT Central</strong> (na janela que abrir) e, ao clicar em <strong>Baixar</strong>, a marcar o <strong>CAPTCHA "Não sou um robô"</strong> nessa janela.</li>
+        </ul>
+    </div>
+
+    <!-- Sessão SAT -->
+    <div class="card bg-base-200 shadow mb-4">
+        <div class="card-body py-3 flex-row items-center gap-3 flex-wrap">
+            <span class="text-sm font-medium">Sessão SAT:</span>
+            <span class="badge" :class="sessaoOk ? 'badge-success' : 'badge-warning'"
+                  x-text="sessaoOk ? 'Conectado' : 'Não conectado'"></span>
+            <button class="btn btn-sm btn-primary" @click="abrirSat()" :disabled="sessaoBusy">
+                <span x-show="sessaoBusy" class="loading loading-spinner loading-xs"></span>
+                Abrir SAT / Login
+            </button>
+            <button class="btn btn-sm btn-ghost" @click="verificarSessao()" :disabled="sessaoBusy">Verificar sessão</button>
+            <span class="text-xs text-base-content/60" x-text="sessaoMsg"></span>
+        </div>
+    </div>
+
+    <!-- Caixa de tramitação + prazo -->
+    <div class="card bg-base-200 shadow mb-4">
+        <div class="card-body py-3 gap-2">
+            <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-sm font-medium mr-1">Tramitar para:</span>
+                <template x-for="g in caixasRapidas()" :key="g">
+                    <button class="btn btn-xs" :class="grupoSel===g ? 'btn-primary' : 'btn-outline'"
+                            @click="grupoSel=g" x-text="g"></button>
+                </template>
+                <button class="btn btn-xs btn-ghost" @click="carregarGrupos()" :disabled="carregandoGrupos">
+                    <span x-show="carregandoGrupos" class="loading loading-spinner loading-xs"></span>
+                    outra caixa…
+                </button>
+                <select x-show="grupos.length" class="select select-bordered select-xs" x-model="grupoSel">
+                    <template x-for="g in grupos" :key="g"><option :value="g" x-text="g"></option></template>
+                </select>
+                <span class="text-xs text-base-content/50 ml-auto">Caixa: <strong x-text="grupoSel"></strong></span>
+            </div>
+            <div class="flex items-center gap-3 flex-wrap border-t border-base-300 pt-2">
+                <span class="text-sm font-medium mr-1">Prazo de conclusão:</span>
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input type="radio" class="sat-radio" :checked="!comPrazo" @change="comPrazo=false">
+                    sem prazo
+                </label>
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                    <input type="radio" class="sat-radio" :checked="comPrazo" @change="comPrazo=true">
+                    em
+                    <input type="number" min="1" max="365" class="input input-bordered input-xs w-16"
+                           x-model.number="prazoDias" @focus="comPrazo=true">
+                    dias
+                </label>
+                <span class="text-xs text-base-content/50" x-show="comPrazo" x-text="'(conclui até ' + dataPrazo() + ')'"></span>
+            </div>
+        </div>
+    </div>
+
+    <!-- Pendências -->
+    <div class="card bg-base-200 shadow mb-6">
+        <div class="card-body p-0">
+            <div class="flex items-center justify-between px-4 pt-3">
+                <h3 class="font-semibold text-base-content/80">Pendências</h3>
+                <button class="btn btn-sm btn-primary" @click="baixarTodos()"
+                        :disabled="rodando || pendentes.length === 0">
+                    Baixar todos
+                </button>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>PAJ</th><th>Assistido</th><th>CPF</th><th>Documentos</th><th>Log</th><th class="text-right">Ação</th>
+                        </tr>
+                    </thead>
+                    <template x-for="p in pendentes" :key="p.id_tramite">
+                        <tbody>
+                            <tr>
+                                <td class="font-mono whitespace-nowrap" x-text="p.paj"></td>
+                                <td x-text="p.assistido"></td>
+                                <td class="font-mono whitespace-nowrap">
+                                    <span x-text="p.cpf || '—'"></span>
+                                    <button class="btn btn-ghost btn-xs" x-show="p.cpf" @click="copiar(p.cpf)" title="Copiar CPF">⧉</button>
+                                </td>
+                                <td>
+                                    <button x-show="p.n_arquivos > 0" class="badge badge-success badge-sm" style="cursor:pointer"
+                                            @click="toggleDocs(p)"
+                                            :title="docsAbertos[p.paj_norm] ? 'Ocultar documentos' : 'Ver documentos baixados'">
+                                        <span x-text="p.n_arquivos + ' arquivo(s)'"></span>
+                                        <span x-text="docsAbertos[p.paj_norm] ? '▲' : '▼'"></span>
+                                    </button>
+                                    <span x-show="p.n_arquivos === 0" class="badge badge-ghost badge-sm">Aguardando download</span>
+                                </td>
+                                <td>
+                                    <button x-show="p.tem_log || logsDownload[p.paj_norm]" class="btn btn-ghost btn-xs"
+                                            @click="verLogDownload(p)" title="Ver log do último download">📄</button>
+                                    <span x-show="!(p.tem_log || logsDownload[p.paj_norm])" class="text-base-content/30">—</span>
+                                </td>
+                                <td class="text-right whitespace-nowrap">
+                                    <button class="btn btn-sm btn-primary" :disabled="rodando"
+                                            @click="baixar(p)"
+                                            title="Baixar os documentos do SAT Central (pelo assistente)">
+                                        Baixar arquivos do SAT Central
+                                    </button>
+                                    <button x-show="p.n_arquivos > 0" class="btn btn-sm btn-outline ml-1" :disabled="rodando"
+                                            @click="processar(p)"
+                                            :title="dryRun ? 'Simular (não efetiva)' : 'Movimentar → tramitar → concluir'"
+                                            x-text="dryRun ? 'Simular anexação' : 'Anexar ao PAJ'"></button>
+                                </td>
+                            </tr>
+                            <tr x-show="docsAbertos[p.paj_norm]">
+                                <td colspan="6" class="bg-base-100">
+                                    <table class="table table-xs w-full sat-docs">
+                                        <thead><tr class="text-[11px] text-base-content/50">
+                                            <th>Documento</th><th class="w-20">Tamanho</th>
+                                            <th class="w-16 text-center">Excluir</th><th class="w-20 text-center">Recuperar</th></tr></thead>
+                                        <tbody>
+                                            <template x-for="a in (docsArquivos[p.paj_norm] || [])" :key="a.nome">
+                                                <tr :class="a.excluido ? 'opacity-40' : ''">
+                                                    <td :class="a.excluido ? 'line-through' : ''">
+                                                        <svg class="inline-block mr-1.5" style="width:14px;height:14px;vertical-align:-2px" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                                                            <path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="#e2574c"/>
+                                                            <path d="M15 2l5 5h-5z" fill="#b23a2e"/>
+                                                            <text x="10.5" y="17.5" font-size="7" fill="#fff" text-anchor="middle" font-weight="bold" font-family="Arial, sans-serif">PDF</text>
+                                                        </svg>
+                                                        <span x-text="a.nome"></span>
+                                                    </td>
+                                                    <td class="whitespace-nowrap tabular-nums" :class="a.excluido ? 'line-through' : ''" x-text="fmtTam(a.tamanho)"></td>
+                                                    <td class="text-center"><button x-show="!a.excluido" class="btn btn-ghost btn-xs text-error px-1"
+                                                                @click="pedirExcluir(p, a.nome)" title="Remover da lista (não será anexado ao PAJ)">✕</button></td>
+                                                    <td class="text-center"><button x-show="a.excluido" class="btn btn-ghost btn-xs px-1" style="color:var(--accent)"
+                                                                @click="recuperar(p, a.nome)" title="Recuperar (voltará a ser anexado)">↶</button></td>
+                                                </tr>
+                                            </template>
+                                            <tr x-show="(docsArquivos[p.paj_norm] || []).length === 0">
+                                                <td colspan="4" class="text-base-content/40">Nenhum documento na pasta.</td>
+                                            </tr>
+                                        </tbody>
+                                    </table>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </template>
+                    <tbody>
+                        <tr x-show="!carregando && pendentes.length === 0">
+                            <td colspan="6" class="text-center text-base-content/40 py-6">Nenhuma pendência de juntada do SAT na caixa.</td>
+                        </tr>
+                        <tr x-show="carregando">
+                            <td colspan="6" class="text-center py-6"><span class="loading loading-spinner"></span> Lendo a caixa do SISDPU…</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Histórico -->
+    <div class="card bg-base-200 shadow">
+        <div class="card-body p-0">
+            <h3 class="font-semibold text-base-content/80 px-4 pt-3">PAJs Concluídos</h3>
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th>Data</th><th>PAJ</th><th>Assistido</th><th>Movimentado</th>
+                            <th>Tramitado</th><th>Concluído</th><th>Log</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="r in historico" :key="r.id">
+                            <tr>
+                                <td class="whitespace-nowrap text-xs" x-text="(r.ts||'').replace('T',' ').slice(0,16)"></td>
+                                <td class="font-mono whitespace-nowrap" x-text="r.paj"></td>
+                                <td x-text="r.assistido"></td>
+                                <td><span class="badge badge-sm" :class="r.mov_status==='movimentado'?'badge-ocre':'badge-error'"
+                                          x-text="r.mov_seq ? ('Mov ' + r.mov_seq) : (r.mov_status||'—')"></span></td>
+                                <td><span class="badge badge-sm" :class="r.tram_status==='tramitado'?'badge-ocre':'badge-error'"
+                                          x-text="r.tram_status==='tramitado' ? r.tram_caixa : (r.tram_status||'—')"></span></td>
+                                <td><span class="badge badge-sm" :class="r.concluido_status==='concluido'?'badge-ocre':'badge-error'"
+                                          x-text="r.concluido_status==='concluido' ? 'Sim' : (r.concluido_status||'—')"></span></td>
+                                <td><button class="btn btn-ghost btn-xs" @click="verLog(r)" title="Ver passo a passo">📄</button></td>
+                            </tr>
+                        </template>
+                        <tr x-show="historico.length === 0">
+                            <td colspan="7" class="text-center text-base-content/40 py-6">Nenhum PAJ trabalhado ainda.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de progresso (SSE) -->
+    <div class="modal" :class="{'modal-open': sseAberto}">
+        <div class="modal-box max-w-2xl">
+            <h3 class="font-bold text-lg mb-2">Processamento <span x-text="sseStatus"></span></h3>
+            <div class="bg-base-300 rounded p-3 text-sm font-mono max-h-96 overflow-y-auto space-y-0.5">
+                <template x-for="(l, i) in sseLog" :key="i">
+                    <div :class="{
+                        'text-success': l.level==='ok', 'text-error': l.level==='erro',
+                        'text-base-content/50': l.level==='muted', 'text-info': l.level==='info',
+                        'text-primary font-semibold': l.level==='novo'}" x-text="l.msg"></div>
+                </template>
+            </div>
+            <div class="modal-action">
+                <button class="btn" @click="sseFechar()" :disabled="!sseFechavel">Fechar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de log do histórico -->
+    <div class="modal" :class="{'modal-open': logAberto}">
+        <div class="modal-box max-w-2xl">
+            <h3 class="font-bold text-lg mb-2">Log do processamento</h3>
+            <div class="space-y-2 max-h-96 overflow-y-auto">
+                <template x-for="(p, i) in logAtual" :key="i">
+                    <div class="flex gap-2 text-sm border-b border-base-300 pb-1">
+                        <span x-text="p.ok===true?'✓':(p.ok===false?'✕':'•')"
+                              :class="p.ok===true?'text-success':(p.ok===false?'text-error':'text-base-content/50')"></span>
+                        <div>
+                            <div class="font-medium" x-text="p.etapa"></div>
+                            <div class="text-base-content/60" x-text="p.detalhe"></div>
+                            <div class="text-xs text-base-content/40" x-text="(p.ts||'').replace('T',' ')"></div>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <div class="modal-action"><button class="btn" @click="logAberto=false">Fechar</button></div>
+        </div>
+        <div class="modal-backdrop" @click="logAberto=false"></div>
+    </div>
+
+    <!-- Modal: baixar via assistente -->
+    <div class="modal" :class="{'modal-open': baixarModal}">
+        <div class="modal-box max-w-xl">
+            <h3 class="font-bold text-lg mb-2">Baixar arquivos do SAT Central</h3>
+            <p class="text-sm text-base-content/70">
+                O download do SAT é feito pelo <strong>assistente</strong> (skill SAT), porque exige o
+                <strong>2FA</strong> e o <strong>CAPTCHA</strong> resolvidos por você no navegador —
+                nenhum servidor faz isso sozinho.
+            </p>
+            <p class="text-sm text-base-content/70 mt-2">Peça ao assistente (comando copiado):</p>
+            <div class="bg-base-300 rounded p-3 text-sm mt-1 space-y-0.5">
+                <template x-for="p in baixarLista" :key="p.id_tramite">
+                    <div class="font-mono" x-text="p.paj + ' — ' + p.assistido + ' (CPF ' + p.cpf + ')'"></div>
+                </template>
+            </div>
+            <p class="text-xs mt-2 h-4" :class="copiado ? 'text-success' : 'text-base-content/40'"
+               x-text="copiado ? 'Comando copiado ✓' : ''"></p>
+            <p class="text-sm text-base-content/60 mt-1">
+                Após o download, os arquivos aparecem na coluna <em>Documentos</em> e o botão
+                <strong>Anexar ao PAJ</strong> fica disponível (movimentação → tramitação → conclusão).
+            </p>
+            <div class="modal-action"><button class="btn" @click="baixarModal=false">Fechar</button></div>
+        </div>
+        <div class="modal-backdrop" @click="baixarModal=false"></div>
+    </div>
+
+    <!-- Modal: log do download -->
+    <div class="modal" :class="{'modal-open': logDlAberto}">
+        <div class="modal-box max-w-2xl">
+            <h3 class="font-bold text-lg mb-2">Log do download — <span x-text="logDlTitulo"></span></h3>
+            <div class="bg-base-300 rounded p-3 text-sm font-mono max-h-96 overflow-y-auto space-y-0.5">
+                <template x-for="(l, i) in logDlItens" :key="i">
+                    <div :class="{
+                        'text-success': l.level==='ok', 'text-error': l.level==='erro',
+                        'text-base-content/50': l.level==='muted', 'text-info': l.level==='info',
+                        'text-primary font-semibold': l.level==='novo'}" x-text="l.msg"></div>
+                </template>
+                <div x-show="logDlItens.length === 0" class="text-base-content/40">Sem log registrado.</div>
+            </div>
+            <div class="modal-action"><button class="btn" @click="logDlAberto=false">Fechar</button></div>
+        </div>
+        <div class="modal-backdrop" @click="logDlAberto=false"></div>
+    </div>
+
+    <!-- Modal: confirmar exclusão de documento -->
+    <div class="modal" :class="{'modal-open': excluirModal}">
+        <div class="modal-box">
+            <h3 class="font-bold text-lg">Remover documento da lista?</h3>
+            <p class="py-2 text-sm text-base-content/70">
+                Este documento <strong>não será anexado ao PAJ</strong>. Ele fica guardado em "Excluídos" —
+                caso queira reverter, basta clicar no ícone de recuperação (↶) ao lado dele na lista.
+            </p>
+            <p class="font-mono text-sm bg-base-300 rounded p-2 break-all" x-text="excluirAlvo.nome"></p>
+            <div class="modal-action">
+                <button class="btn btn-error" @click="confirmarExcluir()">Remover da lista</button>
+                <button class="btn btn-ghost" @click="excluirModal=false">Cancelar</button>
+            </div>
+        </div>
+        <div class="modal-backdrop" @click="excluirModal=false"></div>
+    </div>
+
+</div>
+{% endblock %}
+
+{% block scripts %}
+<style>
+/* Radios nativos com o acento Fluent do painel (o radio-primary do DaisyUI não
+   herda o acento por causa dos overrides de cor). */
+.sat-radio {
+    appearance: auto;
+    -webkit-appearance: radio;
+    accent-color: var(--accent);
+    width: 15px; height: 15px;
+    margin: 0; cursor: pointer; vertical-align: middle;
+}
+/* Badge amarelo ocre claro (off-white) — usado nos selos de PAJs Concluídos */
+.badge-ocre {
+    background-color: #efe6cf !important;
+    color: #6b5a2b !important;
+    border: 1px solid #ddd0a3 !important;
+}
+/* Tabela de documentos baixados (accordion) — fonte menor e linhas compactas */
+.sat-docs { font-size: 11.5px; }
+.sat-docs td, .sat-docs th { padding-top: 3px; padding-bottom: 3px; }
+</style>
+<script>
+function satPage() {
+    return {
+        pendentes: [], historico: [], favoritos: [], grupos: [],
+        padrao: '01 - PREV_DIVPREV', grupoSel: '01 - PREV_DIVPREV',
+        dryRun: false, comPrazo: false, prazoDias: 15,
+        carregando: false, carregandoGrupos: false, rodando: false,
+        sseAberto: false, sseLog: [], sseStatus: '', sseFechavel: false, _es: null,
+        logAberto: false, logAtual: [],
+        baixarModal: false, baixarLista: [], copiado: false,
+        sessaoOk: false, sessaoBusy: false, sessaoMsg: '',
+        logsDownload: {}, logDlAberto: false, logDlItens: [], logDlTitulo: '',
+        docsAbertos: {}, docsArquivos: {}, excluirModal: false, excluirAlvo: {},
+
+        async init() {
+            this.verificarSessao();
+            await this.carregarPrefs();
+            await this.recarregar();
+            this.carregarHistorico();
+        },
+        async verificarSessao() {
+            this.sessaoBusy = true;
+            try {
+                const r = await (await fetch('/api/sat/sessao')).json();
+                this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || '';
+            } catch (e) { this.sessaoMsg = 'Erro ao verificar a sessão.'; }
+            finally { this.sessaoBusy = false; }
+        },
+        async abrirSat() {
+            this.sessaoBusy = true; this.sessaoMsg = 'Abrindo a janela do SAT…';
+            try {
+                const r = await (await fetch('/api/sat/abrir')).json();
+                this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || '';
+            } catch (e) { this.sessaoMsg = 'Erro ao abrir a janela.'; }
+            finally { this.sessaoBusy = false; }
+        },
+        caixasRapidas() {
+            const s = [this.padrao, ...this.favoritos];
+            return [...new Set(s.filter(Boolean))];
+        },
+        dataPrazo() {
+            const d = new Date(); d.setDate(d.getDate() + (this.prazoDias || 0));
+            return d.toLocaleDateString('pt-BR');
+        },
+        async carregarPrefs() {
+            try {
+                const r = await (await fetch('/api/config/tramitacao')).json();
+                this.favoritos = r.favoritos || [];
+                if (r.prazo) this.prazoDias = r.prazo;
+            } catch (e) {}
+        },
+        async recarregar() {
+            this.carregando = true;
+            try {
+                const j = await (await fetch('/api/sat/pendentes')).json();
+                this.pendentes = j.itens || [];
+            } catch (e) { this.pendentes = []; }
+            finally { this.carregando = false; }
+        },
+        async carregarHistorico() {
+            try {
+                const j = await (await fetch('/api/sat/historico')).json();
+                this.historico = j.registros || [];
+            } catch (e) {}
+        },
+        async carregarGrupos() {
+            this.carregandoGrupos = true;
+            try {
+                const g = await (await fetch('/api/sat/grupos')).json();
+                this.grupos = g.grupos || [];
+            } catch (e) {}
+            finally { this.carregandoGrupos = false; }
+        },
+        copiar(txt) { navigator.clipboard.writeText(txt); },
+        verLog(r) { this.logAtual = r.log || []; this.logAberto = true; },
+        async verLogDownload(p) {
+            let ev = this.logsDownload[p.paj_norm];
+            if (!ev) {
+                try {
+                    const j = await (await fetch(`/api/sat/${encodeURIComponent(p.paj_norm)}/log-download`)).json();
+                    ev = j.eventos || [];
+                } catch (e) { ev = []; }
+            }
+            this.logDlItens = ev; this.logDlTitulo = p.paj; this.logDlAberto = true;
+        },
+        fmtTam(b) {
+            b = b || 0;
+            if (b < 1024) return b + ' B';
+            if (b < 1048576) return (b / 1024).toFixed(0) + ' KB';
+            return (b / 1048576).toFixed(1) + ' MB';
+        },
+        async carregarArquivos(p) {
+            try {
+                const j = await (await fetch(`/api/sat/${encodeURIComponent(p.paj_norm)}/arquivos`)).json();
+                this.docsArquivos[p.paj_norm] = j.arquivos || [];
+            } catch (e) { this.docsArquivos[p.paj_norm] = []; }
+        },
+        async toggleDocs(p) {
+            if (this.docsAbertos[p.paj_norm]) { this.docsAbertos[p.paj_norm] = false; return; }
+            await this.carregarArquivos(p);
+            this.docsAbertos[p.paj_norm] = true;
+        },
+        pedirExcluir(p, nome) {
+            this.excluirAlvo = { paj_norm: p.paj_norm, nome: nome, p: p };
+            this.excluirModal = true;
+        },
+        async confirmarExcluir() {
+            const alvo = this.excluirAlvo;
+            this.excluirModal = false;
+            try {
+                const j = await (await fetch(`/api/sat/${encodeURIComponent(alvo.paj_norm)}/excluir-arquivo`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ nome: alvo.nome })
+                })).json();
+                await this.carregarArquivos(alvo.p);
+                if (typeof j.n_arquivos === 'number') alvo.p.n_arquivos = j.n_arquivos;
+            } catch (e) {}
+        },
+        async recuperar(p, nome) {
+            try {
+                const j = await (await fetch(`/api/sat/${encodeURIComponent(p.paj_norm)}/recuperar-arquivo`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ nome: nome })
+                })).json();
+                await this.carregarArquivos(p);
+                if (typeof j.n_arquivos === 'number') p.n_arquivos = j.n_arquivos;
+            } catch (e) {}
+        },
+        baixar(p) {
+            if (this.rodando) return Promise.resolve();
+            if (!this.sessaoOk) {
+                this.sessaoMsg = 'Faça o login no SAT primeiro (botão "Abrir SAT / Login").';
+                return Promise.resolve();
+            }
+            return new Promise((resolve) => {
+                this.rodando = true;
+                this.sseLog = []; this.sseStatus = '— baixando do SAT'; this.sseFechavel = false; this.sseAberto = true;
+                const url = `/api/sat/${encodeURIComponent(p.paj_norm)}/baixar`
+                    + `?cpf=${encodeURIComponent(p.cpf)}&nome=${encodeURIComponent(p.assistido)}`;
+                const es = new EventSource(url); this._es = es;
+                es.addEventListener('log', (ev) => { try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {} });
+                es.addEventListener('done', (ev) => {
+                    let res = {}; try { res = JSON.parse(ev.data); } catch (e) {}
+                    this.sseStatus = res.ok ? '— concluído ✓' : '— com aviso';
+                    this.sseFechavel = true; this.rodando = false; es.close(); this._es = null;
+                    this.logsDownload[p.paj_norm] = this.sseLog.slice();
+                    this.carregarHistorico();
+                    this.recarregar();
+                    resolve(res);
+                });
+                es.onerror = () => {
+                    this.sseStatus = '— erro de conexão'; this.sseFechavel = true; this.rodando = false;
+                    es.close(); this._es = null; resolve({ ok: false });
+                };
+            });
+        },
+        async baixarTodos() {
+            if (!this.sessaoOk) { this.sessaoMsg = 'Faça o login no SAT primeiro.'; return; }
+            for (const p of this.pendentes.slice()) {
+                await this.baixar(p);
+            }
+            await this.recarregar();
+        },
+
+        processar(p) {
+            if (this.rodando) return;
+            return new Promise((resolve) => {
+                this.rodando = true;
+                this.sseLog = []; this.sseStatus = '— em andamento'; this.sseFechavel = false; this.sseAberto = true;
+                const url = `/api/sat/${encodeURIComponent(p.paj_norm)}/processar`
+                    + `?grupo=${encodeURIComponent(this.grupoSel)}&dry=${this.dryRun ? 1 : 0}`
+                    + `&prazo=${this.comPrazo ? (this.prazoDias || 0) : 0}`;
+                const es = new EventSource(url); this._es = es;
+                es.addEventListener('log', (ev) => {
+                    try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {}
+                });
+                es.addEventListener('done', (ev) => {
+                    let res = {}; try { res = JSON.parse(ev.data); } catch (e) {}
+                    this.sseStatus = res.ok ? '— concluído ✓' : '— com falha ✕';
+                    this.sseFechavel = true; this.rodando = false;
+                    es.close(); this._es = null;
+                    this.carregarHistorico();
+                    resolve(res);
+                });
+                es.onerror = () => {
+                    this.sseStatus = '— erro de conexão'; this.sseFechavel = true; this.rodando = false;
+                    es.close(); this._es = null; resolve({ok: false});
+                };
+            });
+        },
+        async processarTodos() {
+            const alvos = this.pendentes.filter(p => p.n_arquivos > 0);
+            for (const p of alvos) {
+                await this.processar(p);
+            }
+            await this.recarregar();
+        },
+        sseFechar() {
+            if (this._es) { this._es.close(); this._es = null; }
+            this.sseAberto = false;
+            this.recarregar();
+        },
+    };
+}
+</script>
+{% endblock %}

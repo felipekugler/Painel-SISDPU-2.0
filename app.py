@@ -22,12 +22,15 @@ from routes.busca import router as busca_router
 from routes.calendar import router as calendar_router
 from routes.chat import router as chat_router
 from routes.chat_livre import router as chat_livre_router
+from routes.configuracoes import router as configuracoes_router
 from routes.dashboard import router as dashboard_router
 from routes.docgen import router as docgen_router
 from routes.files import router as files_router
 from routes.paj import router as paj_router
 from routes.pipeline_monitor import router as pipeline_monitor_router
 from routes.prazos import router as prazos_router
+from routes.sat import router as sat_router
+from routes.seguranca import router as seguranca_router
 from routes.sync import router as sync_router
 from routes.watchlist import router as watchlist_router
 from services.ambiente_service import verificar_ambiente
@@ -142,6 +145,7 @@ app.include_router(paj_router)
 app.include_router(files_router)
 app.include_router(chat_router)
 app.include_router(chat_livre_router)
+app.include_router(configuracoes_router)
 app.include_router(docgen_router)
 app.include_router(sync_router)
 app.include_router(busca_router)
@@ -149,6 +153,8 @@ app.include_router(calendar_router)
 app.include_router(prazos_router)
 app.include_router(watchlist_router)
 app.include_router(pipeline_monitor_router)
+app.include_router(seguranca_router)
+app.include_router(sat_router)
 
 # Healthcheck de dependencias externas — expoe em app.state.ambiente pra
 # o dashboard renderizar banner quando algo falta.

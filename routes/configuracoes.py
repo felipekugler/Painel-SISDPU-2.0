@@ -25,3 +25,34 @@ async def salvar_configuracoes(request: Request):
     if body.get("limpar_narrativa"):
         limpeza["narrativa"] = config_painel_service.limpar_dados_narrativa()
     return JSONResponse({"ok": True, "config": salvo, "limpeza": limpeza})
+
+
+# --- Preferências de tramitação (usadas pela aba "Arquivos SAT") ---
+@router.get("/api/config/tramitacao")
+async def get_pref_tramitacao():
+    return JSONResponse({
+        "prazo": config_painel_service.get_prazo_tramitacao_padrao(),
+        "favoritos": config_painel_service.get_grupos_favoritos(),
+        "max_favoritos": config_painel_service.GRUPOS_FAVORITOS_MAX,
+    })
+
+
+@router.post("/api/config/prazo-tramitacao")
+async def set_prazo_tramitacao(request: Request):
+    body = await request.json()
+    v = config_painel_service.set_prazo_tramitacao_padrao(body.get("dias", 15))
+    return JSONResponse({"ok": True, "prazo": v})
+
+
+@router.post("/api/config/grupos-favoritos")
+async def add_grupo_favorito(request: Request):
+    body = await request.json()
+    favs = config_painel_service.add_grupo_favorito(body.get("grupo", ""))
+    return JSONResponse({"ok": True, "favoritos": favs})
+
+
+@router.post("/api/config/grupos-favoritos/del")
+async def del_grupo_favorito(request: Request):
+    body = await request.json()
+    favs = config_painel_service.del_grupo_favorito(body.get("grupo", ""))
+    return JSONResponse({"ok": True, "favoritos": favs})
