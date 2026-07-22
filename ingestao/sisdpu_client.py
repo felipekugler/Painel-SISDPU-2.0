@@ -463,7 +463,7 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
                     const dataHora = (cells[2]?.textContent || '').trim();
                     const movimentacao = (cells[3]?.textContent || '').trim();
                     const fases = (cells[4]?.textContent || '').trim();
-                    const textoCompleto = cells[5]?.textContent || '';
+                    const textoCompleto = cells[5]?.innerHTML || '';
                     const usuario = (cells[7]?.textContent || '').trim();
 
                     if (seq && /^\\d{1,4}$/.test(seq)
@@ -1320,7 +1320,7 @@ async def buscar_paj_global(
                     const dataHora = (cells[2]?.textContent || '').trim();
                     const movimentacao = (cells[3]?.textContent || '').trim();
                     const fases = (cells[4]?.textContent || '').trim();
-                    const textoCompleto = cells[5]?.textContent || '';
+                    const textoCompleto = cells[5]?.innerHTML || '';
                     const usuario = (cells[6]?.textContent || '').trim();
 
                     if (seq && /^\\d{1,4}$/.test(seq)
