@@ -61,7 +61,14 @@ async def api_sat_sessao_leve():
 
 @router.get("/api/sat/historico", response_class=JSONResponse)
 async def api_historico():
-    return JSONResponse({"registros": historico_sat.listar()})
+    regs = historico_sat.listar()
+    # enriquece com a URL do detalhamento do PAJ no SISDPU (link do nº do PAJ),
+    # construída a partir do id_processo — cobre registros antigos e novos.
+    for r in regs:
+        if not r.get("url_detalhe") and r.get("id_processo"):
+            r["url_detalhe"] = (f"{movtram.SISDPU_URL}/pages/atendimento/"
+                                f"detalhamentoProcesso.xhtml?id={r['id_processo']}")
+    return JSONResponse({"registros": regs})
 
 
 async def _stream_processar(paj_norm: str, grupo: str, dry: bool, prazo: int):

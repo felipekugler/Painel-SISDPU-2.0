@@ -1,13 +1,13 @@
 {% extends "base.html" %}
 
-{% block title %}Arquivos SAT{% endblock %}
+{% block title %}Arquivos SAT Central{% endblock %}
 
 {% block content %}
 <div x-data="satPage()" x-init="init()">
 
     <div class="flex items-center justify-between mb-2">
         <h2 class="text-2xl font-bold">
-            Arquivos SAT
+            Arquivos SAT Central
             <span class="text-base-content/50 text-lg" x-show="!carregando" x-text="'(' + pendentes.length + ')'"></span>
         </h2>
         <div class="flex items-center gap-2">
@@ -58,9 +58,9 @@
         </div>
     </div>
 
-    <!-- Caixa de tramitação + prazo -->
+    <!-- Caixa de tramitação + prazo (uma linha) -->
     <div class="card bg-base-200 shadow mb-4">
-        <div class="card-body py-3 gap-2">
+        <div class="card-body py-3">
             <div class="flex items-center gap-2 flex-wrap">
                 <span class="text-sm font-medium mr-1">Tramitar para:</span>
                 <template x-for="g in caixasRapidas()" :key="g">
@@ -74,9 +74,7 @@
                 <select x-show="grupos.length" class="select select-bordered select-xs" x-model="grupoSel">
                     <template x-for="g in grupos" :key="g"><option :value="g" x-text="g"></option></template>
                 </select>
-                <span class="text-xs text-base-content/50 ml-auto">Caixa: <strong x-text="grupoSel"></strong></span>
-            </div>
-            <div class="flex items-center gap-3 flex-wrap border-t border-base-300 pt-2">
+                <span class="mx-2 text-base-content/30">|</span>
                 <span class="text-sm font-medium mr-1">Prazo de conclusão:</span>
                 <label class="flex items-center gap-1.5 text-sm cursor-pointer">
                     <input type="radio" class="sat-radio" :checked="!comPrazo" @change="comPrazo=false">
@@ -236,10 +234,10 @@
                             <tr class="hover">
                                 <td class="whitespace-nowrap text-xs" x-text="(r.ts||'').replace('T',' ').slice(0,16)"></td>
                                 <td class="font-mono whitespace-nowrap">
-                                    <a x-show="r.mov_url" :href="r.mov_url" target="_blank" rel="noopener"
+                                    <a x-show="r.url_detalhe" :href="r.url_detalhe" target="_blank" rel="noopener"
                                        class="link link-hover" style="color:var(--accent)"
                                        title="Abrir o PAJ no SISDPU (conferir a anexação)" x-text="r.paj"></a>
-                                    <span x-show="!r.mov_url" x-text="r.paj"></span>
+                                    <span x-show="!r.url_detalhe" x-text="r.paj"></span>
                                 </td>
                                 <td x-text="r.assistido"></td>
                                 <td><span class="badge badge-sm" :class="r.mov_status==='movimentado'?'badge-ocre':'badge-error'"
@@ -387,6 +385,8 @@ function satPage() {
         narrativaAberta: {}, narrativas: {},
 
         async init() {
+            // NÃO abrir o navegador ao carregar a aba: checagem LEVE (peek) só LÊ o estado
+            // (não lança o Chromium). O navegador só abre pelo botão "Abrir SAT / Login".
             this.verificarSessao();
             await this.carregarPrefs();
             await this.recarregar();
@@ -395,9 +395,10 @@ function satPage() {
             setInterval(() => this.verificarSessaoLeve(), 5000);
         },
         async verificarSessao() {
+            // usa a checagem LEVE (/sessao-leve → peek): NÃO lança o navegador.
             this.sessaoBusy = true;
             try {
-                const r = await (await fetch('/api/sat/sessao')).json();
+                const r = await (await fetch('/api/sat/sessao-leve')).json();
                 this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || '';
             } catch (e) { this.sessaoMsg = 'Erro ao verificar a sessão.'; }
             finally { this.sessaoBusy = false; }
