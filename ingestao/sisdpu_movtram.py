@@ -376,6 +376,48 @@ async def listar_caixa_estruturada() -> dict:
     return {"ok": True, "itens": itens}
 
 
+# Extração do DETALHAMENTO do PAJ (reusa os seletores do sincronizador): CPF na tabela
+# "Assistido(s) Pessoa(s) Física" (3ª coluna), pretensão/assistido por regex no innerText
+# e a narrativa (HTML) do painel `narrativaPanel`.
+_JS_DETALHE_PAJ = r"""() => {
+  const r = {};
+  const body = document.body.innerText;
+  const am = body.match(/Assistido\(s\)[\t\s]+([^\n]+)/);
+  if (am) r.assistido = am[1].trim();
+  const cpfCell = document.querySelector('#detalhamentoForm\\:dataTableListaAssistidosPF tbody tr td:nth-child(3)');
+  if (cpfCell) {
+    const m = (cpfCell.textContent || '').match(/\d{3}\.\d{3}\.\d{3}-\d{2}/);
+    if (m) r.cpf = m[0];
+  }
+  const pm = body.match(/Pretens[ãa]o[\t\s]+([^\n]+)/);
+  if (pm) r.pretensao = pm[1].trim();
+  const np = document.querySelector('#detalhamentoForm\\:narrativaPanel');
+  if (np) r.narrativa = np.innerHTML;
+  return r;
+}"""
+
+
+async def detalhes_paj(url_detalhe: str) -> dict:
+    """Abre o detalhamento do PAJ (na MESMA sessão headless) e extrai
+    {cpf, pretensao, assistido, narrativa}. Usado como FALLBACK quando o PAJ ainda não
+    foi sincronizado localmente (sem metadata.json). Retorna {} em falha/conflito."""
+    if not url_detalhe:
+        return {}
+    await _ensure_logged_in()
+    page = await _get_page()
+    try:
+        await page.goto(url_detalhe, wait_until="domcontentloaded", timeout=30000)
+        await _wait_pf_ajax(page, timeout=12000)
+        await page.wait_for_timeout(600)
+        if not await _resolver_conflito_login(page):
+            return {}
+        dados = await _eval_seguro(page, _JS_DETALHE_PAJ)
+        return dados if isinstance(dados, dict) else {}
+    except Exception as e:  # noqa: BLE001
+        _log.warning("detalhes_paj(%s): %r", url_detalhe, e)
+        return {}
+
+
 # ---------------------------------------------------------------------------
 # MOVIMENTAR
 # ---------------------------------------------------------------------------

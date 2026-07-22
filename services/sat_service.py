@@ -16,6 +16,7 @@ gravando o resultado em `historico_sat`.
 
 from __future__ import annotations
 
+import html as _html
 import json
 import re
 import shutil
@@ -77,6 +78,29 @@ def _cpf_do_paj(paj_norm: str) -> str:
     meta = _ler_metadata(paj_norm)
     raw = (meta.get("sisdpu_raw") or {})
     return (raw.get("cpf_assistido") or "").strip()
+
+
+def _html_para_texto(h: str) -> str:
+    """Converte o HTML da narrativa do SISDPU em texto limpo, preservando parágrafos."""
+    if not h:
+        return ""
+    h = re.sub(r"(?i)<\s*br\s*/?>", "\n", h)
+    h = re.sub(r"(?i)</\s*(p|div|tr|li)\s*>", "\n", h)
+    h = re.sub(r"<[^>]+>", "", h)          # remove as tags restantes
+    h = _html.unescape(h)
+    h = h.replace("\xa0", " ")
+    h = re.sub(r"[ \t]+", " ", h)
+    h = re.sub(r" *\n *", "\n", h)
+    h = re.sub(r"\n{3,}", "\n\n", h)
+    return h.strip()
+
+
+def narrativa_paj(paj_norm: str) -> dict:
+    """Texto da narrativa do PAJ (a partir do HTML salvo em sisdpu_raw.narrativa)."""
+    meta = _ler_metadata(paj_norm)
+    raw = (meta.get("sisdpu_raw") or {})
+    texto = _html_para_texto(raw.get("narrativa") or "")
+    return {"paj_norm": paj_norm, "texto": texto}
 
 
 def pasta_arquivos_sat(paj_norm: str) -> Path:
@@ -181,20 +205,38 @@ async def listar_pendentes() -> dict:
         meta = _ler_metadata(paj_norm)
         arquivos = listar_arquivos_sat(paj_norm)
         ja = historico_sat.por_id_tramite(it.get("id_tramite", ""))
-        itens.append({
+        item = {
             "paj": paj,
             "paj_norm": paj_norm,
             "id_processo": it.get("id", ""),
             "id_tramite": it.get("id_tramite", ""),
             "assistido": it.get("assistido", "") or meta.get("assistido_caixa", ""),
             "cpf": _cpf_do_paj(paj_norm),
+            "pretensao": meta.get("pretensaopura") or meta.get("pretensao", ""),
             "descricao": it.get("descricao", ""),
             "url_detalhe": it.get("url_detalhe", ""),
             "n_arquivos": len(arquivos),
             "tem_pasta": _pasta_paj(paj_norm).exists(),
+            "sincronizado": bool(meta),
             "tem_log": (pasta_arquivos_sat(paj_norm) / "_log_download.json").exists(),
             "ja_processado": bool(ja and ja.get("status") == "concluido"),
-        })
+        }
+        # FALLBACK: PAJ ainda NÃO sincronizado (sem metadata) → sem CPF/pretensão local.
+        # Busca direto no detalhamento do PAJ, na mesma sessão headless.
+        if not item["cpf"] and item["url_detalhe"]:
+            det = await movtram.detalhes_paj(item["url_detalhe"])
+            if det.get("cpf"):
+                item["cpf"] = det["cpf"].strip()
+            if not item["pretensao"] and det.get("pretensao"):
+                try:
+                    from ingestao import parser as _parser
+                    item["pretensao"] = (_parser.extrair_pretensao_pura(det["pretensao"])
+                                         or det["pretensao"]).strip()
+                except Exception:  # noqa: BLE001
+                    item["pretensao"] = det["pretensao"].strip()
+            if not item["assistido"] and det.get("assistido"):
+                item["assistido"] = det["assistido"].strip()
+        itens.append(item)
     return {"ok": True, "itens": itens, "detalhe": f"{len(itens)} pendência(s)."}
 
 

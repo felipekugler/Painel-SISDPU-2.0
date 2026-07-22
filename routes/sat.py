@@ -11,9 +11,10 @@
 from __future__ import annotations
 
 import json
+from pathlib import Path
 
 from fastapi import APIRouter, Request
-from fastapi.responses import HTMLResponse, JSONResponse
+from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 from ingestao import sisdpu_movtram as movtram
@@ -51,6 +52,13 @@ async def api_sat_sessao():
     return JSONResponse(await sat_client.status())
 
 
+@router.get("/api/sat/sessao-leve", response_class=JSONResponse)
+async def api_sat_sessao_leve():
+    """Status LEVE p/ polling automático: só lê a URL (não navega, não abre a janela)."""
+    from ingestao import sat_client
+    return JSONResponse(await sat_client.peek())
+
+
 @router.get("/api/sat/historico", response_class=JSONResponse)
 async def api_historico():
     return JSONResponse({"registros": historico_sat.listar()})
@@ -66,11 +74,12 @@ async def _stream_processar(paj_norm: str, grupo: str, dry: bool, prazo: int):
             yield {"event": "log", "data": json.dumps(ev, ensure_ascii=False)}
 
 
-async def _stream_baixar(paj_norm: str, cpf: str, nome: str):
+async def _stream_baixar(paj_norm: str, cpf: str, nome: str, delay: float, bloqueio: float):
     from ingestao import sat_client
     pasta = str(sat_service.pasta_arquivos_sat(paj_norm))
     try:
-        async for ev in sat_client.baixar_cidadao_stream(cpf, nome, pasta):
+        async for ev in sat_client.baixar_cidadao_stream(
+                cpf, nome, pasta, delay_s=delay, bloqueio_s=bloqueio):
             if ev.get("done"):
                 yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
             else:
@@ -88,6 +97,21 @@ async def api_arquivos(paj_norm: str):
         for a in arqs]})
 
 
+@router.get("/api/sat/{paj_norm}/arquivo")
+async def abrir_arquivo(paj_norm: str, nome: str):
+    """Serve um PDF do SAT (ativo ou na lixeira 'Excluídos') INLINE, para abrir em nova
+    aba do navegador. `nome` é o nome do arquivo (basename; sem travessia de caminho)."""
+    base = Path(nome).name  # anti path-traversal
+    for pasta in (sat_service.pasta_arquivos_sat(paj_norm),
+                  sat_service.pasta_excluidos(paj_norm)):
+        p = pasta / base
+        if p.exists() and p.is_file():
+            return FileResponse(
+                str(p), media_type="application/pdf",
+                headers={"Content-Disposition": f'inline; filename="{base}"'})
+    return JSONResponse({"erro": "arquivo não encontrado"}, status_code=404)
+
+
 @router.post("/api/sat/{paj_norm}/excluir-arquivo", response_class=JSONResponse)
 async def api_excluir_arquivo(paj_norm: str, request: Request):
     """Move o documento para 'Excluídos' (soft delete)."""
@@ -100,6 +124,12 @@ async def api_recuperar_arquivo(paj_norm: str, request: Request):
     """Traz o documento de volta de 'Excluídos' para a lista de anexação."""
     body = await request.json()
     return JSONResponse(sat_service.recuperar_arquivo_sat(paj_norm, body.get("nome", "")))
+
+
+@router.get("/api/sat/{paj_norm}/narrativa", response_class=JSONResponse)
+async def api_narrativa(paj_norm: str):
+    """Narrativa do PAJ (texto) para a linha expansível da coluna Pretensão."""
+    return JSONResponse(sat_service.narrativa_paj(paj_norm))
 
 
 @router.get("/api/sat/{paj_norm}/log-download", response_class=JSONResponse)
@@ -115,10 +145,12 @@ async def log_download(paj_norm: str):
 
 
 @router.get("/api/sat/{paj_norm}/baixar")
-async def baixar(paj_norm: str, cpf: str, nome: str = ""):
-    """SSE do DOWNLOAD dos documentos do SAT (consulta + Grupo 1). O usuário resolve o
-    CAPTCHA na janela do SAT. Salva na pasta do PAJ."""
-    return EventSourceResponse(_stream_baixar(paj_norm, cpf, nome))
+async def baixar(paj_norm: str, cpf: str, nome: str = "", delay: float = 5.0,
+                 bloqueio: float = 45.0):
+    """SSE do DOWNLOAD dos documentos do SAT (consulta + Grupos 1 e 2 + PAT). O usuário
+    resolve o CAPTCHA na janela do SAT. Salva na pasta do PAJ. `delay` = tempo (s) entre
+    consultas (padrão 5s); `bloqueio` = espera (s) ao detectar antirobô (padrão 45s)."""
+    return EventSourceResponse(_stream_baixar(paj_norm, cpf, nome, delay, bloqueio))
 
 
 @router.get("/api/sat/{paj_norm}/processar")

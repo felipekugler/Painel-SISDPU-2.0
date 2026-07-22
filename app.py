@@ -174,6 +174,16 @@ async def _startup_cota() -> None:
         cota_service.carregar_e_rearmar()
 
 
+@app.on_event("shutdown")
+async def _shutdown_fechar_sat() -> None:
+    """Ao encerrar o painel (graciosamente), fecha o navegador do SAT junto. NÃO roda em
+    kill -9 (Stop-Process -Force), então reinícios de dev preservam a sessão do SAT."""
+    with contextlib.suppress(Exception):
+        from ingestao import sat_client
+
+        sat_client.fechar_navegador()
+
+
 def _cleanup_port(port: int) -> None:
     """Mata TODOS processos LISTEN na porta informada (Windows-only)."""
     if os.name != "nt":
@@ -228,3 +238,8 @@ if __name__ == "__main__":
     finally:
         with contextlib.suppress(Exception):
             PID_FILE.unlink(missing_ok=True)
+        # backup do shutdown hook: garante fechar o navegador do SAT ao sair
+        with contextlib.suppress(Exception):
+            from ingestao import sat_client
+
+            sat_client.fechar_navegador()

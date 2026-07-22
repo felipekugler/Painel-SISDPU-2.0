@@ -11,10 +11,6 @@
             <span class="text-base-content/50 text-lg" x-show="!carregando" x-text="'(' + pendentes.length + ')'"></span>
         </h2>
         <div class="flex items-center gap-2">
-            <label class="label cursor-pointer gap-2 text-sm">
-                <span class="text-base-content/70">Simular (dry-run)</span>
-                <input type="checkbox" class="toggle toggle-sm toggle-primary" x-model="dryRun">
-            </label>
             <button class="btn btn-sm btn-ghost" @click="recarregar()" :disabled="carregando">
                 <span x-show="carregando" class="loading loading-spinner loading-xs"></span>
                 Atualizar
@@ -45,6 +41,20 @@
             </button>
             <button class="btn btn-sm btn-ghost" @click="verificarSessao()" :disabled="sessaoBusy">Verificar sessão</button>
             <span class="text-xs text-base-content/60" x-text="sessaoMsg"></span>
+            <label class="flex items-center gap-1.5 text-sm cursor-pointer ml-auto"
+                   title="Pausa preventiva entre cada consulta ao SAT, para reduzir o bloqueio anti-robô.">
+                <span class="font-medium">Tempo entre consultas:</span>
+                <input type="number" min="0" max="60" step="1"
+                       class="input input-bordered input-xs w-16" x-model.number="tempoEntre">
+                <span class="text-xs text-base-content/50">s</span>
+            </label>
+            <label class="flex items-center gap-1.5 text-sm cursor-pointer"
+                   title="Quanto esperar ao detectar a proteção antirobô, antes de re-tentar o documento.">
+                <span class="font-medium">Espera após bloqueio:</span>
+                <input type="number" min="0" max="300" step="5"
+                       class="input input-bordered input-xs w-16" x-model.number="esperaBloqueio">
+                <span class="text-xs text-base-content/50">s</span>
+            </label>
         </div>
     </div>
 
@@ -98,17 +108,31 @@
                 <table class="table table-sm">
                     <thead>
                         <tr>
-                            <th>PAJ</th><th>Assistido</th><th>CPF</th><th>Documentos</th><th>Log</th><th class="text-right">Ação</th>
+                            <th>PAJ</th><th>Assistido</th><th>CPF</th><th>Pretensão</th><th>Documentos</th><th>Log</th><th class="text-right">Ação</th>
                         </tr>
                     </thead>
                     <template x-for="p in pendentes" :key="p.id_tramite">
                         <tbody>
-                            <tr>
-                                <td class="font-mono whitespace-nowrap" x-text="p.paj"></td>
+                            <tr class="hover">
+                                <td class="font-mono whitespace-nowrap">
+                                    <a x-show="p.url_detalhe" :href="p.url_detalhe" target="_blank" rel="noopener"
+                                       class="link link-hover" style="color:var(--accent)"
+                                       title="Abrir o PAJ no SISDPU (conferir a anexação)" x-text="p.paj"></a>
+                                    <span x-show="!p.url_detalhe" x-text="p.paj"></span>
+                                </td>
                                 <td x-text="p.assistido"></td>
                                 <td class="font-mono whitespace-nowrap">
                                     <span x-text="p.cpf || '—'"></span>
                                     <button class="btn btn-ghost btn-xs" x-show="p.cpf" @click="copiar(p.cpf)" title="Copiar CPF">⧉</button>
+                                </td>
+                                <td class="text-sm">
+                                    <button x-show="p.pretensao" class="link link-hover text-left"
+                                            style="color:var(--accent)" @click="toggleNarrativa(p)"
+                                            :title="narrativaAberta[p.paj_norm] ? 'Ocultar narrativa' : 'Ver narrativa do PAJ'">
+                                        <span x-text="p.pretensao"></span>
+                                        <span x-text="narrativaAberta[p.paj_norm] ? '▲' : '▼'"></span>
+                                    </button>
+                                    <span x-show="!p.pretensao" class="text-base-content/40">—</span>
                                 </td>
                                 <td>
                                     <button x-show="p.n_arquivos > 0" class="badge badge-success badge-sm" style="cursor:pointer"
@@ -125,18 +149,28 @@
                                     <span x-show="!(p.tem_log || logsDownload[p.paj_norm])" class="text-base-content/30">—</span>
                                 </td>
                                 <td class="text-right whitespace-nowrap">
-                                    <button class="btn btn-sm btn-primary" :disabled="rodando"
+                                    <button class="btn btn-sm btn-primary" :disabled="rodando || !p.cpf"
                                             @click="baixar(p)"
-                                            title="Baixar os documentos do SAT Central (pelo assistente)">
+                                            :title="p.cpf ? 'Baixar os documentos do SAT Central (pelo assistente)' : 'Sem CPF do assistido — sincronize a caixa do SISDPU (dashboard) antes de baixar'">
                                         Baixar arquivos do SAT Central
                                     </button>
+                                    <div x-show="!p.cpf" class="text-[11px] text-warning mt-1">⚠ sem CPF — sincronize o PAJ</div>
                                     <button x-show="p.n_arquivos > 0" class="btn btn-sm btn-outline ml-1" :disabled="rodando"
                                             @click="processar(p)"
-                                            :title="dryRun ? 'Simular (não efetiva)' : 'Movimentar → tramitar → concluir'"
-                                            x-text="dryRun ? 'Simular anexação' : 'Anexar ao PAJ'"></button>
+                                            title="Movimentar → tramitar → concluir no SISDPU">Anexar ao PAJ</button>
+                                </td>
+                            </tr>
+                            <tr x-show="narrativaAberta[p.paj_norm]">
+                                <td class="bg-base-100"></td>
+                                <td colspan="6" class="bg-base-100">
+                                    <div class="text-[11px] leading-[1.6] whitespace-pre-wrap max-h-72 overflow-y-auto p-2 rounded bg-base-300">
+                                        <span x-show="narrativas[p.paj_norm] === undefined" class="loading loading-spinner loading-xs"></span>
+                                        <span x-text="narrativas[p.paj_norm] || ''"></span>
+                                    </div>
                                 </td>
                             </tr>
                             <tr x-show="docsAbertos[p.paj_norm]">
+                                <td class="bg-base-100"></td>
                                 <td colspan="6" class="bg-base-100">
                                     <table class="table table-xs w-full sat-docs">
                                         <thead><tr class="text-[11px] text-base-content/50">
@@ -144,18 +178,21 @@
                                             <th class="w-16 text-center">Excluir</th><th class="w-20 text-center">Recuperar</th></tr></thead>
                                         <tbody>
                                             <template x-for="a in (docsArquivos[p.paj_norm] || [])" :key="a.nome">
-                                                <tr :class="a.excluido ? 'opacity-40' : ''">
+                                                <tr class="hover" :class="a.excluido ? 'opacity-40' : ''">
                                                     <td :class="a.excluido ? 'line-through' : ''">
                                                         <svg class="inline-block mr-1.5" style="width:14px;height:14px;vertical-align:-2px" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
                                                             <path d="M6 2h9l5 5v13a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2z" fill="#e2574c"/>
                                                             <path d="M15 2l5 5h-5z" fill="#b23a2e"/>
                                                             <text x="10.5" y="17.5" font-size="7" fill="#fff" text-anchor="middle" font-weight="bold" font-family="Arial, sans-serif">PDF</text>
                                                         </svg>
-                                                        <span x-text="a.nome"></span>
+                                                        <a :href="`/api/sat/${encodeURIComponent(p.paj_norm)}/arquivo?nome=${encodeURIComponent(a.nome)}`"
+                                                           target="_blank" rel="noopener" class="link link-hover"
+                                                           style="color:var(--accent)" title="Abrir o PDF em nova aba"
+                                                           x-text="a.nome"></a>
                                                     </td>
                                                     <td class="whitespace-nowrap tabular-nums" :class="a.excluido ? 'line-through' : ''" x-text="fmtTam(a.tamanho)"></td>
                                                     <td class="text-center"><button x-show="!a.excluido" class="btn btn-ghost btn-xs text-error px-1"
-                                                                @click="pedirExcluir(p, a.nome)" title="Remover da lista (não será anexado ao PAJ)">✕</button></td>
+                                                                @click="excluir(p, a.nome)" title="Remover da lista (não será anexado ao PAJ; pode recuperar)">✕</button></td>
                                                     <td class="text-center"><button x-show="a.excluido" class="btn btn-ghost btn-xs px-1" style="color:var(--accent)"
                                                                 @click="recuperar(p, a.nome)" title="Recuperar (voltará a ser anexado)">↶</button></td>
                                                 </tr>
@@ -171,10 +208,10 @@
                     </template>
                     <tbody>
                         <tr x-show="!carregando && pendentes.length === 0">
-                            <td colspan="6" class="text-center text-base-content/40 py-6">Nenhuma pendência de juntada do SAT na caixa.</td>
+                            <td colspan="7" class="text-center text-base-content/40 py-6">Nenhuma pendência de juntada do SAT na caixa.</td>
                         </tr>
                         <tr x-show="carregando">
-                            <td colspan="6" class="text-center py-6"><span class="loading loading-spinner"></span> Lendo a caixa do SISDPU…</td>
+                            <td colspan="7" class="text-center py-6"><span class="loading loading-spinner"></span> Lendo a caixa do SISDPU…</td>
                         </tr>
                     </tbody>
                 </table>
@@ -196,9 +233,14 @@
                     </thead>
                     <tbody>
                         <template x-for="r in historico" :key="r.id">
-                            <tr>
+                            <tr class="hover">
                                 <td class="whitespace-nowrap text-xs" x-text="(r.ts||'').replace('T',' ').slice(0,16)"></td>
-                                <td class="font-mono whitespace-nowrap" x-text="r.paj"></td>
+                                <td class="font-mono whitespace-nowrap">
+                                    <a x-show="r.mov_url" :href="r.mov_url" target="_blank" rel="noopener"
+                                       class="link link-hover" style="color:var(--accent)"
+                                       title="Abrir o PAJ no SISDPU (conferir a anexação)" x-text="r.paj"></a>
+                                    <span x-show="!r.mov_url" x-text="r.paj"></span>
+                                </td>
                                 <td x-text="r.assistido"></td>
                                 <td><span class="badge badge-sm" :class="r.mov_status==='movimentado'?'badge-ocre':'badge-error'"
                                           x-text="r.mov_seq ? ('Mov ' + r.mov_seq) : (r.mov_status||'—')"></span></td>
@@ -220,9 +262,9 @@
 
     <!-- Modal de progresso (SSE) -->
     <div class="modal" :class="{'modal-open': sseAberto}">
-        <div class="modal-box max-w-2xl">
+        <div class="modal-box max-w-[50vw]">
             <h3 class="font-bold text-lg mb-2">Processamento <span x-text="sseStatus"></span></h3>
-            <div class="bg-base-300 rounded p-3 text-sm font-mono max-h-96 overflow-y-auto space-y-0.5">
+            <div class="bg-base-300 rounded p-3 text-[11px] leading-[1.65] font-mono h-[340px] overflow-y-auto">
                 <template x-for="(l, i) in sseLog" :key="i">
                     <div :class="{
                         'text-success': l.level==='ok', 'text-error': l.level==='erro',
@@ -231,6 +273,8 @@
                 </template>
             </div>
             <div class="modal-action">
+                <button class="btn btn-error btn-outline" x-show="rodando && sseTipo==='download'"
+                        @click="cancelarDownload()">Cancelar download</button>
                 <button class="btn" @click="sseFechar()" :disabled="!sseFechavel">Fechar</button>
             </div>
         </div>
@@ -286,9 +330,9 @@
 
     <!-- Modal: log do download -->
     <div class="modal" :class="{'modal-open': logDlAberto}">
-        <div class="modal-box max-w-2xl">
+        <div class="modal-box max-w-[50vw]">
             <h3 class="font-bold text-lg mb-2">Log do download — <span x-text="logDlTitulo"></span></h3>
-            <div class="bg-base-300 rounded p-3 text-sm font-mono max-h-96 overflow-y-auto space-y-0.5">
+            <div class="bg-base-300 rounded p-3 text-[11px] leading-[1.65] font-mono h-[340px] overflow-y-auto">
                 <template x-for="(l, i) in logDlItens" :key="i">
                     <div :class="{
                         'text-success': l.level==='ok', 'text-error': l.level==='erro',
@@ -300,23 +344,6 @@
             <div class="modal-action"><button class="btn" @click="logDlAberto=false">Fechar</button></div>
         </div>
         <div class="modal-backdrop" @click="logDlAberto=false"></div>
-    </div>
-
-    <!-- Modal: confirmar exclusão de documento -->
-    <div class="modal" :class="{'modal-open': excluirModal}">
-        <div class="modal-box">
-            <h3 class="font-bold text-lg">Remover documento da lista?</h3>
-            <p class="py-2 text-sm text-base-content/70">
-                Este documento <strong>não será anexado ao PAJ</strong>. Ele fica guardado em "Excluídos" —
-                caso queira reverter, basta clicar no ícone de recuperação (↶) ao lado dele na lista.
-            </p>
-            <p class="font-mono text-sm bg-base-300 rounded p-2 break-all" x-text="excluirAlvo.nome"></p>
-            <div class="modal-action">
-                <button class="btn btn-error" @click="confirmarExcluir()">Remover da lista</button>
-                <button class="btn btn-ghost" @click="excluirModal=false">Cancelar</button>
-            </div>
-        </div>
-        <div class="modal-backdrop" @click="excluirModal=false"></div>
     </div>
 
 </div>
@@ -348,20 +375,24 @@ function satPage() {
     return {
         pendentes: [], historico: [], favoritos: [], grupos: [],
         padrao: '01 - PREV_DIVPREV', grupoSel: '01 - PREV_DIVPREV',
-        dryRun: false, comPrazo: false, prazoDias: 15,
+        comPrazo: false, prazoDias: 15,
         carregando: false, carregandoGrupos: false, rodando: false,
-        sseAberto: false, sseLog: [], sseStatus: '', sseFechavel: false, _es: null,
+        sseAberto: false, sseLog: [], sseStatus: '', sseFechavel: false, _es: null, sseTipo: '',
         logAberto: false, logAtual: [],
         baixarModal: false, baixarLista: [], copiado: false,
         sessaoOk: false, sessaoBusy: false, sessaoMsg: '',
+        tempoEntre: 5, esperaBloqueio: 45,
         logsDownload: {}, logDlAberto: false, logDlItens: [], logDlTitulo: '',
-        docsAbertos: {}, docsArquivos: {}, excluirModal: false, excluirAlvo: {},
+        docsAbertos: {}, docsArquivos: {},
+        narrativaAberta: {}, narrativas: {},
 
         async init() {
             this.verificarSessao();
             await this.carregarPrefs();
             await this.recarregar();
             this.carregarHistorico();
+            // atualização automática do selo de sessão (checagem LEVE, não navega)
+            setInterval(() => this.verificarSessaoLeve(), 5000);
         },
         async verificarSessao() {
             this.sessaoBusy = true;
@@ -370,6 +401,14 @@ function satPage() {
                 this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || '';
             } catch (e) { this.sessaoMsg = 'Erro ao verificar a sessão.'; }
             finally { this.sessaoBusy = false; }
+        },
+        async verificarSessaoLeve() {
+            // não interfere durante um download nem numa checagem manual em curso
+            if (this.rodando || this.sessaoBusy) return;
+            try {
+                const r = await (await fetch('/api/sat/sessao-leve')).json();
+                this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || '';
+            } catch (e) { /* silencioso — é polling de fundo */ }
         },
         async abrirSat() {
             this.sessaoBusy = true; this.sessaoMsg = 'Abrindo a janela do SAT…';
@@ -445,20 +484,27 @@ function satPage() {
             await this.carregarArquivos(p);
             this.docsAbertos[p.paj_norm] = true;
         },
-        pedirExcluir(p, nome) {
-            this.excluirAlvo = { paj_norm: p.paj_norm, nome: nome, p: p };
-            this.excluirModal = true;
-        },
-        async confirmarExcluir() {
-            const alvo = this.excluirAlvo;
-            this.excluirModal = false;
+        async carregarNarrativa(p) {
+            if (this.narrativas[p.paj_norm] !== undefined) return;
             try {
-                const j = await (await fetch(`/api/sat/${encodeURIComponent(alvo.paj_norm)}/excluir-arquivo`, {
+                const j = await (await fetch(`/api/sat/${encodeURIComponent(p.paj_norm)}/narrativa`)).json();
+                this.narrativas[p.paj_norm] = j.texto || '(sem narrativa cadastrada)';
+            } catch (e) { this.narrativas[p.paj_norm] = '(erro ao carregar a narrativa)'; }
+        },
+        async toggleNarrativa(p) {
+            if (this.narrativaAberta[p.paj_norm]) { this.narrativaAberta[p.paj_norm] = false; return; }
+            this.narrativaAberta[p.paj_norm] = true;
+            await this.carregarNarrativa(p);
+        },
+        async excluir(p, nome) {
+            // exclusão DIRETA (sem confirmação): é soft-delete → há botão "Recuperar"
+            try {
+                const j = await (await fetch(`/api/sat/${encodeURIComponent(p.paj_norm)}/excluir-arquivo`, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ nome: alvo.nome })
+                    body: JSON.stringify({ nome: nome })
                 })).json();
-                await this.carregarArquivos(alvo.p);
-                if (typeof j.n_arquivos === 'number') alvo.p.n_arquivos = j.n_arquivos;
+                await this.carregarArquivos(p);
+                if (typeof j.n_arquivos === 'number') p.n_arquivos = j.n_arquivos;
             } catch (e) {}
         },
         async recuperar(p, nome) {
@@ -473,15 +519,22 @@ function satPage() {
         },
         baixar(p) {
             if (this.rodando) return Promise.resolve();
+            if (!p.cpf) {
+                this.sessaoMsg = `Sem CPF do assistido no PAJ ${p.paj} — sincronize a caixa do SISDPU antes de baixar.`;
+                return Promise.resolve();
+            }
             if (!this.sessaoOk) {
                 this.sessaoMsg = 'Faça o login no SAT primeiro (botão "Abrir SAT / Login").';
                 return Promise.resolve();
             }
             return new Promise((resolve) => {
-                this.rodando = true;
+                this.rodando = true; this.sseTipo = 'download';
                 this.sseLog = []; this.sseStatus = '— baixando do SAT'; this.sseFechavel = false; this.sseAberto = true;
+                const delay = Math.max(0, Number(this.tempoEntre) || 0);
+                const bloqueio = Math.max(0, Number(this.esperaBloqueio) || 0);
                 const url = `/api/sat/${encodeURIComponent(p.paj_norm)}/baixar`
-                    + `?cpf=${encodeURIComponent(p.cpf)}&nome=${encodeURIComponent(p.assistido)}`;
+                    + `?cpf=${encodeURIComponent(p.cpf)}&nome=${encodeURIComponent(p.assistido)}`
+                    + `&delay=${delay}&bloqueio=${bloqueio}`;
                 const es = new EventSource(url); this._es = es;
                 es.addEventListener('log', (ev) => { try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {} });
                 es.addEventListener('done', (ev) => {
@@ -510,10 +563,10 @@ function satPage() {
         processar(p) {
             if (this.rodando) return;
             return new Promise((resolve) => {
-                this.rodando = true;
+                this.rodando = true; this.sseTipo = 'processar';
                 this.sseLog = []; this.sseStatus = '— em andamento'; this.sseFechavel = false; this.sseAberto = true;
                 const url = `/api/sat/${encodeURIComponent(p.paj_norm)}/processar`
-                    + `?grupo=${encodeURIComponent(this.grupoSel)}&dry=${this.dryRun ? 1 : 0}`
+                    + `?grupo=${encodeURIComponent(this.grupoSel)}`
                     + `&prazo=${this.comPrazo ? (this.prazoDias || 0) : 0}`;
                 const es = new EventSource(url); this._es = es;
                 es.addEventListener('log', (ev) => {
@@ -544,6 +597,13 @@ function satPage() {
             if (this._es) { this._es.close(); this._es = null; }
             this.sseAberto = false;
             this.recarregar();
+        },
+        cancelarDownload() {
+            // fecha o stream (o backend detecta a desconexão e interrompe a rotina)
+            if (this._es) { this._es.close(); this._es = null; }
+            this.rodando = false; this.sseFechavel = true;
+            this.sseStatus = '— cancelado';
+            this.sseLog.push({ level: 'erro', msg: '■ Download cancelado pelo usuário.' });
         },
     };
 }

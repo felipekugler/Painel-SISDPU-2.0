@@ -138,8 +138,9 @@ def processar_pat(pasta_temp, pasta_dest, mapa):
         for a in arquivos:
             if a != principal:
                 os.remove(os.path.join(pasta_temp, a))
-                descartados.append((a, f'duplicata/subtarefa de PROT {prot_int} '
-                                       f'(linha {mapa[a].get("protocolo","?")})'))
+                descartados.append((a, f'protocolo {mapa[a].get("protocolo","?")} '
+                                       f'descartado — é subtarefa/duplicata do protocolo '
+                                       f'principal {prot_int} ({servico})'))
     return mantidos, descartados
 
 
