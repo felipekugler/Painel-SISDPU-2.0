@@ -486,6 +486,8 @@ function satPage() {
         },
         async carregarNarrativa(p) {
             if (this.narrativas[p.paj_norm] !== undefined) return;
+            // PAJ não sincronizado: a narrativa já veio no item (buscada no detalhamento)
+            if (p.narrativa) { this.narrativas[p.paj_norm] = p.narrativa; return; }
             try {
                 const j = await (await fetch(`/api/sat/${encodeURIComponent(p.paj_norm)}/narrativa`)).json();
                 this.narrativas[p.paj_norm] = j.texto || '(sem narrativa cadastrada)';

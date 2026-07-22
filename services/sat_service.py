@@ -236,6 +236,8 @@ async def listar_pendentes() -> dict:
                     item["pretensao"] = det["pretensao"].strip()
             if not item["assistido"] and det.get("assistido"):
                 item["assistido"] = det["assistido"].strip()
+            if det.get("narrativa"):
+                item["narrativa"] = _html_para_texto(det["narrativa"])
         itens.append(item)
     return {"ok": True, "itens": itens, "detalhe": f"{len(itens)} pendência(s)."}
 
