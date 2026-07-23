@@ -30,3 +30,7 @@ data/
 
 # Claude Code — configuracoes locais especificas da maquina (paths reais, PAJs, etc.)
 .claude/settings.local.json
+
+# Config de USO do painel (favoritas de tramitacao, toggles) — dado local, nao versionar
+# (o modulo trata ausencia do arquivo como defaults)
+painel_config.json
