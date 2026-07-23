@@ -1,4 +1,8 @@
 {
   "download_prazos": true,
-  "download_narrativa": true
+  "download_narrativa": true,
+  "grupos_favoritos": [
+    "01 - PREV_AGENDA/AGUARDAR",
+    "01 - PREV_DIVPREV"
+  ]
 }
