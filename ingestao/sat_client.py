@@ -204,6 +204,19 @@ _LOTE_N = 5
 _LOTE_PAUSA_MS = 10000
 _consultas = 0  # contador de consultas do download corrente (reset no início de cada um)
 
+# Inventário ESTRUTURADO do download corrente: 1 item por documento REVELADO no SAT.
+# item = {"key": <tipo>, "sub": <NB/protocolo/"">, "nome": <arquivo/"">, "status": ...}
+# status: baixado · sem_dados · nao_relacionado · nao_consultado · antirobo · falha · descartado
+_INVENTARIO: list[dict] = []
+
+# Seleção por SUBITEM (download complementar): set de "key|sub" (ex.: "carta_concessao|703.969.453-1",
+# "pat|1915479324"). None = sem restrição de subitem (baixa todas as linhas do tipo).
+_ALVOS = None
+
+
+def _inv_add(key: str, sub: str, nome: str, status: str) -> None:
+    _INVENTARIO.append({"key": key, "sub": (sub or ""), "nome": (nome or ""), "status": status})
+
 
 async def _ritmo(page) -> None:
     """Conta 1 consulta e aplica o ritmo: delay por consulta + pausa a cada _LOTE_N."""
@@ -215,18 +228,60 @@ async def _ritmo(page) -> None:
         await page.wait_for_timeout(_LOTE_PAUSA_MS)
 
 
-# Grupo 1 = abrem direto com 1 clique em "Consultar". (rótulo, prefixo do nome, GARANTIDO).
+# Catálogo dos tipos de documentos que a rotina sabe baixar (key estável, rótulo, grupo).
+# A seleção POR PRETENSÃO (config) filtra o download por essas keys.
+_G1 = "Grupo 1 — CNIS / Declarações (1 clique)"
+_G2 = "Grupo 2 — modais"
+_GP = "PAT"
+TIPOS_DOCUMENTOS = [
+    {"key": "cnis_atividades", "label": "CNIS - Atividades", "grupo": _G1},
+    {"key": "cnis_dados_cadastrais", "label": "CNIS - Dados Cadastrais", "grupo": _G1},
+    {"key": "cnis_elos", "label": "CNIS - Elos", "grupo": _G1},
+    {"key": "cnis_microfichas", "label": "CNIS - Microfichas", "grupo": _G1},
+    {"key": "cnis_remuneracoes", "label": "CNIS - Remunerações", "grupo": _G1},
+    {"key": "cnis_vinculos", "label": "CNIS - Vínculos", "grupo": _G1},
+    {"key": "declaracao_beneficios", "label": "Declaração de Benefícios", "grupo": _G1},
+    {"key": "requerimentos_sibe", "label": "Requerimentos do SIBE", "grupo": _G1},
+    {"key": "revisao_art29", "label": "Revisão de Benefício - Artigo 29", "grupo": _G1},
+    {"key": "carta_concessao", "label": "Carta de Concessão", "grupo": _G2},
+    {"key": "crer", "label": "Comunicação de Resultado de Requerimento (CRER)", "grupo": _G2},
+    {"key": "hiscre", "label": "Histórico de Créditos (HISCRE)", "grupo": _G2},
+    {"key": "consignados", "label": "Histórico de Empréstimos Consignados", "grupo": _G2},
+    {"key": "laudo_social", "label": "Laudo de Avaliação Social", "grupo": _G2},
+    {"key": "laudo_medico", "label": "Laudo Médico", "grupo": _G2},
+    {"key": "pat", "label": "Tarefas PAT (2ª Via dos Processos)", "grupo": _GP},
+]
+TIPOS_KEYS = [t["key"] for t in TIPOS_DOCUMENTOS]
+
+# Seleção-padrão dos docs do INSTITUIDOR (benefícios derivados) — foco em provar a
+# qualidade de segurado dele. Editável na UI ("Escolher" → item "Instituidor").
+TIPOS_INSTITUIDOR_DEFAULT = [
+    "cnis_dados_cadastrais", "cnis_atividades", "cnis_vinculos", "cnis_remuneracoes",
+    "declaracao_beneficios", "carta_concessao", "crer",
+]
+
+# Prefixo aplicado aos nomes dos arquivos (ex.: "INSTITUIDOR - " na 2ª consulta).
+# Definido no início de cada download.
+_ROTULO_ARQ = ""
+
+
+def _final_nome(base: str) -> str:
+    """Nome final do PDF (com o prefixo/rótulo do download corrente)."""
+    return sat_utils.nome_final(_ROTULO_ARQ + base) + ".pdf"
+
+
+# Grupo 1 = abrem direto com 1 clique em "Consultar". (rótulo, prefixo, GARANTIDO, key).
 # `garantido`=True → o doc SEMPRE existe; silêncio ao consultar = antirobô com certeza.
 _GRUPO1 = [
-    ("CNIS - Atividades do CNIS v.3", "CNIS - Atividades", False),
-    ("CNIS - Dados Cadastrais do CNIS", "CNIS - Dados Cadastrais", True),
-    ("CNIS - Elos do CNIS", "CNIS - Elos", False),
-    ("CNIS - Microfichas do CNIS v.3", "CNIS - Microfichas", False),
-    ("CNIS - Remunerações do CNIS v.3", "CNIS - Remuneracoes", True),
-    ("CNIS - Vínculos do CNIS v.3", "CNIS - Vinculos", True),
-    ("Declaração de Benefícios", "Declaracao de Beneficios", True),
-    ("Requerimentos do SIBE", "Requerimentos do SIBE", False),
-    ("Revisão de Benefício - Artigo 29", "Revisao de Beneficio - Artigo 29", False),
+    ("CNIS - Atividades do CNIS v.3", "CNIS - Atividades", False, "cnis_atividades"),
+    ("CNIS - Dados Cadastrais do CNIS", "CNIS - Dados Cadastrais", True, "cnis_dados_cadastrais"),
+    ("CNIS - Elos do CNIS", "CNIS - Elos", False, "cnis_elos"),
+    ("CNIS - Microfichas do CNIS v.3", "CNIS - Microfichas", False, "cnis_microfichas"),
+    ("CNIS - Remunerações do CNIS v.3", "CNIS - Remuneracoes", True, "cnis_remuneracoes"),
+    ("CNIS - Vínculos do CNIS v.3", "CNIS - Vinculos", True, "cnis_vinculos"),
+    ("Declaração de Benefícios", "Declaracao de Beneficios", True, "declaracao_beneficios"),
+    ("Requerimentos do SIBE", "Requerimentos do SIBE", False, "requerimentos_sibe"),
+    ("Revisão de Benefício - Artigo 29", "Revisao de Beneficio - Artigo 29", False, "revisao_art29"),
 ]
 
 # Clique no "Consultar" pelo rótulo (comparação NORMALIZADA — sem acento, espaços
@@ -260,6 +315,26 @@ _JS_BANNER_NOVO = r"""()=>{
   for(const e of els){ const t=(e.innerText||'').trim(); if(t && e.dataset.satSeen!==t){ novas.push(t); } e.dataset.satSeen=t; }
   return novas.join(' | ');
 }"""
+
+# Frases do SAT que indicam AUSÊNCIA de documento/benefício (o doc não existe) — NÃO é
+# bloqueio antirobô. Ex.: "não retornou dados", "Não foram encontrados benefícios...".
+_MARCAS_VAZIO = ("nao retorn", "nao foram encontrados", "nao encontrad",
+                 "nenhum beneficio", "nenhum registro", "sem beneficio")
+
+
+def _banner_vazio(banner_norm: str) -> bool:
+    return any(m in banner_norm for m in _MARCAS_VAZIO)
+
+
+def _classificar_banner(banner_norm: str):
+    """Classifica um banner NOVO (não residual). Retorna:
+      None          → silêncio (nenhuma mensagem) ⇒ candidato a antirobô
+      'sem_dados'   → mensagem expressa de ausência (doc não existe)
+      'indisponivel'→ QUALQUER outra mensagem expressa (indisponível/erro/outro motivo)
+    O antirobô SÓ é acionado quando NÃO há mensagem alguma (retorno None)."""
+    if not banner_norm:
+        return None
+    return "sem_dados" if _banner_vazio(banner_norm) else "indisponivel"
 
 # Painel de Consultas RENDERIZADO: >=5 botões "Consultar" cujo td (rótulo) já tem texto.
 _JS_TEM_CONSULTAR = r"""()=>{
@@ -451,7 +526,7 @@ async def _clicar_abre_aba(page, ctx, fn_click, out, reg, nome_doc="documento",
     'aba' (abriu o PDF), 'sem_dados' (banner que MENCIONA o documento) ou 'bloqueio'
     (SILÊNCIO = antirobô → pausa e re-tenta). Gerador: yield-a os avisos ao vivo e
     grava o resultado em out['nova']/out['desfecho']."""
-    nova, desfecho = None, "bloqueio"
+    nova, desfecho, msg = None, "bloqueio", ""
     antes_ini = set(ctx.pages)
     for tentativa in range(1, _MAX_TENT + 1):
         antes = set(ctx.pages)
@@ -464,16 +539,17 @@ async def _clicar_abre_aba(page, ctx, fn_click, out, reg, nome_doc="documento",
                 if novas:  # abriu o PDF numa aba nova → prioridade sobre banner
                     nova, desfecho = novas[0], "aba"
                     break
-                # "sem_dados" só p/ mensagem NOVA (não residual) que — havendo alvo —
-                # menciona o documento. Assim um banner residual de outra linha não faz
-                # falso "não retornou dados" (bug: a aba abria e ficava órfã).
+                # QUALQUER mensagem NOVA (não residual) = motivo EXPRESSO → NÃO é antirobô.
+                # 'sem_dados' (ausência) ou 'indisponivel' (outro motivo). O antirobô só
+                # dispara no SILÊNCIO absoluto (nenhuma mensagem).
                 banner = _norm(await page.evaluate(_JS_BANNER_NOVO))
-                if "nao retorn" in banner and (not alvo_norm or alvo_norm in banner):
-                    desfecho = "sem_dados"
+                cls = _classificar_banner(banner)
+                if cls:
+                    desfecho, msg = cls, banner
                     break
-            if desfecho in ("aba", "sem_dados"):
+            if desfecho in ("aba", "sem_dados", "indisponivel"):
                 break
-        # SILÊNCIO (nem aba nem aviso) → proteção antirobô ativada
+        # SILÊNCIO (nem aba nem mensagem) → proteção antirobô ativada
         if tentativa < _MAX_TENT:
             cert = "" if garantido else " (provável)"
             yield reg(f"  🛡 proteção antirobô{cert} ativada em {nome_doc} — aguardando "
@@ -486,7 +562,7 @@ async def _clicar_abre_aba(page, ctx, fn_click, out, reg, nome_doc="documento",
             if p not in antes_ini:
                 with contextlib.suppress(Exception):
                     await p.close()
-    out["nova"], out["desfecho"] = nova, desfecho
+    out["nova"], out["desfecho"], out["msg"] = nova, desfecho, msg
     await _ritmo(page)  # ritmo (delay por consulta + pausa de lote)
 
 
@@ -506,15 +582,17 @@ async def _fechar_modal(page) -> None:
 async def _abrir_modal(page, label, out, reg, nome_doc="documento",
                        alvo_norm="", garantido=False):
     """Clica o 'Consultar' do rótulo e espera abrir o MODAL. Gerador: yield-a avisos ao
-    vivo e grava out['estado'] = 'modal' | 'sem_dados' | 'bloqueio'."""
+    vivo e grava out['estado'] = 'modal' | 'sem_dados' | 'indisponivel' | 'bloqueio'
+    e out['msg'] com o texto do aviso capturado (quando houver)."""
     # garante que nenhum modal antigo esteja visível antes de clicar
     for _ in range(6):
         if await _sem_modal(page):
             break
         await _fechar_modal(page)
     out["estado"] = "bloqueio"
+    out["msg"] = ""
     for tentativa in range(1, _MAX_TENT + 1):
-        banner_antes = _norm(await page.evaluate(_JS_BANNER))
+        await page.evaluate(_JS_MARCAR_BANNERS)  # marca banners RESIDUAIS como vistos
         clicou = await page.evaluate(_JS_CLK, label)
         if not clicou:
             clicou = await page.evaluate(_JS_CLK_CONTEM, label)
@@ -525,14 +603,16 @@ async def _abrir_modal(page, label, out, reg, nome_doc="documento",
                     out["estado"] = "modal"
                     await _ritmo(page)  # ritmo após abrir o modal (é uma consulta)
                     return
-                banner = _norm(await page.evaluate(_JS_BANNER))
-                # sem_dados = banner NOVO que (se houver alvo) menciona o documento.
-                if ("nao retorn" in banner and banner != banner_antes
-                        and (not alvo_norm or alvo_norm in banner)):
-                    out["estado"] = "sem_dados"
+                # Qualquer aviso EXPRESSO NOVO (não residual) encerra a espera SEM disparar
+                # antirobô: "sem_dados" (ausência de documento/benefício) ou "indisponivel"
+                # (documento inacessível por outro motivo). Só o SILÊNCIO total é antirobô.
+                banner = _norm(await page.evaluate(_JS_BANNER_NOVO))
+                cls = _classificar_banner(banner)
+                if cls:
+                    out["estado"], out["msg"] = cls, banner
                     await _ritmo(page)
                     return
-        # SILÊNCIO → proteção antirobô
+        # SILÊNCIO (nem modal nem aviso expresso) → proteção antirobô
         if tentativa < _MAX_TENT:
             cert = "" if garantido else " (provável)"
             yield reg(f"  🛡 proteção antirobô{cert} ativada em {nome_doc} — aguardando "
@@ -543,23 +623,75 @@ async def _abrir_modal(page, label, out, reg, nome_doc="documento",
 
 # Grupo 2 = abrem em MODAL. tipo "tabela": linhas com "Abrir PDF"; "hiscre": form de datas.
 _GRUPO2 = [
-    {"label": "Carta de Concessão", "tipo": "tabela", "nome": "CCON", "titulo": "carta"},
-    {"label": "Comunicação de Resultado de Requerimento - CRER", "tipo": "tabela",
-     "nome": "CRER", "titulo": "crer", "especie": True},
-    {"label": "Histórico de Créditos", "tipo": "hiscre", "nome": "HISCRE",
-     "titulo": "credito", "garantido": True},
-    {"label": "Histórico de Empréstimos Consignados", "tipo": "tabela",
-     "nome": "HISCONSIGNADOS", "titulo": "emprestimo"},
-    {"label": "Laudo Médico", "tipo": "tabela", "nome": "LAUDO MEDICO", "titulo": "laudo"},
+    {"key": "carta_concessao", "label": "Carta de Concessão", "tipo": "tabela",
+     "nome": "CCON", "titulo": "carta", "filtra_especie": True},
+    {"key": "crer", "label": "Comunicação de Resultado de Requerimento - CRER",
+     "tipo": "tabela", "nome": "CRER", "titulo": "crer", "especie": True, "filtra_especie": True},
+    {"key": "hiscre", "label": "Histórico de Créditos", "tipo": "hiscre",
+     "nome": "HISCRE", "titulo": "credito", "garantido": True},
+    {"key": "consignados", "label": "Histórico de Empréstimos Consignados",
+     "tipo": "tabela", "nome": "HISCONSIGNADOS", "titulo": "emprestimo"},
+    {"key": "laudo_social", "label": "Laudo de Avaliação Social", "tipo": "tabela",
+     "nome": "LAUDO SOCIAL", "titulo": "avaliacao social"},
+    {"key": "laudo_medico", "label": "Laudo Médico", "tipo": "tabela",
+     "nome": "LAUDO MEDICO", "titulo": "laudo"},
 ]
 
 
-async def _baixar_modal_tabela(page, ctx, cfg, nome, pasta_destino, salvos, pulados, reg):
-    """Modais-tabela (CCON/CRER/Consignados/Laudo): 'Abrir PDF' por linha de benefício."""
+# --- Relação espécie × pretensão (filtro automático de CCON/CRER) ---
+# Pretensão (pretensaopura, normalizada) → palavras-chave que devem aparecer na espécie.
+# Casamento por SUBSTRING (tolera variações). Pretensão AUSENTE do mapa OU DERIVADA ⇒
+# SEM restrição (baixa todas) — evita excluir documento relevante por engano.
+_PRETENSAO_ESPECIES = {
+    "beneficio de prestacao continuada": ["prestacao continuada", "assistencial"],
+    "beneficio assistencial": ["prestacao continuada", "assistencial"],
+    "bpc": ["prestacao continuada", "assistencial"],
+    "aposentadoria por idade": ["aposentadoria por idade"],
+    "aposentadoria por tempo de contribuicao": ["tempo de contribuicao"],
+    "aposentadoria por incapacidade permanente": ["incapacidade permanente", "invalidez"],
+    "aposentadoria por invalidez": ["incapacidade permanente", "invalidez"],
+    "auxilio por incapacidade temporaria": ["incapacidade temporaria", "auxilio-doenca", "auxilio doenca"],
+    "auxilio-doenca": ["incapacidade temporaria", "auxilio-doenca", "auxilio doenca"],
+    "auxilio doenca": ["incapacidade temporaria", "auxilio-doenca", "auxilio doenca"],
+    "auxilio-acidente": ["auxilio-acidente", "auxilio acidente"],
+    "auxilio acidente": ["auxilio-acidente", "auxilio acidente"],
+    "salario-maternidade": ["maternidade"],
+    "salario maternidade": ["maternidade"],
+    # Derivados: no SAT do assistido, o doc relevante é o do PRÓPRIO benefício derivado
+    # (a qualidade de segurado do instituidor é baixada à parte, com o CPF dele).
+    "pensao por morte": ["pensao por morte"],
+    "auxilio-reclusao": ["reclusao"],
+    "auxilio reclusao": ["reclusao"],
+}
+
+
+def especie_relacionada(pretensao: str, especie: str) -> bool:
+    """True se a espécie do benefício se relaciona à pretensão do PAJ. SEGURO: pretensão
+    vazia/não mapeada → True (não restringe)."""
+    p = _norm(pretensao)
+    e = _norm(especie)
+    if not p or not e:
+        return True
+    kws = None
+    for chave, lista in _PRETENSAO_ESPECIES.items():
+        if chave in p or p in chave:
+            kws = lista
+            break
+    if kws is None:
+        return True  # pretensão não mapeada → não restringe
+    return any(k in e for k in kws)
+
+
+async def _baixar_modal_tabela(page, ctx, cfg, nome, pasta_destino, salvos, pulados, reg,
+                               pretensao=""):
+    """Modais-tabela (CCON/CRER/Consignados/Laudo): 'Abrir PDF' por linha de benefício.
+    Para os cfgs com `filtra_especie`, pula (e LOGA) linhas cuja espécie não se relaciona
+    à `pretensao` do PAJ."""
     linhas = await page.evaluate(_JS_LINHAS_MODAL)
     idxs = [i for i, l in enumerate(linhas) if _achar_nb_row(l)]
     if not idxs:
         pulados.append(f"{cfg['nome']} (sem linhas)")
+        _inv_add(cfg["key"], "", "", "sem_dados")
         yield reg(f"  – {cfg['label']}: sem benefícios na tabela", "muted")
         return
     alvo = _norm(cfg.get("titulo") or cfg["label"])
@@ -567,9 +699,24 @@ async def _baixar_modal_tabela(page, ctx, cfg, nome, pasta_destino, salvos, pula
         row = linhas[i]
         nb = _achar_nb_row(row)
         sit = _achar_situacao(row)
+        # download por SUBITEM (complementar): baixar só os NBs escolhidos
+        # (ou o tipo inteiro, se veio o curinga "key|").
+        if (_ALVOS is not None and f"{cfg['key']}|{nb}" not in _ALVOS
+                and f"{cfg['key']}|" not in _ALVOS):
+            continue
+        # CCON/CRER: baixar só as espécies relacionadas à pretensão. As demais existem no
+        # SAT mas são puladas — REGISTRADAS no log "por não ser relacionado à pretensão".
+        if cfg.get("filtra_especie") and not especie_relacionada(pretensao, _achar_especie(row)):
+            esp = _achar_especie(row)
+            pulados.append(f"{cfg['nome']} {nb} — pulado por não ser relacionado à pretensão")
+            _inv_add(cfg["key"], nb, "", "nao_relacionado")
+            yield reg(f"  – {cfg['nome']} {nb} ({esp}): pulado por não ser relacionado à "
+                      f"pretensão", "muted")
+            continue
         # Consignados: não faz sentido consultar benefício INDEFERIDO — pular (decisão
         # do usuário 2026-07-21) para poupar consultas e não disparar o antirobô à toa.
         if cfg["nome"] == "HISCONSIGNADOS" and "INDEFER" in sit:
+            _inv_add(cfg["key"], nb, "", "nao_consultado")
             yield reg(f"  – HISCONSIGNADOS {nb}: benefício {sit} — não consultado", "muted")
             continue
         if cfg["nome"] == "CCON":
@@ -583,26 +730,35 @@ async def _baixar_modal_tabela(page, ctx, cfg, nome, pasta_destino, salvos, pula
             base = f"LAUDO MEDICO {nb}"
         else:
             base = f"{cfg['nome']} {nb}"
-        nome_arq = sat_utils.nome_final(base) + ".pdf"
+        nome_arq = _final_nome(base)
         out = {}
         async for ev in _clicar_abre_aba(
                 page, ctx, (lambda idx=i: page.evaluate(_JS_ABRIR_PDF_LINHA, idx)),
                 out, reg, nome_doc=base, alvo_norm=alvo, garantido=cfg.get("garantido", False)):
             yield ev
-        nova, desf = out["nova"], out["desfecho"]
+        nova, desf, msg = out["nova"], out["desfecho"], out.get("msg", "")
+        _k = cfg["key"]
         if desf == "aba" and nova:
             ok = await _baixar_aba(ctx, nova, os.path.join(pasta_destino, nome_arq))
             if ok:
                 salvos.append(nome_arq)
+                _inv_add(_k, nb, nome_arq, "baixado")
                 yield reg(f"  ✓ {nome_arq}", "ok")
             else:
                 pulados.append(f"{nome_arq} (falha no download)")
+                _inv_add(_k, nb, nome_arq, "falha")
                 yield reg(f"  ✗ {nome_arq}: falha no download", "erro")
         elif desf == "sem_dados":
             pulados.append(f"{base} (sem dados)")
+            _inv_add(_k, nb, "", "sem_dados")
             yield reg(f"  – {base}: não retornou dados", "muted")
+        elif desf == "indisponivel":
+            pulados.append(f"{base} (indisponível)")
+            _inv_add(_k, nb, "", "indisponivel")
+            yield reg(f"  – {base}: {msg or 'documento indisponível'}", "muted")
         else:
             pulados.append(f"{base} (antirobô — não recuperado)")
+            _inv_add(_k, nb, "", "antirobo")
             yield reg(f"  ✗ {base}: proteção antirobô — não recuperado após {_MAX_TENT - 1} "
                       f"esperas de {_PAUSA_BLOQUEIO_MS // 1000}s", "erro")
 
@@ -618,34 +774,48 @@ async def _baixar_hiscre(page, ctx, pasta_destino, salvos, pulados, reg):
         await page.wait_for_timeout(250)
         await page.evaluate(_JS_CAMPO_MODAL, [1, ate])
         await page.wait_for_timeout(250)
-    nome_arq = "HISCRE 5 anos.pdf"
+    nome_arq = _final_nome("HISCRE 5 anos")
     out = {}
     async for ev in _clicar_abre_aba(
             page, ctx,
             (lambda: page.evaluate(_JS_BTN_MODAL, r"^(ok|consultar|abrir pdf|confirmar)$")),
             out, reg, nome_doc="HISCRE", alvo_norm="credito", garantido=True):
         yield ev
-    nova, desf = out["nova"], out["desfecho"]
+    nova, desf, msg = out["nova"], out["desfecho"], out.get("msg", "")
     if desf == "aba" and nova:
         ok = await _baixar_aba(ctx, nova, os.path.join(pasta_destino, nome_arq))
         if ok:
             salvos.append(nome_arq)
+            _inv_add("hiscre", "", nome_arq, "baixado")
             yield reg(f"  ✓ {nome_arq} (De {de} até {ate})", "ok")
         else:
             pulados.append("HISCRE (falha no download)")
+            _inv_add("hiscre", "", "", "falha")
             yield reg("  ✗ HISCRE: falha no download", "erro")
     elif desf == "sem_dados":
         pulados.append("HISCRE (sem dados)")
+        _inv_add("hiscre", "", "", "sem_dados")
         yield reg("  – HISCRE: não retornou dados", "muted")
+    elif desf == "indisponivel":
+        pulados.append("HISCRE (indisponível)")
+        _inv_add("hiscre", "", "", "indisponivel")
+        yield reg(f"  – HISCRE: {msg or 'documento indisponível'}", "muted")
     else:
         pulados.append("HISCRE (antirobô — não recuperado)")
+        _inv_add("hiscre", "", "", "antirobo")
         yield reg("  ✗ HISCRE: proteção antirobô — não recuperado (doc sempre existe)", "erro")
 
 
-async def _grupo2_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
-    """Baixa os documentos do Grupo 2 (cada um abre em modal)."""
+async def _grupo2_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg, sel=None,
+                         pretensao=""):
+    """Baixa os documentos do Grupo 2 (cada um abre em modal). `sel` = keys selecionadas
+    (None = todas). `pretensao` = filtra CCON/CRER por espécie relacionada."""
     yield reg("Baixando documentos do Grupo 2 (modais)…", "novo")
     for cfg in _GRUPO2:
+        if sel is not None and cfg["key"] not in sel:
+            _inv_add(cfg["key"], "", "", "nao_selecionado")
+            yield reg(f"  · {cfg['label']}: não baixado (desativado para esta pretensão)", "muted")
+            continue
         alvo = _norm(cfg.get("titulo") or cfg["label"])
         garantido = cfg.get("garantido", False)
         out = {}
@@ -653,12 +823,20 @@ async def _grupo2_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
                                      alvo_norm=alvo, garantido=garantido):
             yield ev
         estado = out["estado"]
+        msg = out.get("msg", "")
         if estado == "sem_dados":
             pulados.append(f"{cfg['nome']} (sem dados)")
+            _inv_add(cfg["key"], "", "", "sem_dados")
             yield reg(f"  – {cfg['label']}: não retornou dados", "muted")
+            continue
+        if estado == "indisponivel":
+            pulados.append(f"{cfg['nome']} (indisponível)")
+            _inv_add(cfg["key"], "", "", "indisponivel")
+            yield reg(f"  – {cfg['label']}: {msg or 'documento indisponível'}", "muted")
             continue
         if estado == "bloqueio":
             pulados.append(f"{cfg['nome']} (antirobô — não recuperado)")
+            _inv_add(cfg["key"], "", "", "antirobo")
             yield reg(f"  ✗ {cfg['label']}: proteção antirobô — não recuperado", "erro")
             continue
         if cfg["tipo"] == "hiscre":
@@ -666,7 +844,7 @@ async def _grupo2_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
                 yield ev
         else:
             async for ev in _baixar_modal_tabela(
-                    page, ctx, cfg, nome, pasta_destino, salvos, pulados, reg):
+                    page, ctx, cfg, nome, pasta_destino, salvos, pulados, reg, pretensao):
                 yield ev
         await _fechar_modal(page)
 
@@ -687,12 +865,20 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
                                      alvo_norm="tarefa", garantido=True):
             yield ev
         estado = out["estado"]
+    msg = out.get("msg", "")
     if estado == "sem_dados":
         pulados.append("PAT (sem dados)")
+        _inv_add("pat", "", "", "sem_dados")
         yield reg("  – PAT: não retornou dados", "muted")
+        return
+    if estado == "indisponivel":
+        pulados.append("PAT (indisponível)")
+        _inv_add("pat", "", "", "indisponivel")
+        yield reg(f"  – PAT: {msg or 'documento indisponível'}", "muted")
         return
     if estado != "modal":
         pulados.append("PAT (antirobô — não recuperado)")
+        _inv_add("pat", "", "", "antirobo")
         yield reg("  ✗ PAT: modal não abriu — proteção antirobô (doc sempre existe)", "erro")
         return
 
@@ -713,13 +899,16 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
             if prot_i is None:
                 continue  # cabeçalho / linha "nenhum registro"
             prot = cells[prot_i]
+            # download por SUBITEM (complementar): só as tarefas escolhidas (ou "pat|" = todas).
+            if _ALVOS is not None and f"pat|{prot}" not in _ALVOS and "pat|" not in _ALVOS:
+                continue
             servico = cells[prot_i + 1] if prot_i + 1 < len(cells) else ""
             out = {}
             async for ev in _clicar_abre_aba(
                     page, ctx, (lambda idx=i: page.evaluate(_JS_ABRIR_PDF_LINHA, idx)),
                     out, reg, nome_doc=f"tarefa {prot}", garantido=True):
                 yield ev
-            nova, desf = out["nova"], out["desfecho"]
+            nova, desf, msg = out["nova"], out["desfecho"], out.get("msg", "")
             if desf == "aba" and nova:
                 seq += 1
                 tmpnome = f"pat_{seq:03d}.pdf"
@@ -728,10 +917,16 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
                     mapa[tmpnome] = {"servico": servico, "protocolo": prot}
                     yield reg(f"  ↓ tarefa {prot} baixada", "muted")
                 else:
+                    _inv_add("pat", prot, "", "falha")
                     yield reg(f"  ✗ tarefa {prot}: falha no download", "erro")
             elif desf == "sem_dados":
+                _inv_add("pat", prot, "", "sem_dados")
                 yield reg(f"  – tarefa {prot}: sem dados", "muted")
+            elif desf == "indisponivel":
+                _inv_add("pat", prot, "", "indisponivel")
+                yield reg(f"  – tarefa {prot}: {msg or 'documento indisponível'}", "muted")
             else:
+                _inv_add("pat", prot, "", "antirobo")
                 yield reg(f"  ✗ tarefa {prot}: proteção antirobô — não recuperado", "erro")
         avancou = await page.evaluate(_JS_PAG_PROX)
         if not avancou:
@@ -748,13 +943,15 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
         yield reg("  – PAT: nenhuma tarefa encontrada", "muted")
     else:
         try:
-            mant, desc = sat_utils.processar_pat(str(tmp), pasta_destino, mapa)
+            mant, desc = sat_utils.processar_pat(str(tmp), pasta_destino, mapa, _ROTULO_ARQ)
             yield reg(f"  PAT: {len(mapa)} tarefa(s) baixada(s) → {len(mant)} principal(is) "
                       f"mantido(s), {len(desc)} descartada(s) (subtarefa/duplicata)", "novo")
             for _f, nm in mant:
                 salvos.append(nm)
+                _inv_add("pat", mapa.get(_f, {}).get("protocolo", ""), nm, "baixado")
                 yield reg(f"  ✓ {nm}", "ok")
             for _a, motivo in desc:
+                _inv_add("pat", mapa.get(_a, {}).get("protocolo", ""), "", "descartado")
                 yield reg(f"  🗑 {motivo}", "muted")
         except Exception as e:  # noqa: BLE001
             pulados.append(f"PAT (dedup falhou: {e})")
@@ -765,16 +962,22 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
 
 
 async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
-                                delay_s: float = 5.0, bloqueio_s: float = 45.0):
+                                delay_s: float = 5.0, bloqueio_s: float = 45.0,
+                                tipos=None, pretensao="", rotulo="", alvos=None):
     """Consulta o CPF no SAT (usuário resolve o CAPTCHA na janela) e baixa o Grupo 1
     (1 clique), o Grupo 2 (modais: CCON, CRER, HISCRE, HISCONSIGNADOS, LAUDO MEDICO) e
     o PAT (2ª Via dos Processos, com deduplicação). `delay_s` = ritmo preventivo entre
     consultas (padrão 5s; 0 desliga). `bloqueio_s` = espera ao detectar antirobô
-    (padrão 45s). Gera eventos SSE; termina com {'done':True,'resultado':{...}}."""
-    global _RITMO_MS, _PAUSA_BLOQUEIO_MS, _consultas
+    (padrão 45s). `tipos` = coleção de keys de TIPOS_DOCUMENTOS a baixar (None = todos).
+    Gera eventos SSE; termina com {'done':True,'resultado':{...}}."""
+    global _RITMO_MS, _PAUSA_BLOQUEIO_MS, _consultas, _ROTULO_ARQ, _INVENTARIO, _ALVOS
     _RITMO_MS = max(0, int(float(delay_s) * 1000))
     _PAUSA_BLOQUEIO_MS = max(0, int(float(bloqueio_s) * 1000))
     _consultas = 0  # zera o contador de lote (pausa a cada _LOTE_N)
+    _ROTULO_ARQ = rotulo or ""  # prefixo dos nomes (ex.: "INSTITUIDOR - ")
+    _INVENTARIO = []  # zera o inventário estruturado desta rodada
+    _ALVOS = set(alvos) if alvos else None  # subitens específicos (download complementar)
+    sel = None if tipos is None else set(tipos)  # None = todos os tipos
     Path(pasta_destino).mkdir(parents=True, exist_ok=True)
     salvos: list[str] = []
     pulados: list[str] = []
@@ -819,29 +1022,37 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
         yield reg("Cidadão localizado. Baixando os documentos (Grupo 1)…", "ok")
 
         # --- Grupo 1 ---
-        for label, prefixo, garantido in _GRUPO1:
+        for label, prefixo, garantido, key in _GRUPO1:
+            if sel is not None and key not in sel:
+                _inv_add(key, "", "", "nao_selecionado")
+                yield reg(f"  · {prefixo}: não baixado (desativado para esta pretensão)", "muted")
+                continue
             alvo_norm = _norm(label)
-            nova, desfecho = None, "bloqueio"
-            # Três desfechos por clique: "aba" (abriu o PDF) · "sem_dados" (banner que
-            # MENCIONA o documento) · "bloqueio" (silêncio anti-robô → re-tentar).
+            nova, desfecho, msg = None, "bloqueio", ""
+            # Quatro desfechos por clique: "aba" (abriu o PDF) · "sem_dados" (aviso expresso
+            # de ausência) · "indisponivel" (aviso expresso de inacessibilidade) · "bloqueio"
+            # (SILÊNCIO total → anti-robô → re-tentar). Qualquer aviso EXPRESSO NOVO (frescor
+            # via marcação) encerra sem disparar o skip temporal do antirobô.
             for tentativa in range(1, _MAX_TENT + 1):
                 antes = set(ctx.pages)
+                await page.evaluate(_JS_MARCAR_BANNERS)  # marca banners RESIDUAIS como vistos
                 clicou = await page.evaluate(_JS_CLK, label)
                 if clicou:
-                    for _ in range(16):  # aguarda ~8s por aba ou banner do documento
+                    for _ in range(16):  # aguarda ~8s por aba ou aviso do documento
                         await page.wait_for_timeout(500)
                         novas = [p for p in ctx.pages if p not in antes]
                         if novas:
                             nova, desfecho = novas[0], "aba"
                             break
-                        banner = _norm(await page.evaluate(_JS_BANNER))
-                        if "nao retorn" in banner and alvo_norm in banner:
-                            desfecho = "sem_dados"
+                        banner = _norm(await page.evaluate(_JS_BANNER_NOVO))
+                        cls = _classificar_banner(banner)
+                        if cls:
+                            desfecho, msg = cls, banner
                             break
-                if desfecho in ("aba", "sem_dados"):
+                if desfecho in ("aba", "sem_dados", "indisponivel"):
                     break
-                # SILÊNCIO: nem aba nem aviso "não retornou dados" p/ este documento →
-                # proteção antirobô ativada → pausa (fixo) e re-tenta
+                # SILÊNCIO: nem aba nem aviso expresso → proteção antirobô ativada → pausa
+                # (fixo) e re-tenta. Só o silêncio total dispara o skip temporal.
                 if tentativa < _MAX_TENT:
                     cert = "" if garantido else " (provável)"
                     yield reg(f"  🛡 proteção antirobô{cert} ativada em {prefixo} — aguardando "
@@ -851,37 +1062,51 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
             if desfecho == "aba" and nova:
                 with contextlib.suppress(Exception):
                     await nova.wait_for_load_state("domcontentloaded", timeout=15000)
-                nome_arq = sat_utils.nome_final(f"{prefixo} {nome}") + ".pdf"
+                nome_arq = _final_nome(f"{prefixo} {nome}")
                 ok = await _baixar_pdf(ctx, _pdf_url(nova.url), os.path.join(pasta_destino, nome_arq))
                 with contextlib.suppress(Exception):
                     await nova.close()
                 if ok:
                     salvos.append(nome_arq)
+                    _inv_add(key, "", nome_arq, "baixado")
                     yield reg(f"  ✓ {nome_arq}", "ok")
                 else:
                     pulados.append(f"{prefixo} (falha no download)")
+                    _inv_add(key, "", "", "falha")
                     yield reg(f"  ✗ {prefixo}: falha no download", "erro")
             elif desfecho == "sem_dados":
                 pulados.append(f"{prefixo} (sem dados)")
+                _inv_add(key, "", "", "sem_dados")
                 yield reg(f"  – {prefixo}: não retornou dados", "muted")
+            elif desfecho == "indisponivel":
+                pulados.append(f"{prefixo} (indisponível)")
+                _inv_add(key, "", "", "indisponivel")
+                yield reg(f"  – {prefixo}: {msg or 'documento indisponível'}", "muted")
             else:  # bloqueio persistente após as tentativas
                 pulados.append(f"{prefixo} (antirobô — não recuperado)")
+                _inv_add(key, "", "", "antirobo")
                 yield reg(f"  ✗ {prefixo}: proteção antirobô — não recuperado após "
                           f"{_MAX_TENT - 1} esperas de {_PAUSA_BLOQUEIO_MS // 1000}s — "
                           f"reveja manualmente", "erro")
             await _ritmo(page)  # ritmo (delay por consulta + pausa de lote)
 
         # --- Grupo 2 (modais) ---
-        with contextlib.suppress(Exception):
-            await _fechar_modal(page)
-        async for ev in _grupo2_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
-            yield ev
+        if sel is None or any(c["key"] in sel for c in _GRUPO2):
+            with contextlib.suppress(Exception):
+                await _fechar_modal(page)
+            async for ev in _grupo2_stream(page, ctx, nome, pasta_destino, salvos, pulados,
+                                           reg, sel, pretensao):
+                yield ev
 
         # --- PAT (2ª Via dos Processos) ---
-        with contextlib.suppress(Exception):
-            await _fechar_modal(page)
-        async for ev in _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
-            yield ev
+        if sel is None or "pat" in sel:
+            with contextlib.suppress(Exception):
+                await _fechar_modal(page)
+            async for ev in _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
+                yield ev
+        else:
+            _inv_add("pat", "", "", "nao_selecionado")
+            yield reg("  · Tarefas PAT: não baixado (desativado para esta pretensão)", "muted")
 
         det = f"{len(salvos)} documento(s) baixado(s)."
         yield {"done": True, "resultado": {"ok": True, "detalhe": det,
@@ -894,7 +1119,8 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
             Path(pasta_destino, "_log_download.json").write_text(
                 _json.dumps({"ts": _dt.now().isoformat(timespec="seconds"),
                              "cpf": cpf, "nome": nome, "salvos": salvos,
-                             "pulados": pulados, "eventos": log_msgs},
+                             "pulados": pulados, "inventario": list(_INVENTARIO),
+                             "eventos": log_msgs},
                             ensure_ascii=False, indent=2), encoding="utf-8")
         with contextlib.suppress(Exception):
             await browser.close()

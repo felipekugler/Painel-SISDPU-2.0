@@ -99,6 +99,60 @@ def del_grupo_favorito(grupo: str) -> list[str]:
     return favs
 
 
+# --- Tipos de documentos do SAT a baixar, POR PRETENSÃO ---
+# Guarda `sat_tipos_por_pretensao` = {pretensao: [keys]} e `sat_tipos_padrao` = [keys]
+# (aplicado às pretensões sem config). Padrão ausente = TODOS os tipos.
+def get_sat_tipos_padrao() -> list[str] | None:
+    v = _ler_raw().get("sat_tipos_padrao")
+    return [str(x) for x in v] if isinstance(v, list) else None
+
+
+def get_sat_tipos_por_pretensao() -> dict:
+    v = _ler_raw().get("sat_tipos_por_pretensao", {})
+    if not isinstance(v, dict):
+        return {}
+    return {str(k): [str(x) for x in (val or [])] for k, val in v.items()}
+
+
+def get_sat_tipos_instituidor() -> list[str] | None:
+    """Keys do que baixar do INSTITUIDOR (benefícios derivados). None = usar default."""
+    v = _ler_raw().get("sat_tipos_instituidor")
+    return [str(x) for x in v] if isinstance(v, list) else None
+
+
+def set_sat_tipos(pretensao: str, keys: list[str]) -> dict:
+    """Salva as keys de uma pretensão; '' ou '__padrao__' = PADRÃO; '__instituidor__' =
+    seleção do instituidor. Retorna {padrao, por_pretensao, instituidor}."""
+    raw = _ler_raw()
+    keys = [str(k) for k in (keys or [])]
+    pretensao = (pretensao or "").strip()
+    if pretensao == "__instituidor__":
+        raw["sat_tipos_instituidor"] = keys
+    elif pretensao in ("", "__padrao__"):
+        raw["sat_tipos_padrao"] = keys
+    else:
+        d = raw.get("sat_tipos_por_pretensao")
+        if not isinstance(d, dict):
+            d = {}
+        d[pretensao] = keys
+        raw["sat_tipos_por_pretensao"] = d
+    _salvar_raw(raw)
+    return {"padrao": raw.get("sat_tipos_padrao"),
+            "por_pretensao": raw.get("sat_tipos_por_pretensao", {}),
+            "instituidor": raw.get("sat_tipos_instituidor")}
+
+
+def resolver_sat_tipos(pretensao: str, todos: list[str]) -> list[str]:
+    """Keys a baixar p/ a pretensão: específica > padrão > todos. Lista vazia
+    configurada (usuário desmarcou tudo) é respeitada."""
+    pretensao = (pretensao or "").strip()
+    por = get_sat_tipos_por_pretensao()
+    if pretensao and pretensao in por:
+        return por[pretensao]
+    pad = get_sat_tipos_padrao()
+    return pad if pad is not None else list(todos)
+
+
 def limpar_dados_prazos() -> int:
     """Apaga o JSONL de prazos pendentes. Retorna o número de registros removidos."""
     from config import PAJS_DIR as _PAJS_DIR

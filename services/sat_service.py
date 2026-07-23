@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import html as _html
 import json
+import os
 import re
 import shutil
 import unicodedata
@@ -34,9 +35,15 @@ DESCRICAO_ALVO = "para juntada dos documentos do sat central"  # trecho p/ filtr
 FASE_MOV = "Juntada de documento"
 TIPO_ARQUIVO = "Documentos do Assistido"
 MOV_DESCRICAO = "Juntada dos documentos obtidos junto ao SAT Central (INSS/Dataprev)"
+MOV_DESCRICAO_INSTITUIDOR = ("Juntada dos documentos do INSTITUIDOR obtidos junto ao SAT "
+                             "Central (INSS/Dataprev)")
+MOV_DESCRICAO_COMPLEMENTAR = ("Juntada complementar de documentos obtidos junto ao SAT "
+                              "Central (INSS/Dataprev)")
 TRAM_DESCRICAO = "Documentos do SAT Central juntados ao PAJ"
 GRUPO_PADRAO = "01 - PREV_DIVPREV"
 SUBPASTA_SAT = "Arquivos SAT"
+SUBPASTA_INSTITUIDOR = "Instituidor"  # dentro de "Arquivos SAT" (download/anexação à parte)
+SUBPASTA_COMPLEMENTAR = "Complementar"  # download complementar (anexado por movimentação)
 
 
 # ---------------------------------------------------------------------------
@@ -111,6 +118,154 @@ def pasta_arquivos_sat(paj_norm: str) -> Path:
 def listar_arquivos_sat(paj_norm: str) -> list[dict]:
     """PDFs já baixados na subpasta 'Arquivos SAT' (ignora o _LOG e não-PDF)."""
     pasta = pasta_arquivos_sat(paj_norm)
+    if not pasta.exists():
+        return []
+    out = []
+    for f in sorted(pasta.glob("*.pdf")):
+        try:
+            tam = f.stat().st_size
+        except Exception:  # noqa: BLE001
+            tam = 0
+        out.append({"nome": f.name, "caminho": str(f), "tipo": "pdf", "tamanho": tam})
+    return out
+
+
+def pasta_instituidor(paj_norm: str) -> Path:
+    """Subpasta dos documentos do INSTITUIDOR (download e anexação SEPARADOS)."""
+    return pasta_arquivos_sat(paj_norm) / SUBPASTA_INSTITUIDOR
+
+
+def listar_arquivos_instituidor(paj_norm: str) -> list[dict]:
+    """PDFs baixados do instituidor (subpasta 'Instituidor')."""
+    pasta = pasta_instituidor(paj_norm)
+    if not pasta.exists():
+        return []
+    out = []
+    for f in sorted(pasta.glob("*.pdf")):
+        try:
+            tam = f.stat().st_size
+        except Exception:  # noqa: BLE001
+            tam = 0
+        out.append({"nome": f.name, "caminho": str(f), "tipo": "pdf", "tamanho": tam})
+    return out
+
+
+# marcador (normalizado) → key do tipo, para reconstruir o inventário de logs antigos
+_MARCADOR_KEY = [
+    ("cnis - dados cadastrais", "cnis_dados_cadastrais"),
+    ("cnis - atividades", "cnis_atividades"),
+    ("cnis - elos", "cnis_elos"),
+    ("cnis - microfichas", "cnis_microfichas"),
+    ("cnis - remuneracoes", "cnis_remuneracoes"),
+    ("cnis - vinculos", "cnis_vinculos"),
+    ("declaracao de beneficios", "declaracao_beneficios"),
+    ("requerimentos do sibe", "requerimentos_sibe"),
+    ("revisao de beneficio", "revisao_art29"),
+    ("hisconsignados", "consignados"),
+    ("hiscre", "hiscre"),
+    ("laudo social", "laudo_social"),
+    ("laudo medico", "laudo_medico"),
+    ("procadm", "pat"),
+    ("tarefa", "pat"),
+    ("ccon", "carta_concessao"),
+    ("crer", "crer"),
+]
+
+
+def _key_de_texto(txt: str) -> str:
+    t = _norm(txt)
+    for marc, key in _MARCADOR_KEY:
+        if marc in t:
+            return key
+    return ""
+
+
+def _sub_de_texto(txt: str, key: str) -> str:
+    if key == "pat":
+        m = re.search(r"prot\s+(\d{5,})", txt, re.I) or re.search(r"tarefa\s+(\d{5,})", txt, re.I)
+        return m.group(1) if m else ""
+    m = re.search(r"\d{3}\.\d{3}\.\d{3}-\d(?!\d)", txt)
+    return m.group(0) if m else ""
+
+
+def _status_de_pulado(txt: str) -> str:
+    t = _norm(txt)
+    if "relacionado" in t:
+        return "nao_relacionado"
+    if "nao consultado" in t:
+        return "nao_consultado"
+    if "antirob" in t or "sem resposta" in t:
+        return "antirobo"
+    if "indisponiv" in t or "inacessiv" in t:
+        return "indisponivel"
+    if "falha" in t:
+        return "falha"
+    if "sem dados" in t or "sem linhas" in t or "sem tarefas" in t or "nao retornou" in t:
+        return "sem_dados"
+    return "sem_dados"
+
+
+def _inventario_de_log(d: dict) -> list[dict]:
+    """Fallback: reconstrói o inventário a partir de salvos[]/pulados[] de logs antigos."""
+    inv: list[dict] = []
+    for nome in d.get("salvos", []) or []:
+        key = _key_de_texto(nome)
+        if key:
+            inv.append({"key": key, "sub": _sub_de_texto(nome, key), "nome": nome, "status": "baixado"})
+    for p in d.get("pulados", []) or []:
+        key = _key_de_texto(p)
+        if not key:
+            continue
+        inv.append({"key": key, "sub": _sub_de_texto(p, key), "nome": "", "status": _status_de_pulado(p)})
+    return inv
+
+
+def inventario_paj(paj_norm: str) -> dict:
+    """Inventário dos documentos revelados no SAT (1º download) + marcas ja_baixado /
+    ja_anexado. Usa `inventario` do log (novos) ou reconstrói de salvos/pulados (antigos)."""
+    log_p = pasta_arquivos_sat(paj_norm) / "_log_download.json"
+    cpf, inv = "", []
+    if os.path.isfile(str(log_p)):
+        try:
+            d = json.loads(log_p.read_text(encoding="utf-8"))
+            cpf = d.get("cpf", "") or ""
+            inv = d.get("inventario") or _inventario_de_log(d)
+        except Exception:  # noqa: BLE001
+            inv = []
+    if not cpf:
+        cpf = _cpf_do_paj(paj_norm)
+    # já anexados: nomes em QUALQUER registro do histórico deste PAJ
+    anexados: set[str] = set()
+    for r in historico_sat.listar():
+        if r.get("paj_norm") == paj_norm:
+            for a in (r.get("arquivos") or []):
+                anexados.add(a)
+    # já baixados: arquivos presentes nas pastas (principal + instituidor + complementar)
+    baixados: set[str] = set()
+    for lst in (listar_arquivos_sat(paj_norm), listar_arquivos_instituidor(paj_norm),
+                listar_arquivos_complementar(paj_norm)):
+        for a in lst:
+            baixados.add(a["nome"])
+    itens = []
+    for it in inv:
+        nome = it.get("nome", "")
+        itens.append({
+            "key": it.get("key", ""), "sub": it.get("sub", ""), "nome": nome,
+            "status": it.get("status", ""),
+            "ja_baixado": bool(it.get("status") == "baixado" and (not nome or nome in baixados)),
+            "ja_anexado": bool(nome and nome in anexados),
+        })
+    return {"paj_norm": paj_norm, "cpf": cpf, "itens": itens}
+
+
+def pasta_complementar(paj_norm: str) -> Path:
+    """Subpasta do download COMPLEMENTAR (baixado depois, anexado por movimentação)."""
+    return pasta_arquivos_sat(paj_norm) / SUBPASTA_COMPLEMENTAR
+
+
+def listar_arquivos_complementar(paj_norm: str) -> list[dict]:
+    """PDFs na subpasta 'Complementar'."""
+    pasta = pasta_complementar(paj_norm)
     if not pasta.exists():
         return []
     out = []
@@ -216,6 +371,7 @@ async def listar_pendentes() -> dict:
             "descricao": it.get("descricao", ""),
             "url_detalhe": it.get("url_detalhe", ""),
             "n_arquivos": len(arquivos),
+            "n_instituidor": len(listar_arquivos_instituidor(paj_norm)),
             "tem_pasta": _pasta_paj(paj_norm).exists(),
             "sincronizado": bool(meta),
             "tem_log": (pasta_arquivos_sat(paj_norm) / "_log_download.json").exists(),
@@ -354,6 +510,95 @@ async def processar_paj_stream(
                      if cc.get("ok") else "Movimentou e tramitou, mas a conclusão falhou."))
     _gravar_hist(paj_norm, item, anexos, grupo, resultado, status, detalhe, log)
     yield {"done": True, "resultado": {"ok": bool(dry_run or cc.get("ok")), "status": status, "detalhe": detalhe}}
+
+
+async def _mov_extra_stream(
+    paj_norm: str, id_processo: str, assistido: str, anexos: list[dict],
+    descricao: str, escopo: str, titulo: str,
+) -> AsyncIterator[dict]:
+    """Anexa (SÓ movimentação/juntada) um conjunto de documentos ao PAJ, acessando-o pelo
+    id/número (independe da caixa). NÃO tramita nem conclui. Grava registro SEPARADO no
+    histórico com `escopo` (instituidor|complementar). Retorna também 'salvos' no done."""
+    num = _norm_to_num(paj_norm)
+    log: list[dict] = []
+
+    def passo(etapa: str, ok: bool | None, detalhe: str) -> dict:
+        log.append({"ts": datetime.now().isoformat(timespec="seconds"),
+                    "etapa": etapa, "ok": (None if ok is None else bool(ok)),
+                    "detalhe": str(detalhe or "")[:600]})
+        return _passo_ev(etapa, ok, detalhe)
+
+    yield _ev("novo", f"{titulo} — {num} (movimentação/juntada)")
+    if not anexos:
+        d = "Nenhum documento para juntar."
+        yield passo("Documentos", False, d)
+        yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": d}}
+        return
+    if not id_processo:
+        d = "id do PAJ ausente — não foi possível abrir a movimentação."
+        yield passo("Localização do PAJ", False, d)
+        yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": d}}
+        return
+    yield passo("Documentos", True, f"{len(anexos)} arquivo(s) para juntar")
+
+    pajs = [{"id": id_processo, "numero": num}]
+    yield _ev("info", "Movimentando (juntada de documento)...")
+    mv = await movtram.movimentar_paj(pajs, descricao, FASE_MOV, anexos, TIPO_ARQUIVO)
+    yield passo("Movimentação (Juntada de documento)", mv.get("ok"), mv.get("detalhe", ""))
+    ok = bool(mv.get("ok"))
+    status = "concluido" if ok else "falha"
+    try:
+        historico_sat.registrar({
+            "paj": num, "paj_norm": paj_norm, "id_processo": id_processo, "id_tramite": "",
+            "assistido": assistido or _ler_metadata(paj_norm).get("assistido_caixa", ""),
+            "cpf": "", "escopo": escopo,
+            "n_arquivos": len(anexos), "arquivos": [a["nome"] for a in anexos],
+            "mov_status": mv.get("status"), "mov_seq": mv.get("mov_seq"),
+            "mov_detalhe": mv.get("detalhe", ""),
+            "tram_status": "ja_foi", "tram_caixa": "", "tram_detalhe": "",
+            "concluido_status": "ja_foi", "concluido_detalhe": "",
+            "status": status,
+            "detalhe": (f"{titulo}: juntada (movimentação) concluída." if ok
+                        else f"{titulo}: falha na movimentação."),
+            "log": log,
+        })
+    except Exception:  # noqa: BLE001
+        pass
+    yield {"done": True, "resultado": {"ok": ok, "status": status,
+           "detalhe": mv.get("detalhe", ""), "escopo": escopo}}
+
+
+async def processar_instituidor_stream(
+    paj_norm: str, id_processo: str, assistido: str = "",
+) -> AsyncIterator[dict]:
+    """Anexa (movimentação-only) os documentos do INSTITUIDOR (subpasta 'Instituidor')."""
+    async for ev in _mov_extra_stream(
+            paj_norm, id_processo, assistido, listar_arquivos_instituidor(paj_norm),
+            MOV_DESCRICAO_INSTITUIDOR, "instituidor", "Documentos do INSTITUIDOR"):
+        yield ev
+
+
+async def processar_complementar_stream(
+    paj_norm: str, id_processo: str, assistido: str = "",
+) -> AsyncIterator[dict]:
+    """Anexa (movimentação-only) os documentos do DOWNLOAD COMPLEMENTAR (subpasta
+    'Complementar'); ao final, move os PDFs para a pasta principal (preserva o acervo)."""
+    anexos = listar_arquivos_complementar(paj_norm)
+    resultado_ok = False
+    async for ev in _mov_extra_stream(
+            paj_norm, id_processo, assistido, anexos,
+            MOV_DESCRICAO_COMPLEMENTAR, "complementar", "Download complementar"):
+        if ev.get("done"):
+            resultado_ok = bool(ev.get("resultado", {}).get("ok"))
+        yield ev
+    # move os PDFs complementares para a pasta principal (só se a movimentação deu certo)
+    if resultado_ok:
+        destino = pasta_arquivos_sat(paj_norm)
+        for a in anexos:
+            try:
+                shutil.move(a["caminho"], str(destino / Path(a["caminho"]).name))
+            except Exception:  # noqa: BLE001
+                pass
 
 
 def _gravar_hist(paj_norm, item, anexos, grupo, resultado, status, detalhe, log) -> None:

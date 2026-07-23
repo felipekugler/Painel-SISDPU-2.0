@@ -101,7 +101,7 @@ def extrair_campos_procadm(pdf_path):
             'subtarefas': list(dict.fromkeys(subs))}
 
 
-def _nome_procadm(servico, campos):
+def _nome_procadm(servico, campos, prefixo=''):
     nb, der, prot = campos['nb'], campos['der'], campos['prot']
     if servico and nb and der and prot:
         base = f'PROCADM {servico} - NB {nb} DER {der} PROT {prot}'
@@ -109,11 +109,12 @@ def _nome_procadm(servico, campos):
         base = f'PROCADM {servico} - DER {der} PROT {prot}'
     else:
         base = f'PROCADM {servico} - PROT {prot}'
-    return nome_final(base) + '.pdf'
+    return nome_final(prefixo + base) + '.pdf'
 
 
-def processar_pat(pasta_temp, pasta_dest, mapa):
-    """mapa: {arquivo_temp: {'servico':..., 'protocolo': <prot da linha>}}."""
+def processar_pat(pasta_temp, pasta_dest, mapa, prefixo=''):
+    """mapa: {arquivo_temp: {'servico':..., 'protocolo': <prot da linha>}}. `prefixo`
+    é anteposto ao nome final (ex.: 'INSTITUIDOR - ')."""
     info = {}
     for f in mapa:
         p = os.path.join(pasta_temp, f)
@@ -132,7 +133,7 @@ def processar_pat(pasta_temp, pasta_dest, mapa):
         principal = next((a for a in arquivos
                           if str(mapa[a].get('protocolo', '')) == prot_int), arquivos[0])
         servico = mapa[principal].get('servico', '')
-        nome = _nome_procadm(servico, info[principal])
+        nome = _nome_procadm(servico, info[principal], prefixo)
         shutil.move(os.path.join(pasta_temp, principal), os.path.join(pasta_dest, nome))
         mantidos.append((principal, nome))
         for a in arquivos:
