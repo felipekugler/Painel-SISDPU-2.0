@@ -232,6 +232,9 @@ async def _resolver_conflito_login(page) -> bool:
     a sessão) e aguarda sumir. Retorna True se não há conflito (ou foi resolvido)."""
     conflito = await _eval_seguro(page, _JS_CONFLITO_LOGIN)
     if not conflito:
+        with contextlib.suppress(Exception):
+            from services import conexao_service
+            conexao_service.marcar_conectado()
         return True
     _log.info("movtram: conflito de sessão detectado — clicando 'Desbloquear'.")
     btn = page.locator('[id$="confirmTramitacao"]').first
@@ -241,7 +244,11 @@ async def _resolver_conflito_login(page) -> bool:
     with contextlib.suppress(Exception):
         await page.wait_for_selector('[id$="confirmDialogLogin_modal"]', state="hidden", timeout=8000)
     await page.wait_for_timeout(300)
-    return not await _eval_seguro(page, _JS_CONFLITO_LOGIN)
+    resolvido = not await _eval_seguro(page, _JS_CONFLITO_LOGIN)
+    with contextlib.suppress(Exception):
+        from services import conexao_service
+        conexao_service.marcar_conectado() if resolvido else conexao_service.marcar_conflito(_MSG_CONFLITO_SESSAO)
+    return resolvido
 
 
 async def _ler_pajs_lista(page, input_id: str) -> list[str]:

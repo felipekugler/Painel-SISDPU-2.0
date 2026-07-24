@@ -19,7 +19,6 @@ from fastapi.staticfiles import StaticFiles
 
 from config import OFICIO_DESCRICAO
 from routes.busca import router as busca_router
-from routes.calendar import router as calendar_router
 from routes.chat import router as chat_router
 from routes.chat_livre import router as chat_livre_router
 from routes.configuracoes import router as configuracoes_router
@@ -29,6 +28,7 @@ from routes.files import router as files_router
 from routes.paj import router as paj_router
 from routes.pipeline_monitor import router as pipeline_monitor_router
 from routes.prazos import router as prazos_router
+from routes.retornos import router as retornos_router
 from routes.sat import router as sat_router
 from routes.seguranca import router as seguranca_router
 from routes.sync import router as sync_router
@@ -149,12 +149,12 @@ app.include_router(configuracoes_router)
 app.include_router(docgen_router)
 app.include_router(sync_router)
 app.include_router(busca_router)
-app.include_router(calendar_router)
 app.include_router(prazos_router)
 app.include_router(watchlist_router)
 app.include_router(pipeline_monitor_router)
 app.include_router(seguranca_router)
 app.include_router(sat_router)
+app.include_router(retornos_router)
 
 # Healthcheck de dependencias externas — expoe em app.state.ambiente pra
 # o dashboard renderizar banner quando algo falta.
@@ -176,12 +176,17 @@ async def _startup_cota() -> None:
 
 @app.on_event("shutdown")
 async def _shutdown_fechar_sat() -> None:
-    """Ao encerrar o painel (graciosamente), fecha o navegador do SAT junto. NÃO roda em
-    kill -9 (Stop-Process -Force), então reinícios de dev preservam a sessão do SAT."""
+    """Ao encerrar o painel (graciosamente), fecha os navegadores do SAT e do e-proc
+    junto. NÃO roda em kill -9 (Stop-Process -Force), então reinícios de dev preservam
+    as sessões."""
     with contextlib.suppress(Exception):
         from ingestao import sat_client
 
         sat_client.fechar_navegador()
+    with contextlib.suppress(Exception):
+        from ingestao import eproc_client
+
+        eproc_client.fechar_navegador()
 
 
 def _cleanup_port(port: int) -> None:
@@ -238,8 +243,12 @@ if __name__ == "__main__":
     finally:
         with contextlib.suppress(Exception):
             PID_FILE.unlink(missing_ok=True)
-        # backup do shutdown hook: garante fechar o navegador do SAT ao sair
+        # backup do shutdown hook: garante fechar os navegadores do SAT e do e-proc ao sair
         with contextlib.suppress(Exception):
             from ingestao import sat_client
 
             sat_client.fechar_navegador()
+        with contextlib.suppress(Exception):
+            from ingestao import eproc_client
+
+            eproc_client.fechar_navegador()

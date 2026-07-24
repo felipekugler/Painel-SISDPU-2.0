@@ -845,32 +845,6 @@ async def _processar_paj_pos_detalhamento(
         encoding="utf-8",
     )
 
-    # Detecta prazos novos (intimacao/citacao/notificacao aparecidas nesta sync)
-    # e grava no JSONL de pendentes pro calendar.
-    try:
-        from ingestao import prazos as _prazos_mod
-        from services.calendar_service import append_prazo as _append_prazo
-
-        det_novo = metadata.get("detalhes_sisdpu", {}) or {}
-        movs_novas = det_novo.get("movimentacoes", []) or []
-        assistido_novo = metadata.get("assistido_caixa", "") or assistido_prev
-        prazos_detectados = _prazos_mod.detectar_prazos_novos(
-            paj_norm=paj_norm,
-            movs_antigas=movs_antigas,
-            movs_novas=movs_novas,
-            assistido=assistido_novo,
-            foro=metadata.get("foro_detectado", "") or "",
-            classificacao=metadata.get("classificacao", "") or "",
-        )
-        for p in prazos_detectados:
-            _append_prazo(p)
-        if prazos_detectados:
-            log(
-                f"  [prazos] {len(prazos_detectados)} prazo(s) novo(s) detectado(s) — aguardando /sync_calendar"
-            )
-    except Exception as e:
-        log(f"  [prazos] erro ao detectar: {type(e).__name__}: {e}")
-
     # Anexos SISDPU: usa o botao "Arquivos" do PAJ (lista consolidada de todos
     # os anexos, tipo/descricao/arquivo). Pre-condicao: movimentacoes_paj foi
     # chamado acima e a page do Playwright esta no detalhamento deste PAJ.

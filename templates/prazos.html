@@ -43,6 +43,27 @@
         </button>
         <button class="btn btn-sm btn-ghost" @click="verificarSessao()" :disabled="sessaoBusy">Verificar sessão</button>
         <span class="text-xs text-base-content/60" x-text="sessaoMsg"></span>
+
+        <!-- Direita: status do login automático (somente leitura) + atalho p/ Configurações -->
+        <div class="ml-auto flex items-center gap-2">
+          <span class="text-xs text-base-content/60">Login automático:</span>
+          <template x-if="!cred.configurado">
+            <span class="badge badge-ghost badge-sm">não configurado</span>
+          </template>
+          <template x-if="cred.configurado && !cred.destrancado">
+            <span class="badge badge-warning badge-sm">🔒 trancado</span>
+          </template>
+          <template x-if="cred.destrancado">
+            <span class="badge badge-success badge-sm">🔓 pronto</span>
+          </template>
+          <a href="/configuracoes" class="btn btn-sm btn-ghost" title="Configurar credenciais do e-proc">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+              <path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 0 1 1.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.108 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.894.149c-.424.07-.764.383-.929.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 0 1-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 0 1-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.893-.15c-.543-.09-.94-.56-.94-1.109v-1.094c0-.55.397-1.02.94-1.11l.894-.149c.424-.07.764-.383.93-.78.164-.398.142-.854-.108-1.204l-.527-.738a1.125 1.125 0 0 1 .12-1.45l.773-.773a1.125 1.125 0 0 1 1.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894Z" />
+              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+            </svg>
+            Configurações
+          </a>
+        </div>
       </div>
     </div>
   </div>
@@ -54,7 +75,8 @@
         A leitura dos prazos do <strong>Painel do Procurador</strong> será construída na próxima etapa.
       </div>
       <div class="text-xs text-base-content/40 mt-2">
-        Por enquanto, esta aba só gerencia a conexão com o e-proc.
+        Por enquanto, esta aba gerencia a conexão e o login automático no e-proc.
+        As credenciais são definidas no menu <strong>Configurações</strong>.
       </div>
     </div>
   </div>
@@ -67,13 +89,13 @@ function prazosEprocApp() {
     sessaoOk: false,
     sessaoBusy: false,
     sessaoMsg: '',
+    cred: { configurado: false, destrancado: false, usuario: '' },
 
     async init() {
-      // NÃO abre o navegador ao carregar a aba: checagem LEVE (peek) só LÊ o estado.
-      // O navegador só abre pelo botão "Abrir e-proc / Login".
       this.verificarSessao();
-      // atualização automática do selo de sessão (checagem LEVE, não navega)
-      setInterval(() => this.verificarSessaoLeve(), 5000);
+      this.carregarCred();
+      // atualização automática do selo de sessão e do estado do cofre (leve, não navega)
+      setInterval(() => { this.verificarSessaoLeve(); this.carregarCred(); }, 5000);
     },
 
     async abrirEproc() {
@@ -84,9 +106,7 @@ function prazosEprocApp() {
       } catch (e) { this.sessaoMsg = 'Erro ao abrir a janela.'; }
       finally { this.sessaoBusy = false; }
     },
-
     async verificarSessao() {
-      // usa a checagem LEVE (/sessao-leve → peek): NÃO lança o navegador.
       this.sessaoBusy = true;
       try {
         const r = await (await fetch('/api/prazos/sessao-leve')).json();
@@ -94,14 +114,18 @@ function prazosEprocApp() {
       } catch (e) { this.sessaoMsg = 'Erro ao verificar a sessão.'; }
       finally { this.sessaoBusy = false; }
     },
-
     async verificarSessaoLeve() {
-      // polling de fundo — não interfere numa checagem manual em curso
       if (this.sessaoBusy) return;
       try {
         const r = await (await fetch('/api/prazos/sessao-leve')).json();
         this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || '';
-      } catch (e) { /* silencioso — é polling de fundo */ }
+      } catch (e) { /* silencioso — polling de fundo */ }
+    },
+    async carregarCred() {
+      try {
+        const r = await (await fetch('/api/config/eproc/status')).json();
+        this.cred = { configurado: !!r.configurado, destrancado: !!r.destrancado, usuario: r.usuario || '' };
+      } catch (e) { /* silencioso */ }
     },
   };
 }

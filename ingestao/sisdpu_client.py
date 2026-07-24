@@ -185,9 +185,16 @@ async def _login() -> None:
             }"""
         )
         if msg_recusa:
+            with contextlib.suppress(Exception):
+                from services import conexao_service
+                conexao_service.marcar_erro("O SISDPU recusou o usuário/senha.")
             raise CredenciaisInvalidas(msg_recusa[:200]) from None
         # Nao foi login fail explicito — repropaga como timeout.
         raise
+    # Login OK — sessão saudável; limpa qualquer conflito/erro anterior.
+    with contextlib.suppress(Exception):
+        from services import conexao_service
+        conexao_service.marcar_conectado()
 
 
 async def _ensure_logged_in() -> None:
@@ -286,11 +293,18 @@ def parse_item_caixa(item_raw: str) -> dict | None:
     }
 
 
-async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
+async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
+                            esperas_curtas: bool = False) -> dict:
     """Retorna dados completos do PAJ incluindo MOVIMENTACOES com URLs de peca.
 
     Fluxo: Caixa de Entrada -> clica no TEXTO DO PAJ -> Detalhamento do Processo.
-    """
+
+    `esperas_curtas=True` (opt-in) reduz as esperas fixas pós-navegacao — usado pela
+    aba Retornos, que so' le movimentacoes/narrativa (nao baixa anexos). O DEFAULT
+    (`False`) preserva a temporizacao original usada pelo Sincronizador (que depende
+    dos buffers para extrair as 500 movs e abrir os popups de anexo)."""
+    _t_goto = 600 if esperas_curtas else 2000
+    _t_click = 900 if esperas_curtas else 3000
     await _ensure_logged_in()
     page = await _get_page()
 
@@ -298,7 +312,7 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
         f"{SISDPU_URL}/pages/caixaentrada/caixaEntrada.xhtml",
         wait_until="domcontentloaded",
     )
-    await page.wait_for_timeout(2000)
+    await page.wait_for_timeout(_t_goto)
     await _wait_pf_ajax(page, timeout=10000)
 
     paj_texto = f"{ano}/{unidade.zfill(3)}-{numero}"
@@ -334,7 +348,7 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44") -> dict:
         return {"erro": f"PAJ {paj_texto} não encontrado na caixa de entrada"}
 
     await _wait_pf_ajax(page, timeout=15000)
-    await page.wait_for_timeout(3000)
+    await page.wait_for_timeout(_t_click)
 
     dados = await page.evaluate(
         """
@@ -1466,21 +1480,35 @@ async def buscar_paj_global(
             if not encontrou and seq in mapa_conteudos:
                 mov["descricao_retorno"] = mapa_conteudos[seq]
 
+    # Narrativa (HTML do painel) — extraida da MESMA pagina de detalhamento, sem
+    # re-navegar. Evita uma 2a navegacao (detalhes_paj) na aba Retornos.
+    with contextlib.suppress(Exception):
+        narr = await page.evaluate(
+            r"""() => {
+                const n = document.querySelector('#detalhamentoForm\:narrativaPanel');
+                return n ? n.innerHTML : '';
+            }"""
+        )
+        if narr:
+            dados["narrativa"] = narr
+
     # Dump tambem em caso de sucesso durante esta fase de afinacao — ajuda
     # diagnosticar campos vazios sem precisar retentar. Pode ser desligado
-    # depois que a extracao estiver estavel.
-    with contextlib.suppress(Exception):
-        pasta = await _dump_debug_paj(
-            page,
-            paj_texto,
-            "sucesso (dump pra afinacao)",
-            extras={
-                "campos_extraidos": {
-                    k: v for k, v in dados.items() if k not in ("movimentacoes", "sisdpu_raw")
+    # depois que a extracao estiver estavel. No caminho rapido (Retornos), pulamos
+    # este dump de disco por PAJ.
+    if not esperas_curtas:
+        with contextlib.suppress(Exception):
+            pasta = await _dump_debug_paj(
+                page,
+                paj_texto,
+                "sucesso (dump pra afinacao)",
+                extras={
+                    "campos_extraidos": {
+                        k: v for k, v in dados.items() if k not in ("movimentacoes", "sisdpu_raw")
+                    },
                 },
-            },
-        )
-        _log.info("dump de sucesso salvo em: %s", pasta)
+            )
+            _log.info("dump de sucesso salvo em: %s", pasta)
     _log.info("FIM(ok) %s", paj_texto)
     return dados
 
@@ -2514,6 +2542,38 @@ async def fechar() -> None:
         with contextlib.suppress(Exception):
             await _playwright.stop()
         _playwright = None
+
+
+async def reconectar() -> dict:
+    """Força uma RECONEXÃO no SISDPU — recupera de conflito de sessão / sessão
+    derrubada por outro login. Fecha o navegador headless atual e refaz o login
+    com as credenciais do .env. Retorna {ok, status, detalhe}."""
+    global _browser, _page
+    with contextlib.suppress(Exception):
+        if _browser:
+            await _browser.close()
+    _browser = None
+    _page = None
+    try:
+        await _login()
+        page = await _get_page()
+        if "login" in (page.url or "").lower():
+            return {"ok": False, "status": "credenciais",
+                    "detalhe": "O SISDPU recusou o usuário/senha ao reconectar. "
+                               "Confira SISDPU_USERNAME/PASSWORD no .env."}
+    except CredenciaisInvalidas as e:
+        return {"ok": False, "status": "credenciais",
+                "detalhe": f"O SISDPU recusou o usuário/senha ao reconectar: {e}"}
+    except RuntimeError as e:
+        return {"ok": False, "status": "indisponivel", "detalhe": str(e)}
+    except Exception as e:  # noqa: BLE001
+        with contextlib.suppress(Exception):
+            from services import conexao_service
+            conexao_service.marcar_erro(str(e))
+        return {"ok": False, "status": "erro",
+                "detalhe": f"Não foi possível reconectar ({type(e).__name__}: {e})."}
+    return {"ok": True, "status": "ok",
+            "detalhe": "Reconectado ao SISDPU — sessão do painel reativada."}
 
 
 if __name__ == "__main__":

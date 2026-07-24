@@ -10,7 +10,7 @@ curto), um dict de overrides por slug supre. Slugs sem override caem em
 defaults seguros (grupo "Utilidades", areas ["*"], label = slug humanizado).
 
 Skills internas/utilitarias do workspace que nao fazem sentido no dropdown
-(ex: sis-caixa, sync_calendar) recebem `areas: []` no override — assim o
+(ex: sis-caixa, dpu-digital) recebem `areas: []` no override — assim o
 auto-discovery as ignora silenciosamente.
 
 Cache em memoria: 60s + invalidacao por mtime do diretorio. Ler 30+ arquivos
@@ -44,7 +44,7 @@ GRUPOS = [
 #
 # Para esconder uma skill da UI sem mexer no .claude/skills/ do workspace,
 # basta colocar `areas: []` no override. Util para skills internas (sis-caixa,
-# dpu-digital, ocr-documentos, exportar-documento, sync_calendar) que sao
+# dpu-digital, ocr-documentos, exportar-documento) que sao
 # acionadas por outros caminhos, nao pelo dropdown "Elaborar".
 SKILL_OVERRIDES: dict[str, dict] = {
     # --- Triagem e análise ---
@@ -173,7 +173,6 @@ SKILL_OVERRIDES: dict[str, dict] = {
     "dpu-digital": {"areas": []},
     "ocr-documentos": {"areas": []},
     "exportar-documento": {"areas": []},
-    "sync_calendar": {"areas": []},
 }
 
 

@@ -29,6 +29,26 @@ def _encerrar_servidor() -> None:
     os._exit(0)
 
 
+@router.get("/api/seguranca/status", response_class=JSONResponse)
+async def api_status():
+    """Estado da conexão com o SISDPU para o selo da barra superior."""
+    from services import conexao_service
+    return JSONResponse(conexao_service.status())
+
+
+@router.post("/api/seguranca/reconectar", response_class=JSONResponse)
+async def api_reconectar():
+    """Reconecta a sessão do SISDPU (recupera de conflito de sessão / sessão
+    derrubada). Fecha o navegador headless e refaz o login com as credenciais
+    do .env. Retorna {ok, status, detalhe}."""
+    from ingestao import sisdpu_client
+    try:
+        res = await sisdpu_client.reconectar()
+    except Exception as e:  # noqa: BLE001
+        res = {"ok": False, "status": "erro", "detalhe": str(e)}
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
+
+
 @router.post("/api/encerrar", response_class=JSONResponse)
 async def api_encerrar():
     """Encerra o painel: fecha o navegador e desliga o servidor.

@@ -1,0 +1,330 @@
+{% extends "base.html" %}
+
+{% block title %}Retornos{% endblock %}
+
+{% block content %}
+<div x-data="retornosPage()" x-init="init()">
+
+    <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <h2 class="text-2xl font-bold">
+            Retornos
+            <span class="text-base-content/50 text-lg" x-show="itens.length" x-text="'(' + itens.length + ')'"></span>
+        </h2>
+        <button class="btn btn-sm btn-primary" @click="sincronizar()" :disabled="sincronizando">
+            <span x-show="sincronizando" class="loading loading-spinner loading-xs"></span>
+            <svg x-show="!sincronizando" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+            </svg>
+            Sincronizar
+        </button>
+    </div>
+
+    <div class="text-sm text-base-content/60 mb-4">
+        Relação de PAJs da Caixa de Entrada cuja tramitação tem a descrição
+        <em>"Atendimento de Retorno"</em>. Ao sincronizar, o painel lê a caixa, extrai as
+        informações do PAJ (descrição integral do retorno + últimas movimentações) e envia
+        para análise da IA. Clique numa linha para ver o <strong>Resumo IA</strong>, o
+        histórico de movimentações e a <strong>Sugestão IA</strong> (editável).
+    </div>
+
+    <!-- Tabela -->
+    <!-- Estados vazio / carregando -->
+    <div class="card bg-base-200 shadow mb-4" x-show="carregando || (grupos().length === 0)">
+        <div class="card-body">
+            <div x-show="carregando" class="text-center py-6"><span class="loading loading-spinner"></span> Carregando…</div>
+            <div x-show="!carregando && itens.length === 0 && !sincronizando" class="text-center text-base-content/40 py-6">
+                Nenhum atendimento de retorno. Clique em <strong>Sincronizar</strong> para consultar a caixa de entrada.
+            </div>
+        </div>
+    </div>
+
+    <!-- Blocos por classificação (Requer ação / Mera conclusão / Sem análise) -->
+    <template x-for="g in grupos()" :key="g.key">
+      <div class="card bg-base-200 shadow mb-4 ret-block">
+        <div class="ret-block-head" :class="g.classe">
+            <span class="ret-block-dot"></span>
+            <span x-text="g.titulo"></span>
+            <span class="ret-block-count" x-text="g.itens.length"></span>
+        </div>
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-sm ret-table">
+                    <thead>
+                        <tr>
+                            <th class="w-6"></th>
+                            <th class="w-32">PAJ</th>
+                            <th class="w-48">Ofício</th>
+                            <th class="w-56">Assistido</th>
+                            <th>Descrição do retorno</th>
+                            <th class="w-28 text-center">Ações</th>
+                        </tr>
+                    </thead>
+                    <template x-for="r in g.itens" :key="r.id_tramite">
+                        <tbody class="ret-group" :class="expandido[r.id_tramite] ? 'ret-open' : ''">
+                            <tr class="hover cursor-pointer" @click="toggle(r.id_tramite)">
+                                <td class="text-center align-top">
+                                    <svg class="ret-caret" :class="expandido[r.id_tramite] ? 'ret-caret-open' : ''"
+                                         xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                                         stroke="currentColor" stroke-width="2" style="width:14px;height:14px">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7" />
+                                    </svg>
+                                </td>
+                                <td class="font-mono whitespace-nowrap align-top">
+                                    <a x-show="r.url_detalhe" :href="r.url_detalhe" target="_blank" rel="noopener"
+                                       class="link link-hover" style="color:var(--accent)" @click.stop
+                                       title="Abrir o PAJ no SISDPU" x-text="r.paj"></a>
+                                    <span x-show="!r.url_detalhe" x-text="r.paj"></span>
+                                    <span x-show="!r.em_caixa" class="badge badge-ghost badge-xs ml-1"
+                                          title="Não está mais na caixa de entrada">fora da caixa</span>
+                                </td>
+                                <td class="text-xs text-base-content/70 align-top" x-text="r.oficio || '—'"></td>
+                                <td class="align-top" x-text="r.assistido || '—'"></td>
+                                <td class="align-top">
+                                    <div class="text-[11px] text-base-content/60 mb-0.5">
+                                        <span x-text="r.data_retorno || '—'"></span>
+                                        <span x-show="r.remetente"> · </span>
+                                        <span x-text="r.remetente"></span>
+                                    </div>
+                                    <div class="ret-desc text-[12.5px] leading-[1.5]" x-text="r.descricao_retorno || '(sem descrição)'"></div>
+                                </td>
+                                <td class="text-center align-top text-base-content/30">—</td>
+                            </tr>
+                            <!-- Linha retrátil -->
+                            <tr x-show="expandido[r.id_tramite]" class="ret-cards-row">
+                                <td></td>
+                                <td colspan="5" class="bg-base-100">
+                                    <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 py-2 pr-2">
+                                        <!-- Card Resumo IA -->
+                                        <div class="ret-card">
+                                            <div class="ret-card-label">Resumo IA</div>
+                                            <div class="ret-card-body">
+                                                <template x-if="r.resumo_ia">
+                                                    <div class="whitespace-pre-wrap text-[12.5px] leading-[1.6]" x-text="r.resumo_ia"></div>
+                                                </template>
+                                                <template x-if="!r.resumo_ia">
+                                                    <div class="text-base-content/40 text-[12.5px]"
+                                                         x-text="r.ia_status === 'indisponivel' ? 'IA indisponível — retorno listado sem análise.' : '— (sincronize para gerar)'"></div>
+                                                </template>
+                                            </div>
+                                            <button class="btn btn-ghost btn-xs mt-2" @click="abrirMovs(r)"
+                                                    :disabled="!(r.movimentacoes && r.movimentacoes.length)">
+                                                <span x-text="(r.movimentacoes ? r.movimentacoes.length : 0) + ' últimas movimentações'"></span>
+                                            </button>
+                                        </div>
+                                        <!-- Card Sugestão IA -->
+                                        <div class="ret-card">
+                                            <div class="ret-card-label flex items-center gap-2">
+                                                Sugestão IA
+                                                <span x-show="r.precisa_acao === false" class="badge badge-success badge-xs">mera conclusão</span>
+                                                <span x-show="r.precisa_acao === true" class="badge badge-warning badge-xs">requer ação</span>
+                                            </div>
+                                            <div class="ret-card-body">
+                                                <textarea class="textarea textarea-bordered w-full text-[12.5px] leading-[1.6]"
+                                                          rows="6" x-model="r._sug"
+                                                          placeholder="— (sincronize para gerar; texto editável)"></textarea>
+                                            </div>
+                                            <div class="flex items-center gap-2 mt-2">
+                                                <button class="btn btn-xs btn-primary" @click="salvarSugestao(r)"
+                                                        :disabled="r._salvando">
+                                                    <span x-show="r._salvando" class="loading loading-spinner loading-xs"></span>
+                                                    Salvar
+                                                </button>
+                                                <span class="text-[11px] text-success" x-show="r._salvo" x-transition>salvo ✓</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                        </tbody>
+                    </template>
+                </table>
+            </div>
+        </div>
+      </div>
+    </template>
+
+    <!-- Modal de movimentações -->
+    <div class="modal" :class="{'modal-open': movModal}">
+        <div class="modal-box max-w-[60vw]">
+            <h3 class="font-bold text-lg mb-2" x-text="movTitulo"></h3>
+            <div class="max-h-[60vh] overflow-y-auto">
+                <table class="table table-xs">
+                    <thead><tr class="text-[11px] text-base-content/50">
+                        <th class="w-12">Seq</th><th class="w-28">Data</th><th>Movimentação</th></tr></thead>
+                    <tbody>
+                        <template x-for="(m, i) in movAtual" :key="i">
+                            <tr class="hover align-top">
+                                <td class="tabular-nums align-top" x-text="m.seq"></td>
+                                <td class="whitespace-nowrap align-top text-[11px]" x-text="m.data"></td>
+                                <td class="align-top">
+                                    <div class="font-medium text-[12px]" x-text="m.movimentacao"></div>
+                                    <div class="text-[11px] text-base-content/50" x-show="m.fases" x-text="m.fases"></div>
+                                    <div class="text-[11.5px] whitespace-pre-wrap mt-0.5"
+                                         x-text="m.descricao_retorno || m.descricao || ''"></div>
+                                </td>
+                            </tr>
+                        </template>
+                        <tr x-show="movAtual.length === 0">
+                            <td colspan="3" class="text-base-content/40">Sem movimentações.</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+            <div class="modal-action">
+                <button class="btn btn-sm" @click="movModal=false">Fechar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de progresso (SSE) -->
+    <div class="modal" :class="{'modal-open': sseAberto}">
+        <div class="modal-box max-w-[50vw]">
+            <h3 class="font-bold text-lg mb-2">Sincronizando retornos <span x-text="sseStatus"></span></h3>
+            <div class="bg-base-300 rounded p-3 text-[11px] leading-[1.65] font-mono h-[340px] overflow-y-auto" x-ref="sseBox">
+                <template x-for="(l, i) in sseLog" :key="i">
+                    <div :class="{
+                        'text-success': l.level==='ok', 'text-error': l.level==='erro',
+                        'text-base-content/50': l.level==='muted', 'text-info': l.level==='info',
+                        'text-primary font-semibold': l.level==='novo'}" x-text="l.msg"></div>
+                </template>
+            </div>
+            <div class="modal-action">
+                <button class="btn btn-sm" :disabled="sincronizando" @click="sseAberto=false">Fechar</button>
+            </div>
+        </div>
+    </div>
+
+</div>
+
+<style>
+.ret-table td, .ret-table th { vertical-align: top; }
+.ret-desc {
+    display: -webkit-box; -webkit-line-clamp: 3; -webkit-box-orient: vertical;
+    overflow: hidden;
+}
+.ret-open .ret-desc { -webkit-line-clamp: unset; overflow: visible; }
+.ret-caret { transition: transform 0.15s ease; opacity: 0.6; }
+.ret-caret-open { transform: rotate(90deg); }
+.ret-group.ret-open > tr:first-child { background: rgba(0,0,0,0.03); }
+:root[data-theme="dark"] .ret-group.ret-open > tr:first-child { background: rgba(255,255,255,0.05); }
+.ret-cards-row td { border-top: none; padding-top: 0; }
+.ret-card {
+    background: var(--surface, rgba(0,0,0,0.02));
+    border: 1px solid var(--border, rgba(0,0,0,0.08));
+    border-radius: 8px;
+    padding: 10px 12px;
+}
+.ret-card-label {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.03em; color: var(--text-secondary, rgba(0,0,0,0.55));
+    margin-bottom: 6px;
+}
+.ret-card-body { min-height: 3rem; }
+
+/* Cabeçalhos dos blocos por classificação */
+.ret-block-head {
+    display: flex; align-items: center; gap: 8px;
+    padding: 9px 16px; font-weight: 700; font-size: 13.5px;
+    border-top-left-radius: 12px; border-top-right-radius: 12px;
+    border-bottom: 1px solid var(--border, rgba(0,0,0,0.08));
+}
+.ret-block-head .ret-block-dot { width: 9px; height: 9px; border-radius: 50%; flex: none; }
+.ret-block-head .ret-block-count {
+    margin-left: 6px; font-size: 11.5px; font-weight: 700;
+    padding: 1px 8px; border-radius: 999px; background: rgba(0,0,0,0.10);
+}
+.ret-block-head.grp-acao      { color: #8a5a00; background: rgba(217,164,65,0.20); }
+.ret-block-head.grp-acao      .ret-block-dot { background: #d9a441; }
+.ret-block-head.grp-conclusao { color: #1a7f4b; background: rgba(31,157,85,0.18); }
+.ret-block-head.grp-conclusao .ret-block-dot { background: #1f9d55; }
+.ret-block-head.grp-outros    { color: var(--text-secondary, #6b7280); background: rgba(120,120,120,0.14); }
+.ret-block-head.grp-outros    .ret-block-dot { background: var(--text-tertiary, #9ca3af); }
+:root[data-theme="dark"] .ret-block-head.grp-acao      { color: #e8b75a; }
+:root[data-theme="dark"] .ret-block-head.grp-conclusao { color: #4ade80; }
+:root[data-theme="dark"] .ret-block-head .ret-block-count { background: rgba(255,255,255,0.12); }
+</style>
+
+<script>
+function retornosPage() {
+    return {
+        itens: [], expandido: {},
+        carregando: false, sincronizando: false,
+        sseAberto: false, sseLog: [], sseStatus: '', _es: null,
+        movModal: false, movAtual: [], movTitulo: '',
+
+        async init() {
+            await this.carregarLista();
+        },
+        async carregarLista() {
+            this.carregando = true;
+            try {
+                const j = await (await fetch('/api/retornos/lista')).json();
+                this.itens = (j.itens || []).map(r => ({
+                    ...r,
+                    _sug: (r.sugestao_editada || r.sugestao_ia || ''),
+                    _salvando: false, _salvo: false,
+                }));
+            } catch (e) { this.itens = []; }
+            finally { this.carregando = false; }
+        },
+        toggle(id) { this.expandido[id] = !this.expandido[id]; },
+        grupos() {
+            // Agrupa os retornos por classificação da IA para agilizar as ações.
+            // Ordem: primeiro os de mera conclusão (mais ágeis de despachar), depois os
+            // que exigem providência, por fim os sem análise (IA indisponível/erro).
+            var concl = this.itens.filter(function(r){ return r.precisa_acao === false; });
+            var acao = this.itens.filter(function(r){ return r.precisa_acao === true; });
+            var outros = this.itens.filter(function(r){ return r.precisa_acao !== true && r.precisa_acao !== false; });
+            var gs = [];
+            if (concl.length)  gs.push({ key:'conclusao', titulo:'Mera conclusão',           classe:'grp-conclusao', itens:concl });
+            if (acao.length)   gs.push({ key:'acao',      titulo:'Requer ação',              classe:'grp-acao',      itens:acao });
+            if (outros.length) gs.push({ key:'outros',    titulo:'Sem análise / a revisar',  classe:'grp-outros',    itens:outros });
+            return gs;
+        },
+        abrirMovs(r) {
+            this.movAtual = r.movimentacoes || [];
+            this.movTitulo = r.paj + ' — ' + (r.assistido || '') + ' · ' + this.movAtual.length + ' movimentações';
+            this.movModal = true;
+        },
+        async salvarSugestao(r) {
+            r._salvando = true; r._salvo = false;
+            try {
+                const resp = await fetch(`/api/retornos/${encodeURIComponent(r.id_tramite)}/sugestao`, {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({texto: r._sug}),
+                });
+                const j = await resp.json();
+                if (j.ok) {
+                    r.sugestao_editada = r._sug;
+                    r._salvo = true;
+                    setTimeout(() => { r._salvo = false; }, 2500);
+                }
+            } catch (e) {}
+            finally { r._salvando = false; }
+        },
+        sincronizar() {
+            if (this.sincronizando) return;
+            this.sincronizando = true;
+            this.sseLog = []; this.sseStatus = ''; this.sseAberto = true;
+            const es = new EventSource('/api/retornos/sincronizar'); this._es = es;
+            es.addEventListener('log', (ev) => {
+                try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {}
+                this.$nextTick(() => { const b = this.$refs.sseBox; if (b) b.scrollTop = b.scrollHeight; });
+            });
+            es.addEventListener('done', async (ev) => {
+                let res = {}; try { res = JSON.parse(ev.data); } catch (e) {}
+                this.sseStatus = res.ok ? '— concluído ✓' : '— com aviso';
+                this.sincronizando = false;
+                es.close(); this._es = null;
+                await this.carregarLista();
+            });
+            es.onerror = () => {
+                this.sseStatus = '— erro de conexão';
+                this.sincronizando = false;
+                es.close(); this._es = null;
+            };
+        },
+    };
+}
+</script>
+{% endblock %}

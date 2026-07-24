@@ -512,6 +512,30 @@
                 display: flex;
             }
         }
+
+        /* Selo de status do SISDPU (barra superior) */
+        .sisdpu-badge {
+            display: inline-flex; align-items: center; gap: 6px;
+            padding: 3px 11px; border-radius: 999px;
+            font-size: 11.5px; font-weight: 600; white-space: nowrap;
+            border: 1px solid transparent;
+        }
+        .sisdpu-badge .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+        .sisdpu-badge.sisdpu-on  { color: #1a7f4b; background: rgba(31,157,85,0.14); }
+        .sisdpu-badge.sisdpu-on  .dot { background: #1f9d55; }
+        .sisdpu-badge.sisdpu-off { color: var(--text-secondary, #6b7280); background: rgba(120,120,120,0.12); }
+        .sisdpu-badge.sisdpu-off .dot { background: var(--text-tertiary, #9ca3af); }
+        .sisdpu-badge.sisdpu-warn { color: #8a5a00; background: rgba(201,138,0,0.16); border-color: #d9a441; }
+        .sisdpu-badge.sisdpu-warn .dot { background: #d9a441; }
+        :root[data-theme="dark"] .sisdpu-badge.sisdpu-on  { color: #4ade80; }
+        :root[data-theme="dark"] .sisdpu-badge.sisdpu-warn { color: #e8b75a; }
+        #btn-reconectar-sisdpu {
+            border-radius: 6px; border: 1px solid var(--border, rgba(0,0,0,0.12));
+            color: var(--text-secondary, #6b7280); background: transparent;
+            transition: background 0.12s ease;
+        }
+        #btn-reconectar-sisdpu:hover { background: rgba(0,0,0,0.05); }
+        :root[data-theme="dark"] #btn-reconectar-sisdpu:hover { background: rgba(255,255,255,0.08); }
     </style>
 
     {% block head %}{% endblock %}
@@ -550,7 +574,7 @@
         <!-- Nav -->
         <nav class="flex-1 px-3 py-2">
             <!-- Caixa de Entrada -->
-            <a href="/" class="nav-item {% if request.url.path == '/' or request.url.path == '/sat' or request.url.path == '/watchlist' %}active{% endif %}">
+            <a href="/" class="nav-item {% if request.url.path == '/' or request.url.path == '/sat' or request.url.path == '/watchlist' or request.url.path == '/retornos' %}active{% endif %}">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M20 13V6a2 2 0 00-2-2H6a2 2 0 00-2 2v7m16 0v5a2 2 0 01-2 2H6a2 2 0 01-2-2v-5m16 0h-2.586a1 1 0 00-.707.293l-2.414 2.414a1 1 0 01-.707.293h-2.172a1 1 0 01-.707-.293l-2.414-2.414A1 1 0 006.586 13H4" />
                 </svg>
@@ -585,6 +609,14 @@
                 <span class="text-xs" style="color: var(--text-tertiary); margin-left: auto;">
                     <span x-text="count > 0 ? `(${count})` : ''"></span>
                 </span>
+            </a>
+
+            <!-- Retornos (submenu) -->
+            <a href="/retornos" class="nav-item nav-sub {% if request.url.path == '/retornos' %}active{% endif %}">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
+                </svg>
+                <span>Retornos</span>
             </a>
 
             <!-- Prazos e-proc -->
@@ -643,9 +675,23 @@
                 </svg>
                 <span class="ml-2 text-sm">Menu</span>
             </button>
+
+            <!-- Selo de status do SISDPU + Reconectar -->
+            <span id="sisdpu-badge" class="sisdpu-badge sisdpu-off" style="margin-left:auto;"
+                  title="Verificando conexão com o SISDPU…">
+                <span class="dot"></span><span class="txt">SISDPU</span>
+            </span>
+            <button type="button" id="btn-reconectar-sisdpu" onclick="reconectarSisdpu()"
+                    title="Reconectar a sessão do SISDPU (recupera de conflito de sessão / sessão derrubada por outro login)."
+                    style="display:inline-flex;align-items:center;gap:5px;padding:3px 10px;font-size:11.5px;">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.9" style="width:14px;height:14px;">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                </svg>
+                Reconectar
+            </button>
+
             <button type="button" id="btn-encerrar-painel" onclick="encerrarPainel()"
-                    title="Encerrar o painel: desliga o servidor. Os dados já salvos permanecem em disco."
-                    style="margin-left:auto;">
+                    title="Encerrar o painel: desliga o servidor. Os dados já salvos permanecem em disco.">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.9" style="width:14px;height:14px;">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M5.636 5.636a9 9 0 1 0 12.728 0M12 3v9" />
                 </svg>
@@ -811,6 +857,64 @@
                 + '</div></body></html>';
             document.open(); document.write(html); document.close();
         };
+
+        // ── Selo de status do SISDPU (barra superior) ──────────────────────
+        window.atualizarBadgeSisdpu = function() {
+            var el = document.getElementById('sisdpu-badge'); if (!el) return;
+            fetch('/api/seguranca/status')
+                .then(function(r){ return r.json(); })
+                .then(function(st){
+                    if (!st || !st.ok) return;
+                    var txt = el.querySelector('.txt');
+                    if (st.conflito) {
+                        el.className = 'sisdpu-badge sisdpu-warn';
+                        if (txt) txt.textContent = 'SISDPU · conflito de sessão';
+                        el.title = st.conflito_detalhe || 'Conflito de sessão do SISDPU. Clique em Reconectar.';
+                    } else if (st.erro) {
+                        el.className = 'sisdpu-badge sisdpu-off';
+                        if (txt) txt.textContent = 'SISDPU desconectado';
+                        el.title = st.erro;
+                    } else if (st.conectado) {
+                        el.className = 'sisdpu-badge sisdpu-on';
+                        if (txt) txt.textContent = 'SISDPU conectado';
+                        el.title = 'Conectado ao SISDPU.';
+                    } else if (st.configurado) {
+                        el.className = 'sisdpu-badge sisdpu-off';
+                        if (txt) txt.textContent = 'SISDPU';
+                        el.title = 'Credenciais configuradas (.env). Sincronize ou clique em Reconectar para conectar.';
+                    } else {
+                        el.className = 'sisdpu-badge sisdpu-off';
+                        if (txt) txt.textContent = 'SISDPU desconectado';
+                        el.title = 'Credenciais SISDPU_USERNAME/PASSWORD não configuradas no .env.';
+                    }
+                })
+                .catch(function(){});
+        };
+
+        window.reconectarSisdpu = async function() {
+            var btn = document.getElementById('btn-reconectar-sisdpu'); if (!btn) return;
+            var orig = btn.innerHTML;
+            btn.disabled = true; btn.innerHTML = 'Reconectando…';
+            try {
+                var r = await fetch('/api/seguranca/reconectar', { method: 'POST' });
+                var d = await r.json().catch(function(){ return {}; });
+                if (d.ok) {
+                    btn.innerHTML = '✓ Reconectado';
+                    setTimeout(function(){ btn.innerHTML = orig; btn.disabled = false; }, 2500);
+                } else {
+                    btn.innerHTML = orig; btn.disabled = false;
+                    alert('Não foi possível reconectar: ' + (d.detalhe || 'erro desconhecido'));
+                }
+            } catch (e) {
+                btn.innerHTML = orig; btn.disabled = false;
+                alert('Erro ao reconectar: ' + e);
+            }
+            if (window.atualizarBadgeSisdpu) window.atualizarBadgeSisdpu();
+        };
+
+        // Atualiza ao carregar e faz polling leve (lê estado reativo, sem sondar o navegador).
+        window.atualizarBadgeSisdpu();
+        setInterval(window.atualizarBadgeSisdpu, 12000);
     </script>
 </body>
 </html>
