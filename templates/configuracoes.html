@@ -134,67 +134,101 @@
         </div>
     </div>
 
-    <!-- Acesso ao e-proc (login automático da aba Prazos e-proc) -->
-    <div class="card bg-base-200 shadow mt-6" x-data="eprocAcesso()" x-init="init()">
+    <!-- Cofre de credenciais (acesso aos sistemas externos) -->
+    <div class="card bg-base-200 shadow mt-6" x-data="cofreAcesso()" x-init="init()">
         <div class="card-body gap-4">
             <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
-                Acesso ao e-proc
+                Cofre de credenciais
             </h3>
             <p class="text-sm text-base-content/60">
-                Credenciais usadas pelo <strong>login automático</strong> da aba <strong>Prazos e-proc</strong>.
-                Ficam <strong>cifradas no computador</strong>, protegidas por uma <strong>senha-mestra</strong>
-                que você cria e que <strong>não é gravada</strong>.
+                Uma única <strong>senha-mestra</strong> protege as credenciais de todos os sistemas
+                (<strong>SISDPU</strong>, <strong>e-proc</strong>…). Ficam <strong>cifradas no computador</strong>;
+                a senha-mestra <strong>não é gravada</strong> e vale só nesta sessão (desbloqueie ao abrir o painel).
+                O <strong>SAT</strong> não entra aqui — seu login (CPF/CAPTCHA/2FA) é feito por você na janela.
             </p>
 
+            <!-- Estado do cofre -->
             <div class="flex items-center gap-3 flex-wrap">
-                <span class="text-sm font-medium">Estado:</span>
-                <template x-if="!cred.configurado">
-                    <span class="badge badge-ghost">Não configuradas</span>
+                <span class="text-sm font-medium">Cofre:</span>
+                <template x-if="!cofre.configurado">
+                    <span class="badge badge-ghost">Não criado</span>
                 </template>
-                <template x-if="cred.configurado && !cred.destrancado">
-                    <span class="badge badge-warning">🔒 Trancadas</span>
+                <template x-if="cofre.configurado && !cofre.destrancado">
+                    <span class="badge badge-warning">🔒 Trancado</span>
                 </template>
-                <template x-if="cred.destrancado">
-                    <span class="badge badge-success">🔓 Destrancadas<span x-show="cred.usuario" x-text="' · ' + cred.usuario"></span></span>
+                <template x-if="cofre.destrancado">
+                    <span class="badge badge-success">🔓 Destrancado</span>
                 </template>
 
-                <template x-if="!cred.configurado">
-                    <button class="btn btn-sm btn-primary" @click="abrirConfig()">Configurar credenciais</button>
-                </template>
-                <template x-if="cred.configurado && !cred.destrancado">
+                <template x-if="cofre.configurado && !cofre.destrancado">
                     <button class="btn btn-sm btn-primary" @click="abrirUnlock()">Desbloquear</button>
                 </template>
-                <template x-if="cred.destrancado">
+                <template x-if="cofre.destrancado">
                     <button class="btn btn-sm btn-ghost" @click="bloquear()">Bloquear</button>
                 </template>
-                <template x-if="cred.configurado">
-                    <button class="btn btn-sm btn-ghost" @click="abrirConfig()">Reconfigurar</button>
+                <template x-if="cofre.configurado">
+                    <button class="btn btn-sm btn-ghost" @click="abrirTrocar()">Trocar senha-mestra</button>
                 </template>
             </div>
-            <p class="text-xs text-base-content/50">
-                Desbloqueie a cada vez que abrir o painel — a senha-mestra vale só nesta sessão e some ao reiniciar.
-            </p>
 
-            <!-- Modal: configurar/reconfigurar -->
-            <div class="modal" :class="{'modal-open': modalConfig}">
+            <!-- Sistemas -->
+            <div class="flex flex-col gap-2 pt-3 border-t border-base-300">
+                <template x-for="s in sistemas" :key="s.chave">
+                    <div class="flex items-center justify-between gap-3 flex-wrap">
+                        <div class="flex items-center gap-2">
+                            <span class="font-medium" x-text="s.rotulo"></span>
+                            <template x-if="cofre.destrancado && s.tem_credencial">
+                                <span class="badge badge-success badge-sm">cadastrado<span x-show="s.usuario" x-text="' · ' + s.usuario"></span></span>
+                            </template>
+                            <template x-if="cofre.destrancado && !s.tem_credencial">
+                                <span class="badge badge-ghost badge-sm">não cadastrado</span>
+                            </template>
+                            <template x-if="!cofre.destrancado && cofre.configurado">
+                                <span class="badge badge-ghost badge-sm">🔒 desbloqueie para ver</span>
+                            </template>
+                        </div>
+                        <div class="flex gap-2">
+                            <button class="btn btn-xs btn-primary" @click="abrirCad(s.chave)"
+                                    x-text="(cofre.destrancado && s.tem_credencial) ? 'Editar' : 'Cadastrar'"></button>
+                            <template x-if="cofre.destrancado && s.tem_credencial">
+                                <button class="btn btn-xs btn-ghost text-error" @click="abrirRemover(s.chave)">Remover</button>
+                            </template>
+                        </div>
+                    </div>
+                </template>
+            </div>
+
+            <!-- Modal: cadastrar/editar credenciais de um sistema -->
+            <div class="modal" :class="{'modal-open': modal==='cad'}">
                 <div class="modal-box max-w-md">
-                    <h3 class="font-bold text-lg mb-3">Configurar credenciais do e-proc</h3>
+                    <h3 class="font-bold text-lg mb-3">Credenciais — <span x-text="rotuloDe(form.sistema)"></span></h3>
+                    <template x-if="!cofre.configurado">
+                        <p class="text-xs text-base-content/60 mb-3">
+                            Este é o primeiro cadastro: você vai <strong>criar a senha-mestra</strong> do cofre.
+                        </p>
+                    </template>
+                    <template x-if="cofre.configurado">
+                        <p class="text-xs text-base-content/60 mb-3">
+                            Use a <strong>mesma senha-mestra</strong> do cofre para gravar/atualizar esta credencial.
+                        </p>
+                    </template>
                     <form @submit.prevent="salvarCredenciais()" class="flex flex-col gap-3">
                         <label class="form-control">
-                            <span class="label-text text-xs mb-1">Usuário do e-proc <span class="text-error">*</span></span>
+                            <span class="label-text text-xs mb-1">Usuário <span class="text-error">*</span></span>
                             <input type="text" class="input input-bordered input-sm" x-model="form.usuario" autocomplete="username" required>
                         </label>
                         <label class="form-control">
-                            <span class="label-text text-xs mb-1">Senha do e-proc <span class="text-error">*</span></span>
+                            <span class="label-text text-xs mb-1">Senha <span class="text-error">*</span></span>
                             <input type="password" class="input input-bordered input-sm" x-model="form.senha" autocomplete="off" required>
                         </label>
                         <label class="form-control">
-                            <span class="label-text text-xs mb-1">Criar senha-mestra (mín. 6) <span class="text-error">*</span></span>
-                            <input type="password" class="input input-bordered input-sm" x-model="form.senha_mestra" autocomplete="new-password" required>
+                            <span class="label-text text-xs mb-1"
+                                  x-text="cofre.configurado ? 'Senha-mestra do cofre' : 'Criar senha-mestra (mín. 6)'"></span>
+                            <input type="password" class="input input-bordered input-sm" x-model="form.senha_mestra" autocomplete="off" required>
                         </label>
-                        <label class="form-control">
-                            <span class="label-text text-xs mb-1">Confirmar senha-mestra <span class="text-error">*</span></span>
-                            <input type="password" class="input input-bordered input-sm" x-model="form.senha_mestra_confirma" autocomplete="new-password" required>
+                        <label class="form-control" x-show="!cofre.configurado">
+                            <span class="label-text text-xs mb-1">Confirmar senha-mestra</span>
+                            <input type="password" class="input input-bordered input-sm" x-model="form.senha_mestra_confirma" autocomplete="off">
                         </label>
                         <template x-if="erro">
                             <div class="alert alert-error py-2 text-xs" x-text="erro"></div>
@@ -203,22 +237,19 @@
                             <button type="button" class="btn btn-sm btn-ghost" @click="fechar()">Cancelar</button>
                             <button type="submit" class="btn btn-sm btn-primary" :disabled="busy">
                                 <span x-show="busy" class="loading loading-spinner loading-xs"></span>
-                                Salvar e destrancar
+                                Salvar
                             </button>
                         </div>
                     </form>
-                    <div class="border-t border-base-300 pt-3 mt-1" x-show="cred.configurado">
-                        <button class="btn btn-xs btn-ghost text-error" @click="removerCofre()">Apagar cofre (remover credenciais)</button>
-                    </div>
                 </div>
                 <div class="modal-backdrop" @click="fechar()"></div>
             </div>
 
             <!-- Modal: desbloquear -->
-            <div class="modal" :class="{'modal-open': modalUnlock}">
+            <div class="modal" :class="{'modal-open': modal==='unlock'}">
                 <div class="modal-box max-w-sm">
-                    <h3 class="font-bold text-lg mb-3">Desbloquear credenciais</h3>
-                    <p class="text-xs text-base-content/60 mb-3">Digite a senha-mestra para liberar o login automático nesta sessão.</p>
+                    <h3 class="font-bold text-lg mb-3">Desbloquear cofre</h3>
+                    <p class="text-xs text-base-content/60 mb-3">Digite a senha-mestra para liberar o acesso aos sistemas nesta sessão.</p>
                     <form @submit.prevent="desbloquear()" class="flex flex-col gap-3">
                         <input type="password" class="input input-bordered input-sm" placeholder="senha-mestra"
                                x-model="form.senha_mestra_unlock" autocomplete="current-password" required>
@@ -230,6 +261,56 @@
                             <button type="submit" class="btn btn-sm btn-primary" :disabled="busy">
                                 <span x-show="busy" class="loading loading-spinner loading-xs"></span>
                                 Desbloquear
+                            </button>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-backdrop" @click="fechar()"></div>
+            </div>
+
+            <!-- Modal: trocar senha-mestra -->
+            <div class="modal" :class="{'modal-open': modal==='trocar'}">
+                <div class="modal-box max-w-sm">
+                    <h3 class="font-bold text-lg mb-3">Trocar senha-mestra</h3>
+                    <p class="text-xs text-base-content/60 mb-3">Re-cifra o cofre inteiro com uma nova senha-mestra.</p>
+                    <form @submit.prevent="trocarSenha()" class="flex flex-col gap-3">
+                        <input type="password" class="input input-bordered input-sm" placeholder="senha-mestra atual"
+                               x-model="form.senha_atual" autocomplete="off" required>
+                        <input type="password" class="input input-bordered input-sm" placeholder="nova senha-mestra (mín. 6)"
+                               x-model="form.senha_nova" autocomplete="off" required>
+                        <input type="password" class="input input-bordered input-sm" placeholder="confirmar nova senha-mestra"
+                               x-model="form.senha_nova_confirma" autocomplete="off" required>
+                        <template x-if="erro">
+                            <div class="alert alert-error py-2 text-xs" x-text="erro"></div>
+                        </template>
+                        <div class="modal-action">
+                            <button type="button" class="btn btn-sm btn-ghost" @click="fechar()">Cancelar</button>
+                            <button type="submit" class="btn btn-sm btn-primary" :disabled="busy">
+                                <span x-show="busy" class="loading loading-spinner loading-xs"></span>
+                                Trocar
+                            </button>
+                        </div>
+                    </form>
+                </div>
+                <div class="modal-backdrop" @click="fechar()"></div>
+            </div>
+
+            <!-- Modal: remover credencial de um sistema -->
+            <div class="modal" :class="{'modal-open': modal==='remover'}">
+                <div class="modal-box max-w-sm">
+                    <h3 class="font-bold text-lg mb-3">Remover credencial — <span x-text="rotuloDe(form.sistema)"></span></h3>
+                    <p class="text-xs text-base-content/60 mb-3">Confirme com a senha-mestra. Os demais sistemas do cofre são mantidos.</p>
+                    <form @submit.prevent="removerSistema()" class="flex flex-col gap-3">
+                        <input type="password" class="input input-bordered input-sm" placeholder="senha-mestra"
+                               x-model="form.senha_mestra_rm" autocomplete="off" required>
+                        <template x-if="erro">
+                            <div class="alert alert-error py-2 text-xs" x-text="erro"></div>
+                        </template>
+                        <div class="modal-action">
+                            <button type="button" class="btn btn-sm btn-ghost" @click="fechar()">Cancelar</button>
+                            <button type="submit" class="btn btn-sm btn-error" :disabled="busy">
+                                <span x-show="busy" class="loading loading-spinner loading-xs"></span>
+                                Remover
                             </button>
                         </div>
                     </form>
@@ -604,38 +685,64 @@ function satCentralDefaults() {
     };
 }
 
-// Acesso ao e-proc — cofre de credenciais cifrado (senha-mestra)
-function eprocAcesso() {
+// Cofre unificado de credenciais (senha-mestra única p/ SISDPU + e-proc + futuros)
+function cofreAcesso() {
     return {
-        cred: { configurado: false, destrancado: false, usuario: '' },
-        modalConfig: false, modalUnlock: false,
+        cofre: { configurado: false, destrancado: false },
+        sistemas: [],  // [{chave, rotulo, tem_credencial, usuario}]
+        modal: '',     // '' | 'cad' | 'unlock' | 'trocar' | 'remover'
         busy: false, erro: '',
-        form: { usuario: '', senha: '', senha_mestra: '', senha_mestra_confirma: '', senha_mestra_unlock: '' },
+        form: {
+            sistema: '', usuario: '', senha: '', senha_mestra: '', senha_mestra_confirma: '',
+            senha_mestra_unlock: '', senha_atual: '', senha_nova: '', senha_nova_confirma: '',
+            senha_mestra_rm: '',
+        },
 
         async init() { await this.carregar(); },
 
         async carregar() {
             try {
-                const r = await (await fetch('/api/config/eproc/status')).json();
-                this.cred = { configurado: !!r.configurado, destrancado: !!r.destrancado, usuario: r.usuario || '' };
+                const r = await (await fetch('/api/cofre/status')).json();
+                this.cofre = { configurado: !!r.configurado, destrancado: !!r.destrancado };
+                const sis = r.sistemas || {};
+                this.sistemas = Object.keys(sis).map(k => ({
+                    chave: k, rotulo: sis[k].rotulo || k,
+                    tem_credencial: !!sis[k].tem_credencial, usuario: sis[k].usuario || '',
+                }));
             } catch (e) {}
+            // Sincroniza a barra de selos no topo (se existir).
+            if (window.atualizarSelos) window.atualizarSelos();
         },
-        abrirConfig() {
-            this.erro = '';
-            this.form.usuario = this.cred.usuario || '';
-            this.form.senha = ''; this.form.senha_mestra = ''; this.form.senha_mestra_confirma = '';
-            this.modalUnlock = false; this.modalConfig = true;
+
+        rotuloDe(chave) {
+            const s = this.sistemas.find(x => x.chave === chave);
+            return s ? s.rotulo : chave;
         },
-        abrirUnlock() { this.erro = ''; this.form.senha_mestra_unlock = ''; this.modalConfig = false; this.modalUnlock = true; },
-        fechar() { this.modalConfig = false; this.modalUnlock = false; },
+
+        _limparForm() {
+            this.form.usuario = ''; this.form.senha = '';
+            this.form.senha_mestra = ''; this.form.senha_mestra_confirma = '';
+            this.form.senha_mestra_unlock = ''; this.form.senha_atual = '';
+            this.form.senha_nova = ''; this.form.senha_nova_confirma = ''; this.form.senha_mestra_rm = '';
+        },
+        abrirCad(chave) {
+            this.erro = ''; this._limparForm(); this.form.sistema = chave;
+            const s = this.sistemas.find(x => x.chave === chave);
+            if (s && s.tem_credencial) this.form.usuario = s.usuario || '';
+            this.modal = 'cad';
+        },
+        abrirUnlock() { this.erro = ''; this._limparForm(); this.modal = 'unlock'; },
+        abrirTrocar() { this.erro = ''; this._limparForm(); this.modal = 'trocar'; },
+        abrirRemover(chave) { this.erro = ''; this._limparForm(); this.form.sistema = chave; this.modal = 'remover'; },
+        fechar() { this.modal = ''; },
 
         async salvarCredenciais() {
             this.busy = true; this.erro = '';
             try {
-                const r = await fetch('/api/config/eproc/credenciais', {
+                const r = await fetch('/api/cofre/credenciais', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        usuario: this.form.usuario, senha: this.form.senha,
+                        sistema: this.form.sistema, usuario: this.form.usuario, senha: this.form.senha,
                         senha_mestra: this.form.senha_mestra, senha_mestra_confirma: this.form.senha_mestra_confirma,
                     }),
                 });
@@ -648,7 +755,7 @@ function eprocAcesso() {
         async desbloquear() {
             this.busy = true; this.erro = '';
             try {
-                const r = await fetch('/api/config/eproc/desbloquear', {
+                const r = await fetch('/api/cofre/desbloquear', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ senha_mestra: this.form.senha_mestra_unlock }),
                 });
@@ -658,14 +765,38 @@ function eprocAcesso() {
             } catch (e) { this.erro = 'Falha de rede ao desbloquear.'; }
             finally { this.busy = false; }
         },
+        async trocarSenha() {
+            this.busy = true; this.erro = '';
+            try {
+                const r = await fetch('/api/cofre/trocar-senha', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        senha_atual: this.form.senha_atual, senha_nova: this.form.senha_nova,
+                        senha_nova_confirma: this.form.senha_nova_confirma,
+                    }),
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok || !d.ok) { this.erro = d.erro || 'Erro ao trocar a senha-mestra.'; return; }
+                this.fechar(); await this.carregar();
+            } catch (e) { this.erro = 'Falha de rede.'; }
+            finally { this.busy = false; }
+        },
         async bloquear() {
-            try { await fetch('/api/config/eproc/bloquear', { method: 'POST' }); } catch (e) {}
+            try { await fetch('/api/cofre/bloquear', { method: 'POST' }); } catch (e) {}
             await this.carregar();
         },
-        async removerCofre() {
-            if (!confirm('Apagar o cofre de credenciais do e-proc deste computador?')) return;
-            try { await fetch('/api/config/eproc/credenciais', { method: 'DELETE' }); } catch (e) {}
-            this.fechar(); await this.carregar();
+        async removerSistema() {
+            this.busy = true; this.erro = '';
+            try {
+                const r = await fetch('/api/cofre/credenciais/' + encodeURIComponent(this.form.sistema), {
+                    method: 'DELETE', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ senha_mestra: this.form.senha_mestra_rm }),
+                });
+                const d = await r.json().catch(() => ({}));
+                if (!r.ok || !d.ok) { this.erro = d.erro || 'Erro ao remover.'; return; }
+                this.fechar(); await this.carregar();
+            } catch (e) { this.erro = 'Falha de rede.'; }
+            finally { this.busy = false; }
         },
     };
 }
