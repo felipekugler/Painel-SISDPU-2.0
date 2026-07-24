@@ -511,10 +511,17 @@
                         </summary>
                         <ul>
                             <li>
-                                <a href="/"
-                                   class="{% if request.url.path == '/' %}active{% endif %}">
-                                    <span class="text-xs">Inbox</span>
-                                </a>
+                                <details open>
+                                    <summary>PAJs</summary>
+                                    <ul>
+                                        <li>
+                                            <a href="/"
+                                               class="{% if request.url.path == '/' %}active{% endif %}">
+                                                Todos
+                                            </a>
+                                        </li>
+                                    </ul>
+                                </details>
                             </li>
                             <li>
                                 <a href="/sat"
