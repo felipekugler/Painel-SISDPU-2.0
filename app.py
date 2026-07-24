@@ -21,6 +21,7 @@ from config import OFICIO_DESCRICAO
 from routes.busca import router as busca_router
 from routes.chat import router as chat_router
 from routes.chat_livre import router as chat_livre_router
+from routes.cofre import router as cofre_router
 from routes.configuracoes import router as configuracoes_router
 from routes.dashboard import router as dashboard_router
 from routes.docgen import router as docgen_router
@@ -146,6 +147,7 @@ app.include_router(files_router)
 app.include_router(chat_router)
 app.include_router(chat_livre_router)
 app.include_router(configuracoes_router)
+app.include_router(cofre_router)
 app.include_router(docgen_router)
 app.include_router(sync_router)
 app.include_router(busca_router)

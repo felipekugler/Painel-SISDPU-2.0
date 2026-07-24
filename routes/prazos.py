@@ -5,12 +5,12 @@ Procurador). Etapa atual: MOTOR DE SESSÃO + LOGIN AUTOMÁTICO.
 
 - A janela do e-proc é um Chromium persistente (processo separado, conectado por
   CDP) — ver `ingestao.eproc_client`. Sobrevive a reinícios do painel.
-- Login automático: as credenciais do e-proc ficam num COFRE CIFRADO por
-  senha-mestra (`services.credenciais_eproc_service`), escopado a esta feature (não
-  tranca o resto do painel). A CONFIGURAÇÃO/DESBLOQUEIO do cofre fica no menu
-  Configurações (rotas `/api/config/eproc/*`, em `routes.configuracoes`). Quando
-  destrancado, o botão "Abrir e-proc / Login" preenche usuário/senha sozinho (2FA
-  memorizado no perfil) e escolhe o perfil.
+- Login automático: as credenciais do e-proc ficam no COFRE UNIFICADO cifrado por
+  senha-mestra (`services.cofre_service`, sistema "eproc"), que também guarda as
+  credenciais do SISDPU e de sistemas futuros — uma senha-mestra desbloqueia tudo.
+  A CONFIGURAÇÃO/DESBLOQUEIO fica no menu Configurações. Quando destrancado, o botão
+  "Abrir e-proc / Login" preenche usuário/senha sozinho (2FA memorizado no perfil)
+  e escolhe o perfil.
 
 ▶️ PRÓXIMA ETAPA: leitor do Painel do Procurador (extrai a tabela de prazos).
 """
@@ -20,7 +20,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from services import credenciais_eproc_service as cred
+from services import cofre_service
 
 router = APIRouter()
 
@@ -40,7 +40,7 @@ async def api_prazos_abrir():
     (se destrancado) para preencher o login; senão, o usuário loga na janela."""
     from ingestao import eproc_client
     usuario, senha = "", ""
-    creds = cred.get_credenciais()
+    creds = cofre_service.get_credenciais("eproc")
     if creds:
         usuario, senha = creds
     return JSONResponse(await eproc_client.abrir(usuario=usuario, senha=senha))

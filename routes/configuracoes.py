@@ -3,8 +3,7 @@
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from services import config_painel_service
-from services import credenciais_eproc_service as cred_eproc
+from services import cofre_service, config_painel_service
 
 router = APIRouter()
 
@@ -70,22 +69,24 @@ async def set_sat_central(request: Request):
     return JSONResponse({"ok": True, "defaults": defaults})
 
 
-# --- Acesso ao e-proc: cofre de credenciais cifrado por senha-mestra ---------
-# Usado pela aba "Prazos e-proc" (login automático). As credenciais ficam
-# cifradas em disco; a senha-mestra não é gravada. Escopado a esta feature —
-# não tranca o resto do painel.
+# --- Acesso ao e-proc (compat): delega ao COFRE UNIFICADO (sistema "eproc") ----
+# Endpoints legados mantidos para a tela de Configurações atual continuar
+# funcionando. As credenciais do e-proc agora vivem no cofre unificado
+# (services.cofre_service) — uma única senha-mestra desbloqueia SISDPU + e-proc.
+# A API canônica nova é /api/cofre/* (routes.cofre). Estes serão aposentados.
 @router.get("/api/config/eproc/status", response_class=JSONResponse)
 async def eproc_cred_status():
     return {"ok": True,
-            "configurado": cred_eproc.configurado(),
-            "destrancado": cred_eproc.destrancado(),
-            "usuario": cred_eproc.get_usuario()}
+            "configurado": cofre_service.configurado(),
+            "destrancado": cofre_service.destrancado(),
+            "tem_credencial": cofre_service.tem_credencial("eproc"),
+            "usuario": cofre_service.get_usuario("eproc")}
 
 
 @router.post("/api/config/eproc/credenciais", response_class=JSONResponse)
 async def eproc_cred_salvar(payload: dict = Body(...)):
-    """Define (primeira vez) ou troca as credenciais do e-proc + senha-mestra.
-    Sobrescreve o cofre e já deixa a sessão destrancada."""
+    """Define/atualiza as credenciais do e-proc no cofre unificado. Se o cofre já
+    existe, a senha-mestra deve conferir com ele (uma única senha-mestra)."""
     p = payload or {}
     usuario = (p.get("usuario") or "").strip()
     senha = p.get("senha") or ""
@@ -101,7 +102,11 @@ async def eproc_cred_salvar(payload: dict = Body(...)):
         return JSONResponse({"ok": False, "erro": "A confirmação da senha-mestra não confere."},
                             status_code=400)
     try:
-        cred_eproc.salvar(usuario, senha, senha_mestra)
+        cofre_service.salvar_sistema("eproc", usuario, senha, senha_mestra)
+    except cofre_service.SenhaMestraIncorreta:
+        return JSONResponse(
+            {"ok": False, "erro": "A senha-mestra não confere com o cofre já existente. "
+                                  "Use a mesma senha-mestra do cofre."}, status_code=401)
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"ok": False, "erro": str(e)}, status_code=500)
     return {"ok": True}
@@ -112,20 +117,29 @@ async def eproc_cred_desbloquear(payload: dict = Body(...)):
     senha_mestra = (payload or {}).get("senha_mestra", "")
     if not senha_mestra:
         return JSONResponse({"ok": False, "erro": "Informe a senha-mestra."}, status_code=400)
-    if cred_eproc.destrancar(senha_mestra):
-        return {"ok": True, "usuario": cred_eproc.get_usuario()}
+    if cofre_service.destrancar(senha_mestra):
+        return {"ok": True, "usuario": cofre_service.get_usuario("eproc")}
     return JSONResponse({"ok": False, "erro": "Senha-mestra incorreta."}, status_code=401)
 
 
 @router.post("/api/config/eproc/bloquear", response_class=JSONResponse)
 async def eproc_cred_bloquear():
-    """Esquece as credenciais da memória (tranca de novo)."""
-    cred_eproc.bloquear()
+    """Esquece as credenciais da memória (tranca o cofre inteiro)."""
+    cofre_service.bloquear()
     return {"ok": True}
 
 
 @router.delete("/api/config/eproc/credenciais", response_class=JSONResponse)
-async def eproc_cred_remover():
-    """Bloqueia e APAGA o cofre em disco (volta a exigir configuração)."""
-    cred_eproc.remover()
+async def eproc_cred_remover(payload: dict = Body(default=None)):
+    """Remove apenas o e-proc do cofre (mantém os demais sistemas). Requer a
+    senha-mestra no corpo para poder re-cifrar o cofre."""
+    senha_mestra = (payload or {}).get("senha_mestra", "") if payload else ""
+    if not senha_mestra:
+        return JSONResponse(
+            {"ok": False, "erro": "Informe a senha-mestra para remover a credencial do e-proc."},
+            status_code=400)
+    try:
+        cofre_service.remover_sistema("eproc", senha_mestra)
+    except cofre_service.SenhaMestraIncorreta:
+        return JSONResponse({"ok": False, "erro": "Senha-mestra incorreta."}, status_code=401)
     return {"ok": True}

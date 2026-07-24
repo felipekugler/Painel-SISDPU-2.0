@@ -136,12 +136,34 @@ async def _wait_pf_ajax(page: Page, timeout: int = 10000) -> None:
         await page.wait_for_timeout(1000)
 
 
-async def _login() -> None:
-    """Faz login no SISDPU."""
+def _obter_credenciais() -> tuple[str, str]:
+    """Credenciais do SISDPU: primeiro do COFRE cifrado (se destrancado); senão,
+    fallback para o .env (SISDPU_USERNAME/PASSWORD) durante a transição. Levanta
+    RuntimeError com mensagem clara se nenhuma fonte tiver credenciais."""
+    with contextlib.suppress(Exception):
+        from services import cofre_service
+        creds = cofre_service.get_credenciais("sisdpu")
+        if creds:
+            return creds
     user = os.environ.get("SISDPU_USERNAME", "")
     senha = os.environ.get("SISDPU_PASSWORD", "")
-    if not user or not senha:
-        raise RuntimeError("SISDPU_USERNAME/SISDPU_PASSWORD não definidos no ambiente (.env)")
+    if user and senha:
+        return user, senha
+    # Nenhuma fonte disponível — distingue "cofre bloqueado" de "nada cadastrado".
+    with contextlib.suppress(Exception):
+        from services import cofre_service
+        if cofre_service.configurado() and not cofre_service.destrancado():
+            raise RuntimeError(
+                "Cofre de credenciais bloqueado — desbloqueie com a senha-mestra "
+                "para acessar o SISDPU.")
+    raise RuntimeError(
+        "Credenciais do SISDPU não configuradas — cadastre-as no cofre "
+        "(Configurações) ou defina SISDPU_USERNAME/PASSWORD no .env.")
+
+
+async def _login() -> None:
+    """Faz login no SISDPU."""
+    user, senha = _obter_credenciais()
     page = await _get_page()
     await page.goto(f"{SISDPU_URL}/login.xhtml", wait_until="domcontentloaded")
     await page.wait_for_selector(_sel("frmLogin:epaj_input_usuario"), timeout=15000)
@@ -2547,7 +2569,9 @@ async def fechar() -> None:
 async def reconectar() -> dict:
     """Força uma RECONEXÃO no SISDPU — recupera de conflito de sessão / sessão
     derrubada por outro login. Fecha o navegador headless atual e refaz o login
-    com as credenciais do .env. Retorna {ok, status, detalhe}."""
+    com as credenciais do cofre (ou do .env, no modo legado). Ao criar uma sessão
+    nova, ela "assume a vez", derrubando a sessão concorrente do mesmo usuário.
+    Retorna {ok, status, detalhe}."""
     global _browser, _page
     with contextlib.suppress(Exception):
         if _browser:
@@ -2560,7 +2584,8 @@ async def reconectar() -> dict:
         if "login" in (page.url or "").lower():
             return {"ok": False, "status": "credenciais",
                     "detalhe": "O SISDPU recusou o usuário/senha ao reconectar. "
-                               "Confira SISDPU_USERNAME/PASSWORD no .env."}
+                               "Confira as credenciais cadastradas no cofre "
+                               "(Configurações)."}
     except CredenciaisInvalidas as e:
         return {"ok": False, "status": "credenciais",
                 "detalhe": f"O SISDPU recusou o usuário/senha ao reconectar: {e}"}

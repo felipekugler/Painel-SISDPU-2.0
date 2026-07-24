@@ -55,11 +55,31 @@ def env_tem_credenciais() -> bool:
     return bool(os.environ.get("SISDPU_USERNAME") and os.environ.get("SISDPU_PASSWORD"))
 
 
+def cofre_bloqueado() -> bool:
+    """True se há um cofre configurado mas ainda bloqueado (sem credenciais do
+    SISDPU em memória e sem fallback do .env). Nesse caso o selo deve indicar que
+    é preciso desbloquear antes de usar."""
+    from services import cofre_service
+    if env_tem_credenciais():
+        return False
+    return bool(cofre_service.configurado() and not cofre_service.tem_credencial("sisdpu"))
+
+
+def credenciais_disponiveis() -> bool:
+    """True se há credenciais do SISDPU prontas para uso — do cofre (destrancado)
+    ou do .env (legado)."""
+    from services import cofre_service
+    return bool(cofre_service.get_credenciais("sisdpu")) or env_tem_credenciais()
+
+
 def status() -> dict:
-    """Snapshot para o selo de status. `configurado` = há credenciais no .env."""
+    """Snapshot para o selo de status. `configurado` = há credenciais prontas para
+    uso (cofre destrancado com SISDPU ou .env). `bloqueado` = cofre existe mas
+    ainda não foi desbloqueado."""
     return {
         "ok": True,
-        "configurado": env_tem_credenciais(),
+        "configurado": credenciais_disponiveis(),
+        "bloqueado": cofre_bloqueado(),
         "conflito": bool(_estado["conflito"]),
         "conflito_detalhe": _estado["detalhe"],
         "conectado": bool(_estado["conectado"]),
