@@ -535,8 +535,16 @@
            @sidebar-toggle.window="sidebarOpen = !sidebarOpen; localStorage.setItem('sidebarOpen', sidebarOpen)">
         <!-- Header -->
         <div class="p-5 border-b border-base-300">
-            <h1 class="text-xl font-bold text-primary">Ofício Geral</h1>
-            <p class="text-xs text-base-content/60 mt-1">{{ oficio_descricao }}</p>
+            <div class="flex items-center gap-3">
+                <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0"
+                      style="background: var(--accent); color: var(--accent-fg);">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 0 0 2.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 0 0-1.123-.08m-5.801 0c-.065.21-.1.433-.1.66V18a2.25 2.25 0 0 0 2.25 2.25h3.75a2.25 2.25 0 0 0 2.25-2.25V2.716m-3.75 0V3c0 .414-.336.75-.75.75H6.75C6.336 3 6 3.336 6 3.75V18a2.25 2.25 0 0 0 2.25 2.25h3.75a2.25 2.25 0 0 0 2.25-2.25" />
+                    </svg>
+                </span>
+                <h1 class="text-lg font-bold leading-tight" style="color: var(--text);">Painel SISDPU</h1>
+            </div>
+            <p class="text-xs mt-2" style="color: var(--text-secondary);">{{ oficio_descricao }}</p>
         </div>
 
         <!-- Nav -->
