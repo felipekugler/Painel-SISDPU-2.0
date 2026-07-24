@@ -86,7 +86,7 @@
     </div>
     {% endif %}
 
-    <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4" x-data="{ copied: null, ...watchlistToggle('{{ paj_norm }}') }" @init="init()">
+    <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4" x-data="{ copied: null, watched: false, loading: false, async init() { await this.checkWatched(); }, async checkWatched() { try { const r = await fetch('/api/watchlist/check/' + encodeURIComponent('{{ paj_norm }}')); const data = await r.json(); this.watched = !!data.watched; } catch (e) { this.watched = false; } }, async removeFromWatchlist() { if (!confirm('Remover {{ paj_norm }} da watchlist?')) return; this.loading = true; try { const r = await fetch('/api/watchlist/' + encodeURIComponent('{{ paj_norm }}'), { method: 'DELETE' }); if (!r.ok) { showToast('Erro ao remover', 'error'); return; } showToast('Removido da watchlist', 'info'); await this.checkWatched(); } catch (e) { showToast('Falha de rede', 'error'); } finally { this.loading = false; } } }" @init="init()">
         <div>
             <div class="flex items-center gap-2">
                 <h2 class="text-2xl font-bold">PAJ {{ meta.paj }}</h2>
@@ -99,7 +99,7 @@
                 </button>
                 <template x-if="!watched">
                     <button class="btn btn-ghost btn-xs gap-1"
-                            @click="adicionar()"
+                            onclick="document.getElementById('modal-watchlist-motivo').showModal()"
                             :disabled="loading"
                             title="Adicionar este PAJ à watchlist (acompanhamento prioritário)">
                         <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
