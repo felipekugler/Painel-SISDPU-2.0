@@ -55,18 +55,27 @@ function watchlistToggle(pajNorm) {
         },
 
         async adicionar() {
+            const modal = document.getElementById('modal-watchlist-motivo');
+            if (modal) {
+                modal.showModal();
+            }
+        },
+
+        async confirmarAdicionar(motivo) {
             this.loading = true;
             try {
                 const r = await fetch('/api/watchlist', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ paj_norm: pajNorm, motivo: '' }),
+                    body: JSON.stringify({ paj_norm: pajNorm, motivo: motivo || '' }),
                 });
                 if (!r.ok) {
                     const err = await r.json().catch(() => ({}));
                     showToast('Erro: ' + (err.detail || 'falha ao adicionar'), 'error');
                     return;
                 }
+                const modal = document.getElementById('modal-watchlist-motivo');
+                if (modal) modal.close();
                 showToast('Adicionado à watchlist', 'success');
                 await this.refresh();
             } catch (e) {

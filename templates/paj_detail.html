@@ -1003,6 +1003,68 @@
     <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
 </dialog>
 
+<!-- Modal: Adicionar à watchlist com motivo -->
+<dialog id="modal-watchlist-motivo" class="modal">
+    <div class="modal-box max-w-lg">
+        <div class="flex items-center justify-between mb-4">
+            <h3 class="font-bold text-lg">Adicionar à watchlist</h3>
+            <form method="dialog"><button class="btn btn-sm btn-ghost">X</button></form>
+        </div>
+
+        <p class="text-sm text-base-content/70 mb-4">
+            Adicionar <span class="font-mono font-semibold">{{ meta.paj }}</span> à sua watchlist para acompanhamento prioritário.
+        </p>
+
+        <div x-data="{ motivo: '', salvando: false }">
+            <label class="form-control">
+                <span class="label-text text-xs mb-1">Motivo (opcional)</span>
+                <textarea class="textarea textarea-bordered text-sm"
+                          rows="3"
+                          placeholder="Ex: aguardando decisão do agravo, prazo curto, cliente cobrou..."
+                          x-model="motivo"
+                          maxlength="500"></textarea>
+                <span class="text-[11px] text-base-content/40 mt-1" x-text="`${motivo.length}/500`"></span>
+            </label>
+
+            <div class="flex justify-end gap-2 mt-6">
+                <button type="button" class="btn btn-sm btn-ghost" @click="document.getElementById('modal-watchlist-motivo').close()" :disabled="salvando">Cancelar</button>
+                <button type="button" class="btn btn-sm btn-primary"
+                        @click="(async () => {
+                            salvando = true;
+                            const pajNorm = '{{ paj_norm }}';
+                            try {
+                                const r = await fetch('/api/watchlist', {
+                                    method: 'POST',
+                                    headers: { 'Content-Type': 'application/json' },
+                                    body: JSON.stringify({ paj_norm: pajNorm, motivo: motivo || '' }),
+                                });
+                                if (!r.ok) {
+                                    const err = await r.json().catch(() => ({}));
+                                    showToast('Erro: ' + (err.detail || 'falha ao adicionar'), 'error');
+                                    return;
+                                }
+                                document.getElementById('modal-watchlist-motivo').close();
+                                showToast('Adicionado à watchlist', 'success');
+                                window.dispatchEvent(new CustomEvent('watchlist-updated'));
+                            } catch (e) {
+                                showToast('Falha de rede', 'error');
+                            } finally {
+                                salvando = false;
+                            }
+                        })()"
+                        :disabled="salvando">
+                    <span x-show="!salvando">Adicionar</span>
+                    <span x-show="salvando" class="flex items-center gap-2">
+                        <span class="loading loading-spinner loading-xs"></span>
+                        Salvando…
+                    </span>
+                </button>
+            </div>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
+</dialog>
+
 {% endblock %}
 
 {% block scripts %}
