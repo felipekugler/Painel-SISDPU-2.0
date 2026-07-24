@@ -196,13 +196,10 @@ async def peek() -> dict:
 _MAX_TENT = 3
 _PAUSA_BLOQUEIO_MS = 45000  # 45s fixos ao detectar bloqueio antirobô (era 30s)
 
-# Ritmo entre consultas: (1) delay APÓS cada consulta (campo "Tempo entre consultas",
-# padrão 5s) + (2) a cada _LOTE_N consultas, uma pausa EXTRA de _LOTE_PAUSA_MS. É este
-# ritmo (e não esperas fixas ad-hoc) que governa as transições entre docs/grupos/modais.
+# Ritmo entre consultas: delay APÓS cada consulta (campo "Tempo entre consultas", padrão
+# 5s). É este ritmo (e não esperas fixas ad-hoc) que governa as transições entre docs/
+# grupos/modais. Só há DOIS tempos no sistema: este e a espera após bloqueio antirobô.
 _RITMO_MS = 5000
-_LOTE_N = 5
-_LOTE_PAUSA_MS = 10000
-_consultas = 0  # contador de consultas do download corrente (reset no início de cada um)
 
 # Inventário ESTRUTURADO do download corrente: 1 item por documento REVELADO no SAT.
 # item = {"key": <tipo>, "sub": <NB/protocolo/"">, "nome": <arquivo/"">, "status": ...}
@@ -213,19 +210,39 @@ _INVENTARIO: list[dict] = []
 # "pat|1915479324"). None = sem restrição de subitem (baixa todas as linhas do tipo).
 _ALVOS = None
 
+# Filtro inicial por NB (Grupo 2 + PAT): set de NBs (SÓ DÍGITOS) indicado pelo usuário
+# com base na narrativa. None/vazio = sem filtro (baixa tudo). Quando ativo, no Grupo 2
+# e no PAT só se baixam docs do(s) NB(s) indicado(s). Grupo 1 e HISCRE (sem NB) NÃO são
+# afetados. Setado no início de cada download.
+_NB_FILTRO = None
+
+# Compilação de PDFs por tipo (CCON/CRER/Laudo Médico/Laudo Social): quando o nº de docs
+# de um tipo passa de _COMPILAR_LIMIAR, une num único PDF (ordem de NB decrescente) para
+# reduzir os anexos da movimentação. Setado no início de cada download (só o principal).
+_COMPILAR = False
+_COMPILAR_LIMIAR = 3
+
+# Espécies de processo administrativo (PAT) a IGNORAR — nomes de "Serviço" irrelevantes
+# (config, editável na aba). Comparação por substring normalizada. O PAT cujo Serviço bate
+# NÃO é baixado (skip ANTES do clique). Setado no início de cada download principal.
+_PAT_IGNORAR: list[str] = []
+
+
+def _pat_ignorado(servico: str) -> bool:
+    """True se o Serviço do PAT casa (substring normalizada) alguma espécie da lista de
+    ignorados configurada — nesse caso a tarefa NÃO é baixada."""
+    s = _norm(servico)
+    return bool(s) and any(_norm(t) in s for t in _PAT_IGNORAR if str(t).strip())
+
 
 def _inv_add(key: str, sub: str, nome: str, status: str) -> None:
     _INVENTARIO.append({"key": key, "sub": (sub or ""), "nome": (nome or ""), "status": status})
 
 
 async def _ritmo(page) -> None:
-    """Conta 1 consulta e aplica o ritmo: delay por consulta + pausa a cada _LOTE_N."""
-    global _consultas
-    _consultas += 1
+    """Aplica o ritmo entre consultas: delay APÓS cada consulta (Tempo entre consultas)."""
     if _RITMO_MS > 0:
         await page.wait_for_timeout(_RITMO_MS)
-    if _LOTE_N > 0 and _LOTE_PAUSA_MS > 0 and _consultas % _LOTE_N == 0:
-        await page.wait_for_timeout(_LOTE_PAUSA_MS)
 
 
 # Catálogo dos tipos de documentos que a rotina sabe baixar (key estável, rótulo, grupo).
@@ -563,7 +580,7 @@ async def _clicar_abre_aba(page, ctx, fn_click, out, reg, nome_doc="documento",
                 with contextlib.suppress(Exception):
                     await p.close()
     out["nova"], out["desfecho"], out["msg"] = nova, desfecho, msg
-    await _ritmo(page)  # ritmo (delay por consulta + pausa de lote)
+    await _ritmo(page)  # ritmo: delay entre consultas
 
 
 async def _sem_modal(page) -> bool:
@@ -704,9 +721,19 @@ async def _baixar_modal_tabela(page, ctx, cfg, nome, pasta_destino, salvos, pula
         if (_ALVOS is not None and f"{cfg['key']}|{nb}" not in _ALVOS
                 and f"{cfg['key']}|" not in _ALVOS):
             continue
+        # Filtro inicial por NB (indicado pelo usuário na narrativa): pula linhas de NB
+        # não indicado — REGISTRA no log. Vale p/ TODOS os modais-tabela (incl. Consignados).
+        nb_indicado = _NB_FILTRO is not None and sat_utils.nb_digits(nb) in _NB_FILTRO
+        if _NB_FILTRO is not None and not nb_indicado:
+            pulados.append(f"{cfg['nome']} {nb} — pulado (NB não indicado pelo usuário)")
+            _inv_add(cfg["key"], nb, "", "nao_filtrado_nb")
+            yield reg(f"  – {cfg['nome']} {nb}: pulado — NB não indicado pelo usuário", "muted")
+            continue
         # CCON/CRER: baixar só as espécies relacionadas à pretensão. As demais existem no
         # SAT mas são puladas — REGISTRADAS no log "por não ser relacionado à pretensão".
-        if cfg.get("filtra_especie") and not especie_relacionada(pretensao, _achar_especie(row)):
+        # Um NB explicitamente indicado pelo usuário SOBREPÕE o filtro por espécie.
+        if (cfg.get("filtra_especie") and not nb_indicado
+                and not especie_relacionada(pretensao, _achar_especie(row))):
             esp = _achar_especie(row)
             pulados.append(f"{cfg['nome']} {nb} — pulado por não ser relacionado à pretensão")
             _inv_add(cfg["key"], nb, "", "nao_relacionado")
@@ -903,6 +930,13 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
             if _ALVOS is not None and f"pat|{prot}" not in _ALVOS and "pat|" not in _ALVOS:
                 continue
             servico = cells[prot_i + 1] if prot_i + 1 < len(cells) else ""
+            # Espécies de PAT irrelevantes (lista de ignorados): pula ANTES de baixar.
+            if _pat_ignorado(servico):
+                _inv_add("pat", prot, "", "ignorado")
+                pulados.append(f"PAT {servico} (protocolo {prot}) — ignorado (espécie na lista de ignorados)")
+                yield reg(f"  – tarefa {prot} ({servico}): ignorada (espécie de processo "
+                          f"administrativo na lista de ignorados)", "muted")
+                continue
             out = {}
             async for ev in _clicar_abre_aba(
                     page, ctx, (lambda idx=i: page.evaluate(_JS_ABRIR_PDF_LINHA, idx)),
@@ -943,10 +977,12 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
         yield reg("  – PAT: nenhuma tarefa encontrada", "muted")
     else:
         try:
-            mant, desc, pul = sat_utils.processar_pat(str(tmp), pasta_destino, mapa, _ROTULO_ARQ)
+            mant, desc, pul_prazo, pul_nb = sat_utils.processar_pat(
+                str(tmp), pasta_destino, mapa, _ROTULO_ARQ, _NB_FILTRO)
             yield reg(f"  PAT: {len(mapa)} tarefa(s) baixada(s) → {len(mant)} principal(is) "
                       f"mantido(s), {len(desc)} descartada(s) (subtarefa/duplicata)"
-                      + (f", {len(pul)} pulado(s) (protocolo há mais de 5 anos)" if pul else ""),
+                      + (f", {len(pul_prazo)} pulado(s) (>5 anos)" if pul_prazo else "")
+                      + (f", {len(pul_nb)} pulado(s) (NB não indicado)" if pul_nb else ""),
                       "novo")
             for _f, nm in mant:
                 salvos.append(nm)
@@ -955,8 +991,12 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
             for _a, motivo in desc:
                 _inv_add("pat", mapa.get(_a, {}).get("protocolo", ""), "", "descartado")
                 yield reg(f"  🗑 {motivo}", "muted")
-            for _p, motivo in pul:
+            for _p, motivo in pul_prazo:
                 _inv_add("pat", mapa.get(_p, {}).get("protocolo", ""), "", "pulado_prazo")
+                pulados.append(f"PAT {motivo}")
+                yield reg(f"  ↷ {motivo}", "muted")
+            for _p, motivo in pul_nb:
+                _inv_add("pat", mapa.get(_p, {}).get("protocolo", ""), "", "nao_filtrado_nb")
                 pulados.append(f"PAT {motivo}")
                 yield reg(f"  ↷ {motivo}", "muted")
         except Exception as e:  # noqa: BLE001
@@ -967,19 +1007,71 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
         _sh.rmtree(tmp, ignore_errors=True)
 
 
+# Tipos que podem ser compilados num único PDF (nome-base → prefixo do arquivo salvo).
+_TIPOS_COMPILAVEIS = [("CCON", "CCON "), ("CRER", "CRER "),
+                      ("LAUDO MEDICO", "LAUDO MEDICO "), ("LAUDO SOCIAL", "LAUDO SOCIAL "),
+                      ("HISCONSIGNADOS", "HISCONSIGNADOS ")]
+# Subpasta (dentro da pasta do PAJ) onde ficam os originais após a compilação — NÃO é
+# anexada (o anexador lê só a pasta principal). Apagada após a anexação (sat_service).
+SUBPASTA_ORIGINAIS_COMPILADOS = "Compilados (originais)"
+
+
+async def _compilar_por_tipo(pasta_destino, salvos, reg):
+    """Regra geral: se um tipo (CCON/CRER/Laudo Médico/Laudo Social) tem MAIS de
+    _COMPILAR_LIMIAR arquivos, une-os num único PDF em ordem de NB DECRESCENTE, para reduzir
+    os anexos da movimentação. Os originais vão p/ a subpasta 'Compilados (originais)' (não
+    anexada); são apagados só após a anexação do compilado (limpeza no sat_service)."""
+    if not _COMPILAR:
+        return
+    import shutil as _sh
+    pasta = Path(pasta_destino)
+    orig_dir = pasta / SUBPASTA_ORIGINAIS_COMPILADOS
+    for nome_tipo, prefixo in _TIPOS_COMPILAVEIS:
+        arquivos = sorted(pasta.glob(f"{prefixo}*.pdf"),
+                          key=lambda p: sat_utils.nb_digits(p.name), reverse=True)
+        if len(arquivos) <= _COMPILAR_LIMIAR:
+            continue
+        destino = pasta / f"{nome_tipo} - COMPILADO {len(arquivos)} documentos.pdf"
+        try:
+            n_pag = sat_utils.merge_pdfs([str(p) for p in arquivos], str(destino))
+        except Exception as e:  # noqa: BLE001
+            yield reg(f"  ✗ Falha ao compilar {nome_tipo}: {e}", "erro")
+            continue
+        orig_dir.mkdir(parents=True, exist_ok=True)
+        for p in arquivos:
+            with contextlib.suppress(Exception):
+                _sh.move(str(p), str(orig_dir / p.name))
+            if p.name in salvos:
+                salvos.remove(p.name)
+        salvos.append(destino.name)
+        yield reg(f"  📎 {nome_tipo}: {len(arquivos)} documentos compilados em 1 PDF "
+                  f"({n_pag} pág., ordem de NB decrescente) → {destino.name}", "novo")
+
+
 async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                                 delay_s: float = 5.0, bloqueio_s: float = 45.0,
-                                tipos=None, pretensao="", rotulo="", alvos=None):
+                                tipos=None, pretensao="", rotulo="", alvos=None,
+                                nbs=None, compilar=False, compilar_limiar=3,
+                                pat_ignorar=None):
     """Consulta o CPF no SAT (usuário resolve o CAPTCHA na janela) e baixa o Grupo 1
     (1 clique), o Grupo 2 (modais: CCON, CRER, HISCRE, HISCONSIGNADOS, LAUDO MEDICO) e
     o PAT (2ª Via dos Processos, com deduplicação). `delay_s` = ritmo preventivo entre
     consultas (padrão 5s; 0 desliga). `bloqueio_s` = espera ao detectar antirobô
     (padrão 45s). `tipos` = coleção de keys de TIPOS_DOCUMENTOS a baixar (None = todos).
-    Gera eventos SSE; termina com {'done':True,'resultado':{...}}."""
-    global _RITMO_MS, _PAUSA_BLOQUEIO_MS, _consultas, _ROTULO_ARQ, _INVENTARIO, _ALVOS
+    `nbs` = coleção de NBs (qualquer formato) p/ filtrar Grupo 2 + PAT (None/vazio = sem
+    filtro). `compilar`/`compilar_limiar` = compilar por tipo quando > limiar (só no
+    download principal). `pat_ignorar` = espécies de PAT (Serviço) a NÃO baixar. Gera
+    eventos SSE; termina com {'done':True,'resultado':{...}}."""
+    global _RITMO_MS, _PAUSA_BLOQUEIO_MS, _ROTULO_ARQ, _INVENTARIO, _ALVOS
+    global _NB_FILTRO, _COMPILAR, _COMPILAR_LIMIAR, _PAT_IGNORAR
     _RITMO_MS = max(0, int(float(delay_s) * 1000))
     _PAUSA_BLOQUEIO_MS = max(0, int(float(bloqueio_s) * 1000))
-    _consultas = 0  # zera o contador de lote (pausa a cada _LOTE_N)
+    # filtro de NB: aceita formatado ("726.015.826-4") ou dígitos crus ("7260158264");
+    # normaliza para só dígitos. Vazio/None = sem filtro.
+    _NB_FILTRO = {re.sub(r"\D", "", str(x)) for x in nbs if re.sub(r"\D", "", str(x))} if nbs else None
+    _COMPILAR = bool(compilar)
+    _COMPILAR_LIMIAR = max(1, int(compilar_limiar or 3))
+    _PAT_IGNORAR = list(pat_ignorar) if pat_ignorar else []  # espécies de PAT a não baixar
     _ROTULO_ARQ = rotulo or ""  # prefixo dos nomes (ex.: "INSTITUIDOR - ")
     _INVENTARIO = []  # zera o inventário estruturado desta rodada
     _ALVOS = set(alvos) if alvos else None  # subitens específicos (download complementar)
@@ -1094,7 +1186,7 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                 yield reg(f"  ✗ {prefixo}: proteção antirobô — não recuperado após "
                           f"{_MAX_TENT - 1} esperas de {_PAUSA_BLOQUEIO_MS // 1000}s — "
                           f"reveja manualmente", "erro")
-            await _ritmo(page)  # ritmo (delay por consulta + pausa de lote)
+            await _ritmo(page)  # ritmo: delay entre consultas
 
         # --- Grupo 2 (modais) ---
         if sel is None or any(c["key"] in sel for c in _GRUPO2):
@@ -1113,6 +1205,11 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
         else:
             _inv_add("pat", "", "", "nao_selecionado")
             yield reg("  · Tarefas PAT: não baixado (desativado para esta pretensão)", "muted")
+
+        # --- Compilação por tipo (CCON/CRER/Laudos) quando > limiar ---
+        if _COMPILAR:
+            async for ev in _compilar_por_tipo(pasta_destino, salvos, reg):
+                yield ev
 
         det = f"{len(salvos)} documento(s) baixado(s)."
         yield {"done": True, "resultado": {"ok": True, "detalhe": det,

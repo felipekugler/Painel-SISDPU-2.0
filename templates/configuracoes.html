@@ -282,6 +282,28 @@
                 </div>
             </div>
 
+            <!-- Compilar documentos por tipo -->
+            <div class="flex items-start justify-between gap-4 pt-2 border-t border-base-300">
+                <div>
+                    <p class="font-medium">Compilar documentos por tipo</p>
+                    <p class="text-sm text-base-content/60 mt-0.5">
+                        Quando houver mais que o limiar de documentos de um mesmo tipo (Carta de Concessão, CRER,
+                        Laudo Médico, Laudo de Avaliação Social, Histórico de Empréstimos Consignados), o painel os une
+                        num único PDF por tipo, em ordem de NB decrescente — reduzindo os anexos da movimentação.
+                    </p>
+                </div>
+                <div class="flex items-center gap-3 shrink-0">
+                    <label class="flex items-center gap-1.5 text-sm">
+                        <span class="text-base-content/60">acima de</span>
+                        <input type="number" min="1" max="50" class="input input-bordered input-sm w-16"
+                               x-model.number="compilarLimiar" :disabled="!compilar">
+                        <span class="text-base-content/60">docs</span>
+                    </label>
+                    <input type="checkbox" class="toggle toggle-primary shrink-0" :checked="compilar"
+                           @change="compilar = $event.target.checked">
+                </div>
+            </div>
+
             <div class="flex items-center gap-4 pt-2 border-t border-base-300">
                 <button class="btn btn-primary btn-sm" :disabled="salvando" @click="salvar()">
                     <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
@@ -443,7 +465,7 @@ function prefTramitacao() {
 function satCentralDefaults() {
     return {
         caixa: '01 - PREV_DIVPREV', prazoModo: 'sem_prazo', prazoDias: 15,
-        tempoEntre: 5, esperaBloqueio: 45,
+        tempoEntre: 5, esperaBloqueio: 45, compilar: true, compilarLimiar: 3,
         grupos: [], carregando: false, salvando: false, msg: '', msgErro: false,
         async init() {
             try {
@@ -453,6 +475,8 @@ function satCentralDefaults() {
                 if (r.prazo_dias) this.prazoDias = r.prazo_dias;
                 if (typeof r.tempo_entre === 'number') this.tempoEntre = r.tempo_entre;
                 if (typeof r.espera_bloqueio === 'number') this.esperaBloqueio = r.espera_bloqueio;
+                if (typeof r.compilar === 'boolean') this.compilar = r.compilar;
+                if (r.compilar_limiar) this.compilarLimiar = r.compilar_limiar;
             } catch (e) {}
         },
         async carregarGrupos() {
@@ -472,6 +496,7 @@ function satCentralDefaults() {
                     body: JSON.stringify({
                         caixa: this.caixa, prazo_modo: this.prazoModo, prazo_dias: this.prazoDias,
                         tempo_entre: this.tempoEntre, espera_bloqueio: this.esperaBloqueio,
+                        compilar: this.compilar, compilar_limiar: this.compilarLimiar,
                     })})).json();
                 if (r.ok) {
                     const d = r.defaults || {};
@@ -480,6 +505,8 @@ function satCentralDefaults() {
                     this.prazoDias = d.prazo_dias || this.prazoDias;
                     this.tempoEntre = (typeof d.tempo_entre === 'number') ? d.tempo_entre : this.tempoEntre;
                     this.esperaBloqueio = (typeof d.espera_bloqueio === 'number') ? d.espera_bloqueio : this.esperaBloqueio;
+                    if (typeof d.compilar === 'boolean') this.compilar = d.compilar;
+                    if (d.compilar_limiar) this.compilarLimiar = d.compilar_limiar;
                     this._msg('Padrões salvos.', false);
                 } else { this._msg('Erro ao salvar.', true); }
             } catch (e) { this._msg('Erro de comunicação.', true); }

@@ -129,6 +129,29 @@ def _mais_de_5_anos(d, ref=None):
     return d < corte  # anterior ao corte = protocolo com mais de 5 anos
 
 
+def nb_digits(texto):
+    """Extrai só os dígitos do 1º NB (NNN.NNN.NNN-N) achado no texto; '' se não houver.
+    Usado para comparar/ordenar NBs vindos de nomes de arquivo ou de campos do PDF."""
+    m = re.search(r'\d{3}\.\d{3}\.\d{3}-\d', texto or '')
+    return re.sub(r'\D', '', m.group(0)) if m else ''
+
+
+def merge_pdfs(paths, destino):
+    """Une os PDFs de `paths` (NA ORDEM dada) num único arquivo `destino`.
+    Retorna o nº de páginas do resultado. Requer PyMuPDF (fitz)."""
+    if fitz is None:
+        raise RuntimeError('PyMuPDF (fitz) não instalado.')
+    out = fitz.open()
+    try:
+        for p in paths:
+            with fitz.open(p) as d:
+                out.insert_pdf(d)
+        out.save(destino)
+        return out.page_count
+    finally:
+        out.close()
+
+
 def _nome_procadm(servico, campos, prefixo=''):
     nb, der, prot = campos['nb'], campos['der'], campos['prot']
     if servico and nb and der and prot:
@@ -140,15 +163,18 @@ def _nome_procadm(servico, campos, prefixo=''):
     return nome_final(prefixo + base) + '.pdf'
 
 
-def processar_pat(pasta_temp, pasta_dest, mapa, prefixo=''):
+def processar_pat(pasta_temp, pasta_dest, mapa, prefixo='', nbs=None):
     """mapa: {arquivo_temp: {'servico':..., 'protocolo': <prot da linha>}}. `prefixo`
-    é anteposto ao nome final (ex.: 'INSTITUIDOR - ').
+    é anteposto ao nome final (ex.: 'INSTITUIDOR - '). `nbs` = conjunto de NBs (só
+    dígitos) indicados pelo usuário; se fornecido, processos cujo NB não esteja no
+    conjunto (inclusive sem NB) são pulados.
 
-    Retorna (mantidos, descartados, pulados):
-    - mantidos:    [(arquivo_temp, nome_final)] movidos para a pasta destino;
-    - descartados: [(arquivo_temp, motivo)] subtarefas/duplicatas removidas;
-    - pulados:     [(arquivo_temp, motivo)] protocolos com mais de 5 anos (Data de
-                   entrada), NÃO baixados por regra.
+    Retorna (mantidos, descartados, pulados_prazo, pulados_nb):
+    - mantidos:      [(arquivo_temp, nome_final)] movidos para a pasta destino;
+    - descartados:   [(arquivo_temp, motivo)] subtarefas/duplicatas removidas;
+    - pulados_prazo: [(arquivo_temp, motivo)] protocolos com mais de 5 anos (Data de
+                     entrada), NÃO baixados por regra;
+    - pulados_nb:    [(arquivo_temp, motivo)] processos de NB não indicado pelo usuário.
     """
     info = {}
     for f in mapa:
@@ -161,7 +187,12 @@ def processar_pat(pasta_temp, pasta_dest, mapa, prefixo=''):
     for f, c in info.items():
         grupos.setdefault((c['prot'], c['paginas']), []).append(f)
 
-    mantidos, descartados, pulados = [], [], []
+    def _apagar(arquivos):
+        for a in arquivos:
+            with __import__('contextlib').suppress(OSError):
+                os.remove(os.path.join(pasta_temp, a))
+
+    mantidos, descartados, pulados_prazo, pulados_nb = [], [], [], []
     for chave, arquivos in grupos.items():
         prot_int = chave[0]
         # principal = linha cujo protocolo == prot interno; senão o primeiro
@@ -175,13 +206,23 @@ def processar_pat(pasta_temp, pasta_dest, mapa, prefixo=''):
         # (principal + subtarefas) e registra o motivo para o log.
         der = campos.get('der', '')
         if _mais_de_5_anos(_der_para_data(der)):
-            for a in arquivos:
-                with __import__('contextlib').suppress(OSError):
-                    os.remove(os.path.join(pasta_temp, a))
-            pulados.append((principal,
-                            f'protocolo {prot_int} ({servico}) — pulado - protocolo há '
-                            f'mais de 5 anos (Data de entrada {der.replace("-", "/")})'))
+            _apagar(arquivos)
+            pulados_prazo.append((principal,
+                                  f'protocolo {prot_int} ({servico}) — pulado - protocolo há '
+                                  f'mais de 5 anos (Data de entrada {der.replace("-", "/")})'))
             continue
+
+        # Filtro por NB indicado pelo usuário: pula processos de NB não indicado
+        # (inclusive os SEM NB, quando o filtro está ativo).
+        if nbs:
+            nbd = nb_digits(campos.get('nb', ''))
+            if nbd not in nbs:
+                _apagar(arquivos)
+                nb_txt = campos.get('nb', '') or 'sem NB'
+                pulados_nb.append((principal,
+                                   f'protocolo {prot_int} ({servico}) — pulado - NB {nb_txt} '
+                                   f'não indicado pelo usuário'))
+                continue
 
         nome = _nome_procadm(servico, campos, prefixo)
         shutil.move(os.path.join(pasta_temp, principal), os.path.join(pasta_dest, nome))
@@ -192,7 +233,7 @@ def processar_pat(pasta_temp, pasta_dest, mapa, prefixo=''):
                 descartados.append((a, f'protocolo {mapa[a].get("protocolo","?")} '
                                        f'descartado — é subtarefa/duplicata do protocolo '
                                        f'principal {prot_int} ({servico})'))
-    return mantidos, descartados, pulados
+    return mantidos, descartados, pulados_prazo, pulados_nb
 
 
 def _cli():
@@ -207,7 +248,7 @@ def _cli():
         pasta_temp, pasta_dest, mapa_json = sys.argv[2], sys.argv[3], sys.argv[4]
         with open(mapa_json, encoding='utf-8') as fh:
             mapa = json.load(fh)
-        mant, desc, pul = processar_pat(pasta_temp, pasta_dest, mapa)
+        mant, desc, pul_prazo, pul_nb = processar_pat(pasta_temp, pasta_dest, mapa)
         print('=== MANTIDOS (principais/únicos) ===')
         for _, nome in mant:
             print('  [OK]', nome)
@@ -215,7 +256,10 @@ def _cli():
         for a, motivo in desc:
             print('  [x]', a, '->', motivo)
         print('=== PULADOS (protocolo há mais de 5 anos) ===')
-        for a, motivo in pul:
+        for a, motivo in pul_prazo:
+            print('  [->]', a, '->', motivo)
+        print('=== PULADOS (NB não indicado) ===')
+        for a, motivo in pul_nb:
             print('  [->]', a, '->', motivo)
     else:
         print(__doc__)

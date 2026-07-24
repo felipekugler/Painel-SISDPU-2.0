@@ -99,6 +99,8 @@
                 <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-sm font-medium mr-1">O que baixar:</span>
                     <button class="btn btn-xs btn-outline" @click="abrirTipos()">Escolher documentos</button>
+                    <button class="btn btn-xs btn-outline" @click="abrirPatIgnorar()"
+                            title="Espécies de processo administrativo (PAT) que não devem ser baixadas">Ignorar</button>
                 </div>
             </div>
         </div>
@@ -183,6 +185,13 @@
                             <tr x-show="narrativaAberta[p.paj_norm]">
                                 <td class="bg-base-100"></td>
                                 <td colspan="6" class="bg-base-100">
+                                    <div class="nb-filtro-box flex items-center gap-2 mb-2 flex-wrap">
+                                        <span class="badge badge-nb">Filtrar por NB</span>
+                                        <input type="text" class="input input-bordered input-xs w-72"
+                                               placeholder="ex.: 726.015.826-4"
+                                               x-model="p.nbFiltro">
+                                        <span class="text-[11px] nb-filtro-hint">indique um ou mais benefícios, separados por vírgula</span>
+                                    </div>
                                     <div class="text-[11px] leading-[1.6] whitespace-pre-wrap max-h-72 overflow-y-auto p-2 rounded bg-base-300">
                                         <span x-show="narrativas[p.paj_norm] === undefined" class="loading loading-spinner loading-xs"></span>
                                         <span x-text="narrativas[p.paj_norm] || ''"></span>
@@ -255,7 +264,7 @@
                     <tbody>
                         <template x-for="r in historico" :key="r.id">
                             <tr class="hover">
-                                <td class="whitespace-nowrap text-xs" x-text="(r.ts||'').replace('T',' ').slice(0,16)"></td>
+                                <td class="whitespace-nowrap text-xs" x-text="fmtDataHora(r.ts)"></td>
                                 <td class="font-mono whitespace-nowrap">
                                     <a x-show="r.url_detalhe" :href="r.url_detalhe" target="_blank" rel="noopener"
                                        class="link link-hover" style="color:var(--accent)"
@@ -439,6 +448,38 @@
         <div class="modal-backdrop" @click="tiposModal=false"></div>
     </div>
 
+    <!-- Modal: ignorar espécies de processo administrativo (PAT) -->
+    <div class="modal" :class="{'modal-open': patIgnorarModal}">
+        <div class="modal-box max-w-xl">
+            <h3 class="font-bold text-lg mb-1">Processos administrativos a ignorar</h3>
+            <p class="text-sm text-base-content/70 mb-3">
+                Espécies de processo administrativo (coluna <strong>Serviço</strong> do PAT) que
+                <strong>não devem ser baixadas</strong>. A comparação ignora acentos e maiúsculas
+                (casa por trecho). Vá cadastrando novas espécies conforme forem surgindo.
+            </p>
+            <div class="flex items-center gap-2 mb-2">
+                <input type="text" class="input input-bordered input-sm flex-1" x-model="patIgnorarNovo"
+                       placeholder="ex.: Alterar Local ou Forma de Pagamento" @keydown.enter="addPatIgnorar()">
+                <button class="btn btn-sm btn-primary" :disabled="!patIgnorarNovo.trim()" @click="addPatIgnorar()">Adicionar</button>
+            </div>
+            <div class="max-h-[300px] overflow-y-auto space-y-1 pr-1">
+                <template x-for="(t, i) in patIgnorar" :key="i">
+                    <div class="flex items-center gap-2 text-sm py-0.5 border-b border-base-300">
+                        <span class="flex-1" x-text="t"></span>
+                        <button class="btn btn-ghost btn-xs text-error px-1" @click="delPatIgnorar(i)" title="Remover">✕</button>
+                    </div>
+                </template>
+                <div x-show="patIgnorar.length === 0" class="text-sm text-base-content/40 py-2">Nenhuma espécie ignorada.</div>
+            </div>
+            <div class="modal-action items-center">
+                <span class="text-xs text-success mr-auto" x-show="patIgnorarMsg" x-text="patIgnorarMsg"></span>
+                <button class="btn btn-primary btn-sm" @click="salvarPatIgnorar()">Salvar</button>
+                <button class="btn btn-sm" @click="patIgnorarModal=false">Fechar</button>
+            </div>
+        </div>
+        <div class="modal-backdrop" @click="patIgnorarModal=false"></div>
+    </div>
+
     <!-- Modal de log do histórico -->
     <div class="modal" :class="{'modal-open': logAberto}">
         <div class="modal-box max-w-2xl">
@@ -525,6 +566,20 @@
     color: #6b5a2b !important;
     border: 1px solid #ddd0a3 !important;
 }
+/* Filtro por NB — badge/caixa com tonalidade avermelhada (acima da narrativa) */
+.badge-nb {
+    background-color: #f6d6d6 !important;
+    color: #9b1c1c !important;
+    border: 1px solid #e0a3a3 !important;
+    font-weight: 600;
+}
+.nb-filtro-box {
+    background: rgba(214, 69, 69, 0.10);
+    border: 1px solid rgba(214, 69, 69, 0.40);
+    border-radius: 8px;
+    padding: 6px 10px;
+}
+.nb-filtro-hint { color: var(--fallback-bc, oklch(var(--bc)/0.6)); }
 /* Tabela de documentos baixados (accordion) — fonte menor e linhas compactas */
 .sat-docs { font-size: 11.5px; }
 .sat-docs td, .sat-docs th { padding-top: 3px; padding-bottom: 3px; }
@@ -547,6 +602,7 @@ function satPage() {
         tiposModal: false, tiposCatalogo: [], tiposPadrao: null, tiposPorPretensao: {},
         tiposPretSel: '__padrao__', tiposSel: [], tiposPretensoes: [], tiposMsg: '',
         tiposInstituidor: null, tiposInstituidorDefault: [],
+        patIgnorarModal: false, patIgnorar: [], patIgnorarNovo: '', patIgnorarMsg: '',
         instModal: false, instCpf: '', instNome: '', instAlvo: null,
         baixarMaisModal: false, bmAlvo: null, bmCpf: '', bmSel: [], bmLista: [], bmCarregando: false,
 
@@ -656,6 +712,8 @@ function satPage() {
                 else if (row.status === 'falha') m.push('falhou no 1º download');
                 else if (row.status === 'nao_consultado') m.push('não consultado (indeferido)');
                 else if (row.status === 'pulado_prazo') m.push('pulado - protocolo há mais de 5 anos');
+                else if (row.status === 'nao_filtrado_nb') m.push('pulado - NB não indicado no filtro');
+                else if (row.status === 'ignorado') m.push('ignorado - espécie na lista de ignorados');
             }
             return m.join(' · ');
         },
@@ -753,6 +811,33 @@ function satPage() {
             this._tiposMsgT = setTimeout(() => { this.tiposMsg = ''; }, 2500);
             // NÃO fecha o modal — o fechamento é só pelo botão "Fechar".
         },
+        async abrirPatIgnorar() {
+            this.patIgnorarNovo = ''; this.patIgnorarMsg = '';
+            try {
+                const j = await (await fetch('/api/sat/pat-ignorar')).json();
+                this.patIgnorar = j.itens || [];
+            } catch (e) { this.patIgnorar = []; }
+            this.patIgnorarModal = true;
+        },
+        addPatIgnorar() {
+            const t = (this.patIgnorarNovo || '').trim();
+            if (!t) return;
+            if (!this.patIgnorar.some(x => x.toLowerCase() === t.toLowerCase())) this.patIgnorar.push(t);
+            this.patIgnorarNovo = '';
+        },
+        delPatIgnorar(i) { this.patIgnorar.splice(i, 1); },
+        async salvarPatIgnorar() {
+            try {
+                const j = await (await fetch('/api/sat/pat-ignorar', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ itens: this.patIgnorar })
+                })).json();
+                if (j.ok) { this.patIgnorar = j.itens || []; this.patIgnorarMsg = 'Alterações salvas ✓'; }
+                else { this.patIgnorarMsg = 'Falha ao salvar'; }
+            } catch (e) { this.patIgnorarMsg = 'Falha ao salvar'; }
+            clearTimeout(this._patIgnMsgT);
+            this._patIgnMsgT = setTimeout(() => { this.patIgnorarMsg = ''; }, 2500);
+        },
         async verificarSessao() {
             // usa a checagem LEVE (/sessao-leve → peek): NÃO lança o navegador.
             this.sessaoBusy = true;
@@ -843,6 +928,14 @@ function satPage() {
             if (b < 1048576) return (b / 1024).toFixed(0) + ' KB';
             return (b / 1048576).toFixed(1) + ' MB';
         },
+        // Data no padrão do projeto: DD-MM-AAAA HH:MM (a partir do ISO "AAAA-MM-DDThh:mm").
+        fmtDataHora(ts) {
+            ts = ts || '';
+            const d = ts.slice(0, 10).split('-');
+            if (d.length !== 3) return '';
+            const hora = ts.slice(11, 16);
+            return `${d[2]}-${d[1]}-${d[0]}` + (hora ? ` ${hora}` : '');
+        },
         async carregarArquivos(p) {
             try {
                 const j = await (await fetch(`/api/sat/${encodeURIComponent(p.paj_norm)}/arquivos`)).json();
@@ -907,7 +1000,8 @@ function satPage() {
                 const url = `/api/sat/${encodeURIComponent(p.paj_norm)}/baixar`
                     + `?cpf=${encodeURIComponent(p.cpf)}&nome=${encodeURIComponent(p.assistido)}`
                     + `&delay=${delay}&bloqueio=${bloqueio}`
-                    + `&pretensao=${encodeURIComponent(p.pretensao || '')}`;
+                    + `&pretensao=${encodeURIComponent(p.pretensao || '')}`
+                    + `&nbs=${encodeURIComponent(p.nbFiltro || '')}`;
                 const es = new EventSource(url); this._es = es;
                 es.addEventListener('log', (ev) => { try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {} });
                 es.addEventListener('done', (ev) => {

@@ -44,6 +44,9 @@ GRUPO_PADRAO = "01 - PREV_DIVPREV"
 SUBPASTA_SAT = "Arquivos SAT"
 SUBPASTA_INSTITUIDOR = "Instituidor"  # dentro de "Arquivos SAT" (download/anexação à parte)
 SUBPASTA_COMPLEMENTAR = "Complementar"  # download complementar (anexado por movimentação)
+# Originais dos PDFs compilados por tipo (espelha sat_client.SUBPASTA_ORIGINAIS_COMPILADOS).
+# Ficam fora da anexação; apagados só APÓS a conclusão da tramitação (ver processar_paj_stream).
+SUBPASTA_ORIGINAIS_COMPILADOS = "Compilados (originais)"
 
 
 # ---------------------------------------------------------------------------
@@ -508,6 +511,18 @@ async def processar_paj_stream(
     detalhe = ("[dry-run] Simulação concluída — nada foi efetivado." if dry_run
                else ("Fluxo concluído: movimentado, tramitado e trâmite concluído."
                      if cc.get("ok") else "Movimentou e tramitou, mas a conclusão falhou."))
+    # Compilação: apagar os PDFs originais SÓ APÓS a anexação/conclusão (o compilado já foi
+    # anexado na movimentação; os originais ficaram numa subpasta não-anexada até aqui).
+    if cc.get("ok") and not dry_run:
+        orig = pasta_arquivos_sat(paj_norm) / SUBPASTA_ORIGINAIS_COMPILADOS
+        if orig.is_dir():
+            n = len(list(orig.glob("*.pdf")))
+            try:
+                shutil.rmtree(orig, ignore_errors=True)
+                yield passo("Limpeza dos originais compilados", True,
+                            f"{n} PDF(s) originais removidos após a anexação do(s) compilado(s).")
+            except Exception as e:  # noqa: BLE001
+                yield passo("Limpeza dos originais compilados", None, str(e))
     _gravar_hist(paj_norm, item, anexos, grupo, resultado, status, detalhe, log)
     yield {"done": True, "resultado": {"ok": bool(dry_run or cc.get("ok")), "status": status, "detalhe": detalhe}}
 

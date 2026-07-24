@@ -81,8 +81,15 @@ async def _stream_processar(paj_norm: str, grupo: str, dry: bool, prazo: int):
             yield {"event": "log", "data": json.dumps(ev, ensure_ascii=False)}
 
 
+def _parse_nbs(nbs: str) -> list[str]:
+    """Divide a lista de NBs informada pelo usuário (separada por vírgula/espaço/;/quebra
+    de linha) numa lista de strings; a normalização p/ dígitos é feita no sat_client."""
+    import re as _re
+    return [t for t in _re.split(r"[\s,;]+", (nbs or "").strip()) if t]
+
+
 async def _stream_baixar(paj_norm: str, cpf: str, nome: str, delay: float,
-                         bloqueio: float, pretensao: str):
+                         bloqueio: float, pretensao: str, nbs: str = ""):
     from ingestao import sat_client
     pasta = str(sat_service.pasta_arquivos_sat(paj_norm))
     # resolve os tipos de documentos a baixar pela PRETENSÃO do PAJ (config por pretensão);
@@ -92,10 +99,25 @@ async def _stream_baixar(paj_norm: str, cpf: str, nome: str, delay: float,
         tipos = _cfg.resolver_sat_tipos(pretensao, sat_client.TIPOS_KEYS)  # type: ignore[name-defined]
     except Exception:  # noqa: BLE001
         tipos = None
+    # compilação por tipo (config "Arquivos SAT Central"); default ligado, limiar 3.
+    compilar, compilar_limiar = True, 3
+    try:
+        _d = _cfg.get_sat_central_defaults()  # type: ignore[name-defined]
+        compilar, compilar_limiar = bool(_d.get("compilar", True)), int(_d.get("compilar_limiar", 3))
+    except Exception:  # noqa: BLE001
+        pass
+    # espécies de PAT a ignorar (lista configurável)
+    pat_ignorar = []
+    try:
+        pat_ignorar = _cfg.get_sat_pat_ignorar()  # type: ignore[name-defined]
+    except Exception:  # noqa: BLE001
+        pat_ignorar = []
     try:
         async for ev in sat_client.baixar_cidadao_stream(
                 cpf, nome, pasta, delay_s=delay, bloqueio_s=bloqueio,
-                tipos=tipos, pretensao=pretensao):
+                tipos=tipos, pretensao=pretensao, nbs=_parse_nbs(nbs),
+                compilar=compilar, compilar_limiar=compilar_limiar,
+                pat_ignorar=pat_ignorar):
             if ev.get("done"):
                 yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
             else:
@@ -172,12 +194,13 @@ async def log_download(paj_norm: str):
 
 @router.get("/api/sat/{paj_norm}/baixar")
 async def baixar(paj_norm: str, cpf: str, nome: str = "", delay: float = 5.0,
-                 bloqueio: float = 45.0, pretensao: str = ""):
+                 bloqueio: float = 45.0, pretensao: str = "", nbs: str = ""):
     """SSE do DOWNLOAD dos documentos do SAT (consulta + Grupos 1 e 2 + PAT). O usuário
     resolve o CAPTCHA na janela do SAT. Salva na pasta do PAJ. `delay` = tempo (s) entre
     consultas (padrão 5s); `bloqueio` = espera (s) ao detectar antirobô (padrão 45s);
-    `pretensao` = define quais tipos de documentos baixar (config por pretensão)."""
-    return EventSourceResponse(_stream_baixar(paj_norm, cpf, nome, delay, bloqueio, pretensao))
+    `pretensao` = define quais tipos de documentos baixar (config por pretensão);
+    `nbs` = filtro inicial por NB (Grupo 2 + PAT), separados por vírgula/espaço."""
+    return EventSourceResponse(_stream_baixar(paj_norm, cpf, nome, delay, bloqueio, pretensao, nbs))
 
 
 async def _stream_baixar_instituidor(paj_norm: str, cpf: str, nome: str,
@@ -213,6 +236,30 @@ async def baixar_instituidor(paj_norm: str, cpf: str, nome: str = "", delay: flo
     novo CAPTCHA na janela). Usado em pretensões derivadas (pensão por morte / auxílio-
     reclusão). Salva na MESMA pasta do PAJ com prefixo 'INSTITUIDOR - '."""
     return EventSourceResponse(_stream_baixar_instituidor(paj_norm, cpf, nome, delay, bloqueio))
+
+
+@router.get("/api/sat/pat-ignorar", response_class=JSONResponse)
+async def api_pat_ignorar_get():
+    """Lista de espécies de processo administrativo (PAT) a ignorar (não baixar)."""
+    try:
+        itens = _cfg.get_sat_pat_ignorar()  # type: ignore[name-defined]
+    except Exception:  # noqa: BLE001
+        itens = []
+    return JSONResponse({"itens": itens})
+
+
+@router.post("/api/sat/pat-ignorar", response_class=JSONResponse)
+async def api_pat_ignorar_set(request: Request):
+    """Salva a lista de espécies de PAT a ignorar."""
+    body = await request.json()
+    itens = body.get("itens") or []
+    if not isinstance(itens, list):
+        itens = []
+    try:
+        itens = _cfg.set_sat_pat_ignorar([str(x) for x in itens])  # type: ignore[name-defined]
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"ok": False, "erro": str(e)}, status_code=500)
+    return JSONResponse({"ok": True, "itens": itens})
 
 
 @router.get("/api/sat/tipos", response_class=JSONResponse)

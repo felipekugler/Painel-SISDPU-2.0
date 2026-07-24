@@ -12,7 +12,6 @@ _CONFIG_FILE = Path(__file__).parent.parent / "painel_config.json"
 _CONFIG_FILE_STR = str(_CONFIG_FILE)
 
 DEFAULTS: dict = {
-    "download_prazos": True,
     "download_narrativa": True,
 }
 
@@ -110,6 +109,8 @@ SAT_PRAZO_MODO_DEFAULT = "sem_prazo"  # "sem_prazo" | "dias"
 SAT_PRAZO_DIAS_DEFAULT = 15           # dias de prazo quando o modo é "dias"
 SAT_TEMPO_ENTRE_DEFAULT = 5           # segundos entre consultas ao SAT
 SAT_ESPERA_BLOQUEIO_DEFAULT = 45      # segundos de espera ao detectar antirobô
+SAT_COMPILAR_DEFAULT = True           # compilar por tipo (CCON/CRER/Laudos) quando > limiar
+SAT_COMPILAR_LIMIAR_DEFAULT = 3       # compilar só quando houver MAIS de N docs do tipo
 
 
 def get_sat_central_defaults() -> dict:
@@ -131,12 +132,19 @@ def get_sat_central_defaults() -> dict:
         bloqueio = int(raw.get("sat_espera_bloqueio", SAT_ESPERA_BLOQUEIO_DEFAULT))
     except Exception:
         bloqueio = SAT_ESPERA_BLOQUEIO_DEFAULT
+    compilar = raw.get("sat_compilar", SAT_COMPILAR_DEFAULT)
+    try:
+        limiar = int(raw.get("sat_compilar_limiar", SAT_COMPILAR_LIMIAR_DEFAULT))
+    except Exception:
+        limiar = SAT_COMPILAR_LIMIAR_DEFAULT
     return {
         "caixa": caixa,
         "prazo_modo": modo,
         "prazo_dias": min(365, max(1, dias)),
         "tempo_entre": min(60, max(0, entre)),
         "espera_bloqueio": min(300, max(0, bloqueio)),
+        "compilar": bool(compilar),
+        "compilar_limiar": min(50, max(1, limiar)),
     }
 
 
@@ -162,8 +170,44 @@ def set_sat_central_defaults(d: dict) -> dict:
             raw["sat_espera_bloqueio"] = min(300, max(0, int(d.get("espera_bloqueio"))))
         except Exception:
             pass
+    if "compilar" in d:
+        raw["sat_compilar"] = bool(d.get("compilar"))
+    if "compilar_limiar" in d:
+        try:
+            raw["sat_compilar_limiar"] = min(50, max(1, int(d.get("compilar_limiar"))))
+        except Exception:
+            pass
     _salvar_raw(raw)
     return get_sat_central_defaults()
+
+
+# --- Espécies de PROCESSO ADMINISTRATIVO (PAT) a IGNORAR (não baixar) ---
+# Lista configurável de nomes de "Serviço" do PAT irrelevantes; comparação por substring
+# normalizada (sem acento). Semeada com 3 exemplos quando a chave nunca foi gravada.
+SAT_PAT_IGNORAR_DEFAULT = [
+    "Alterar Local ou Forma de Pagamento",
+    "Atualizar Cadastro e/ou Benefício",
+    "Bloquear/Desbloquear Benefício para Empréstimo Consignado",
+]
+
+
+def get_sat_pat_ignorar() -> list[str]:
+    v = _ler_raw().get("sat_pat_ignorar")
+    if isinstance(v, list):
+        return [str(x) for x in v]
+    return list(SAT_PAT_IGNORAR_DEFAULT)  # nunca configurado → sementes
+
+
+def set_sat_pat_ignorar(itens: list[str]) -> list[str]:
+    raw = _ler_raw()
+    limpos: list[str] = []
+    for x in (itens or []):
+        s = str(x).strip()
+        if s and s not in limpos:
+            limpos.append(s)
+    raw["sat_pat_ignorar"] = limpos
+    _salvar_raw(raw)
+    return limpos
 
 
 # --- Tipos de documentos do SAT a baixar, POR PRETENSÃO ---
@@ -218,21 +262,6 @@ def resolver_sat_tipos(pretensao: str, todos: list[str]) -> list[str]:
         return por[pretensao]
     pad = get_sat_tipos_padrao()
     return pad if pad is not None else list(todos)
-
-
-def limpar_dados_prazos() -> int:
-    """Apaga o JSONL de prazos pendentes. Retorna o número de registros removidos."""
-    from config import PAJS_DIR as _PAJS_DIR
-    jsonl = _PAJS_DIR / ".pendentes_calendar.jsonl"
-    if not os.path.isfile(str(jsonl)):
-        return 0
-    try:
-        linhas = [l for l in jsonl.read_text(encoding="utf-8").splitlines() if l.strip()]
-        count = len(linhas)
-        jsonl.unlink()
-        return count
-    except Exception:
-        return 0
 
 
 def limpar_dados_narrativa() -> int:
