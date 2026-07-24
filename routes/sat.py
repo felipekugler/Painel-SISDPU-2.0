@@ -367,6 +367,14 @@ async def anexar_complementar(paj_norm: str, id: str = "", assistido: str = ""):
     return EventSourceResponse(_stream_anexar_complementar(paj_norm, id, assistido))
 
 
+@router.post("/api/sat/{paj_norm}/mesclar-complementar", response_class=JSONResponse)
+async def mesclar_complementar(paj_norm: str):
+    """Download complementar em PAJ pendente (ainda NÃO anexado): move os PDFs para a pasta
+    principal e mescla o log/inventário — SEM movimentação. Os arquivos entram no acervo
+    para a futura 'Anexar ao PAJ'."""
+    return JSONResponse(sat_service.mesclar_complementar_pendente(paj_norm))
+
+
 @router.get("/api/sat/grupos", response_class=JSONResponse)
 async def api_grupos(id: str = ""):
     """Lista caixas de grupo da unidade (+ favoritas de config). `id` = id_processo de

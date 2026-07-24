@@ -8,14 +8,8 @@
     <div class="flex items-center justify-between mb-2">
         <h2 class="text-2xl font-bold">
             Arquivos SAT Central
-            <span class="text-base-content/50 text-lg" x-show="!carregando" x-text="'(' + pendentes.length + ')'"></span>
+            <span class="text-base-content/50 text-lg" x-show="verificado && !carregando" x-text="'(' + pendentes.length + ')'"></span>
         </h2>
-        <div class="flex items-center gap-2">
-            <button class="btn btn-sm btn-ghost" @click="recarregar()" :disabled="carregando">
-                <span x-show="carregando" class="loading loading-spinner loading-xs"></span>
-                Atualizar
-            </button>
-        </div>
     </div>
 
     <div class="text-sm text-base-content/60 mb-4">
@@ -111,9 +105,9 @@
         <div class="card-body p-0">
             <div class="flex items-center justify-between px-4 pt-3">
                 <h3 class="font-semibold text-base-content/80">Pendências</h3>
-                <button class="btn btn-sm btn-primary" @click="baixarTodos()"
-                        :disabled="rodando || pendentes.length === 0">
-                    Baixar todos
+                <button class="btn btn-sm btn-primary" @click="recarregar()" :disabled="carregando">
+                    <span x-show="carregando" class="loading loading-spinner loading-xs"></span>
+                    Verificar PAJs pendentes
                 </button>
             </div>
             <div class="overflow-x-auto">
@@ -147,13 +141,19 @@
                                     <span x-show="!p.pretensao" class="text-base-content/40">—</span>
                                 </td>
                                 <td>
-                                    <button x-show="p.n_arquivos > 0" class="badge badge-success badge-sm" style="cursor:pointer"
-                                            @click="toggleDocs(p)"
-                                            :title="docsAbertos[p.paj_norm] ? 'Ocultar documentos' : 'Ver documentos baixados'">
-                                        <span x-text="p.n_arquivos + ' arquivo(s)'"></span>
-                                        <span x-text="docsAbertos[p.paj_norm] ? '▲' : '▼'"></span>
-                                    </button>
-                                    <span x-show="p.n_arquivos === 0" class="badge badge-ghost badge-sm">Aguardando download</span>
+                                    <div class="inline-flex items-center gap-1.5">
+                                        <span x-show="p.n_arquivos > 0"
+                                              class="badge badge-success badge-sm gap-1 whitespace-nowrap cursor-pointer"
+                                              @click="toggleDocs(p)"
+                                              :title="docsAbertos[p.paj_norm] ? 'Ocultar documentos' : 'Ver documentos baixados'">
+                                            <span x-text="p.n_arquivos + ' arquivo(s)'"></span>
+                                            <span class="text-[10px]" x-text="docsAbertos[p.paj_norm] ? '▲' : '▼'"></span>
+                                        </span>
+                                        <span x-show="p.n_arquivos === 0" class="badge badge-ghost badge-sm whitespace-nowrap">Aguardando download</span>
+                                        <!-- ponto vermelho: houve falha no download (clique abre o log) -->
+                                        <span x-show="p.tem_falha" class="sat-falha-dot" @click.stop="verLogDownload(p)"
+                                              title="Houve falha no último download — clique para ver o log"></span>
+                                    </div>
                                 </td>
                                 <td>
                                     <button x-show="p.tem_log || logsDownload[p.paj_norm]" class="btn btn-ghost btn-xs"
@@ -162,9 +162,9 @@
                                 </td>
                                 <td class="text-right whitespace-nowrap">
                                     <button class="btn btn-sm btn-primary" :disabled="rodando || !p.cpf"
-                                            @click="baixar(p)"
-                                            :title="p.cpf ? 'Baixar os documentos do SAT Central (pelo assistente)' : 'Sem CPF do assistido — sincronize a caixa do SISDPU (dashboard) antes de baixar'">
-                                        Baixar arquivos do SAT Central
+                                            @click="p.n_arquivos > 0 ? abrirBaixarMais(p, 'pendente') : baixar(p)"
+                                            :title="!p.cpf ? 'Sem CPF do assistido — sincronize a caixa do SISDPU (dashboard) antes de baixar' : (p.n_arquivos > 0 ? 'Baixar mais documentos do SAT (escolher o que baixar) — junta ao acervo pendente' : 'Baixar os documentos do SAT Central')">
+                                        <span x-text="p.n_arquivos > 0 ? 'Baixar mais' : 'Baixar arquivos'"></span>
                                     </button>
                                     <div x-show="!p.cpf" class="text-[11px] text-warning mt-1">⚠ sem CPF — sincronize o PAJ</div>
                                     <button x-show="ehDerivada(p.pretensao)" class="btn btn-sm btn-outline ml-1" :disabled="rodando"
@@ -236,7 +236,12 @@
                         </tbody>
                     </template>
                     <tbody>
-                        <tr x-show="!carregando && pendentes.length === 0">
+                        <tr x-show="!carregando && !verificado">
+                            <td colspan="7" class="text-center text-base-content/40 py-6">
+                                Clique em <strong>Verificar PAJs pendentes</strong> para consultar a caixa de entrada do SISDPU.
+                            </td>
+                        </tr>
+                        <tr x-show="!carregando && verificado && pendentes.length === 0">
                             <td colspan="7" class="text-center text-base-content/40 py-6">Nenhuma pendência de juntada do SAT na caixa.</td>
                         </tr>
                         <tr x-show="carregando">
@@ -337,6 +342,28 @@
         </div>
     </div>
 
+    <!-- Modal: sessão do SAT não conectada (ao tentar baixar sem login) -->
+    <div class="modal" :class="{'modal-open': naoLogadoModal}">
+        <div class="modal-box max-w-md">
+            <h3 class="font-bold text-lg mb-2">⚠ Sessão do SAT não conectada</h3>
+            <p class="text-sm text-base-content/70">
+                Para baixar os documentos é preciso estar <strong>logado no SAT Central</strong>.
+                Clique em <strong>Abrir SAT / Login</strong>, faça o login (usuário / senha / 2FA) e
+                resolva o <strong>CAPTCHA</strong> na janela que abrir. Depois, volte e clique em
+                <strong>Baixar arquivos</strong> novamente.
+            </p>
+            <div class="modal-action">
+                <button class="btn btn-primary btn-sm" @click="naoLogadoModal=false; abrirSat()"
+                        :disabled="sessaoBusy">
+                    <span x-show="sessaoBusy" class="loading loading-spinner loading-xs"></span>
+                    Abrir SAT / Login
+                </button>
+                <button class="btn btn-sm" @click="naoLogadoModal=false">Fechar</button>
+            </div>
+        </div>
+        <div class="modal-backdrop" @click="naoLogadoModal=false"></div>
+    </div>
+
     <!-- Modal: CPF do instituidor (benefícios derivados) -->
     <div class="modal" :class="{'modal-open': instModal}">
         <div class="modal-box max-w-md">
@@ -368,10 +395,16 @@
     <div class="modal" :class="{'modal-open': baixarMaisModal}">
         <div class="modal-box max-w-[50vw]">
             <h3 class="font-bold text-lg mb-1">Baixar mais documentos — <span class="font-mono" x-text="bmAlvo && bmAlvo.paj"></span></h3>
-            <p class="text-sm text-base-content/70 mb-3">
+            <p class="text-sm text-base-content/70 mb-3" x-show="bmModo === 'concluido'">
                 Nova consulta ao SAT para <strong x-text="bmAlvo && bmAlvo.assistido"></strong>. Os selecionados
                 serão baixados e anexados por uma <strong>nova movimentação</strong> (sem tramitar/concluir) —
                 registrado como "download complementar". Você resolve o CAPTCHA na janela.
+            </p>
+            <p class="text-sm text-base-content/70 mb-3" x-show="bmModo === 'pendente'">
+                Nova consulta ao SAT para <strong x-text="bmAlvo && bmAlvo.assistido"></strong>. Os selecionados
+                serão baixados e <strong>juntados ao acervo pendente</strong> deste PAJ (entram na futura
+                <em>Anexar ao PAJ</em>) — <strong>sem</strong> movimentação agora. Registrado no log como
+                complementar. Você resolve o CAPTCHA na janela.
             </p>
             <div class="flex items-center gap-2 mb-2 flex-wrap">
                 <span class="text-sm font-medium">CPF:</span>
@@ -388,7 +421,7 @@
                 <template x-for="cl in bmLista" :key="cl.grupo">
                     <div>
                         <div class="text-xs font-semibold text-base-content/60 mb-1" x-text="cl.grupo"></div>
-                        <template x-for="row in cl.rows" :key="row.alvo">
+                        <template x-for="(row, ri) in cl.rows" :key="cl.grupo + '#' + ri + '#' + row.alvo">
                             <label class="flex items-center gap-2 text-sm py-0.5"
                                    :class="row.ja_baixado ? 'opacity-60' : 'cursor-pointer'">
                                 <input type="checkbox" class="checkbox checkbox-sm" :value="row.alvo"
@@ -403,7 +436,8 @@
                 </template>
             </div>
             <div class="modal-action">
-                <button class="btn btn-primary btn-sm" :disabled="!bmCpf || bmSel.length===0" @click="baixarMais()">Baixar e anexar</button>
+                <button class="btn btn-primary btn-sm" :disabled="!bmCpf || bmSel.length===0" @click="baixarMais()"
+                        x-text="bmModo === 'pendente' ? 'Baixar e juntar ao acervo' : 'Baixar e anexar'"></button>
                 <button class="btn btn-sm" @click="baixarMaisModal=false">Cancelar</button>
             </div>
         </div>
@@ -580,6 +614,16 @@
     padding: 6px 10px;
 }
 .nb-filtro-hint { color: var(--fallback-bc, oklch(var(--bc)/0.6)); }
+/* Ponto vermelho de falha ao lado do badge de documentos (clicável → abre o log) */
+.sat-falha-dot {
+    display: inline-block;
+    width: 9px; height: 9px;
+    border-radius: 50%;
+    background: #e2574c;
+    box-shadow: 0 0 0 2px rgba(226, 87, 76, 0.25);
+    cursor: pointer;
+    flex: 0 0 auto;
+}
 /* Tabela de documentos baixados (accordion) — fonte menor e linhas compactas */
 .sat-docs { font-size: 11.5px; }
 .sat-docs td, .sat-docs th { padding-top: 3px; padding-bottom: 3px; }
@@ -590,11 +634,12 @@ function satPage() {
         pendentes: [], historico: [], favoritos: [], grupos: [],
         padrao: '01 - PREV_DIVPREV', grupoSel: '01 - PREV_DIVPREV',
         comPrazo: false, prazoDias: 15,
+        verificado: false,
         carregando: false, carregandoGrupos: false, rodando: false,
         sseAberto: false, sseLog: [], sseStatus: '', sseFechavel: false, _es: null, sseTipo: '',
         logAberto: false, logAtual: [],
         baixarModal: false, baixarLista: [], copiado: false,
-        sessaoOk: false, sessaoBusy: false, sessaoMsg: '',
+        sessaoOk: false, sessaoBusy: false, sessaoMsg: '', naoLogadoModal: false,
         tempoEntre: 5, esperaBloqueio: 45,
         logsDownload: {}, logDlAberto: false, logDlItens: [], logDlTitulo: '',
         docsAbertos: {}, docsArquivos: {},
@@ -604,7 +649,7 @@ function satPage() {
         tiposInstituidor: null, tiposInstituidorDefault: [],
         patIgnorarModal: false, patIgnorar: [], patIgnorarNovo: '', patIgnorarMsg: '',
         instModal: false, instCpf: '', instNome: '', instAlvo: null,
-        baixarMaisModal: false, bmAlvo: null, bmCpf: '', bmSel: [], bmLista: [], bmCarregando: false,
+        baixarMaisModal: false, bmAlvo: null, bmCpf: '', bmSel: [], bmLista: [], bmCarregando: false, bmModo: 'concluido',
 
         async init() {
             // NÃO abrir o navegador ao carregar a aba: checagem LEVE (peek) só LÊ o estado
@@ -612,7 +657,8 @@ function satPage() {
             this.verificarSessao();
             await this.carregarPrefs();
             this.carregarTipos();
-            await this.recarregar();
+            // A busca de PAJs pendentes na caixa NÃO é automática: só pelo botão
+            // "Verificar PAJs pendentes" (evita consultar o SISDPU ao abrir a aba).
             this.carregarHistorico();
             // atualização automática do selo de sessão (checagem LEVE, não navega)
             setInterval(() => this.verificarSessaoLeve(), 5000);
@@ -646,7 +692,7 @@ function satPage() {
         baixarInstituidor() {
             const p = this.instAlvo;
             if (!p || !this.instCpf) return;
-            if (!this.sessaoOk) { this.sessaoMsg = 'Faça o login no SAT primeiro (botão "Abrir SAT / Login").'; return; }
+            if (!this.sessaoOk) { this.instModal = false; this.naoLogadoModal = true; return; }
             this.instModal = false;
             const cpf = this.instCpf, nome = this.instNome;
             this.rodando = true; this.sseTipo = 'download';
@@ -670,7 +716,10 @@ function satPage() {
                 es.close(); this._es = null;
             };
         },
-        async abrirBaixarMais(r) {
+        async abrirBaixarMais(r, modo = 'concluido') {
+            // modo 'concluido' = PAJ já anexado (histórico) → baixa+anexa (movimentação).
+            // modo 'pendente'  = PAJ ainda não anexado → baixa e junta ao acervo pendente.
+            this.bmModo = modo;
             this.bmAlvo = r; this.bmCpf = r.cpf || ''; this.bmSel = []; this.bmLista = [];
             this.baixarMaisModal = true; this.bmCarregando = true;
             try {
@@ -682,15 +731,26 @@ function satPage() {
         },
         _montarBmLista(itens, tipos) {
             const grupos = []; tipos.forEach(t => { if (!grupos.includes(t.grupo)) grupos.push(t.grupo); });
-            const vis = itens.filter(it => !['sem_dados', 'descartado', 'pulado_prazo'].includes(it.status));
+            // Oculta só o que não faz sentido rebaixar: sem_dados (SAT sem documento) e
+            // descartado (subtarefa/duplicata). Os pulado_prazo (PAT >5 anos) APARECEM —
+            // podem ser baixados por pedido explícito (a regra dos 5 anos não vale aqui).
+            const vis = itens.filter(it => !['sem_dados', 'descartado'].includes(it.status));
             const out = [];
             grupos.forEach(g => {
                 const rows = [];
                 tipos.filter(t => t.grupo === g).forEach(t => {
                     vis.filter(it => it.key === t.key).forEach(it => {
+                        let label;
+                        if (it.key === 'pat') {
+                            // PAT: sempre mostrar tipo de serviço + protocolo
+                            const svc = it.servico || 'Tarefa PAT';
+                            label = svc + (it.sub ? (' — protocolo ' + it.sub) : '');
+                        } else {
+                            label = t.label + (it.sub ? (' — ' + it.sub) : '');
+                        }
                         rows.push({
                             alvo: it.key + '|' + (it.sub || ''),
-                            label: t.label + (it.sub ? (' — ' + it.sub) : ''),
+                            label: label,
                             status: it.status, ja_baixado: it.ja_baixado, ja_anexado: it.ja_anexado,
                         });
                     });
@@ -720,7 +780,7 @@ function satPage() {
         baixarMais() {
             const r = this.bmAlvo;
             if (!r || !this.bmCpf || this.bmSel.length === 0) return;
-            if (!this.sessaoOk) { this.sessaoMsg = 'Faça o login no SAT primeiro (botão "Abrir SAT / Login").'; return; }
+            if (!this.sessaoOk) { this.baixarMaisModal = false; this.naoLogadoModal = true; return; }
             this.baixarMaisModal = false;
             const cpf = this.bmCpf, alvos = this.bmSel.join(',');
             const delay = Math.max(0, Number(this.tempoEntre) || 0);
@@ -738,9 +798,28 @@ function satPage() {
                 const baixou = res && Array.isArray(res.salvos) && res.salvos.length;
                 if (!baixou) {
                     this.sseStatus = '— nada baixado (sem novos documentos)';
-                    this.sseFechavel = true; this.rodando = false; return;
+                    this.sseFechavel = true; this.rodando = false;
+                    if (this.bmModo === 'pendente') this.recarregar();
+                    return;
                 }
-                // encadeia a anexação (movimentação) do complementar
+                if (this.bmModo === 'pendente') {
+                    // PAJ ainda NÃO anexado: junta os PDFs ao acervo pendente (SEM movimentação).
+                    this.sseTipo = 'processar';
+                    this.sseStatus = '— juntando ao acervo do PAJ';
+                    this.sseLog.push({ level: 'novo', msg: 'Juntando os documentos complementares ao acervo pendente (sem anexação)…' });
+                    fetch(`/api/sat/${encodeURIComponent(r.paj_norm)}/mesclar-complementar`, { method: 'POST' })
+                        .then(x => x.json()).then(j => {
+                            this.sseLog.push({ level: 'ok', msg: `✓ ${(j.movidos || []).length} documento(s) juntado(s) ao acervo. Total agora: ${j.n_arquivos}.` });
+                            this.sseStatus = '— concluído ✓';
+                            this.sseFechavel = true; this.rodando = false;
+                            this.recarregar();
+                        }).catch(() => {
+                            this.sseLog.push({ level: 'erro', msg: 'Falha ao juntar os documentos ao acervo.' });
+                            this.sseStatus = '— com aviso'; this.sseFechavel = true; this.rodando = false;
+                        });
+                    return;
+                }
+                // modo 'concluido': encadeia a anexação (movimentação) do complementar
                 this.sseTipo = 'processar';  // não é mais download (esconde "Cancelar")
                 this.sseStatus = '— anexando (complementar)';
                 this.sseLog.push({ level: 'novo', msg: 'Anexando os documentos complementares (movimentação)…' });
@@ -893,7 +972,8 @@ function satPage() {
             try {
                 const j = await (await fetch('/api/sat/pendentes')).json();
                 this.pendentes = j.itens || [];
-            } catch (e) { this.pendentes = []; }
+                this.verificado = true;
+            } catch (e) { this.pendentes = []; this.verificado = true; }
             finally { this.carregando = false; }
         },
         async carregarHistorico() {
@@ -989,7 +1069,7 @@ function satPage() {
                 return Promise.resolve();
             }
             if (!this.sessaoOk) {
-                this.sessaoMsg = 'Faça o login no SAT primeiro (botão "Abrir SAT / Login").';
+                this.naoLogadoModal = true;
                 return Promise.resolve();
             }
             return new Promise((resolve) => {
@@ -1019,14 +1099,6 @@ function satPage() {
                 };
             });
         },
-        async baixarTodos() {
-            if (!this.sessaoOk) { this.sessaoMsg = 'Faça o login no SAT primeiro.'; return; }
-            for (const p of this.pendentes.slice()) {
-                await this.baixar(p);
-            }
-            await this.recarregar();
-        },
-
         processar(p) {
             if (this.rodando) return;
             return new Promise((resolve) => {
@@ -1052,13 +1124,6 @@ function satPage() {
                     es.close(); this._es = null; resolve({ok: false});
                 };
             });
-        },
-        async processarTodos() {
-            const alvos = this.pendentes.filter(p => p.n_arquivos > 0);
-            for (const p of alvos) {
-                await this.processar(p);
-            }
-            await this.recarregar();
         },
         sseFechar() {
             if (this._es) { this._es.close(); this._es = null; }

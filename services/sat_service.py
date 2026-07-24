@@ -223,16 +223,53 @@ def _inventario_de_log(d: dict) -> list[dict]:
     return inv
 
 
+_STATUS_FALHA = {"falha", "antirobo", "indisponivel"}
+
+
+def _download_tem_falha(paj_norm: str) -> bool:
+    """True se o último log de download registrou FALHA real (status de erro no inventário
+    ou evento de nível 'erro'). Skips intencionais (ignorado/pulado/sem_dados/etc.) NÃO
+    contam como falha."""
+    p = pasta_arquivos_sat(paj_norm) / "_log_download.json"
+    if not os.path.isfile(str(p)):
+        return False
+    try:
+        d = json.loads(p.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return False
+    if any(it.get("status") in _STATUS_FALHA for it in (d.get("inventario") or [])):
+        return True
+    return any(ev.get("level") == "erro" for ev in (d.get("eventos") or []))
+
+
+def _pat_servico_map(d: dict) -> dict:
+    """Mapa {protocolo: serviço} do PAT, reconstruído dos nomes/textos do log — para exibir
+    o tipo de serviço no "Baixar mais" mesmo em logs sem o campo `rotulo`.
+    Nomes de arquivo: 'PROCADM <Serviço> - ... PROT <prot>'; pulados: 'PAT <Serviço>
+    (protocolo <prot>)'."""
+    mapa: dict[str, str] = {}
+    for nome in d.get("salvos", []) or []:
+        m = re.search(r"PROCADM\s+(.+?)\s+-\s+.*?PROT\s+(\d{5,})", nome, re.I)
+        if m:
+            mapa.setdefault(m.group(2), m.group(1).strip())
+    for p in d.get("pulados", []) or []:
+        m = re.search(r"PAT\s+(.+?)\s+\(protocolo\s+(\d{5,})\)", p, re.I)
+        if m:
+            mapa.setdefault(m.group(2), m.group(1).strip())
+    return mapa
+
+
 def inventario_paj(paj_norm: str) -> dict:
     """Inventário dos documentos revelados no SAT (1º download) + marcas ja_baixado /
     ja_anexado. Usa `inventario` do log (novos) ou reconstrói de salvos/pulados (antigos)."""
     log_p = pasta_arquivos_sat(paj_norm) / "_log_download.json"
-    cpf, inv = "", []
+    cpf, inv, pat_serv = "", [], {}
     if os.path.isfile(str(log_p)):
         try:
             d = json.loads(log_p.read_text(encoding="utf-8"))
             cpf = d.get("cpf", "") or ""
             inv = d.get("inventario") or _inventario_de_log(d)
+            pat_serv = _pat_servico_map(d)  # {protocolo: serviço} p/ rótulo do PAT
         except Exception:  # noqa: BLE001
             inv = []
     if not cpf:
@@ -249,11 +286,33 @@ def inventario_paj(paj_norm: str) -> dict:
                 listar_arquivos_complementar(paj_norm)):
         for a in lst:
             baixados.add(a["nome"])
-    itens = []
+    # dedup por (key, sub) — a paginação do PAT pode revelar o mesmo protocolo 2x; itens
+    # duplicados quebravam o x-for do "Baixar mais" (chave repetida). Preferência de status:
+    # baixado > qualquer outro (mantém o registro mais informativo).
+    _PRIO = {"baixado": 3}
+    dedup: dict[tuple, dict] = {}
     for it in inv:
+        chave = (it.get("key", ""), it.get("sub", ""))
+        atual = dedup.get(chave)
+        if atual is None:
+            dedup[chave] = dict(it)
+            continue
+        # preserva o rótulo/serviço se o vencedor atual não tiver
+        if not atual.get("rotulo") and it.get("rotulo"):
+            atual["rotulo"] = it["rotulo"]
+        # troca o vencedor SÓ quando o novo tem status de prioridade MAIOR (baixado manda)
+        if _PRIO.get(it.get("status", ""), 0) > _PRIO.get(atual.get("status", ""), 0):
+            novo = dict(it)
+            if not novo.get("rotulo") and atual.get("rotulo"):
+                novo["rotulo"] = atual["rotulo"]
+            dedup[chave] = novo
+    itens = []
+    for it in dedup.values():
         nome = it.get("nome", "")
+        key, sub = it.get("key", ""), it.get("sub", "")
+        servico = it.get("rotulo", "") or (pat_serv.get(sub, "") if key == "pat" else "")
         itens.append({
-            "key": it.get("key", ""), "sub": it.get("sub", ""), "nome": nome,
+            "key": key, "sub": sub, "nome": nome, "servico": servico,
             "status": it.get("status", ""),
             "ja_baixado": bool(it.get("status") == "baixado" and (not nome or nome in baixados)),
             "ja_anexado": bool(nome and nome in anexados),
@@ -378,6 +437,7 @@ async def listar_pendentes() -> dict:
             "tem_pasta": _pasta_paj(paj_norm).exists(),
             "sincronizado": bool(meta),
             "tem_log": (pasta_arquivos_sat(paj_norm) / "_log_download.json").exists(),
+            "tem_falha": _download_tem_falha(paj_norm),
             "ja_processado": bool(ja and ja.get("status") == "concluido"),
         }
         # FALLBACK: PAJ ainda NÃO sincronizado (sem metadata) → sem CPF/pretensão local.
@@ -614,6 +674,65 @@ async def processar_complementar_stream(
                 shutil.move(a["caminho"], str(destino / Path(a["caminho"]).name))
             except Exception:  # noqa: BLE001
                 pass
+
+
+def mesclar_complementar_pendente(paj_norm: str) -> dict:
+    """Download complementar em PAJ AINDA NÃO ANEXADO: move os PDFs da subpasta
+    'Complementar' para a pasta principal (juntam-se ao acervo pendente, para entrarem na
+    futura movimentação) e MESCLA o log/inventário no _log_download.json principal —
+    upsert do inventário por (key, sub), salvos/pulados somados e eventos anexados com um
+    marcador (log complementar visível no mesmo visualizador). SEM movimentação. Retorna
+    {ok, movidos, n_arquivos}."""
+    comp = pasta_complementar(paj_norm)
+    principal = pasta_arquivos_sat(paj_norm)
+    principal.mkdir(parents=True, exist_ok=True)
+    movidos: list[str] = []
+    if comp.is_dir():
+        for f in sorted(comp.glob("*.pdf")):
+            try:
+                shutil.move(str(f), str(principal / f.name))
+                movidos.append(f.name)
+            except Exception:  # noqa: BLE001
+                pass
+
+    def _ler(p):
+        try:
+            return json.loads(p.read_text(encoding="utf-8")) if os.path.isfile(str(p)) else {}
+        except Exception:  # noqa: BLE001
+            return {}
+
+    main = _ler(principal / "_log_download.json")
+    cdata = _ler(comp / "_log_download.json")
+    if cdata:
+        salvos = list(main.get("salvos", []) or [])
+        for s in cdata.get("salvos", []) or []:
+            if s not in salvos:
+                salvos.append(s)
+        main["salvos"] = salvos
+        inv = list(main.get("inventario", []) or [])
+        idx = {(it.get("key"), it.get("sub")): i for i, it in enumerate(inv)}
+        for it in cdata.get("inventario", []) or []:
+            chave = (it.get("key"), it.get("sub"))
+            if chave in idx:
+                inv[idx[chave]] = it   # comp é mais novo → prevalece
+            else:
+                inv.append(it); idx[chave] = len(inv) - 1
+        main["inventario"] = inv
+        main["pulados"] = list(main.get("pulados", []) or []) + list(cdata.get("pulados", []) or [])
+        ev = list(main.get("eventos", []) or [])
+        ev.append({"level": "novo",
+                   "msg": f"── Download complementar (pendência) — "
+                          f"{datetime.now():%d-%m-%Y %H:%M} ──"})
+        ev.extend(cdata.get("eventos", []) or [])
+        main["eventos"] = ev
+        try:
+            (principal / "_log_download.json").write_text(
+                json.dumps(main, ensure_ascii=False, indent=2), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+    with __import__("contextlib").suppress(Exception):
+        shutil.rmtree(comp, ignore_errors=True)
+    return {"ok": True, "movidos": movidos, "n_arquivos": len(listar_arquivos_sat(paj_norm))}
 
 
 def _gravar_hist(paj_norm, item, anexos, grupo, resultado, status, detalhe, log) -> None:

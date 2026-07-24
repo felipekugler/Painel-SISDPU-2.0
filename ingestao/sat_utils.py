@@ -163,11 +163,14 @@ def _nome_procadm(servico, campos, prefixo=''):
     return nome_final(prefixo + base) + '.pdf'
 
 
-def processar_pat(pasta_temp, pasta_dest, mapa, prefixo='', nbs=None):
+def processar_pat(pasta_temp, pasta_dest, mapa, prefixo='', nbs=None,
+                  aplicar_regra_5anos=True):
     """mapa: {arquivo_temp: {'servico':..., 'protocolo': <prot da linha>}}. `prefixo`
     é anteposto ao nome final (ex.: 'INSTITUIDOR - '). `nbs` = conjunto de NBs (só
     dígitos) indicados pelo usuário; se fornecido, processos cujo NB não esteja no
-    conjunto (inclusive sem NB) são pulados.
+    conjunto (inclusive sem NB) são pulados. `aplicar_regra_5anos` = quando False, NÃO
+    descarta por antiguidade (usado em pedidos EXPLÍCITOS/complementares, orientados pelo
+    usuário, que devem baixar independentemente da idade).
 
     Retorna (mantidos, descartados, pulados_prazo, pulados_nb):
     - mantidos:      [(arquivo_temp, nome_final)] movidos para a pasta destino;
@@ -203,9 +206,10 @@ def processar_pat(pasta_temp, pasta_dest, mapa, prefixo='', nbs=None):
 
         # Regra: não baixar processo administrativo (PAT) com mais de 5 anos,
         # considerando a Data de entrada do protocolo. Descarta o grupo inteiro
-        # (principal + subtarefas) e registra o motivo para o log.
+        # (principal + subtarefas) e registra o motivo para o log. NÃO se aplica a
+        # pedidos explícitos/complementares (aplicar_regra_5anos=False).
         der = campos.get('der', '')
-        if _mais_de_5_anos(_der_para_data(der)):
+        if aplicar_regra_5anos and _mais_de_5_anos(_der_para_data(der)):
             _apagar(arquivos)
             pulados_prazo.append((principal,
                                   f'protocolo {prot_int} ({servico}) — pulado - protocolo há '

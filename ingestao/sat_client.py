@@ -235,8 +235,10 @@ def _pat_ignorado(servico: str) -> bool:
     return bool(s) and any(_norm(t) in s for t in _PAT_IGNORAR if str(t).strip())
 
 
-def _inv_add(key: str, sub: str, nome: str, status: str) -> None:
-    _INVENTARIO.append({"key": key, "sub": (sub or ""), "nome": (nome or ""), "status": status})
+def _inv_add(key: str, sub: str, nome: str, status: str, rotulo: str = "") -> None:
+    # `rotulo` = rótulo humano do item (ex.: o Serviço do PAT), para exibir no "Baixar mais".
+    _INVENTARIO.append({"key": key, "sub": (sub or ""), "nome": (nome or ""),
+                        "status": status, "rotulo": (rotulo or "")})
 
 
 async def _ritmo(page) -> None:
@@ -918,6 +920,7 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
     mapa: dict[str, dict] = {}
     seq = 0
     pagina = 1
+    vistos: set[str] = set()  # protocolos já processados (evita duplicatas na paginação)
     while True:
         linhas = await page.evaluate(_JS_LINHAS_MODAL)
         for i, row in enumerate(linhas):
@@ -926,13 +929,17 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
             if prot_i is None:
                 continue  # cabeçalho / linha "nenhum registro"
             prot = cells[prot_i]
+            # dedup: se este protocolo já foi processado (relido na paginação), pula.
+            if prot in vistos:
+                continue
+            vistos.add(prot)
             # download por SUBITEM (complementar): só as tarefas escolhidas (ou "pat|" = todas).
             if _ALVOS is not None and f"pat|{prot}" not in _ALVOS and "pat|" not in _ALVOS:
                 continue
             servico = cells[prot_i + 1] if prot_i + 1 < len(cells) else ""
             # Espécies de PAT irrelevantes (lista de ignorados): pula ANTES de baixar.
             if _pat_ignorado(servico):
-                _inv_add("pat", prot, "", "ignorado")
+                _inv_add("pat", prot, "", "ignorado", rotulo=servico)
                 pulados.append(f"PAT {servico} (protocolo {prot}) — ignorado (espécie na lista de ignorados)")
                 yield reg(f"  – tarefa {prot} ({servico}): ignorada (espécie de processo "
                           f"administrativo na lista de ignorados)", "muted")
@@ -949,18 +956,18 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
                 ok = await _baixar_aba(ctx, nova, str(tmp / tmpnome))
                 if ok:
                     mapa[tmpnome] = {"servico": servico, "protocolo": prot}
-                    yield reg(f"  ↓ tarefa {prot} baixada", "muted")
+                    yield reg(f"  ↓ tarefa {prot} ({servico}) baixada", "muted")
                 else:
-                    _inv_add("pat", prot, "", "falha")
+                    _inv_add("pat", prot, "", "falha", rotulo=servico)
                     yield reg(f"  ✗ tarefa {prot}: falha no download", "erro")
             elif desf == "sem_dados":
-                _inv_add("pat", prot, "", "sem_dados")
+                _inv_add("pat", prot, "", "sem_dados", rotulo=servico)
                 yield reg(f"  – tarefa {prot}: sem dados", "muted")
             elif desf == "indisponivel":
-                _inv_add("pat", prot, "", "indisponivel")
+                _inv_add("pat", prot, "", "indisponivel", rotulo=servico)
                 yield reg(f"  – tarefa {prot}: {msg or 'documento indisponível'}", "muted")
             else:
-                _inv_add("pat", prot, "", "antirobo")
+                _inv_add("pat", prot, "", "antirobo", rotulo=servico)
                 yield reg(f"  ✗ tarefa {prot}: proteção antirobô — não recuperado", "erro")
         avancou = await page.evaluate(_JS_PAG_PROX)
         if not avancou:
@@ -977,8 +984,11 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
         yield reg("  – PAT: nenhuma tarefa encontrada", "muted")
     else:
         try:
+            # Em pedidos EXPLÍCITOS/complementares (o usuário escolheu os itens, _ALVOS
+            # definido), a regra dos 5 anos NÃO se aplica — baixa independentemente da idade.
             mant, desc, pul_prazo, pul_nb = sat_utils.processar_pat(
-                str(tmp), pasta_destino, mapa, _ROTULO_ARQ, _NB_FILTRO)
+                str(tmp), pasta_destino, mapa, _ROTULO_ARQ, _NB_FILTRO,
+                aplicar_regra_5anos=(_ALVOS is None))
             yield reg(f"  PAT: {len(mapa)} tarefa(s) baixada(s) → {len(mant)} principal(is) "
                       f"mantido(s), {len(desc)} descartada(s) (subtarefa/duplicata)"
                       + (f", {len(pul_prazo)} pulado(s) (>5 anos)" if pul_prazo else "")
@@ -986,17 +996,21 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
                       "novo")
             for _f, nm in mant:
                 salvos.append(nm)
-                _inv_add("pat", mapa.get(_f, {}).get("protocolo", ""), nm, "baixado")
+                _inv_add("pat", mapa.get(_f, {}).get("protocolo", ""), nm, "baixado",
+                         rotulo=mapa.get(_f, {}).get("servico", ""))
                 yield reg(f"  ✓ {nm}", "ok")
             for _a, motivo in desc:
-                _inv_add("pat", mapa.get(_a, {}).get("protocolo", ""), "", "descartado")
+                _inv_add("pat", mapa.get(_a, {}).get("protocolo", ""), "", "descartado",
+                         rotulo=mapa.get(_a, {}).get("servico", ""))
                 yield reg(f"  🗑 {motivo}", "muted")
             for _p, motivo in pul_prazo:
-                _inv_add("pat", mapa.get(_p, {}).get("protocolo", ""), "", "pulado_prazo")
+                _inv_add("pat", mapa.get(_p, {}).get("protocolo", ""), "", "pulado_prazo",
+                         rotulo=mapa.get(_p, {}).get("servico", ""))
                 pulados.append(f"PAT {motivo}")
                 yield reg(f"  ↷ {motivo}", "muted")
             for _p, motivo in pul_nb:
-                _inv_add("pat", mapa.get(_p, {}).get("protocolo", ""), "", "nao_filtrado_nb")
+                _inv_add("pat", mapa.get(_p, {}).get("protocolo", ""), "", "nao_filtrado_nb",
+                         rotulo=mapa.get(_p, {}).get("servico", ""))
                 pulados.append(f"PAT {motivo}")
                 yield reg(f"  ↷ {motivo}", "muted")
         except Exception as e:  # noqa: BLE001
