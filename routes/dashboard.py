@@ -23,6 +23,13 @@ async def dashboard(request: Request):
     return HTMLResponse(html)
 
 
+@router.get("/api/pajs/count", response_class=JSONResponse)
+async def api_pajs_count():
+    """Retorna a contagem de PAJs na caixa atual."""
+    pajs = listar_pajs(incluir_concluidos=False)
+    return {"count": len(pajs)}
+
+
 @router.get("/api/pajs", response_class=JSONResponse)
 async def api_pajs(concluidos: int = 0, arquivados: int = 0):
     """Lista PAJs pro dashboard.
