@@ -99,6 +99,73 @@ def del_grupo_favorito(grupo: str) -> list[str]:
     return favs
 
 
+# --- Valores padrão da aba "Arquivos SAT Central" ---
+# Caixa de tramitação padrão, modo/quantidade de prazo, tempo entre consultas e
+# espera após bloqueio anti-robô. Todos assumem o valor de fábrica quando ausentes
+# (comportamento original do painel). É uma padronização ESPECÍFICA da aba: o nº de
+# dias usa a chave própria `sat_prazo_dias`, independente do prazo geral de tramitação
+# (`prazo_tramitacao_padrao`, editado em "Preferências de tramitação").
+SAT_CAIXA_PADRAO_DEFAULT = "01 - PREV_DIVPREV"
+SAT_PRAZO_MODO_DEFAULT = "sem_prazo"  # "sem_prazo" | "dias"
+SAT_PRAZO_DIAS_DEFAULT = 15           # dias de prazo quando o modo é "dias"
+SAT_TEMPO_ENTRE_DEFAULT = 5           # segundos entre consultas ao SAT
+SAT_ESPERA_BLOQUEIO_DEFAULT = 45      # segundos de espera ao detectar antirobô
+
+
+def get_sat_central_defaults() -> dict:
+    """Defaults invocados pelos elementos da aba Arquivos SAT Central."""
+    raw = _ler_raw()
+    caixa = str(raw.get("sat_caixa_padrao") or "").strip() or SAT_CAIXA_PADRAO_DEFAULT
+    modo = raw.get("sat_prazo_modo")
+    if modo not in ("sem_prazo", "dias"):
+        modo = SAT_PRAZO_MODO_DEFAULT
+    try:
+        dias = int(raw.get("sat_prazo_dias", SAT_PRAZO_DIAS_DEFAULT))
+    except Exception:
+        dias = SAT_PRAZO_DIAS_DEFAULT
+    try:
+        entre = int(raw.get("sat_tempo_entre", SAT_TEMPO_ENTRE_DEFAULT))
+    except Exception:
+        entre = SAT_TEMPO_ENTRE_DEFAULT
+    try:
+        bloqueio = int(raw.get("sat_espera_bloqueio", SAT_ESPERA_BLOQUEIO_DEFAULT))
+    except Exception:
+        bloqueio = SAT_ESPERA_BLOQUEIO_DEFAULT
+    return {
+        "caixa": caixa,
+        "prazo_modo": modo,
+        "prazo_dias": min(365, max(1, dias)),
+        "tempo_entre": min(60, max(0, entre)),
+        "espera_bloqueio": min(300, max(0, bloqueio)),
+    }
+
+
+def set_sat_central_defaults(d: dict) -> dict:
+    """Grava apenas as chaves presentes em `d`. Retorna os defaults resultantes."""
+    raw = _ler_raw()
+    if "caixa" in d:
+        raw["sat_caixa_padrao"] = str(d.get("caixa") or "").strip() or SAT_CAIXA_PADRAO_DEFAULT
+    if "prazo_modo" in d:
+        raw["sat_prazo_modo"] = "dias" if d.get("prazo_modo") == "dias" else "sem_prazo"
+    if "prazo_dias" in d:
+        try:
+            raw["sat_prazo_dias"] = min(365, max(1, int(d.get("prazo_dias"))))
+        except Exception:
+            pass
+    if "tempo_entre" in d:
+        try:
+            raw["sat_tempo_entre"] = min(60, max(0, int(d.get("tempo_entre"))))
+        except Exception:
+            pass
+    if "espera_bloqueio" in d:
+        try:
+            raw["sat_espera_bloqueio"] = min(300, max(0, int(d.get("espera_bloqueio"))))
+        except Exception:
+            pass
+    _salvar_raw(raw)
+    return get_sat_central_defaults()
+
+
 # --- Tipos de documentos do SAT a baixar, POR PRETENSÃO ---
 # Guarda `sat_tipos_por_pretensao` = {pretensao: [keys]} e `sat_tipos_padrao` = [keys]
 # (aplicado às pretensões sem config). Padrão ausente = TODOS os tipos.

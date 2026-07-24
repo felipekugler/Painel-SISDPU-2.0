@@ -943,9 +943,11 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
         yield reg("  – PAT: nenhuma tarefa encontrada", "muted")
     else:
         try:
-            mant, desc = sat_utils.processar_pat(str(tmp), pasta_destino, mapa, _ROTULO_ARQ)
+            mant, desc, pul = sat_utils.processar_pat(str(tmp), pasta_destino, mapa, _ROTULO_ARQ)
             yield reg(f"  PAT: {len(mapa)} tarefa(s) baixada(s) → {len(mant)} principal(is) "
-                      f"mantido(s), {len(desc)} descartada(s) (subtarefa/duplicata)", "novo")
+                      f"mantido(s), {len(desc)} descartada(s) (subtarefa/duplicata)"
+                      + (f", {len(pul)} pulado(s) (protocolo há mais de 5 anos)" if pul else ""),
+                      "novo")
             for _f, nm in mant:
                 salvos.append(nm)
                 _inv_add("pat", mapa.get(_f, {}).get("protocolo", ""), nm, "baixado")
@@ -953,6 +955,10 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
             for _a, motivo in desc:
                 _inv_add("pat", mapa.get(_a, {}).get("protocolo", ""), "", "descartado")
                 yield reg(f"  🗑 {motivo}", "muted")
+            for _p, motivo in pul:
+                _inv_add("pat", mapa.get(_p, {}).get("protocolo", ""), "", "pulado_prazo")
+                pulados.append(f"PAT {motivo}")
+                yield reg(f"  ↷ {motivo}", "muted")
         except Exception as e:  # noqa: BLE001
             pulados.append(f"PAT (dedup falhou: {e})")
             yield reg(f"  ✗ PAT: deduplicação/nomeação falhou: {e}", "erro")

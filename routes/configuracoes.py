@@ -56,3 +56,16 @@ async def del_grupo_favorito(request: Request):
     body = await request.json()
     favs = config_painel_service.del_grupo_favorito(body.get("grupo", ""))
     return JSONResponse({"ok": True, "favoritos": favs})
+
+
+# --- Valores padrão da aba "Arquivos SAT Central" ---
+@router.get("/api/config/sat-central")
+async def get_sat_central():
+    return JSONResponse(config_painel_service.get_sat_central_defaults())
+
+
+@router.post("/api/config/sat-central")
+async def set_sat_central(request: Request):
+    body = await request.json()
+    defaults = config_painel_service.set_sat_central_defaults(body)
+    return JSONResponse({"ok": True, "defaults": defaults})

@@ -626,7 +626,7 @@ function satPage() {
         },
         _montarBmLista(itens, tipos) {
             const grupos = []; tipos.forEach(t => { if (!grupos.includes(t.grupo)) grupos.push(t.grupo); });
-            const vis = itens.filter(it => !['sem_dados', 'descartado'].includes(it.status));
+            const vis = itens.filter(it => !['sem_dados', 'descartado', 'pulado_prazo'].includes(it.status));
             const out = [];
             grupos.forEach(g => {
                 const rows = [];
@@ -655,6 +655,7 @@ function satPage() {
                 else if (row.status === 'sem_dados') m.push('sem dados no SAT');
                 else if (row.status === 'falha') m.push('falhou no 1º download');
                 else if (row.status === 'nao_consultado') m.push('não consultado (indeferido)');
+                else if (row.status === 'pulado_prazo') m.push('pulado - protocolo há mais de 5 anos');
             }
             return m.join(' · ');
         },
@@ -790,6 +791,16 @@ function satPage() {
                 const r = await (await fetch('/api/config/tramitacao')).json();
                 this.favoritos = r.favoritos || [];
                 if (r.prazo) this.prazoDias = r.prazo;
+            } catch (e) {}
+            // Valores padrão da aba (config → "Arquivos SAT Central"): caixa de
+            // tramitação, prazo (sem prazo/dias), tempo entre consultas e espera após bloqueio.
+            try {
+                const s = await (await fetch('/api/config/sat-central')).json();
+                if (s.caixa) { this.padrao = s.caixa; this.grupoSel = s.caixa; }
+                this.comPrazo = (s.prazo_modo === 'dias');
+                if (s.prazo_dias) this.prazoDias = s.prazo_dias;
+                if (typeof s.tempo_entre === 'number') this.tempoEntre = s.tempo_entre;
+                if (typeof s.espera_bloqueio === 'number') this.esperaBloqueio = s.espera_bloqueio;
             } catch (e) {}
         },
         async recarregar() {

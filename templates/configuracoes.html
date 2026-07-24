@@ -205,6 +205,93 @@
         </div>
     </div>
 
+    <!-- Arquivos SAT Central — valores padrão da aba -->
+    <div class="card bg-base-200 shadow mt-6" x-data="satCentralDefaults()" x-init="init()">
+        <div class="card-body gap-5">
+            <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
+                Arquivos SAT Central
+            </h3>
+            <p class="text-sm text-base-content/60">
+                Valores pré-carregados nos controles da aba <strong>Arquivos SAT</strong>
+                (podem ser ajustados pontualmente lá em cada operação).
+            </p>
+
+            <!-- Caixa de tramitação padrão -->
+            <div class="flex items-start justify-between gap-4">
+                <div class="min-w-0">
+                    <p class="font-medium">Caixa de tramitação</p>
+                    <p class="text-sm text-base-content/60 mt-0.5">Caixa de grupo selecionada por padrão em "Tramitar para".</p>
+                </div>
+                <div class="flex flex-col items-end gap-1.5 shrink-0">
+                    <input type="text" class="input input-bordered input-sm w-64" x-model="caixa"
+                           placeholder="Ex.: 01 - PREV_DIVPREV">
+                    <div class="flex items-center gap-2">
+                        <select class="select select-bordered select-sm w-64" x-model="caixa" x-show="grupos.length">
+                            <template x-for="g in grupos" :key="g"><option :value="g" x-text="g"></option></template>
+                        </select>
+                        <button class="btn btn-sm btn-ghost" @click="carregarGrupos()" :disabled="carregando" title="Consulta o SISDPU">
+                            <span x-show="carregando" class="loading loading-spinner loading-xs"></span>
+                            <span x-text="grupos.length ? 'Recarregar caixas' : 'Carregar caixas'"></span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Prazo da tramitação -->
+            <div class="flex items-start justify-between gap-4 pt-2 border-t border-base-300">
+                <div>
+                    <p class="font-medium">Prazo da tramitação</p>
+                    <p class="text-sm text-base-content/60 mt-0.5">Prazo de conclusão aplicado por padrão na tramitação.</p>
+                </div>
+                <div class="flex items-center gap-4 shrink-0">
+                    <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                        <input type="radio" class="sat-cfg-radio" :checked="prazoModo==='sem_prazo'" @change="prazoModo='sem_prazo'">
+                        sem prazo
+                    </label>
+                    <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                        <input type="radio" class="sat-cfg-radio" :checked="prazoModo==='dias'" @change="prazoModo='dias'">
+                        em
+                        <input type="number" min="1" max="365" class="input input-bordered input-sm w-20"
+                               x-model.number="prazoDias" @focus="prazoModo='dias'">
+                        dias
+                    </label>
+                </div>
+            </div>
+
+            <!-- Tempo entre consultas -->
+            <div class="flex items-start justify-between gap-4 pt-2 border-t border-base-300">
+                <div>
+                    <p class="font-medium">Tempo entre consultas</p>
+                    <p class="text-sm text-base-content/60 mt-0.5">Pausa preventiva entre cada consulta ao SAT, para reduzir o bloqueio anti-robô.</p>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                    <input type="number" min="0" max="60" step="1" class="input input-bordered input-sm w-20" x-model.number="tempoEntre">
+                    <span class="text-sm text-base-content/50">s</span>
+                </div>
+            </div>
+
+            <!-- Espera após bloqueio -->
+            <div class="flex items-start justify-between gap-4 pt-2 border-t border-base-300">
+                <div>
+                    <p class="font-medium">Tempo de espera após bloqueio</p>
+                    <p class="text-sm text-base-content/60 mt-0.5">Quanto esperar ao detectar a proteção antirobô, antes de re-tentar o documento.</p>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                    <input type="number" min="0" max="300" step="5" class="input input-bordered input-sm w-20" x-model.number="esperaBloqueio">
+                    <span class="text-sm text-base-content/50">s</span>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-4 pt-2 border-t border-base-300">
+                <button class="btn btn-primary btn-sm" :disabled="salvando" @click="salvar()">
+                    <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
+                    Salvar padrões
+                </button>
+                <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
+            </div>
+        </div>
+    </div>
+
     <p class="text-xs text-base-content/40 mt-4">
         As alterações têm efeito imediato. Configurações armazenadas em
         <code class="font-mono">painel_config.json</code> na raiz do projeto.
@@ -271,6 +358,14 @@
     background: var(--accent);
     color: var(--accent-fg);
     box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+}
+/* Radios nativos com o acento Fluent (igual aos da aba Arquivos SAT) */
+.sat-cfg-radio {
+    appearance: auto;
+    -webkit-appearance: radio;
+    accent-color: var(--accent);
+    width: 15px; height: 15px;
+    margin: 0; cursor: pointer; vertical-align: middle;
 }
 </style>
 
@@ -339,6 +434,56 @@ function prefTramitacao() {
                     body: JSON.stringify({grupo: g})})).json();
                 this.favoritos = r.favoritos || [];
             } catch (e) { this._msg('Erro de comunicação.', true); }
+        },
+        _msg(m, err) { this.msg = m; this.msgErro = err; setTimeout(() => this.msg = '', 3500); },
+    };
+}
+
+// Valores padrão da aba "Arquivos SAT Central"
+function satCentralDefaults() {
+    return {
+        caixa: '01 - PREV_DIVPREV', prazoModo: 'sem_prazo', prazoDias: 15,
+        tempoEntre: 5, esperaBloqueio: 45,
+        grupos: [], carregando: false, salvando: false, msg: '', msgErro: false,
+        async init() {
+            try {
+                const r = await (await fetch('/api/config/sat-central')).json();
+                this.caixa = r.caixa || this.caixa;
+                this.prazoModo = r.prazo_modo || 'sem_prazo';
+                if (r.prazo_dias) this.prazoDias = r.prazo_dias;
+                if (typeof r.tempo_entre === 'number') this.tempoEntre = r.tempo_entre;
+                if (typeof r.espera_bloqueio === 'number') this.esperaBloqueio = r.espera_bloqueio;
+            } catch (e) {}
+        },
+        async carregarGrupos() {
+            this.carregando = true;
+            try {
+                const g = await (await fetch('/api/sat/grupos')).json();
+                this.grupos = g.grupos || [];
+                if (!this.grupos.length) this._msg('Nenhuma caixa retornada (verifique a sessão do SISDPU).', true);
+            } catch (e) { this._msg('Erro ao consultar as caixas.', true); }
+            finally { this.carregando = false; }
+        },
+        async salvar() {
+            this.salvando = true;
+            try {
+                const r = await (await fetch('/api/config/sat-central', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({
+                        caixa: this.caixa, prazo_modo: this.prazoModo, prazo_dias: this.prazoDias,
+                        tempo_entre: this.tempoEntre, espera_bloqueio: this.esperaBloqueio,
+                    })})).json();
+                if (r.ok) {
+                    const d = r.defaults || {};
+                    this.caixa = d.caixa || this.caixa;
+                    this.prazoModo = d.prazo_modo || this.prazoModo;
+                    this.prazoDias = d.prazo_dias || this.prazoDias;
+                    this.tempoEntre = (typeof d.tempo_entre === 'number') ? d.tempo_entre : this.tempoEntre;
+                    this.esperaBloqueio = (typeof d.espera_bloqueio === 'number') ? d.espera_bloqueio : this.esperaBloqueio;
+                    this._msg('Padrões salvos.', false);
+                } else { this._msg('Erro ao salvar.', true); }
+            } catch (e) { this._msg('Erro de comunicação.', true); }
+            finally { this.salvando = false; }
         },
         _msg(m, err) { this.msg = m; this.msgErro = err; setTimeout(() => this.msg = '', 3500); },
     };

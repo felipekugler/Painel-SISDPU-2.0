@@ -21,7 +21,7 @@ CLI:
   python sat_utils.py nome "<texto>"      -> testa abreviar+sanitize
   python sat_utils.py campos <pdf>        -> imprime campos PROCADM de um PDF
 """
-import sys, os, re, json, shutil, unicodedata
+import sys, os, re, json, shutil, unicodedata, datetime
 
 try:
     import fitz  # PyMuPDF
@@ -101,6 +101,34 @@ def extrair_campos_procadm(pdf_path):
             'subtarefas': list(dict.fromkeys(subs))}
 
 
+# ---- Regra: não baixar PAT (processo administrativo) com mais de 5 anos ----
+PAT_MAX_ANOS = 5
+
+
+def _der_para_data(der):
+    """Converte o DER ('DD-MM-AAAA', como extraído de extrair_campos_procadm) para
+    datetime.date. Retorna None se vazio/inválido."""
+    if not der:
+        return None
+    try:
+        return datetime.datetime.strptime(der, '%d-%m-%Y').date()
+    except ValueError:
+        return None
+
+
+def _mais_de_5_anos(d, ref=None):
+    """True se a Data de entrada `d` (date) tiver MAIS de PAT_MAX_ANOS anos em relação
+    a `ref` (hoje por padrão). Sem data (None) NÃO bloqueia — não há como afirmar."""
+    if d is None:
+        return False
+    ref = ref or datetime.date.today()
+    try:
+        corte = ref.replace(year=ref.year - PAT_MAX_ANOS)
+    except ValueError:  # 29/02 em ano não bissexto -> 28/02
+        corte = ref.replace(year=ref.year - PAT_MAX_ANOS, day=28)
+    return d < corte  # anterior ao corte = protocolo com mais de 5 anos
+
+
 def _nome_procadm(servico, campos, prefixo=''):
     nb, der, prot = campos['nb'], campos['der'], campos['prot']
     if servico and nb and der and prot:
@@ -114,7 +142,14 @@ def _nome_procadm(servico, campos, prefixo=''):
 
 def processar_pat(pasta_temp, pasta_dest, mapa, prefixo=''):
     """mapa: {arquivo_temp: {'servico':..., 'protocolo': <prot da linha>}}. `prefixo`
-    é anteposto ao nome final (ex.: 'INSTITUIDOR - ')."""
+    é anteposto ao nome final (ex.: 'INSTITUIDOR - ').
+
+    Retorna (mantidos, descartados, pulados):
+    - mantidos:    [(arquivo_temp, nome_final)] movidos para a pasta destino;
+    - descartados: [(arquivo_temp, motivo)] subtarefas/duplicatas removidas;
+    - pulados:     [(arquivo_temp, motivo)] protocolos com mais de 5 anos (Data de
+                   entrada), NÃO baixados por regra.
+    """
     info = {}
     for f in mapa:
         p = os.path.join(pasta_temp, f)
@@ -126,14 +161,29 @@ def processar_pat(pasta_temp, pasta_dest, mapa, prefixo=''):
     for f, c in info.items():
         grupos.setdefault((c['prot'], c['paginas']), []).append(f)
 
-    mantidos, descartados = [], []
+    mantidos, descartados, pulados = [], [], []
     for chave, arquivos in grupos.items():
         prot_int = chave[0]
         # principal = linha cujo protocolo == prot interno; senão o primeiro
         principal = next((a for a in arquivos
                           if str(mapa[a].get('protocolo', '')) == prot_int), arquivos[0])
         servico = mapa[principal].get('servico', '')
-        nome = _nome_procadm(servico, info[principal], prefixo)
+        campos = info[principal]
+
+        # Regra: não baixar processo administrativo (PAT) com mais de 5 anos,
+        # considerando a Data de entrada do protocolo. Descarta o grupo inteiro
+        # (principal + subtarefas) e registra o motivo para o log.
+        der = campos.get('der', '')
+        if _mais_de_5_anos(_der_para_data(der)):
+            for a in arquivos:
+                with __import__('contextlib').suppress(OSError):
+                    os.remove(os.path.join(pasta_temp, a))
+            pulados.append((principal,
+                            f'protocolo {prot_int} ({servico}) — pulado - protocolo há '
+                            f'mais de 5 anos (Data de entrada {der.replace("-", "/")})'))
+            continue
+
+        nome = _nome_procadm(servico, campos, prefixo)
         shutil.move(os.path.join(pasta_temp, principal), os.path.join(pasta_dest, nome))
         mantidos.append((principal, nome))
         for a in arquivos:
@@ -142,7 +192,7 @@ def processar_pat(pasta_temp, pasta_dest, mapa, prefixo=''):
                 descartados.append((a, f'protocolo {mapa[a].get("protocolo","?")} '
                                        f'descartado — é subtarefa/duplicata do protocolo '
                                        f'principal {prot_int} ({servico})'))
-    return mantidos, descartados
+    return mantidos, descartados, pulados
 
 
 def _cli():
@@ -157,13 +207,16 @@ def _cli():
         pasta_temp, pasta_dest, mapa_json = sys.argv[2], sys.argv[3], sys.argv[4]
         with open(mapa_json, encoding='utf-8') as fh:
             mapa = json.load(fh)
-        mant, desc = processar_pat(pasta_temp, pasta_dest, mapa)
+        mant, desc, pul = processar_pat(pasta_temp, pasta_dest, mapa)
         print('=== MANTIDOS (principais/únicos) ===')
         for _, nome in mant:
             print('  [OK]', nome)
         print('=== DESCARTADOS ===')
         for a, motivo in desc:
             print('  [x]', a, '->', motivo)
+        print('=== PULADOS (protocolo há mais de 5 anos) ===')
+        for a, motivo in pul:
+            print('  [->]', a, '->', motivo)
     else:
         print(__doc__)
 
