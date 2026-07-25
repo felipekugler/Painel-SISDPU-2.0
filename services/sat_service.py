@@ -584,6 +584,19 @@ async def processar_paj_stream(
             except Exception as e:  # noqa: BLE001
                 yield passo("Limpeza dos originais compilados", None, str(e))
     _gravar_hist(paj_norm, item, anexos, grupo, resultado, status, detalhe, log)
+    # Histórico UNIFICADO do painel (aba "Histórico de PAJs Concluídos") — só em conclusão real.
+    if status == "concluido" and not dry_run:
+        try:
+            from services import historico_painel
+            historico_painel.registrar({
+                "paj": num, "paj_norm": paj_norm,
+                "url_detalhe": item.get("url_detalhe", ""),
+                "origem": "sat", "atividade": "Juntada de documentos do SAT Central",
+                "movimentacao": FASE_MOV, "tramitado_para": grupo,
+                "concluido": True, "detalhe": f"{len(anexos)} arquivo(s) juntado(s).",
+            })
+        except Exception:  # noqa: BLE001
+            pass
     yield {"done": True, "resultado": {"ok": bool(dry_run or cc.get("ok")), "status": status, "detalhe": detalhe}}
 
 

@@ -52,3 +52,59 @@ async def sincronizar():
 async def api_salvar_sugestao(id_tramite: str, request: Request):
     body = await request.json()
     return JSONResponse(retornos_service.salvar_sugestao(id_tramite, body.get("texto", "")))
+
+
+@router.post("/api/retornos/{id_tramite}/reanalisar", response_class=JSONResponse)
+async def api_reanalisar(id_tramite: str, request: Request):
+    """Reanalisa o retorno com a IA; `prompt` (opcional) = instruções adicionais."""
+    body = await request.json()
+    return JSONResponse(await retornos_service.reanalisar(id_tramite, body.get("prompt", "")))
+
+
+@router.get("/api/retornos/preferencias", response_class=JSONResponse)
+async def api_preferencias():
+    """Favoritas (dropdown) + frequentes (badges) de fases/caixas — do cache local
+    (instantâneo, sem navegar no SISDPU). Alimenta a console de despacho no init."""
+    from services import config_painel_service
+    return JSONResponse(config_painel_service.get_sisdpu_prefs())
+
+
+@router.get("/api/retornos/fases", response_class=JSONResponse)
+async def api_fases():
+    """Fases de movimentação (dropdown Movimentar) — consulta AO VIVO (fallback)."""
+    return JSONResponse(await retornos_service.listar_fases())
+
+
+@router.get("/api/retornos/grupos", response_class=JSONResponse)
+async def api_grupos():
+    """Caixas de grupo + favoritas (dropdown/badges Tramitar)."""
+    return JSONResponse(await retornos_service.listar_grupos())
+
+
+@router.get("/api/retornos/{id_tramite}/caixas-abertas", response_class=JSONResponse)
+async def api_caixas_abertas(id_tramite: str):
+    """Caixas/usuários onde o PAJ está aberto agora (badge acima dos cards)."""
+    return JSONResponse(await retornos_service.caixas_abertas(id_tramite))
+
+
+async def _stream_executar(id_tramite: str, fase: str, descricao: str, grupo: str,
+                           prazo: int, prazo_data: str, concluir: bool, dry: bool):
+    async for ev in retornos_service.executar_stream(
+        id_tramite, fase, descricao, grupo=grupo or None,
+        prazo_dias=prazo, prazo_data=prazo_data, concluir=concluir, dry_run=dry,
+    ):
+        if ev.get("done"):
+            yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
+        else:
+            yield {"event": "log", "data": json.dumps(ev, ensure_ascii=False)}
+
+
+@router.get("/api/retornos/{id_tramite}/executar")
+async def executar(id_tramite: str, fase: str = "", descricao: str = "", grupo: str = "",
+                   prazo: int = 0, prazo_data: str = "", concluir: int = 1, dry: int = 0):
+    """SSE: movimenta (fase + despacho) → tramita (se grupo) → conclui (se concluir=1).
+    `descricao` vazio usa o despacho salvo no store. `prazo_data` (ISO YYYY-MM-DD)
+    tem precedência sobre `prazo` (dias). `dry=1` simula."""
+    return EventSourceResponse(_stream_executar(
+        id_tramite, fase, descricao, grupo, int(prazo), prazo_data,
+        bool(int(concluir)), bool(int(dry))))

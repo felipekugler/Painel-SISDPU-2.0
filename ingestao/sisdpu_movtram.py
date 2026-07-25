@@ -714,3 +714,80 @@ async def listar_grupos_unidade(id_processo: str) -> list[str]:
     except Exception as e:  # noqa: BLE001
         _log.warning("listar_grupos_unidade falhou: %r", e)
         return []
+
+
+async def listar_fases_movimentacao(id_processo: str) -> list[str]:
+    """Lê os nomes das FASES de movimentação disponíveis (dropdown `faseId` da tela
+    de movimentação), com 'Todas as fases' marcado. Precisa de um id de PAJ p/ abrir."""
+    if not id_processo:
+        return []
+    try:
+        await _ensure_logged_in()
+        page = await _get_page()
+        url = (f"{SISDPU_URL}/pages/movimentacao/movimentaProcesso.xhtml"
+               f"?id={id_processo}&caixaEntrada=false")
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await _wait_pf_ajax(page); await page.wait_for_timeout(400)
+        if not await _resolver_conflito_login(page):
+            return []
+        await page.evaluate(_JS_MARCAR_TODAS_FASES)
+        await _wait_pf_ajax(page); await page.wait_for_timeout(700)
+        js = ("()=>{const s=document.getElementById('%s:faseId');"
+              "return s?[...s.options].map(o=>(o.text||'').trim())"
+              ".filter(t=>t && !/selecione/i.test(t)):[];}" % _MOV_FORM)
+        fases = await _eval_seguro(page, js)
+        return fases or []
+    except Exception as e:  # noqa: BLE001
+        _log.warning("listar_fases_movimentacao falhou: %r", e)
+        return []
+
+
+# Lê a tela "Histórico de Tramitações do PAJ" e devolve as tramitações AINDA ABERTAS
+# (sem "Data / Hora de Conclusão"): o(s) grupo/usuário que está(ão) com o PAJ agora.
+_JS_CAIXAS_ABERTAS = r"""() => {
+  for (const t of document.querySelectorAll('table')) {
+    const ths = [...t.querySelectorAll('thead th, thead td')].map(x => (x.innerText||'').trim());
+    if (!ths.length) continue;
+    const iConcl = ths.findIndex(h => /conclus/i.test(h));
+    const iGrupo = ths.findIndex(h => /grupo/i.test(h));
+    const iDest  = ths.findIndex(h => /destinat/i.test(h));
+    const iRem   = ths.findIndex(h => /remetente/i.test(h));
+    const iData  = ths.findIndex(h => /tr[âa]mite/i.test(h));
+    const iDesc  = ths.findIndex(h => /descri/i.test(h));
+    if (iConcl < 0 || (iGrupo < 0 && iDest < 0)) continue;
+    const abertas = [];
+    for (const tr of t.querySelectorAll('tbody tr')) {
+      const tds = [...tr.querySelectorAll('td')];
+      if (!tds.length) continue;
+      const cell = i => (i >= 0 && tds[i] ? (tds[i].innerText||'').trim() : '');
+      if (cell(iConcl)) continue;  // já concluído -> não está aberto
+      const grupo = cell(iGrupo), dest = cell(iDest);
+      const local = grupo || dest;
+      if (!local) continue;
+      abertas.push({ local, grupo, destinatario: dest,
+                     remetente: cell(iRem), data: cell(iData), descricao: cell(iDesc) });
+    }
+    return abertas;
+  }
+  return [];
+}"""
+
+
+async def caixas_abertas_paj(id_processo: str) -> list[dict]:
+    """Onde o PAJ está ABERTO agora: linhas da tela 'Histórico de Tramitações do PAJ'
+    sem data de conclusão. Retorna [{local, grupo, destinatario, remetente, data, descricao}]."""
+    if not id_processo:
+        return []
+    try:
+        await _ensure_logged_in()
+        page = await _get_page()
+        url = f"{SISDPU_URL}/pages/tramite/historicoTramitacao.xhtml?id={id_processo}"
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await _wait_pf_ajax(page); await page.wait_for_timeout(800)
+        if not await _resolver_conflito_login(page):
+            return []
+        res = await _eval_seguro(page, _JS_CAIXAS_ABERTAS)
+        return res if isinstance(res, list) else []
+    except Exception as e:  # noqa: BLE001
+        _log.warning("caixas_abertas_paj falhou: %r", e)
+        return []

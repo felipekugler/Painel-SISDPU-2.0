@@ -26,6 +26,7 @@ from routes.configuracoes import router as configuracoes_router
 from routes.dashboard import router as dashboard_router
 from routes.docgen import router as docgen_router
 from routes.files import router as files_router
+from routes.historico import router as historico_router
 from routes.paj import router as paj_router
 from routes.pipeline_monitor import router as pipeline_monitor_router
 from routes.prazos import router as prazos_router
@@ -157,6 +158,7 @@ app.include_router(pipeline_monitor_router)
 app.include_router(seguranca_router)
 app.include_router(sat_router)
 app.include_router(retornos_router)
+app.include_router(historico_router)
 
 # Healthcheck de dependencias externas — expoe em app.state.ambiente pra
 # o dashboard renderizar banner quando algo falta.

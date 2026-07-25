@@ -1,0 +1,94 @@
+{% extends "base.html" %}
+
+{% block title %}Histórico{% endblock %}
+
+{% block content %}
+<div x-data="historicoPage()" x-init="init()">
+
+    <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <h2 class="text-2xl font-bold">
+            Histórico
+            <span class="text-base-content/50 text-lg" x-show="registros.length" x-text="'(' + registros.length + ')'"></span>
+        </h2>
+        <button class="btn btn-sm btn-ghost" @click="carregar()" :disabled="carregando">
+            <span x-show="carregando" class="loading loading-spinner loading-xs"></span>
+            Atualizar
+        </button>
+    </div>
+
+    <div class="text-sm text-base-content/60 mb-4">
+        Registro simples de tudo o que foi <strong>concluído da caixa de entrada dentro do painel</strong>
+        (conclusões de atendimento de retorno, juntadas do SAT Central, etc.) — para consulta e visão panorâmica.
+    </div>
+
+    <div class="card bg-base-200 shadow">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th class="w-40">Data/hora</th>
+                            <th class="w-36">PAJ</th>
+                            <th>Atividade</th>
+                            <th class="w-48">Movimentação</th>
+                            <th class="w-56">Tramitado para</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="r in registros" :key="r.id">
+                            <tr class="hover align-top">
+                                <td class="whitespace-nowrap text-xs" x-text="fmtDataHora(r.ts)"></td>
+                                <td class="font-mono whitespace-nowrap">
+                                    <a x-show="r.url_detalhe" :href="r.url_detalhe" target="_blank" rel="noopener"
+                                       class="link link-hover" style="color:var(--accent)"
+                                       title="Abrir o PAJ no SISDPU" x-text="r.paj"></a>
+                                    <span x-show="!r.url_detalhe" x-text="r.paj"></span>
+                                </td>
+                                <td>
+                                    <span x-text="r.atividade || '—'"></span>
+                                    <span x-show="r.origem" class="badge badge-ghost badge-xs ml-1" x-text="r.origem"></span>
+                                </td>
+                                <td class="text-xs" x-text="r.movimentacao || '—'"></td>
+                                <td class="text-xs" x-text="r.tramitado_para || '—'"></td>
+                            </tr>
+                        </template>
+                        <tr x-show="!carregando && registros.length === 0">
+                            <td colspan="5" class="text-center text-base-content/40 py-6">
+                                Nenhum PAJ concluído pelo painel ainda.
+                            </td>
+                        </tr>
+                        <tr x-show="carregando">
+                            <td colspan="5" class="text-center py-6"><span class="loading loading-spinner"></span> Carregando…</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+</div>
+
+<script>
+function historicoPage() {
+    return {
+        registros: [], carregando: false,
+        async init() { await this.carregar(); },
+        async carregar() {
+            this.carregando = true;
+            try {
+                const j = await (await fetch('/api/historico/lista')).json();
+                this.registros = j.registros || [];
+            } catch (e) { this.registros = []; }
+            finally { this.carregando = false; }
+        },
+        fmtDataHora(ts) {
+            if (!ts) return '—';
+            try {
+                const d = new Date(ts);
+                if (isNaN(d)) return ts;
+                return d.toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+            } catch (e) { return ts; }
+        },
+    };
+}
+</script>
+{% endblock %}

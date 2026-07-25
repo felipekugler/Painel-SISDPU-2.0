@@ -94,20 +94,50 @@ _INSTRUCOES = (
     "Você recebe: (A) a narrativa do PAJ, (B) as últimas movimentações e (C) a "
     "descrição integral do trâmite de atendimento de retorno.\n\n"
     "Faça DUAS tarefas e responda em JSON:\n"
-    "1. \"resumo\": em 3-5 frases objetivas, explique o ATUAL ANDAMENTO do PAJ a "
-    "partir da narrativa, das últimas movimentações e do contexto em que este "
-    "atendimento de retorno se insere. Seja concreto (o que já aconteceu, o que "
-    "motivou o retorno). Se não der para identificar algo, diga que deve ser "
-    "verificado manualmente.\n"
-    "2. Avalie se HÁ medida a ser tomada pelo defensor:\n"
-    "   - Se NÃO houver providência pendente (o retorno pode ser apenas "
-    "concluído), retorne \"precisa_acao\": false e, em \"sugestao\", explique "
-    "brevemente por que o trâmite pode ser concluído sem movimentação (mera "
-    "conclusão do atendimento de retorno).\n"
-    "   - Se HOUVER providência a tomar, retorne \"precisa_acao\": true e, em "
-    "\"sugestao\", descreva de forma específica e prática O QUE o defensor deve "
-    "fazer neste caso concreto (a medida e, se aplicável, para onde movimentar/"
-    "tramitar o PAJ).\n\n"
+    "1. \"resumo\": estruture em DOIS blocos separados por uma LINHA EM BRANCO "
+    "(use \\n\\n entre eles):\n"
+    "   - PRIMEIRO PARÁGRAFO (síntese): 1-2 frases que SINTETIZEM o que é ESTE "
+    "atendimento de retorno e sua conclusão — por exemplo, se corresponde a um "
+    "comparecimento meramente informativo, sem fato novo ou documento que exija "
+    "análise/atuação do defensor, ou se traz alguma demanda/documento a tratar. É a "
+    "conclusão objetiva sobre o retorno (ex.: 'O atendimento de retorno corresponde a "
+    "um comparecimento de caráter meramente informativo, sem apresentação de fato novo "
+    "ou documento que exija análise do defensor.').\n"
+    "   - DEMAIS PARÁGRAFOS: exponha o restante — o andamento atual do PAJ, o que "
+    "motivou o retorno e o contexto, a partir da narrativa e das últimas movimentações. "
+    "Seja concreto. Se algo não puder ser identificado, diga que deve ser verificado "
+    "manualmente.\n"
+    "2. \"sugestao\": redija um DESPACHO DO DEFENSOR — escreva na 1ª pessoa, como se "
+    "VOCÊ FOSSE O DEFENSOR dando o encaminhamento necessário a este PAJ. Este texto "
+    "será usado LITERALMENTE como a descrição da movimentação do PAJ. Regras do "
+    "despacho:\n"
+    "   - Seja o MAIS SUCINTO POSSÍVEL quando não houver providência a tomar. Nesses "
+    "casos, o despacho é apenas um registro de ciência e determinação de que se "
+    "aguarde, e VOCÊ deve retornar \"precisa_acao\": false. Exemplos de despacho de "
+    "mera conclusão (adapte ao caso concreto):\n"
+    "       'Ciente das informações. Aguarde-se tramitação do PAJ.'\n"
+    "       'Ciente das informações processuais passadas ao assistido. Aguarde-se "
+    "tramitação do PAJ.'\n"
+    "       'Ciente das orientações passadas ao assistido pelo setor de atendimento. "
+    "Aguarde-se tramitação do PAJ.'\n"
+    "   - Quando HOUVER providência concreta a tomar, retorne \"precisa_acao\": true "
+    "e redija um DESPACHO começando com 'DESPACHO:' seguido do encaminhamento "
+    "específico e, quando cabível, do prazo. Use verbos no imperativo impessoal "
+    "(Aguarde-se, Oficie-se, Intime-se, Solicite-se, Expeça-se). Exemplos (adapte, "
+    "usando APENAS dados reais do material):\n"
+    "       'DESPACHO: Considerando a informação do último retorno, aguarde-se "
+    "retorno do assistido com cópia do prontuário médico e com formulário de "
+    "informações médicas da DPU. Prazo de 15 dias.'\n"
+    "       'DESPACHO: Diante das informações prestadas no último retorno, oficie-se "
+    "à Secretaria Municipal de Saúde de [município] para solicitar extrato com "
+    "períodos de internação do assistido [NOME], a fim de instruir o PAJ. Prazo de "
+    "15 dias.'\n"
+    "   - NÃO invente prazos, nomes, órgãos ou dados: se um dado necessário ao "
+    "despacho não estiver no material, deixe a lacuna evidente para o defensor "
+    "preencher (ex.: '[verificar: município]') em vez de inventar.\n"
+    "   - O campo \"precisa_acao\" (booleano) deve refletir a natureza do despacho: "
+    "false para mera conclusão/ciência; true quando o despacho determina uma "
+    "providência.\n\n"
     "SOMENTE TEXTO: não use emojis nem símbolos gráficos. Dentro dos VALORES do "
     "JSON, NUNCA use aspas duplas (\") — use aspas simples ('') se precisar citar. "
     "Aspas duplas não escapadas quebram o JSON.\n"
@@ -124,6 +154,17 @@ def _colapsar(s: str) -> str:
     linhas = [ln.strip() for ln in s.replace("\r", "").split("\n")]
     linhas = [ln for ln in linhas if ln != ""]
     return "\n".join(linhas).strip()
+
+
+def _paragrafos(s: str) -> str:
+    """Preserva a estrutura de parágrafos (síntese + detalhe do resumo): mantém UMA
+    linha em branco entre blocos, colapsando 3+ quebras em 2 e aparando espaços."""
+    if not s:
+        return ""
+    s = s.replace("\r", "")
+    s = re.sub(r"\n{3,}", "\n\n", s)
+    s = "\n".join(ln.rstrip() for ln in s.split("\n"))
+    return s.strip()
 
 
 def _remover_emojis(s: str) -> str:
@@ -210,6 +251,7 @@ def analisar_retorno(
     descricao_retorno: str = "",
     assistido: str = "",
     pretensao: str = "",
+    prompt_extra: str = "",
 ) -> dict | None:
     """Gera {resumo, precisa_acao, sugestao} para um atendimento de retorno.
 
@@ -255,6 +297,14 @@ def analisar_retorno(
         + "(B) MOVIMENTAÇÕES (mais recentes primeiro):\n"
         + bloco_mov
     )
+    extra = (prompt_extra or "").strip()
+    if extra:
+        prompt += (
+            "\n\n=== INSTRUÇÕES ADICIONAIS DO DEFENSOR PARA ESTA REANÁLISE ===\n"
+            "Estas instruções têm PRIORIDADE quando houver conflito com as gerais, "
+            "mas MANTENHA o formato JSON de saída e o despacho na 1ª pessoa do defensor:\n"
+            + extra
+        )
 
     result = _run_claude(prompt)
     if result is None:
@@ -267,7 +317,7 @@ def analisar_retorno(
     if isinstance(precisa, str):
         precisa = precisa.strip().lower() in ("true", "1", "sim", "yes")
     return {
-        "resumo": _colapsar((obj.get("resumo") or "").strip()),
+        "resumo": _paragrafos((obj.get("resumo") or "").strip()),
         "precisa_acao": bool(precisa),
         "sugestao": _colapsar(_remover_emojis(obj.get("sugestao") or "")),
     }

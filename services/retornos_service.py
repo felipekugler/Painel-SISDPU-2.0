@@ -22,14 +22,16 @@ import html as _html
 import json
 import re
 import unicodedata
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any, AsyncIterator
 
 import config
 from ingestao import sisdpu_client
 from ingestao import sisdpu_movtram as movtram
-from services import retornos_ia
+from services import historico_painel, retornos_ia
+
+GRUPO_PADRAO = "01 - PREV_DIVPREV"
 
 # --- parâmetros de negócio (aprovados pelo usuário) ---
 DESCRICAO_ALVO = "atendimento de retorno"  # trecho p/ filtro (normalizado)
@@ -62,6 +64,18 @@ def _paj_partes(paj: str) -> tuple[str, str, str]:
 
 def _pasta_paj(paj_norm: str) -> Path:
     return Path(config.PAJS_DIR) / paj_norm
+
+
+def _limpar_oficio(s: str) -> str:
+    """Normaliza o ofício para o mesmo formato da tabela de PAJs (metadata.oficio_caixa):
+    'E. 04º OFÍCIO PREVIDENCIÁRIO - (D) FELIPE... Tramitar para titular' -> '04º OFÍCIO
+    PREVIDENCIÁRIO'. Corta no primeiro ' - ' e remove o prefixo 'E.'. Idempotente."""
+    s = (s or "").strip()
+    if not s:
+        return ""
+    s = re.split(r"\s+-\s+", s, 1)[0].strip()   # remove '- (D) NOME ... Tramitar para titular'
+    s = re.sub(r"^E\.\s*", "", s).strip()        # remove prefixo 'E. '
+    return s
 
 
 def _ler_metadata(paj_norm: str) -> dict:
@@ -126,6 +140,9 @@ def listar() -> dict:
     # em_caixa=True antes; dentro de cada grupo, mais recentes primeiro
     itens.sort(key=lambda r: r.get("atualizado_em", ""), reverse=True)
     itens.sort(key=lambda r: 0 if r.get("em_caixa", True) else 1)
+    # normaliza o ofício na leitura (cobre registros antigos com ofício sujo) — idempotente
+    for r in itens:
+        r["oficio"] = _limpar_oficio(r.get("oficio", ""))
     return {"ok": True, "itens": itens}
 
 
@@ -140,6 +157,38 @@ def salvar_sugestao(id_tramite: str, texto: str) -> dict:
     store[id_tramite] = rec
     _gravar_store(store)
     return {"ok": True}
+
+
+async def reanalisar(id_tramite: str, prompt_extra: str = "") -> dict:
+    """Reanalisa UM retorno com a IA, opcionalmente com instruções adicionais
+    (`prompt_extra`). Vazio = segue a análise padrão. Atualiza resumo/sugestão no
+    store (descarta a edição manual da sugestão) e devolve os novos campos."""
+    if not retornos_ia.disponivel():
+        return {"ok": False, "detalhe": "IA indisponível (claude não encontrado ou desligado)."}
+    store = _ler_store()
+    rec = store.get(id_tramite)
+    if not rec:
+        return {"ok": False, "detalhe": "Retorno não encontrado (sincronize novamente)."}
+
+    narrativa = _narrativa_do_paj(rec.get("paj_norm", ""))
+    analise = await asyncio.to_thread(
+        retornos_ia.analisar_retorno,
+        narrativa, rec.get("movimentacoes", []), rec.get("descricao_retorno", ""),
+        rec.get("assistido", ""), rec.get("pretensao", ""), prompt_extra or "",
+    )
+    if not analise:
+        return {"ok": False, "detalhe": "A IA não retornou análise. Tente novamente."}
+
+    rec["resumo_ia"] = analise.get("resumo", "")
+    rec["precisa_acao"] = analise.get("precisa_acao")
+    rec["sugestao_ia"] = analise.get("sugestao", "")
+    rec["sugestao_editada"] = ""  # a reanálise substitui a sugestão vigente
+    rec["ia_status"] = "ok"
+    rec["atualizado_em"] = _now_iso()
+    store[id_tramite] = rec
+    _gravar_store(store)
+    return {"ok": True, "resumo_ia": rec["resumo_ia"],
+            "precisa_acao": rec["precisa_acao"], "sugestao_ia": rec["sugestao_ia"]}
 
 
 # ---------------------------------------------------------------------------
@@ -246,11 +295,19 @@ async def sincronizar_stream() -> AsyncIterator[dict]:
         meta = _ler_metadata(paj_norm)
         assistido = (det.get("assistido") or it.get("assistido", "")
                      or meta.get("assistido_caixa", "")).strip()
-        oficio = (det.get("oficio") or meta.get("oficio_caixa", "")).strip()
+        # ofício: prioriza o metadata (limpo, igual à tabela de PAJs); limpa o fallback
+        oficio = (meta.get("oficio_caixa") or _limpar_oficio(det.get("oficio", ""))).strip()
         pretensao = (det.get("pretensao") or meta.get("pretensaopura")
                      or meta.get("pretensao", "")).strip()
         # narrativa vem da MESMA navegação (movimentacoes_paj); fallback: metadata local
         narrativa = _html_para_texto(det.get("narrativa") or "") or _narrativa_do_paj(paj_norm)
+
+        # onde o PAJ está aberto agora (tramitações sem conclusão) — extraído JÁ na
+        # sincronização e cacheado, para o badge aparecer instantâneo ao expandir.
+        try:
+            abertas = await movtram.caixas_abertas_paj(it.get("id", ""))
+        except Exception:  # noqa: BLE001
+            abertas = []
 
         rec_antigo = store.get(id_tramite, {})
         rec: dict[str, Any] = {
@@ -266,6 +323,7 @@ async def sincronizar_stream() -> AsyncIterator[dict]:
             "descricao_retorno": descricao_retorno,
             "url_detalhe": it.get("url_detalhe", ""),
             "movimentacoes": movs,
+            "caixas_abertas": abertas,
             "em_caixa": True,
             "atualizado_em": _now_iso(),
             # preserva edição manual da sugestão entre sincronizações
@@ -320,3 +378,161 @@ async def sincronizar_stream() -> AsyncIterator[dict]:
     yield _ev("ok", f"Sincronização concluída: {len(pendentes)} na caixa"
                     + (f", {saidos} saíram." if saidos else "."))
     yield {"done": True, "resultado": {"ok": True, "n_caixa": len(pendentes), "n_saidos": saidos}}
+
+
+# ---------------------------------------------------------------------------
+# Ações (coluna Ações): fases, grupos e execução mov→tram→concluir
+# ---------------------------------------------------------------------------
+def _um_id_processo() -> str:
+    """Um id_processo qualquer do store (para abrir as telas de fase/grupo)."""
+    for rec in _ler_store().values():
+        if rec.get("id_processo"):
+            return str(rec["id_processo"])
+    return ""
+
+
+async def algum_id_processo() -> str:
+    """id_processo do store; se vazio, lê a caixa de entrada para achar um PAJ.
+    Usado pela importação de fases/caixas (Configurações), que independe de sync."""
+    idp = _um_id_processo()
+    if idp:
+        return idp
+    try:
+        caixa = await movtram.listar_caixa_estruturada()
+        for it in caixa.get("itens", []):
+            if it.get("id"):
+                return str(it["id"])
+    except Exception:  # noqa: BLE001
+        pass
+    return ""
+
+
+async def listar_fases() -> dict:
+    """Fases de movimentação disponíveis no SISDPU (para o dropdown Movimentar)."""
+    idp = _um_id_processo()
+    fases = await movtram.listar_fases_movimentacao(idp) if idp else []
+    return {"ok": bool(fases), "fases": fases,
+            "detalhe": "" if fases else "Não foi possível ler as fases (há retornos sincronizados?)."}
+
+
+async def listar_grupos() -> dict:
+    """Caixas de grupo da unidade para o dropdown de Tramitar. As caixas favoritas
+    (dropdown) e frequentes (badges) vêm de /api/config/sisdpu, não daqui."""
+    idp = _um_id_processo()
+    grupos = await movtram.listar_grupos_unidade(idp) if idp else []
+    return {"ok": True, "grupos": grupos, "padrao": GRUPO_PADRAO}
+
+
+async def caixas_abertas(id_tramite: str) -> dict:
+    """Onde o PAJ do retorno está aberto agora (tramitações sem conclusão)."""
+    rec = _ler_store().get(id_tramite)
+    idp = (rec or {}).get("id_processo", "")
+    if not idp:
+        return {"ok": False, "abertas": [], "detalhe": "id_processo ausente (sincronize)."}
+    abertas = await movtram.caixas_abertas_paj(idp)
+    return {"ok": True, "abertas": abertas}
+
+
+def _iso_to_br(s: str) -> str:
+    """'2026-08-15' -> '15/08/2026'. Aceita já-BR ou vazio (devolve intacto)."""
+    s = (s or "").strip()
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", s)
+    return f"{m.group(3)}/{m.group(2)}/{m.group(1)}" if m else s
+
+
+async def executar_stream(id_tramite: str, fase: str, descricao: str,
+                          grupo: str | None = None, prazo_dias: int = 0,
+                          prazo_data: str = "", concluir: bool = True,
+                          dry_run: bool = False) -> AsyncIterator[dict]:
+    """Executa o despacho de UM retorno: movimenta (fase + despacho como descrição),
+    tramita (se `grupo`), conclui (se `concluir`). Ao concluir com sucesso, registra no
+    histórico do painel e REMOVE o retorno da lista. Emite eventos SSE."""
+    store = _ler_store()
+    rec = store.get(id_tramite)
+    if not rec:
+        yield _ev("erro", "Retorno não encontrado (sincronize novamente).")
+        yield {"done": True, "resultado": {"ok": False, "detalhe": "Retorno não encontrado."}}
+        return
+
+    paj = rec.get("paj", "")
+    paj_norm = rec.get("paj_norm", "")
+    id_proc = rec.get("id_processo", "")
+    fase = (fase or "").strip()
+    # despacho: usa o texto passado; se vazio, cai no salvo (edição manual ou IA).
+    descricao = (descricao or "").strip() or (
+        rec.get("sugestao_editada") or rec.get("sugestao_ia") or "").strip()
+    if not id_proc:
+        yield _ev("erro", "id_processo ausente — sincronize novamente.")
+        yield {"done": True, "resultado": {"ok": False, "detalhe": "id_processo ausente."}}
+        return
+    if not fase:
+        yield _ev("erro", "Escolha a fase de movimentação.")
+        yield {"done": True, "resultado": {"ok": False, "detalhe": "Fase não informada."}}
+        return
+    if not descricao:
+        yield _ev("erro", "O despacho (descrição da movimentação) está vazio.")
+        yield {"done": True, "resultado": {"ok": False, "detalhe": "Despacho vazio."}}
+        return
+
+    # prazo: data explícita (calendário) tem precedência sobre dias
+    prazo_data_final = None
+    if grupo:
+        if prazo_data:
+            prazo_data_final = _iso_to_br(prazo_data)
+        elif prazo_dias and int(prazo_dias) > 0:
+            prazo_data_final = (date.today() + timedelta(days=int(prazo_dias))).strftime("%d/%m/%Y")
+
+    pajs = [{"id": id_proc, "numero": paj}]
+    pref = "[dry-run] " if dry_run else ""
+    yield _ev("novo", f"{pref}Executando {paj}…")
+
+    # 1) MOVIMENTAR (carrega o despacho como descrição da movimentação)
+    yield _ev("info", f"Movimentando (fase: {fase})…")
+    mv = await movtram.movimentar_paj(pajs, descricao, fase, [], "Documentos do Assistido", dry_run)
+    yield _ev("ok" if mv.get("ok") else "erro", f"Movimentação: {mv.get('detalhe', '')}")
+    if not mv.get("ok"):
+        yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": mv.get("detalhe", "")}}
+        return
+
+    # 2) TRAMITAR (opcional)
+    tram_caixa = ""
+    if grupo:
+        prazo_txt = f"prazo até {prazo_data_final}" if prazo_data_final else "sem prazo"
+        yield _ev("info", f"Tramitando para {grupo} ({prazo_txt})…")
+        tr = await movtram.tramitar_paj(pajs, grupo=grupo, descricao=descricao,
+                                        prazo_data=prazo_data_final, dry_run=dry_run)
+        yield _ev("ok" if tr.get("ok") else "erro", f"Tramitação: {tr.get('detalhe', '')}")
+        if not tr.get("ok"):
+            yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": tr.get("detalhe", "")}}
+            return
+        tram_caixa = grupo
+
+    # 3) CONCLUIR (opcional) — é o que retira o retorno da caixa de entrada
+    concluido = False
+    if concluir:
+        yield _ev("info", "Concluindo o trâmite de retorno…")
+        cc = await movtram.concluir_paj([id_tramite], dry_run)
+        yield _ev("ok" if cc.get("ok") else "erro", f"Conclusão: {cc.get('detalhe', '')}")
+        if not cc.get("ok"):
+            yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": cc.get("detalhe", "")}}
+            return
+        concluido = not dry_run
+
+    # sucesso — registra no histórico do painel e remove da lista se concluído
+    if not dry_run:
+        atividade = ("Conclusão de atendimento de retorno" if concluido
+                     else "Movimentação de atendimento de retorno")
+        historico_painel.registrar({
+            "paj": paj, "paj_norm": paj_norm, "url_detalhe": rec.get("url_detalhe", ""),
+            "origem": "retorno", "atividade": atividade,
+            "movimentacao": fase, "tramitado_para": tram_caixa,
+            "concluido": concluido, "detalhe": descricao[:300],
+        })
+        if concluido:
+            store = _ler_store()
+            store.pop(id_tramite, None)
+            _gravar_store(store)
+
+    yield _ev("ok", f"{paj} — executado com sucesso.")
+    yield {"done": True, "resultado": {"ok": True, "concluido": concluido,
+                                       "tramitado_para": tram_caixa, "mov_seq": mv.get("mov_seq")}}

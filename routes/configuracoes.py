@@ -25,37 +25,6 @@ async def salvar_configuracoes(request: Request):
     return JSONResponse({"ok": True, "config": salvo, "limpeza": limpeza})
 
 
-# --- Preferências de tramitação (usadas pela aba "Arquivos SAT") ---
-@router.get("/api/config/tramitacao")
-async def get_pref_tramitacao():
-    return JSONResponse({
-        "prazo": config_painel_service.get_prazo_tramitacao_padrao(),
-        "favoritos": config_painel_service.get_grupos_favoritos(),
-        "max_favoritos": config_painel_service.GRUPOS_FAVORITOS_MAX,
-    })
-
-
-@router.post("/api/config/prazo-tramitacao")
-async def set_prazo_tramitacao(request: Request):
-    body = await request.json()
-    v = config_painel_service.set_prazo_tramitacao_padrao(body.get("dias", 15))
-    return JSONResponse({"ok": True, "prazo": v})
-
-
-@router.post("/api/config/grupos-favoritos")
-async def add_grupo_favorito(request: Request):
-    body = await request.json()
-    favs = config_painel_service.add_grupo_favorito(body.get("grupo", ""))
-    return JSONResponse({"ok": True, "favoritos": favs})
-
-
-@router.post("/api/config/grupos-favoritos/del")
-async def del_grupo_favorito(request: Request):
-    body = await request.json()
-    favs = config_painel_service.del_grupo_favorito(body.get("grupo", ""))
-    return JSONResponse({"ok": True, "favoritos": favs})
-
-
 # --- Valores padrão da aba "Arquivos SAT Central" ---
 @router.get("/api/config/sat-central")
 async def get_sat_central():
@@ -67,6 +36,38 @@ async def set_sat_central(request: Request):
     body = await request.json()
     defaults = config_painel_service.set_sat_central_defaults(body)
     return JSONResponse({"ok": True, "defaults": defaults})
+
+
+# --- Preferências SISDPU: fases de movimentação + caixas de tramitação ---
+@router.get("/api/config/sisdpu", response_class=JSONResponse)
+async def get_config_sisdpu():
+    """Listas importadas + favoritas (dropdown) + frequentes (badges)."""
+    return JSONResponse(config_painel_service.get_sisdpu_prefs())
+
+
+@router.post("/api/config/sisdpu", response_class=JSONResponse)
+async def set_config_sisdpu(request: Request):
+    """Salva a curadoria (favoritas/frequentes de fases e caixas)."""
+    body = await request.json()
+    return JSONResponse({"ok": True, "prefs": config_painel_service.set_sisdpu_prefs(body)})
+
+
+@router.post("/api/config/sisdpu/importar", response_class=JSONResponse)
+async def importar_config_sisdpu():
+    """Importa do SISDPU a lista COMPLETA de fases de movimentação e caixas de
+    tramitação (navegação Playwright) e cacheia em painel_config.json."""
+    from ingestao import sisdpu_movtram as movtram
+    from services import retornos_service
+    idp = await retornos_service.algum_id_processo()
+    if not idp:
+        return JSONResponse(
+            {"ok": False, "erro": "Nenhum PAJ na caixa para abrir as telas de fase/caixa. "
+                                  "Sincronize os retornos e tente de novo."}, status_code=400)
+    fases = await movtram.listar_fases_movimentacao(idp)
+    caixas = await movtram.listar_grupos_unidade(idp)
+    prefs = config_painel_service.set_sisdpu_listas_todas(fases, caixas)
+    return JSONResponse({"ok": True, "prefs": prefs,
+                         "n_fases": len(fases), "n_caixas": len(caixas)})
 
 
 # --- Acesso ao e-proc (compat): delega ao COFRE UNIFICADO (sistema "eproc") ----

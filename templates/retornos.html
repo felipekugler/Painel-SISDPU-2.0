@@ -61,7 +61,7 @@
                     </thead>
                     <template x-for="r in g.itens" :key="r.id_tramite">
                         <tbody class="ret-group" :class="expandido[r.id_tramite] ? 'ret-open' : ''">
-                            <tr class="hover cursor-pointer" @click="toggle(r.id_tramite)">
+                            <tr class="hover cursor-pointer" @click="toggle(r)">
                                 <td class="text-center align-top">
                                     <svg class="ret-caret" :class="expandido[r.id_tramite] ? 'ret-caret-open' : ''"
                                          xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
@@ -87,12 +87,27 @@
                                     </div>
                                     <div class="ret-desc text-[12.5px] leading-[1.5]" x-text="r.descricao_retorno || '(sem descrição)'"></div>
                                 </td>
-                                <td class="text-center align-top text-base-content/30">—</td>
+                                <td class="text-center align-top" @click.stop>
+                                    <button class="btn btn-xs btn-outline"
+                                            @click="toggle(r)">Despachar</button>
+                                </td>
                             </tr>
                             <!-- Linha retrátil -->
                             <tr x-show="expandido[r.id_tramite]" class="ret-cards-row">
                                 <td></td>
                                 <td colspan="5" class="bg-base-100">
+                                    <!-- Caixas onde o PAJ está aberto -->
+                                    <div class="ret-caixas mx-2 mt-2 mb-1 p-2">
+                                        <span class="ret-card-label">Caixas onde o PAJ está aberto</span>
+                                        <span x-show="r._caixasLoad" class="loading loading-spinner loading-xs ml-2"></span>
+                                        <template x-for="c in (r._caixas || [])" :key="c.local + c.data">
+                                            <span class="badge badge-outline ml-1" style="border-color:var(--accent);color:var(--accent)"
+                                                  :title="(c.remetente ? ('de ' + c.remetente + ' · ') : '') + (c.descricao || '')"
+                                                  x-text="c.local"></span>
+                                        </template>
+                                        <span x-show="!r._caixasLoad && r._caixas && r._caixas.length === 0"
+                                              class="text-base-content/40 text-xs ml-2">nenhuma tramitação em aberto</span>
+                                    </div>
                                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 py-2 pr-2">
                                         <!-- Card Resumo IA -->
                                         <div class="ret-card">
@@ -130,6 +145,80 @@
                                                     Salvar
                                                 </button>
                                                 <span class="text-[11px] text-success" x-show="r._salvo" x-transition>salvo ✓</span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <!-- Reanálise IA (prompt adicional opcional) -->
+                                    <div class="ret-reanalise mx-2 mb-2 p-2">
+                                        <div class="flex items-end gap-2 flex-wrap">
+                                            <div class="flex-1 min-w-[18rem]">
+                                                <div class="ret-card-label mb-1">Prompt de reanálise</div>
+                                                <textarea class="textarea textarea-bordered w-full text-[12px] leading-[1.5]" rows="2"
+                                                          x-model="r._promptReanalise"
+                                                          placeholder="Instruções adicionais para a IA (opcional). Vazio = segue a análise padrão de retornos."></textarea>
+                                            </div>
+                                            <button class="btn btn-sm btn-outline" @click="reanalisar(r)" :disabled="r._reanalisando"
+                                                    title="Descartar a análise atual e gerar uma nova pela IA (usa o prompt de reanálise acima, se preenchido)">
+                                                <span x-show="r._reanalisando" class="loading loading-spinner loading-xs"></span>
+                                                <svg x-show="!r._reanalisando" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" style="width:14px;height:14px;">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z" />
+                                                </svg>
+                                                Reanálise pela IA
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <!-- Console de Ações: movimentar → tramitar → concluir -->
+                                    <div class="ret-acoes mx-2 mb-2 p-3">
+                                        <div class="ret-card-label mb-3">Ações — executar despacho</div>
+                                        <div class="flex flex-col gap-3 text-[12.5px]">
+                                            <!-- Movimentar -->
+                                            <div class="ret-acao-bloco">
+                                                <div class="ret-acao-titulo">Movimentar</div>
+                                                <div class="flex items-center gap-2 flex-wrap">
+                                                    <select class="select select-bordered select-sm min-w-[18rem]" x-model="r._fase">
+                                                        <option value="">— escolha a fase —</option>
+                                                        <template x-for="f in fasesDropdown()" :key="f"><option :value="f" x-text="f"></option></template>
+                                                    </select>
+                                                    <template x-for="f in fasesFreq" :key="f">
+                                                        <button class="btn btn-xs" :class="r._fase===f ? 'btn-primary' : 'btn-outline'" @click="r._fase=f" x-text="f"></button>
+                                                    </template>
+                                                    <span x-show="!fasesDropdown().length" class="text-[11px] text-base-content/50">configure em Configurações › SISDPU</span>
+                                                </div>
+                                            </div>
+                                            <!-- Tramitar -->
+                                            <div class="ret-acao-bloco">
+                                                <div class="ret-acao-titulo">Tramitar</div>
+                                                <div class="flex items-center gap-2 flex-wrap">
+                                                    <select class="select select-bordered select-sm min-w-[18rem]" x-model="r._grupo">
+                                                        <option value="">— caixa —</option>
+                                                        <template x-for="c in caixasDropdown()" :key="c"><option :value="c" x-text="c"></option></template>
+                                                    </select>
+                                                    <button class="btn btn-xs" :class="r._grupo==='' ? 'btn-primary' : 'btn-outline'" @click="r._grupo=''">Sem tramitação</button>
+                                                    <template x-for="c in caixasFreq" :key="c">
+                                                        <button class="btn btn-xs" :class="r._grupo===c ? 'btn-primary' : 'btn-outline'" @click="r._grupo=c" x-text="c"></button>
+                                                    </template>
+                                                </div>
+                                                <div class="flex items-center gap-2 flex-wrap mt-2" x-show="r._grupo">
+                                                    <span class="text-[11px] text-base-content/60 mr-1">Prazo:</span>
+                                                    <template x-for="p in [0,5,10,15,30]" :key="p">
+                                                        <button class="btn btn-xs" :class="(!r._prazoData && r._prazo===p) ? 'btn-primary' : 'btn-outline'" @click="r._prazo=p; r._prazoData=''" x-text="p===0 ? 'Sem prazo' : (p + ' dias')"></button>
+                                                    </template>
+                                                    <span class="text-[11px] text-base-content/60 ml-1">ou data:</span>
+                                                    <input type="date" class="input input-bordered input-xs w-36"
+                                                           :class="r._prazoData ? 'border-primary' : ''"
+                                                           x-model="r._prazoData" @change="if (r._prazoData) r._prazo = -1">
+                                                </div>
+                                            </div>
+                                            <!-- Concluir + Executar (última linha) -->
+                                            <div class="flex items-center gap-2 flex-wrap pt-2 border-t border-base-300">
+                                                <span class="font-medium">Concluir trâmite:</span>
+                                                <button class="btn btn-xs" :class="r._concluir ? 'btn-primary' : 'btn-outline'" @click="r._concluir=true">Sim</button>
+                                                <button class="btn btn-xs" :class="!r._concluir ? 'btn-primary' : 'btn-outline'" @click="r._concluir=false">Não</button>
+                                                <span class="text-[11px] text-base-content/50">(retira o PAJ da caixa)</span>
+                                                <button class="btn btn-sm btn-success ml-auto ret-btn-exec" @click="executar(r)" :disabled="!r._fase || r._exec">
+                                                    <span x-show="r._exec" class="loading loading-spinner loading-xs"></span>
+                                                    Executar
+                                                </button>
                                             </div>
                                         </div>
                                     </div>
@@ -242,6 +331,37 @@
 :root[data-theme="dark"] .ret-block-head.grp-acao      { color: #e8b75a; }
 :root[data-theme="dark"] .ret-block-head.grp-conclusao { color: #4ade80; }
 :root[data-theme="dark"] .ret-block-head .ret-block-count { background: rgba(255,255,255,0.12); }
+
+/* Console de Ações */
+.ret-acoes {
+    background: var(--surface, rgba(0,0,0,0.02));
+    border: 1px solid var(--border, rgba(0,0,0,0.08));
+    border-radius: 8px;
+}
+.ret-acoes-lbl { min-width: 8.5rem; font-weight: 600; color: var(--text-secondary, rgba(0,0,0,0.55)); }
+.ret-acao-bloco {
+    padding: 8px 10px; border-radius: 8px;
+    background: var(--card, rgba(255,255,255,0.5));
+    border: 1px solid var(--border, rgba(0,0,0,0.06));
+}
+.ret-acao-titulo {
+    font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+    color: var(--accent, #005FB8); margin-bottom: 6px;
+}
+/* Botão Executar em verde (independe dos overrides de tema do btn-primary) */
+.ret-btn-exec { background-color: #1f9d55 !important; border-color: #1f9d55 !important; color: #fff !important; }
+.ret-btn-exec:hover:not(:disabled) { background-color: #18864a !important; border-color: #18864a !important; }
+.ret-btn-exec:disabled { opacity: .6; }
+.ret-caixas {
+    background: var(--accent-soft, rgba(0,95,184,0.08));
+    border: 1px solid var(--border, rgba(0,0,0,0.08));
+    border-radius: 8px;
+}
+.ret-reanalise {
+    background: var(--surface, rgba(0,0,0,0.02));
+    border: 1px solid var(--border, rgba(0,0,0,0.08));
+    border-radius: 8px;
+}
 </style>
 
 <script>
@@ -251,10 +371,34 @@ function retornosPage() {
         carregando: false, sincronizando: false,
         sseAberto: false, sseLog: [], sseStatus: '', _es: null,
         movModal: false, movAtual: [], movTitulo: '',
+        // preferências da coluna Ações (favoritas=dropdown, frequentes=badges) — cache local
+        fasesFav: [], fasesFreq: [], fasesTodas: [],
+        caixasFav: [], caixasFreq: [], caixasTodas: [], faseDefault: '', caixaPadrao: '',
 
         async init() {
+            await this.carregarPreferencias();
             await this.carregarLista();
         },
+        async carregarPreferencias() {
+            try {
+                const j = await (await fetch('/api/retornos/preferencias')).json();
+                this.fasesFav = j.fases_favoritas || [];
+                this.fasesFreq = j.fases_frequentes || [];
+                this.fasesTodas = j.fases_todas || [];
+                this.caixasFav = j.caixas_favoritas || [];
+                this.caixasFreq = j.caixas_frequentes || [];
+                this.caixasTodas = j.caixas_todas || [];
+                this.caixaPadrao = j.caixa_padrao || '';
+                // fase pré-selecionada: padrão configurado, senão heurística 'despacho'
+                this.faseDefault = j.fase_padrao || (this.fasesDropdown().find(f => /despacho/i.test(f)) || '');
+                this.itens.forEach(r => {
+                    if (!r._fase) r._fase = this.faseDefault;
+                    if (r._grupo === undefined || r._grupo === '') r._grupo = this.caixaPadrao;
+                });
+            } catch (e) {}
+        },
+        fasesDropdown() { return this.fasesFav.length ? this.fasesFav : this.fasesTodas; },
+        caixasDropdown() { return this.caixasFav.length ? this.caixasFav : this.caixasTodas; },
         async carregarLista() {
             this.carregando = true;
             try {
@@ -263,11 +407,62 @@ function retornosPage() {
                     ...r,
                     _sug: (r.sugestao_editada || r.sugestao_ia || ''),
                     _salvando: false, _salvo: false,
+                    // estado da coluna Ações
+                    _fase: this.faseDefault, _grupo: this.caixaPadrao, _prazo: 0, _prazoData: '',
+                    _concluir: true, _exec: false,
+                    _promptReanalise: '', _reanalisando: false,
+                    // caixas abertas: já vêm da sincronização (cache); null = fallback lazy
+                    _caixas: Array.isArray(r.caixas_abertas) ? r.caixas_abertas : null,
+                    _caixasLoad: false,
                 }));
             } catch (e) { this.itens = []; }
             finally { this.carregando = false; }
         },
-        toggle(id) { this.expandido[id] = !this.expandido[id]; },
+        toggle(r) {
+            const id = (typeof r === 'object' && r) ? r.id_tramite : r;
+            this.expandido[id] = !this.expandido[id];
+            if (this.expandido[id] && typeof r === 'object' && r) this.carregarCaixas(r);
+        },
+        async carregarCaixas(r) {
+            if (r._caixas || r._caixasLoad) return;  // já carregado / carregando
+            r._caixasLoad = true;
+            try {
+                const j = await (await fetch('/api/retornos/' + encodeURIComponent(r.id_tramite) + '/caixas-abertas')).json();
+                r._caixas = j.abertas || [];
+            } catch (e) { r._caixas = []; }
+            finally { r._caixasLoad = false; }
+        },
+        executar(r) {
+            if (r._exec || !r._fase) return;
+            if (!confirm('Executar o despacho de ' + r.paj + '?\n\n'
+                + 'Movimentar (fase: ' + r._fase + ')'
+                + (r._grupo ? '\nTramitar para: ' + r._grupo + (r._prazo ? ' (prazo ' + r._prazo + ' dias)' : '') : '\nSem tramitação')
+                + (r._concluir ? '\nConcluir o trâmite (retira da caixa)' : '\nSem conclusão'))) return;
+            r._exec = true;
+            this.sseLog = []; this.sseStatus = ''; this.sseAberto = true;
+            const qs = new URLSearchParams({
+                fase: r._fase, descricao: r._sug || '',
+                grupo: r._grupo || '', prazo: String(r._prazo > 0 ? r._prazo : 0),
+                prazo_data: r._prazoData || '',
+                concluir: r._concluir ? '1' : '0',
+            });
+            const es = new EventSource('/api/retornos/' + encodeURIComponent(r.id_tramite) + '/executar?' + qs.toString());
+            this._es = es;
+            es.addEventListener('log', (ev) => {
+                try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {}
+                this.$nextTick(() => { const b = this.$refs.sseBox; if (b) b.scrollTop = b.scrollHeight; });
+            });
+            es.addEventListener('done', async (ev) => {
+                let res = {}; try { res = JSON.parse(ev.data); } catch (e) {}
+                this.sseStatus = res.ok ? '— executado ✓' : '— com aviso';
+                r._exec = false; es.close(); this._es = null;
+                await this.carregarLista();  // se concluído, o PAJ saiu do store e some da lista
+            });
+            es.onerror = () => {
+                this.sseStatus = '— erro de conexão';
+                r._exec = false; es.close(); this._es = null;
+            };
+        },
         grupos() {
             // Agrupa os retornos por classificação da IA para agilizar as ações.
             // Ordem: primeiro os de mera conclusão (mais ágeis de despachar), depois os
@@ -285,6 +480,27 @@ function retornosPage() {
             this.movAtual = r.movimentacoes || [];
             this.movTitulo = r.paj + ' — ' + (r.assistido || '') + ' · ' + this.movAtual.length + ' movimentações';
             this.movModal = true;
+        },
+        async reanalisar(r) {
+            if (r._reanalisando) return;
+            r._reanalisando = true;
+            try {
+                const resp = await fetch('/api/retornos/' + encodeURIComponent(r.id_tramite) + '/reanalisar', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ prompt: r._promptReanalise || '' }),
+                });
+                const j = await resp.json();
+                if (j.ok) {
+                    r.resumo_ia = j.resumo_ia;
+                    r.precisa_acao = j.precisa_acao;
+                    r.sugestao_ia = j.sugestao_ia;
+                    r.sugestao_editada = '';
+                    r._sug = j.sugestao_ia;   // atualiza o textarea da Sugestão IA
+                } else {
+                    alert('Reanálise: ' + (j.detalhe || 'falha'));
+                }
+            } catch (e) { alert('Erro ao reanalisar: ' + e); }
+            finally { r._reanalisando = false; }
         },
         async salvarSugestao(r) {
             r._salvando = true; r._salvo = false;

@@ -479,13 +479,18 @@
                 <div x-show="fasesTodas.length===0" class="text-sm text-base-content/40">
                     Nenhuma fase importada. Clique em <strong>Importar do SISDPU</strong>.
                 </div>
+                <label class="flex items-center gap-2 mb-2 text-sm cursor-pointer" x-show="fasesTodas.length">
+                    <input type="radio" class="radio radio-sm" :checked="fasePadrao===''" @change="fasePadrao=''">
+                    <span>Padrão: <strong>nenhuma</strong> (escolher na hora)</span>
+                </label>
                 <div class="cfg-pref-grid" x-show="fasesTodas.length">
-                    <div class="cfg-pref-head"><span>Fase</span><span>Favorita</span><span>Frequente</span></div>
+                    <div class="cfg-pref-head"><span>Fase</span><span>Favorita</span><span>Frequente</span><span>Padrão</span></div>
                     <template x-for="f in fasesTodas" :key="f">
                         <label class="cfg-pref-row">
                             <span x-text="f"></span>
                             <input type="checkbox" class="checkbox checkbox-sm" :checked="fasesFav.includes(f)" @change="toggleIn('fasesFav', f)">
                             <input type="checkbox" class="checkbox checkbox-sm" :checked="fasesFreq.includes(f)" @change="toggleIn('fasesFreq', f)">
+                            <input type="radio" class="radio radio-sm" :checked="fasePadrao===f" @change="fasePadrao=f">
                         </label>
                     </template>
                 </div>
@@ -499,13 +504,18 @@
                 <div x-show="caixasTodas.length===0" class="text-sm text-base-content/40">
                     Nenhuma caixa importada. Clique em <strong>Importar do SISDPU</strong>.
                 </div>
+                <label class="flex items-center gap-2 mb-2 text-sm cursor-pointer" x-show="caixasTodas.length">
+                    <input type="radio" class="radio radio-sm" :checked="caixaPadrao===''" @change="caixaPadrao=''">
+                    <span>Padrão: <strong>Sem tramitação</strong> (não tramitar por padrão)</span>
+                </label>
                 <div class="cfg-pref-grid" x-show="caixasTodas.length">
-                    <div class="cfg-pref-head"><span>Caixa</span><span>Favorita</span><span>Frequente</span></div>
+                    <div class="cfg-pref-head"><span>Caixa</span><span>Favorita</span><span>Frequente</span><span>Padrão</span></div>
                     <template x-for="c in caixasTodas" :key="c">
                         <label class="cfg-pref-row">
                             <span x-text="c"></span>
                             <input type="checkbox" class="checkbox checkbox-sm" :checked="caixasFav.includes(c)" @change="toggleIn('caixasFav', c)">
                             <input type="checkbox" class="checkbox checkbox-sm" :checked="caixasFreq.includes(c)" @change="toggleIn('caixasFreq', c)">
+                            <input type="radio" class="radio radio-sm" :checked="caixaPadrao===c" @change="caixaPadrao=c">
                         </label>
                     </template>
                 </div>
@@ -577,7 +587,7 @@
 .cfg-pref-grid { border: 1px solid var(--stroke, rgba(0,0,0,0.1)); border-radius: 8px; overflow: hidden;
     max-height: 22rem; overflow-y: auto; }
 .cfg-pref-head, .cfg-pref-row {
-    display: grid; grid-template-columns: 1fr 5.5rem 5.5rem; align-items: center; gap: 8px;
+    display: grid; grid-template-columns: 1fr 5rem 5rem 5rem; align-items: center; gap: 8px;
     padding: 6px 12px;
 }
 .cfg-pref-head { position: sticky; top: 0; background: var(--layer-alt, #f6f6f6);
@@ -669,6 +679,7 @@ function sisdpuPrefs() {
     return {
         fasesTodas: [], caixasTodas: [],
         fasesFav: [], fasesFreq: [], caixasFav: [], caixasFreq: [],
+        fasePadrao: '', caixaPadrao: '',
         importando: false, salvando: false, msg: '', msg2: '', msgErro: false,
         async init() {
             try {
@@ -683,6 +694,8 @@ function sisdpuPrefs() {
             this.fasesFreq = j.fases_frequentes || [];
             this.caixasFav = j.caixas_favoritas || [];
             this.caixasFreq = j.caixas_frequentes || [];
+            this.fasePadrao = j.fase_padrao || '';
+            this.caixaPadrao = j.caixa_padrao || '';
         },
         toggleIn(lista, item) {
             const arr = this[lista];
@@ -707,6 +720,7 @@ function sisdpuPrefs() {
                     body: JSON.stringify({
                         fases_favoritas: this.fasesFav, fases_frequentes: this.fasesFreq,
                         caixas_favoritas: this.caixasFav, caixas_frequentes: this.caixasFreq,
+                        fase_padrao: this.fasePadrao, caixa_padrao: this.caixaPadrao,
                     }),
                 });
                 const j = await r.json();

@@ -53,57 +53,11 @@ def salvar_config(config: dict) -> dict:
     return {k: raw[k] for k in DEFAULTS}
 
 
-# --- Preferências de tramitação (caixas favoritas + prazo padrão) ---
-GRUPOS_FAVORITOS_MAX = 3
-PRAZO_TRAMITACAO_DEFAULT = 15
-
-
-def get_prazo_tramitacao_padrao() -> int:
-    try:
-        v = int(_ler_raw().get("prazo_tramitacao_padrao", PRAZO_TRAMITACAO_DEFAULT))
-    except Exception:
-        v = PRAZO_TRAMITACAO_DEFAULT
-    return min(365, max(1, v))
-
-
-def set_prazo_tramitacao_padrao(dias: int) -> int:
-    v = min(365, max(1, int(dias)))
-    raw = _ler_raw()
-    raw["prazo_tramitacao_padrao"] = v
-    _salvar_raw(raw)
-    return v
-
-
-def get_grupos_favoritos() -> list[str]:
-    g = _ler_raw().get("grupos_favoritos", [])
-    return [str(x) for x in g][:GRUPOS_FAVORITOS_MAX] if isinstance(g, list) else []
-
-
-def add_grupo_favorito(grupo: str) -> list[str]:
-    grupo = (grupo or "").strip()
-    favs = get_grupos_favoritos()
-    if grupo and grupo not in favs and len(favs) < GRUPOS_FAVORITOS_MAX:
-        favs.append(grupo)
-        raw = _ler_raw()
-        raw["grupos_favoritos"] = favs
-        _salvar_raw(raw)
-    return favs
-
-
-def del_grupo_favorito(grupo: str) -> list[str]:
-    favs = [g for g in get_grupos_favoritos() if g != (grupo or "").strip()]
-    raw = _ler_raw()
-    raw["grupos_favoritos"] = favs
-    _salvar_raw(raw)
-    return favs
-
-
 # --- Valores padrão da aba "Arquivos SAT Central" ---
 # Caixa de tramitação padrão, modo/quantidade de prazo, tempo entre consultas e
 # espera após bloqueio anti-robô. Todos assumem o valor de fábrica quando ausentes
-# (comportamento original do painel). É uma padronização ESPECÍFICA da aba: o nº de
-# dias usa a chave própria `sat_prazo_dias`, independente do prazo geral de tramitação
-# (`prazo_tramitacao_padrao`, editado em "Preferências de tramitação").
+# (comportamento original do painel). O nº de dias usa a chave própria
+# `sat_prazo_dias`, específica desta aba.
 SAT_CAIXA_PADRAO_DEFAULT = "01 - PREV_DIVPREV"
 SAT_PRAZO_MODO_DEFAULT = "sem_prazo"  # "sem_prazo" | "dias"
 SAT_PRAZO_DIAS_DEFAULT = 15           # dias de prazo quando o modo é "dias"
@@ -262,6 +216,61 @@ def resolver_sat_tipos(pretensao: str, todos: list[str]) -> list[str]:
         return por[pretensao]
     pad = get_sat_tipos_padrao()
     return pad if pad is not None else list(todos)
+
+
+# --- Preferências SISDPU: fases de movimentação e caixas de tramitação ---
+# Listas COMPLETAS importadas do SISDPU (raramente mudam) + curadoria do usuário:
+#   favoritas -> preenchem o DROPDOWN da console de despacho (Retornos);
+#   frequentes -> aparecem como BADGES de clique rápido.
+def _lst(raw: dict, k: str) -> list[str]:
+    v = raw.get(k)
+    return [str(x) for x in v] if isinstance(v, list) else []
+
+
+def get_sisdpu_prefs() -> dict:
+    """Todas as listas SISDPU (importadas + favoritas + frequentes)."""
+    raw = _ler_raw()
+    return {
+        "fases_todas": _lst(raw, "sisdpu_fases_todas"),
+        "caixas_todas": _lst(raw, "sisdpu_caixas_todas"),
+        "fases_favoritas": _lst(raw, "sisdpu_fases_favoritas"),
+        "caixas_favoritas": _lst(raw, "sisdpu_caixas_favoritas"),
+        "fases_frequentes": _lst(raw, "sisdpu_fases_frequentes"),
+        "caixas_frequentes": _lst(raw, "sisdpu_caixas_frequentes"),
+        # opção pré-selecionada nos dropdowns; caixa_padrao "" = Sem tramitação
+        "fase_padrao": str(raw.get("sisdpu_fase_padrao") or ""),
+        "caixa_padrao": str(raw.get("sisdpu_caixa_padrao") or ""),
+    }
+
+
+def set_sisdpu_listas_todas(fases: list[str], caixas: list[str]) -> dict:
+    """Grava as listas COMPLETAS importadas do SISDPU (mantém a curadoria existente,
+    apenas descartando favoritas/frequentes que sumiram da lista importada)."""
+    raw = _ler_raw()
+    fases = [str(x) for x in (fases or [])]
+    caixas = [str(x) for x in (caixas or [])]
+    raw["sisdpu_fases_todas"] = fases
+    raw["sisdpu_caixas_todas"] = caixas
+    for k, universo in (("sisdpu_fases_favoritas", fases), ("sisdpu_fases_frequentes", fases),
+                        ("sisdpu_caixas_favoritas", caixas), ("sisdpu_caixas_frequentes", caixas)):
+        if isinstance(raw.get(k), list) and universo:
+            raw[k] = [x for x in _lst(raw, k) if x in universo]
+    _salvar_raw(raw)
+    return get_sisdpu_prefs()
+
+
+def set_sisdpu_prefs(d: dict) -> dict:
+    """Grava as listas de curadoria presentes em `d` (favoritas/frequentes)."""
+    raw = _ler_raw()
+    for chave in ("fases_favoritas", "caixas_favoritas", "fases_frequentes", "caixas_frequentes"):
+        if chave in d and isinstance(d[chave], list):
+            raw["sisdpu_" + chave] = [str(x) for x in d[chave]]
+    if "fase_padrao" in d:
+        raw["sisdpu_fase_padrao"] = str(d.get("fase_padrao") or "")
+    if "caixa_padrao" in d:
+        raw["sisdpu_caixa_padrao"] = str(d.get("caixa_padrao") or "")
+    _salvar_raw(raw)
+    return get_sisdpu_prefs()
 
 
 def limpar_dados_narrativa() -> int:

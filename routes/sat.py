@@ -377,17 +377,13 @@ async def mesclar_complementar(paj_norm: str):
 
 @router.get("/api/sat/grupos", response_class=JSONResponse)
 async def api_grupos(id: str = ""):
-    """Lista caixas de grupo da unidade (+ favoritas de config). `id` = id_processo de
-    referência p/ abrir a tela de tramitação; se ausente, usa o de uma pendência."""
+    """Lista caixas de grupo da unidade. `id` = id_processo de referência p/ abrir a
+    tela de tramitação; se ausente, usa o de uma pendência. As caixas frequentes
+    (badges de clique rápido) vêm de /api/config/sisdpu, não daqui."""
     id_processo = id
     if not id_processo:
         pend = await sat_service.listar_pendentes()
         itens = pend.get("itens", []) if isinstance(pend, dict) else []
         id_processo = next((i.get("id_processo") for i in itens if i.get("id_processo")), "")
     grupos = await movtram.listar_grupos_unidade(id_processo) if id_processo else []
-    favoritos: list[str] = []
-    try:
-        favoritos = _cfg.get_grupos_favoritos()  # type: ignore[name-defined]
-    except Exception:  # noqa: BLE001
-        favoritos = []
-    return JSONResponse({"grupos": grupos, "favoritos": favoritos, "padrao": sat_service.GRUPO_PADRAO})
+    return JSONResponse({"grupos": grupos, "padrao": sat_service.GRUPO_PADRAO})
