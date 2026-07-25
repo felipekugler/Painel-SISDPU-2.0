@@ -954,7 +954,6 @@ function satPage() {
             try {
                 const r = await (await fetch('/api/config/tramitacao')).json();
                 this.favoritos = r.favoritos || [];
-                if (r.prazo) this.prazoDias = r.prazo;
             } catch (e) {}
             // Valores padrão da aba (config → "Arquivos SAT Central"): caixa de
             // tramitação, prazo (sem prazo/dias), tempo entre consultas e espera após bloqueio.

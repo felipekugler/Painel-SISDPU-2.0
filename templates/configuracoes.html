@@ -340,62 +340,8 @@
     <!-- ===================== Aba: Arquivos SAT ===================== -->
     <div class="cfg-panel" data-panel="sat">
 
-    <!-- Preferências de tramitação (usadas na aba Arquivos SAT) -->
-    <div class="card bg-base-200 shadow" x-data="prefTramitacao()" x-init="init()">
-        <div class="card-body gap-5">
-            <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
-                Preferências de tramitação
-            </h3>
-            <p class="text-sm text-base-content/60">
-                Usadas na aba <strong>Arquivos SAT</strong> ao escolher a caixa de tramitação.
-            </p>
-
-            <!-- Prazo padrão -->
-            <div class="flex items-start justify-between gap-4">
-                <div>
-                    <p class="font-medium">Prazo de tramitação padrão</p>
-                    <p class="text-sm text-base-content/60 mt-0.5">Em dias (1–365). Aplicado quando a tramitação define prazo de conclusão.</p>
-                </div>
-                <div class="flex items-center gap-2 shrink-0">
-                    <input type="number" min="1" max="365" class="input input-bordered input-sm w-20" x-model.number="prazo">
-                    <button class="btn btn-sm btn-primary" @click="salvarPrazo()">Salvar</button>
-                </div>
-            </div>
-
-            <!-- Caixas favoritas -->
-            <div class="pt-2 border-t border-base-300">
-                <p class="font-medium">Caixas de grupo favoritas
-                    <span class="text-base-content/50" x-text="'(' + favoritos.length + '/' + maxFav + ')'"></span>
-                </p>
-                <p class="text-sm text-base-content/60 mt-0.5 mb-2">Atalhos rápidos na escolha da caixa de tramitação.</p>
-                <div class="flex flex-wrap gap-2 mb-3">
-                    <template x-for="g in favoritos" :key="g">
-                        <span class="badge badge-primary badge-lg gap-1">
-                            <span x-text="g"></span>
-                            <button class="font-bold" @click="delFav(g)" title="Remover">✕</button>
-                        </span>
-                    </template>
-                    <span x-show="favoritos.length===0" class="text-sm text-base-content/40">Nenhuma favorita.</span>
-                </div>
-                <div class="flex items-center gap-2">
-                    <select class="select select-bordered select-sm flex-1" x-model="grupoSel" :disabled="grupos.length===0">
-                        <option value="" x-text="grupos.length ? 'Selecione uma caixa...' : 'Carregue as caixas primeiro'"></option>
-                        <template x-for="g in grupos" :key="g"><option :value="g" x-text="g"></option></template>
-                    </select>
-                    <button class="btn btn-sm btn-ghost" @click="carregarGrupos()" :disabled="carregando" title="Consulta o SISDPU">
-                        <span x-show="carregando" class="loading loading-spinner loading-xs"></span>
-                        <span x-text="grupos.length ? 'Recarregar' : 'Carregar caixas'"></span>
-                    </button>
-                    <button class="btn btn-sm btn-primary" :disabled="!grupoSel || favoritos.length>=maxFav" @click="addFav()">Adicionar</button>
-                </div>
-            </div>
-
-            <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
-        </div>
-    </div>
-
-    <!-- Arquivos SAT Central — valores padrão da aba -->
-    <div class="card bg-base-200 shadow mt-6" x-data="satCentralDefaults()" x-init="init()">
+    <!-- Arquivos SAT Central — valores padrão da aba (caixa padrão + favoritas + prazo) -->
+    <div class="card bg-base-200 shadow" x-data="satCentralDefaults()" x-init="init()">
         <div class="card-body gap-5">
             <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
                 Arquivos SAT Central
@@ -423,6 +369,32 @@
                             <span x-text="grupos.length ? 'Recarregar caixas' : 'Carregar caixas'"></span>
                         </button>
                     </div>
+                </div>
+            </div>
+
+            <!-- Caixas de grupo favoritas (atalhos extras à caixa padrão) -->
+            <div class="pt-2 border-t border-base-300">
+                <p class="font-medium">Caixas de grupo favoritas
+                    <span class="text-base-content/50" x-text="'(' + favoritos.length + '/' + maxFav + ')'"></span>
+                </p>
+                <p class="text-sm text-base-content/60 mt-0.5 mb-2">
+                    Atalhos rápidos que aparecem junto à caixa padrão ao escolher "Tramitar para" (na aba Arquivos SAT e em Retornos).
+                </p>
+                <div class="flex flex-wrap gap-2 mb-3">
+                    <template x-for="g in favoritos" :key="g">
+                        <span class="badge badge-primary badge-lg gap-1">
+                            <span x-text="g"></span>
+                            <button class="font-bold" @click="delFav(g)" title="Remover">✕</button>
+                        </span>
+                    </template>
+                    <span x-show="favoritos.length===0" class="text-sm text-base-content/40">Nenhuma favorita.</span>
+                </div>
+                <div class="flex items-center gap-2">
+                    <select class="select select-bordered select-sm flex-1" x-model="favSel" :disabled="grupos.length===0">
+                        <option value="" x-text="grupos.length ? 'Selecione uma caixa...' : 'Carregue as caixas primeiro'"></option>
+                        <template x-for="g in grupos" :key="g"><option :value="g" x-text="g"></option></template>
+                    </select>
+                    <button class="btn btn-sm btn-primary" :disabled="!favSel || favoritos.length>=maxFav" @click="addFav()">Adicionar favorita</button>
                 </div>
             </div>
 
@@ -634,60 +606,13 @@ function temaMarcarAtivo(t) {
     temaMarcarAtivo(t);
 })();
 
-// Preferências de tramitação (caixas favoritas + prazo)
-function prefTramitacao() {
-    return {
-        prazo: 15, favoritos: [], grupos: [], grupoSel: '', maxFav: 3,
-        msg: '', msgErro: false, carregando: false,
-        async init() {
-            try {
-                const r = await (await fetch('/api/config/tramitacao')).json();
-                this.prazo = r.prazo; this.favoritos = r.favoritos || []; this.maxFav = r.max_favoritos || 3;
-            } catch (e) {}
-        },
-        async carregarGrupos() {
-            this.carregando = true;
-            try {
-                const g = await (await fetch('/api/sat/grupos')).json();
-                this.grupos = g.grupos || [];
-                if (!this.grupos.length) this._msg('Nenhuma caixa retornada (verifique a sessão do SISDPU).', true);
-            } catch (e) { this._msg('Erro ao consultar as caixas.', true); }
-            finally { this.carregando = false; }
-        },
-        async salvarPrazo() {
-            try {
-                const r = await (await fetch('/api/config/prazo-tramitacao', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({dias: this.prazo})})).json();
-                this.prazo = r.prazo; this._msg('Prazo salvo.', false);
-            } catch (e) { this._msg('Erro de comunicação.', true); }
-        },
-        async addFav() {
-            if (!this.grupoSel) return;
-            try {
-                const r = await (await fetch('/api/config/grupos-favoritos', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({grupo: this.grupoSel})})).json();
-                this.favoritos = r.favoritos || []; this.grupoSel = ''; this._msg('Favorita adicionada.', false);
-            } catch (e) { this._msg('Erro de comunicação.', true); }
-        },
-        async delFav(g) {
-            try {
-                const r = await (await fetch('/api/config/grupos-favoritos/del', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({grupo: g})})).json();
-                this.favoritos = r.favoritos || [];
-            } catch (e) { this._msg('Erro de comunicação.', true); }
-        },
-        _msg(m, err) { this.msg = m; this.msgErro = err; setTimeout(() => this.msg = '', 3500); },
-    };
-}
-
-// Valores padrão da aba "Arquivos SAT Central"
+// Valores padrão da aba "Arquivos SAT Central" — inclui as caixas favoritas
+// (antes num card separado "Preferências de tramitação", agora consolidadas aqui).
 function satCentralDefaults() {
     return {
         caixa: '01 - PREV_DIVPREV', prazoModo: 'sem_prazo', prazoDias: 15,
         tempoEntre: 5, esperaBloqueio: 45, compilar: true, compilarLimiar: 3,
+        favoritos: [], favSel: '', maxFav: 3,
         grupos: [], carregando: false, salvando: false, msg: '', msgErro: false,
         async init() {
             try {
@@ -700,6 +625,12 @@ function satCentralDefaults() {
                 if (typeof r.compilar === 'boolean') this.compilar = r.compilar;
                 if (r.compilar_limiar) this.compilarLimiar = r.compilar_limiar;
             } catch (e) {}
+            // Caixas favoritas (compartilhadas com a aba Retornos).
+            try {
+                const t = await (await fetch('/api/config/tramitacao')).json();
+                this.favoritos = t.favoritos || [];
+                this.maxFav = t.max_favoritos || 3;
+            } catch (e) {}
         },
         async carregarGrupos() {
             this.carregando = true;
@@ -709,6 +640,23 @@ function satCentralDefaults() {
                 if (!this.grupos.length) this._msg('Nenhuma caixa retornada (verifique a sessão do SISDPU).', true);
             } catch (e) { this._msg('Erro ao consultar as caixas.', true); }
             finally { this.carregando = false; }
+        },
+        async addFav() {
+            if (!this.favSel) return;
+            try {
+                const r = await (await fetch('/api/config/grupos-favoritos', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({grupo: this.favSel})})).json();
+                this.favoritos = r.favoritos || []; this.favSel = ''; this._msg('Favorita adicionada.', false);
+            } catch (e) { this._msg('Erro de comunicação.', true); }
+        },
+        async delFav(g) {
+            try {
+                const r = await (await fetch('/api/config/grupos-favoritos/del', {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({grupo: g})})).json();
+                this.favoritos = r.favoritos || [];
+            } catch (e) { this._msg('Erro de comunicação.', true); }
         },
         async salvar() {
             this.salvando = true;
