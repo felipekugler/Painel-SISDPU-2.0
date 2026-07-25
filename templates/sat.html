@@ -631,7 +631,7 @@
 <script>
 function satPage() {
     return {
-        pendentes: [], historico: [], favoritos: [], grupos: [],
+        pendentes: [], historico: [], frequentes: [], grupos: [],
         padrao: '01 - PREV_DIVPREV', grupoSel: '01 - PREV_DIVPREV',
         comPrazo: false, prazoDias: 15,
         verificado: false,
@@ -943,7 +943,9 @@ function satPage() {
             finally { this.sessaoBusy = false; }
         },
         caixasRapidas() {
-            const s = [this.padrao, ...this.favoritos];
+            // Badges de clique rápido: caixa padrão + caixas FREQUENTES (curadas em
+            // Configurações › SISDPU). As favoritas ficam para o dropdown "outra caixa".
+            const s = [this.padrao, ...this.frequentes];
             return [...new Set(s.filter(Boolean))];
         },
         dataPrazo() {
@@ -951,9 +953,10 @@ function satPage() {
             return d.toLocaleDateString('pt-BR');
         },
         async carregarPrefs() {
+            // Caixas FREQUENTES (curadoria em Configurações › SISDPU) → badges rápidos.
             try {
-                const r = await (await fetch('/api/config/tramitacao')).json();
-                this.favoritos = r.favoritos || [];
+                const r = await (await fetch('/api/config/sisdpu')).json();
+                this.frequentes = r.caixas_frequentes || [];
             } catch (e) {}
             // Valores padrão da aba (config → "Arquivos SAT Central"): caixa de
             // tramitação, prazo (sem prazo/dias), tempo entre consultas e espera após bloqueio.
