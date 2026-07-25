@@ -69,6 +69,16 @@
 
     <h2 class="text-2xl font-bold mb-6">Configurações do Painel</h2>
 
+    <!-- Abas temáticas -->
+    <div class="cfg-tabs" role="tablist">
+        <button class="cfg-tab" data-tab="acesso" onclick="abrirTab('acesso')">Acesso</button>
+        <button class="cfg-tab" data-tab="geral" onclick="abrirTab('geral')">Geral</button>
+        <button class="cfg-tab" data-tab="sat" onclick="abrirTab('sat')">Arquivos SAT</button>
+    </div>
+
+    <!-- ===================== Aba: Geral ===================== -->
+    <div class="cfg-panel" data-panel="geral">
+
     <!-- Aparência -->
     <div class="card bg-base-200 shadow mb-6">
         <div class="card-body gap-4">
@@ -134,8 +144,13 @@
         </div>
     </div>
 
+    </div><!-- /cfg-panel geral -->
+
+    <!-- ===================== Aba: Acesso ===================== -->
+    <div class="cfg-panel" data-panel="acesso">
+
     <!-- Cofre de credenciais (acesso aos sistemas externos) -->
-    <div class="card bg-base-200 shadow mt-6" x-data="cofreAcesso()" x-init="init()">
+    <div class="card bg-base-200 shadow" x-data="cofreAcesso()" x-init="init()">
         <div class="card-body gap-4">
             <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
                 Cofre de credenciais
@@ -320,8 +335,13 @@
         </div>
     </div>
 
+    </div><!-- /cfg-panel acesso -->
+
+    <!-- ===================== Aba: Arquivos SAT ===================== -->
+    <div class="cfg-panel" data-panel="sat">
+
     <!-- Preferências de tramitação (usadas na aba Arquivos SAT) -->
-    <div class="card bg-base-200 shadow mt-6" x-data="prefTramitacao()" x-init="init()">
+    <div class="card bg-base-200 shadow" x-data="prefTramitacao()" x-init="init()">
         <div class="card-body gap-5">
             <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
                 Preferências de tramitação
@@ -483,6 +503,8 @@
         </div>
     </div>
 
+    </div><!-- /cfg-panel sat -->
+
     <p class="text-xs text-base-content/40 mt-4">
         As alterações têm efeito imediato. Configurações armazenadas em
         <code class="font-mono">painel_config.json</code> na raiz do projeto.
@@ -516,6 +538,24 @@
 
 {% block scripts %}
 <style>
+/* Abas temáticas das Configurações (mesmo padrão do Painel Comunicações) */
+.cfg-tabs {
+    display: flex; gap: 2px; flex-wrap: wrap;
+    border-bottom: 1px solid var(--stroke, rgba(0,0,0,0.1));
+    margin-bottom: 24px;
+}
+.cfg-tab {
+    padding: 9px 16px; border: none; background: transparent;
+    color: var(--text-secondary, #6b7280);
+    font-size: 14px; font-weight: 600; cursor: pointer;
+    border-bottom: 2px solid transparent; margin-bottom: -1px;
+    transition: color .12s, background .12s;
+    border-top-left-radius: 6px; border-top-right-radius: 6px;
+}
+.cfg-tab:hover { color: var(--text, #1a1a1a); background: color-mix(in srgb, var(--text, #1a1a1a) 5%, transparent); }
+.cfg-tab.ativa { color: var(--accent, #005FB8); border-bottom-color: var(--accent, #005FB8); }
+.cfg-panel { display: none; }
+.cfg-panel.ativa { display: block; }
 .tema-seg {
     display: inline-flex;
     gap: 4px;
@@ -561,6 +601,19 @@
 </style>
 
 <script>
+// Abas temáticas — alterna painéis e persiste a aba ativa entre recargas.
+function abrirTab(id) {
+    document.querySelectorAll('.cfg-panel').forEach(p => p.classList.toggle('ativa', p.dataset.panel === id));
+    document.querySelectorAll('.cfg-tab').forEach(b => b.classList.toggle('ativa', b.dataset.tab === id));
+    try { sessionStorage.setItem('cfg-tab-sisdpu', id); } catch (e) {}
+}
+(function () {
+    let id = 'acesso';
+    try { id = sessionStorage.getItem('cfg-tab-sisdpu') || 'acesso'; } catch (e) {}
+    if (!document.querySelector('.cfg-tab[data-tab="' + id + '"]')) id = 'acesso';
+    abrirTab(id);
+})();
+
 // Definir tema (Sistema / Claro / Escuro) — salvo neste navegador
 function definirTema(t) {
     try { localStorage.setItem('painel-tema', t); } catch(e){}
