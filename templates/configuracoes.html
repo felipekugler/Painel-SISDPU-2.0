@@ -74,6 +74,7 @@
         <button class="cfg-tab" data-tab="acesso" onclick="abrirTab('acesso')">Acesso</button>
         <button class="cfg-tab" data-tab="geral" onclick="abrirTab('geral')">Geral</button>
         <button class="cfg-tab" data-tab="sat" onclick="abrirTab('sat')">Arquivos SAT</button>
+        <button class="cfg-tab" data-tab="sisdpu" onclick="abrirTab('sisdpu')">SISDPU</button>
     </div>
 
     <!-- ===================== Aba: Geral ===================== -->
@@ -340,7 +341,7 @@
     <!-- ===================== Aba: Arquivos SAT ===================== -->
     <div class="cfg-panel" data-panel="sat">
 
-    <!-- Arquivos SAT Central — valores padrão da aba (caixa padrão + favoritas + prazo) -->
+    <!-- Arquivos SAT Central — valores padrão da aba (caixa de tramitação + prazo + antirrobô) -->
     <div class="card bg-base-200 shadow" x-data="satCentralDefaults()" x-init="init()">
         <div class="card-body gap-5">
             <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
@@ -369,32 +370,6 @@
                             <span x-text="grupos.length ? 'Recarregar caixas' : 'Carregar caixas'"></span>
                         </button>
                     </div>
-                </div>
-            </div>
-
-            <!-- Caixas de grupo favoritas (atalhos extras à caixa padrão) -->
-            <div class="pt-2 border-t border-base-300">
-                <p class="font-medium">Caixas de grupo favoritas
-                    <span class="text-base-content/50" x-text="'(' + favoritos.length + '/' + maxFav + ')'"></span>
-                </p>
-                <p class="text-sm text-base-content/60 mt-0.5 mb-2">
-                    Atalhos rápidos que aparecem junto à caixa padrão ao escolher "Tramitar para" (na aba Arquivos SAT e em Retornos).
-                </p>
-                <div class="flex flex-wrap gap-2 mb-3">
-                    <template x-for="g in favoritos" :key="g">
-                        <span class="badge badge-primary badge-lg gap-1">
-                            <span x-text="g"></span>
-                            <button class="font-bold" @click="delFav(g)" title="Remover">✕</button>
-                        </span>
-                    </template>
-                    <span x-show="favoritos.length===0" class="text-sm text-base-content/40">Nenhuma favorita.</span>
-                </div>
-                <div class="flex items-center gap-2">
-                    <select class="select select-bordered select-sm flex-1" x-model="favSel" :disabled="grupos.length===0">
-                        <option value="" x-text="grupos.length ? 'Selecione uma caixa...' : 'Carregue as caixas primeiro'"></option>
-                        <template x-for="g in grupos" :key="g"><option :value="g" x-text="g"></option></template>
-                    </select>
-                    <button class="btn btn-sm btn-primary" :disabled="!favSel || favoritos.length>=maxFav" @click="addFav()">Adicionar favorita</button>
                 </div>
             </div>
 
@@ -477,6 +452,76 @@
 
     </div><!-- /cfg-panel sat -->
 
+    <!-- ===================== Aba: SISDPU ===================== -->
+    <div class="cfg-panel" data-panel="sisdpu">
+    <div class="card bg-base-200 shadow" x-data="sisdpuPrefs()" x-init="init()">
+        <div class="card-body gap-5">
+            <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
+                <h3 class="text-lg font-semibold text-base-content/80">Fases e caixas do SISDPU</h3>
+                <button class="btn btn-sm btn-ghost" @click="importar()" :disabled="importando"
+                        title="Consulta o SISDPU e atualiza a lista completa de fases e caixas.">
+                    <span x-show="importando" class="loading loading-spinner loading-xs"></span>
+                    <span x-text="(fasesTodas.length||caixasTodas.length) ? 'Reimportar do SISDPU' : 'Importar do SISDPU'"></span>
+                </button>
+            </div>
+            <p class="text-sm text-base-content/60">
+                Marque as <strong>Favoritas</strong> (aparecem no dropdown da console de despacho em
+                <strong>Retornos</strong>) e as <strong>Frequentes</strong> (viram badges de clique rápido).
+                A lista completa é importada do SISDPU (muda raramente).
+            </p>
+            <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
+
+            <!-- Fases de movimentação -->
+            <div class="pt-1">
+                <p class="font-medium mb-2">Fases de movimentação
+                    <span class="text-base-content/50" x-text="'(' + fasesTodas.length + ')'"></span>
+                </p>
+                <div x-show="fasesTodas.length===0" class="text-sm text-base-content/40">
+                    Nenhuma fase importada. Clique em <strong>Importar do SISDPU</strong>.
+                </div>
+                <div class="cfg-pref-grid" x-show="fasesTodas.length">
+                    <div class="cfg-pref-head"><span>Fase</span><span>Favorita</span><span>Frequente</span></div>
+                    <template x-for="f in fasesTodas" :key="f">
+                        <label class="cfg-pref-row">
+                            <span x-text="f"></span>
+                            <input type="checkbox" class="checkbox checkbox-sm" :checked="fasesFav.includes(f)" @change="toggleIn('fasesFav', f)">
+                            <input type="checkbox" class="checkbox checkbox-sm" :checked="fasesFreq.includes(f)" @change="toggleIn('fasesFreq', f)">
+                        </label>
+                    </template>
+                </div>
+            </div>
+
+            <!-- Caixas de tramitação -->
+            <div class="pt-2 border-t border-base-300">
+                <p class="font-medium mb-2">Caixas de tramitação
+                    <span class="text-base-content/50" x-text="'(' + caixasTodas.length + ')'"></span>
+                </p>
+                <div x-show="caixasTodas.length===0" class="text-sm text-base-content/40">
+                    Nenhuma caixa importada. Clique em <strong>Importar do SISDPU</strong>.
+                </div>
+                <div class="cfg-pref-grid" x-show="caixasTodas.length">
+                    <div class="cfg-pref-head"><span>Caixa</span><span>Favorita</span><span>Frequente</span></div>
+                    <template x-for="c in caixasTodas" :key="c">
+                        <label class="cfg-pref-row">
+                            <span x-text="c"></span>
+                            <input type="checkbox" class="checkbox checkbox-sm" :checked="caixasFav.includes(c)" @change="toggleIn('caixasFav', c)">
+                            <input type="checkbox" class="checkbox checkbox-sm" :checked="caixasFreq.includes(c)" @change="toggleIn('caixasFreq', c)">
+                        </label>
+                    </template>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-4 pt-2 border-t border-base-300">
+                <button class="btn btn-primary btn-sm" :disabled="salvando" @click="salvar()">
+                    <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
+                    Salvar curadoria
+                </button>
+                <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg2" x-show="msg2"></p>
+            </div>
+        </div>
+    </div>
+    </div><!-- /cfg-panel sisdpu -->
+
     <p class="text-xs text-base-content/40 mt-4">
         As alterações têm efeito imediato. Configurações armazenadas em
         <code class="font-mono">painel_config.json</code> na raiz do projeto.
@@ -528,6 +573,19 @@
 .cfg-tab.ativa { color: var(--accent, #005FB8); border-bottom-color: var(--accent, #005FB8); }
 .cfg-panel { display: none; }
 .cfg-panel.ativa { display: block; }
+/* Grade de curadoria (fase/caixa · favorita · frequente) — aba SISDPU */
+.cfg-pref-grid { border: 1px solid var(--stroke, rgba(0,0,0,0.1)); border-radius: 8px; overflow: hidden;
+    max-height: 22rem; overflow-y: auto; }
+.cfg-pref-head, .cfg-pref-row {
+    display: grid; grid-template-columns: 1fr 5.5rem 5.5rem; align-items: center; gap: 8px;
+    padding: 6px 12px;
+}
+.cfg-pref-head { position: sticky; top: 0; background: var(--layer-alt, #f6f6f6);
+    font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+    color: var(--text-secondary, rgba(0,0,0,0.55)); }
+.cfg-pref-head span:not(:first-child), .cfg-pref-row input { justify-self: center; text-align: center; }
+.cfg-pref-row { border-top: 1px solid var(--stroke, rgba(0,0,0,0.07)); cursor: pointer; font-size: 13px; }
+.cfg-pref-row:hover { background: color-mix(in srgb, var(--accent, #005FB8) 6%, transparent); }
 .tema-seg {
     display: inline-flex;
     gap: 4px;
@@ -606,13 +664,66 @@ function temaMarcarAtivo(t) {
     temaMarcarAtivo(t);
 })();
 
-// Valores padrão da aba "Arquivos SAT Central" — inclui as caixas favoritas
-// (antes num card separado "Preferências de tramitação", agora consolidadas aqui).
+// Aba SISDPU — fases/caixas: importar do SISDPU + curadoria de favoritas/frequentes.
+function sisdpuPrefs() {
+    return {
+        fasesTodas: [], caixasTodas: [],
+        fasesFav: [], fasesFreq: [], caixasFav: [], caixasFreq: [],
+        importando: false, salvando: false, msg: '', msg2: '', msgErro: false,
+        async init() {
+            try {
+                const j = await (await fetch('/api/config/sisdpu')).json();
+                this.aplicar(j);
+            } catch (e) {}
+        },
+        aplicar(j) {
+            this.fasesTodas = j.fases_todas || [];
+            this.caixasTodas = j.caixas_todas || [];
+            this.fasesFav = j.fases_favoritas || [];
+            this.fasesFreq = j.fases_frequentes || [];
+            this.caixasFav = j.caixas_favoritas || [];
+            this.caixasFreq = j.caixas_frequentes || [];
+        },
+        toggleIn(lista, item) {
+            const arr = this[lista];
+            const i = arr.indexOf(item);
+            if (i >= 0) arr.splice(i, 1); else arr.push(item);
+        },
+        async importar() {
+            this.importando = true; this.msg = ''; this.msgErro = false;
+            try {
+                const r = await fetch('/api/config/sisdpu/importar', { method: 'POST' });
+                const j = await r.json();
+                if (j.ok) { this.aplicar(j.prefs); this.msg = 'Importado: ' + j.n_fases + ' fases, ' + j.n_caixas + ' caixas.'; }
+                else { this.msgErro = true; this.msg = j.erro || 'Falha ao importar.'; }
+            } catch (e) { this.msgErro = true; this.msg = 'Erro ao importar: ' + e; }
+            finally { this.importando = false; }
+        },
+        async salvar() {
+            this.salvando = true; this.msg2 = ''; this.msgErro = false;
+            try {
+                const r = await fetch('/api/config/sisdpu', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        fases_favoritas: this.fasesFav, fases_frequentes: this.fasesFreq,
+                        caixas_favoritas: this.caixasFav, caixas_frequentes: this.caixasFreq,
+                    }),
+                });
+                const j = await r.json();
+                if (j.ok) { this.msg2 = 'Curadoria salva ✓'; setTimeout(() => this.msg2 = '', 2500); }
+                else { this.msgErro = true; this.msg2 = 'Falha ao salvar.'; }
+            } catch (e) { this.msgErro = true; this.msg2 = 'Erro ao salvar: ' + e; }
+            finally { this.salvando = false; }
+        },
+    };
+}
+
+// Valores padrão da aba "Arquivos SAT Central" (caixa de tramitação padrão, prazo,
+// ritmo antirrobô e compilação por tipo).
 function satCentralDefaults() {
     return {
         caixa: '01 - PREV_DIVPREV', prazoModo: 'sem_prazo', prazoDias: 15,
         tempoEntre: 5, esperaBloqueio: 45, compilar: true, compilarLimiar: 3,
-        favoritos: [], favSel: '', maxFav: 3,
         grupos: [], carregando: false, salvando: false, msg: '', msgErro: false,
         async init() {
             try {
@@ -625,12 +736,6 @@ function satCentralDefaults() {
                 if (typeof r.compilar === 'boolean') this.compilar = r.compilar;
                 if (r.compilar_limiar) this.compilarLimiar = r.compilar_limiar;
             } catch (e) {}
-            // Caixas favoritas (compartilhadas com a aba Retornos).
-            try {
-                const t = await (await fetch('/api/config/tramitacao')).json();
-                this.favoritos = t.favoritos || [];
-                this.maxFav = t.max_favoritos || 3;
-            } catch (e) {}
         },
         async carregarGrupos() {
             this.carregando = true;
@@ -640,23 +745,6 @@ function satCentralDefaults() {
                 if (!this.grupos.length) this._msg('Nenhuma caixa retornada (verifique a sessão do SISDPU).', true);
             } catch (e) { this._msg('Erro ao consultar as caixas.', true); }
             finally { this.carregando = false; }
-        },
-        async addFav() {
-            if (!this.favSel) return;
-            try {
-                const r = await (await fetch('/api/config/grupos-favoritos', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({grupo: this.favSel})})).json();
-                this.favoritos = r.favoritos || []; this.favSel = ''; this._msg('Favorita adicionada.', false);
-            } catch (e) { this._msg('Erro de comunicação.', true); }
-        },
-        async delFav(g) {
-            try {
-                const r = await (await fetch('/api/config/grupos-favoritos/del', {
-                    method: 'POST', headers: {'Content-Type': 'application/json'},
-                    body: JSON.stringify({grupo: g})})).json();
-                this.favoritos = r.favoritos || [];
-            } catch (e) { this._msg('Erro de comunicação.', true); }
         },
         async salvar() {
             this.salvando = true;
