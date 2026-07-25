@@ -465,11 +465,11 @@ async def executar_stream(id_tramite: str, fase: str, descricao: str,
         yield _ev("erro", "id_processo ausente — sincronize novamente.")
         yield {"done": True, "resultado": {"ok": False, "detalhe": "id_processo ausente."}}
         return
-    if not fase:
-        yield _ev("erro", "Escolha a fase de movimentação.")
-        yield {"done": True, "resultado": {"ok": False, "detalhe": "Fase não informada."}}
+    if not fase and not grupo and not concluir:
+        yield _ev("erro", "Selecione ao menos uma ação: movimentar, tramitar ou concluir.")
+        yield {"done": True, "resultado": {"ok": False, "detalhe": "Nenhuma ação selecionada."}}
         return
-    if not descricao:
+    if fase and not descricao:
         yield _ev("erro", "O despacho (descrição da movimentação) está vazio.")
         yield {"done": True, "resultado": {"ok": False, "detalhe": "Despacho vazio."}}
         return
@@ -486,21 +486,35 @@ async def executar_stream(id_tramite: str, fase: str, descricao: str,
     pref = "[dry-run] " if dry_run else ""
     yield _ev("novo", f"{pref}Executando {paj}…")
 
-    # 1) MOVIMENTAR (carrega o despacho como descrição da movimentação)
-    yield _ev("info", f"Movimentando (fase: {fase})…")
-    mv = await movtram.movimentar_paj(pajs, descricao, fase, [], "Documentos do Assistido", dry_run)
-    yield _ev("ok" if mv.get("ok") else "erro", f"Movimentação: {mv.get('detalhe', '')}")
-    if not mv.get("ok"):
-        yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": mv.get("detalhe", "")}}
-        return
+    # 1) MOVIMENTAR (opcional — carrega o despacho como descrição da movimentação)
+    mv: dict = {}
+    if fase:
+        yield _ev("info", f"Movimentando (fase: {fase})…")
+        try:
+            mv = await movtram.movimentar_paj(pajs, descricao, fase, [], "Documentos do Assistido", dry_run)
+        except Exception as e:  # noqa: BLE001
+            yield _ev("erro", f"Falha na movimentação ({type(e).__name__}): {str(e)[:200]}. "
+                              "Verifique a conexão do SISDPU (selo/Reconectar) e tente de novo.")
+            yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": str(e)[:300]}}
+            return
+        yield _ev("ok" if mv.get("ok") else "erro", f"Movimentação: {mv.get('detalhe', '')}")
+        if not mv.get("ok"):
+            yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": mv.get("detalhe", "")}}
+            return
 
     # 2) TRAMITAR (opcional)
     tram_caixa = ""
     if grupo:
         prazo_txt = f"prazo até {prazo_data_final}" if prazo_data_final else "sem prazo"
         yield _ev("info", f"Tramitando para {grupo} ({prazo_txt})…")
-        tr = await movtram.tramitar_paj(pajs, grupo=grupo, descricao=descricao,
-                                        prazo_data=prazo_data_final, dry_run=dry_run)
+        try:
+            tr = await movtram.tramitar_paj(pajs, grupo=grupo, descricao=descricao,
+                                            prazo_data=prazo_data_final, dry_run=dry_run)
+        except Exception as e:  # noqa: BLE001
+            yield _ev("erro", f"Falha na tramitação ({type(e).__name__}): {str(e)[:200]}. "
+                              "A movimentação já foi registrada; verifique o PAJ.")
+            yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": str(e)[:300]}}
+            return
         yield _ev("ok" if tr.get("ok") else "erro", f"Tramitação: {tr.get('detalhe', '')}")
         if not tr.get("ok"):
             yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": tr.get("detalhe", "")}}
@@ -511,7 +525,13 @@ async def executar_stream(id_tramite: str, fase: str, descricao: str,
     concluido = False
     if concluir:
         yield _ev("info", "Concluindo o trâmite de retorno…")
-        cc = await movtram.concluir_paj([id_tramite], dry_run)
+        try:
+            cc = await movtram.concluir_paj([id_tramite], dry_run)
+        except Exception as e:  # noqa: BLE001
+            yield _ev("erro", f"Falha na conclusão ({type(e).__name__}): {str(e)[:200]}. "
+                              "Mov./tramitação já podem ter sido registradas; verifique o PAJ.")
+            yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": str(e)[:300]}}
+            return
         yield _ev("ok" if cc.get("ok") else "erro", f"Conclusão: {cc.get('detalhe', '')}")
         if not cc.get("ok"):
             yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": cc.get("detalhe", "")}}
@@ -520,12 +540,16 @@ async def executar_stream(id_tramite: str, fase: str, descricao: str,
 
     # sucesso — registra no histórico do painel e remove da lista se concluído
     if not dry_run:
-        atividade = ("Conclusão de atendimento de retorno" if concluido
-                     else "Movimentação de atendimento de retorno")
+        if concluido:
+            atividade = "Conclusão de atendimento de retorno"
+        elif tram_caixa:
+            atividade = "Tramitação de atendimento de retorno"
+        else:
+            atividade = "Movimentação de atendimento de retorno"
         historico_painel.registrar({
             "paj": paj, "paj_norm": paj_norm, "url_detalhe": rec.get("url_detalhe", ""),
             "origem": "retorno", "atividade": atividade,
-            "movimentacao": fase, "tramitado_para": tram_caixa,
+            "movimentacao": fase or "—", "tramitado_para": tram_caixa,
             "concluido": concluido, "detalhe": descricao[:300],
         })
         if concluido:

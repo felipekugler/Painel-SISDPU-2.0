@@ -176,7 +176,7 @@
                                                 <div class="ret-acao-titulo">Movimentar</div>
                                                 <div class="flex items-center gap-2 flex-wrap">
                                                     <select class="select select-bordered select-sm min-w-[18rem]" x-model="r._fase">
-                                                        <option value="">— escolha a fase —</option>
+                                                        <option value="">Sem movimentação</option>
                                                         <template x-for="f in fasesDropdown()" :key="f"><option :value="f" x-text="f"></option></template>
                                                     </select>
                                                     <template x-for="f in fasesFreq" :key="f">
@@ -190,10 +190,9 @@
                                                 <div class="ret-acao-titulo">Tramitar</div>
                                                 <div class="flex items-center gap-2 flex-wrap">
                                                     <select class="select select-bordered select-sm min-w-[18rem]" x-model="r._grupo">
-                                                        <option value="">— caixa —</option>
+                                                        <option value="">Sem tramitação</option>
                                                         <template x-for="c in caixasDropdown()" :key="c"><option :value="c" x-text="c"></option></template>
                                                     </select>
-                                                    <button class="btn btn-xs" :class="r._grupo==='' ? 'btn-primary' : 'btn-outline'" @click="r._grupo=''">Sem tramitação</button>
                                                     <template x-for="c in caixasFreq" :key="c">
                                                         <button class="btn btn-xs" :class="r._grupo===c ? 'btn-primary' : 'btn-outline'" @click="r._grupo=c" x-text="c"></button>
                                                     </template>
@@ -215,7 +214,7 @@
                                                 <button class="btn btn-xs" :class="r._concluir ? 'btn-primary' : 'btn-outline'" @click="r._concluir=true">Sim</button>
                                                 <button class="btn btn-xs" :class="!r._concluir ? 'btn-primary' : 'btn-outline'" @click="r._concluir=false">Não</button>
                                                 <span class="text-[11px] text-base-content/50">(retira o PAJ da caixa)</span>
-                                                <button class="btn btn-sm btn-success ml-auto ret-btn-exec" @click="executar(r)" :disabled="!r._fase || r._exec">
+                                                <button class="btn btn-sm btn-success ml-auto ret-btn-exec" @click="executar(r)" :disabled="(!r._fase && !r._grupo && !r._concluir) || r._exec">
                                                     <span x-show="r._exec" class="loading loading-spinner loading-xs"></span>
                                                     Executar
                                                 </button>
@@ -268,7 +267,7 @@
     <!-- Modal de progresso (SSE) -->
     <div class="modal" :class="{'modal-open': sseAberto}">
         <div class="modal-box max-w-[50vw]">
-            <h3 class="font-bold text-lg mb-2">Sincronizando retornos <span x-text="sseStatus"></span></h3>
+            <h3 class="font-bold text-lg mb-2"><span x-text="sseTitulo"></span> <span x-text="sseStatus"></span></h3>
             <div class="bg-base-300 rounded p-3 text-[11px] leading-[1.65] font-mono h-[340px] overflow-y-auto" x-ref="sseBox">
                 <template x-for="(l, i) in sseLog" :key="i">
                     <div :class="{
@@ -369,7 +368,7 @@ function retornosPage() {
     return {
         itens: [], expandido: {},
         carregando: false, sincronizando: false,
-        sseAberto: false, sseLog: [], sseStatus: '', _es: null,
+        sseAberto: false, sseLog: [], sseStatus: '', sseTitulo: 'Sincronizando retornos', _es: null,
         movModal: false, movAtual: [], movTitulo: '',
         // preferências da coluna Ações (favoritas=dropdown, frequentes=badges) — cache local
         fasesFav: [], fasesFreq: [], fasesTodas: [],
@@ -389,8 +388,8 @@ function retornosPage() {
                 this.caixasFreq = j.caixas_frequentes || [];
                 this.caixasTodas = j.caixas_todas || [];
                 this.caixaPadrao = j.caixa_padrao || '';
-                // fase pré-selecionada: padrão configurado, senão heurística 'despacho'
-                this.faseDefault = j.fase_padrao || (this.fasesDropdown().find(f => /despacho/i.test(f)) || '');
+                // fase pré-selecionada: padrão configurado; senão, Sem movimentação ('')
+                this.faseDefault = j.fase_padrao || '';
                 this.itens.forEach(r => {
                     if (!r._fase) r._fase = this.faseDefault;
                     if (r._grupo === undefined || r._grupo === '') r._grupo = this.caixaPadrao;
@@ -433,12 +432,14 @@ function retornosPage() {
             finally { r._caixasLoad = false; }
         },
         executar(r) {
-            if (r._exec || !r._fase) return;
-            if (!confirm('Executar o despacho de ' + r.paj + '?\n\n'
-                + 'Movimentar (fase: ' + r._fase + ')'
-                + (r._grupo ? '\nTramitar para: ' + r._grupo + (r._prazo ? ' (prazo ' + r._prazo + ' dias)' : '') : '\nSem tramitação')
+            if (r._exec || (!r._fase && !r._grupo && !r._concluir)) return;
+            const prazoTxt = r._grupo ? (r._prazoData ? ' (prazo ' + r._prazoData + ')' : (r._prazo > 0 ? ' (prazo ' + r._prazo + ' dias)' : '')) : '';
+            if (!confirm('Executar em ' + r.paj + '?\n\n'
+                + (r._fase ? 'Movimentar (fase: ' + r._fase + ')' : 'Sem movimentação')
+                + (r._grupo ? '\nTramitar para: ' + r._grupo + prazoTxt : '\nSem tramitação')
                 + (r._concluir ? '\nConcluir o trâmite (retira da caixa)' : '\nSem conclusão'))) return;
             r._exec = true;
+            this.sseTitulo = 'Executando despacho — ' + r.paj;
             this.sseLog = []; this.sseStatus = ''; this.sseAberto = true;
             const qs = new URLSearchParams({
                 fase: r._fase, descricao: r._sug || '',
@@ -521,6 +522,7 @@ function retornosPage() {
         sincronizar() {
             if (this.sincronizando) return;
             this.sincronizando = true;
+            this.sseTitulo = 'Sincronizando retornos';
             this.sseLog = []; this.sseStatus = ''; this.sseAberto = true;
             const es = new EventSource('/api/retornos/sincronizar'); this._es = es;
             es.addEventListener('log', (ev) => {
