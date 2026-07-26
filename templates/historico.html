@@ -29,6 +29,7 @@
                         <tr>
                             <th class="w-40">Data/hora</th>
                             <th class="w-36">PAJ</th>
+                            <th class="w-56">Assistido</th>
                             <th>Atividade</th>
                             <th class="w-48">Movimentação</th>
                             <th class="w-56">Tramitado para</th>
@@ -44,6 +45,7 @@
                                        title="Abrir o PAJ no SISDPU" x-text="r.paj"></a>
                                     <span x-show="!r.url_detalhe" x-text="r.paj"></span>
                                 </td>
+                                <td class="text-sm" x-text="r.assistido || '—'"></td>
                                 <td>
                                     <span x-text="r.atividade || '—'"></span>
                                     <span x-show="r.origem" class="badge badge-ghost badge-xs ml-1" x-text="r.origem"></span>
@@ -53,12 +55,12 @@
                             </tr>
                         </template>
                         <tr x-show="!carregando && registros.length === 0">
-                            <td colspan="5" class="text-center text-base-content/40 py-6">
+                            <td colspan="6" class="text-center text-base-content/40 py-6">
                                 Nenhum PAJ concluído pelo painel ainda.
                             </td>
                         </tr>
                         <tr x-show="carregando">
-                            <td colspan="5" class="text-center py-6"><span class="loading loading-spinner"></span> Carregando…</td>
+                            <td colspan="6" class="text-center py-6"><span class="loading loading-spinner"></span> Carregando…</td>
                         </tr>
                     </tbody>
                 </table>

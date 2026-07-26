@@ -591,6 +591,7 @@ async def processar_paj_stream(
             historico_painel.registrar({
                 "paj": num, "paj_norm": paj_norm,
                 "url_detalhe": item.get("url_detalhe", ""),
+                "assistido": item.get("assistido", ""),
                 "origem": "sat", "atividade": "Juntada de documentos do SAT Central",
                 "movimentacao": FASE_MOV, "tramitado_para": grupo,
                 "concluido": True, "detalhe": f"{len(anexos)} arquivo(s) juntado(s).",

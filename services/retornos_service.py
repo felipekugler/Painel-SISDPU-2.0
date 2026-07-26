@@ -548,6 +548,7 @@ async def executar_stream(id_tramite: str, fase: str, descricao: str,
             atividade = "Movimentação de atendimento de retorno"
         historico_painel.registrar({
             "paj": paj, "paj_norm": paj_norm, "url_detalhe": rec.get("url_detalhe", ""),
+            "assistido": rec.get("assistido", ""),
             "origem": "retorno", "atividade": atividade,
             "movimentacao": fase or "—", "tramitado_para": tram_caixa,
             "concluido": concluido, "detalhe": descricao[:300],
