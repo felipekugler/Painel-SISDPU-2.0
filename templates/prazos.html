@@ -3,6 +3,46 @@
 
 {% block content_class %}flex flex-col flex-1 p-0{% endblock %}
 
+{% block head %}
+<style>
+  .tnum { font-variant-numeric: tabular-nums; }
+  .lembrete-cell { max-width: 22rem; max-height: 5.5rem; overflow-y: auto; white-space: normal;
+                   font-size: 11px; line-height: 1.45; color: var(--text-secondary); }
+  .cell-wrap { white-space: normal; }
+  .intim-table td { vertical-align: top; }
+  /* Linhas verticais claras entre colunas, no tom do e-proc (#dee2e6) */
+  .intim-table { border-collapse: collapse; }
+  .intim-table tbody td { border-left: 1px solid #dee2e6; border-right: 1px solid #dee2e6; }
+  .resumo-table td, .resumo-table th { padding-top: .25rem; padding-bottom: .25rem; }
+  /* Cor da linha replicada do e-proc (fase processual + tipo de demanda). As cores
+     do eproc são claras; forçamos texto escuro p/ legibilidade em qualquer tema. */
+  .intim-table tr.linha-eproc > td { color: #1f2937; background-color: inherit; }
+  .intim-table tr.linha-eproc .text-base-content\/70,
+  .intim-table tr.linha-eproc .text-base-content\/50,
+  .intim-table tr.linha-eproc .text-base-content\/40,
+  .intim-table tr.linha-eproc .lembrete-cell { color: #374151 !important; }
+  .intim-table tr.linha-eproc a.link { color: #0a4bad !important; }
+  /* Nome do polo ativo: negrito + vermelho-escuro, igual ao e-proc (rgb(153,0,0)) */
+  .autor-nome { color: #990000; font-weight: 700; }
+  .intim-table tr.linha-eproc .autor-nome { color: #990000 !important; }
+  /* Hover idêntico ao e-proc: overlay cinza translúcido sobre a cor da linha */
+  .intim-table tbody tr:hover > td { background-image: linear-gradient(rgba(208,208,208,0.7), rgba(208,208,208,0.7)); }
+  /* Ícone e tooltip do Lembrete — post-it igual ao e-proc */
+  .lembrete-icon { cursor: help; vertical-align: middle; }
+  .lembrete-icon:hover { filter: brightness(0.93); }
+  .lembrete-pop { position: fixed; z-index: 1000; background: #fcf8db; border: 1px solid rgba(0,0,0,0.2);
+                  border-radius: 3px; box-shadow: 0 10px 20px rgba(0,0,0,0.19), 0 6px 6px rgba(0,0,0,0.23);
+                  font-family: Roboto, 'Segoe UI', sans-serif; font-size: 11px; color: #000; max-width: 30rem;
+                  pointer-events: none; }
+  .lembrete-pop table { border-collapse: collapse; }
+  .lembrete-pop td { padding: 3px 7px; vertical-align: top; }
+  .lembrete-pop td:first-child { text-align: center; color: #666; width: 1.6rem; }
+  .lembrete-pop tr:nth-of-type(even) { background: rgba(0,0,0,0.05); }
+  .th-sort { cursor: pointer; user-select: none; }
+  .th-sort:hover { color: var(--accent); }
+</style>
+{% endblock %}
+
 {% block content %}
 <div x-data="prazosEprocApp()" x-init="init()" x-cloak class="flex flex-col flex-1">
 
@@ -13,9 +53,7 @@
       <div>
         <strong class="text-sm">Ambiente:</strong>
         <ul class="text-xs list-disc ml-5 mt-1">
-          {% for aviso in ambiente.avisos %}
-          <li>{{ aviso }}</li>
-          {% endfor %}
+          {% for aviso in ambiente.avisos %}<li>{{ aviso }}</li>{% endfor %}
         </ul>
       </div>
     </div>
@@ -26,7 +64,7 @@
   <div class="px-8 pt-6 pb-2">
     <h1 class="text-3xl font-semibold tracking-tight">Prazos e-proc</h1>
     <div class="text-xs text-base-content/50 mt-1">
-      Controle de prazos judiciais a partir da caixa de entrada do e-proc (JFPR — 1ª instância).
+      Intimações da caixa do Procurador (e-proc / JFPR — 1ª instância).
     </div>
   </div>
 
@@ -43,42 +81,185 @@
         </button>
         <button class="btn btn-sm btn-ghost" @click="verificarSessao()" :disabled="sessaoBusy">Verificar sessão</button>
         <span class="text-xs text-base-content/60" x-text="sessaoMsg"></span>
-
-        <!-- Direita: status do login automático (somente leitura) + atalho p/ Configurações -->
-        <div class="ml-auto flex items-center gap-2">
-          <span class="text-xs text-base-content/60">Login automático:</span>
-          <template x-if="!cred.configurado">
-            <span class="badge badge-ghost badge-sm">não configurado</span>
-          </template>
-          <template x-if="cred.configurado && !cred.destrancado">
-            <span class="badge badge-warning badge-sm">🔒 trancado</span>
-          </template>
-          <template x-if="cred.destrancado">
-            <span class="badge badge-success badge-sm">🔓 pronto</span>
-          </template>
-          <a href="/configuracoes" class="btn btn-sm btn-ghost" title="Configurar credenciais do e-proc">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-              <path stroke-linecap="round" stroke-linejoin="round" d="M10.343 3.94c.09-.542.56-.94 1.11-.94h1.093c.55 0 1.02.398 1.11.94l.149.894c.07.424.384.764.78.93.398.164.855.142 1.205-.108l.737-.527a1.125 1.125 0 0 1 1.45.12l.773.774c.39.389.44 1.002.12 1.45l-.527.737c-.25.35-.272.806-.108 1.204.165.397.505.71.93.78l.893.15c.543.09.94.56.94 1.109v1.094c0 .55-.397 1.02-.94 1.11l-.894.149c-.424.07-.764.383-.929.78-.165.398-.143.854.107 1.204l.527.738c.32.447.269 1.06-.12 1.45l-.774.773a1.125 1.125 0 0 1-1.449.12l-.738-.527c-.35-.25-.806-.272-1.203-.107-.397.165-.71.505-.781.929l-.149.894c-.09.542-.56.94-1.11.94h-1.094c-.55 0-1.019-.398-1.11-.94l-.148-.894c-.071-.424-.384-.764-.781-.93-.398-.164-.854-.142-1.204.108l-.738.527c-.447.32-1.06.269-1.45-.12l-.773-.774a1.125 1.125 0 0 1-.12-1.45l.527-.737c.25-.35.273-.806.108-1.204-.165-.397-.505-.71-.93-.78l-.893-.15c-.543-.09-.94-.56-.94-1.109v-1.094c0-.55.397-1.02.94-1.11l.894-.149c.424-.07.764-.383.93-.78.164-.398.142-.854-.108-1.204l-.527-.738a1.125 1.125 0 0 1 .12-1.45l.773-.773a1.125 1.125 0 0 1 1.45-.12l.737.527c.35.25.807.272 1.204.107.397-.165.71-.505.78-.929l.15-.894Z" />
-              <path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
-            </svg>
-            Configurações
-          </a>
+        <div class="ml-auto flex items-center gap-3">
+          <button class="btn btn-sm btn-primary" @click="sincronizar()" :disabled="sincronizando">
+            <span x-show="sincronizando" class="loading loading-spinner loading-xs"></span>
+            Sincronizar intimações
+          </button>
+          <span class="text-xs text-base-content/50" x-show="sincronizadoEm">
+            Última sincronização: <span x-text="formatarDataHora(sincronizadoEm)"></span>
+          </span>
         </div>
       </div>
     </div>
   </div>
 
-  <!-- Placeholder: leitor do Painel do Procurador (próxima etapa) -->
-  <div class="px-8 pb-8 flex-1">
-    <div class="bg-base-200 rounded-lg border border-base-300 p-10 text-center">
-      <div class="text-base-content/60">
-        A leitura dos prazos do <strong>Painel do Procurador</strong> será construída na próxima etapa.
+  <!-- Ações -->
+  <div class="px-8 pb-2 flex items-center gap-3 flex-wrap">
+    <span class="text-xs" x-show="!sincronizando && diff && (diff.novas || diff.removidas)">
+      <span class="text-success" x-show="diff.novas" x-text="'+' + diff.novas + ' nova(s)'"></span>
+      <span x-show="diff.novas && diff.removidas" class="text-base-content/40"> · </span>
+      <span class="text-error" x-show="diff.removidas" x-text="'−' + diff.removidas + ' saíram da caixa'"></span>
+    </span>
+    <span class="text-xs text-error" x-show="syncErro" x-text="syncErro"></span>
+    <span class="text-xs text-base-content/50" x-show="sincronizando">Lendo o Painel do Procurador… (percorrendo as categorias)</span>
+  </div>
+
+  <div class="px-8 pb-8 flex-1 flex flex-col gap-10">
+
+    <!-- Tabela-resumo (Citações/Intimações) -->
+    <template x-if="resumo.length">
+      <div class="bg-base-200 rounded-lg border border-base-300 overflow-hidden max-w-2xl">
+        <div class="px-4 py-2 border-b border-base-300 text-sm font-semibold">Citações / Intimações</div>
+        <table class="table table-sm resumo-table">
+          <thead>
+            <tr class="text-sm font-bold text-base-content"><th>Tipo</th><th class="text-right">Quantidade</th></tr>
+          </thead>
+          <tbody>
+            <template x-for="item in resumo" :key="item.chave">
+              <tr @click="irParaSecao(item.chave)"
+                  :class="(secoes[item.chave] || []).length ? 'cursor-pointer hover:bg-base-300/60' : (item.quantidade > 0 ? '' : 'opacity-40')"
+                  :title="(secoes[item.chave] || []).length ? 'Ir para a lista' : ''">
+                <td class="text-sm" x-text="item.label"></td>
+                <td class="text-right tnum">
+                  <span class="badge badge-sm" :class="item.quantidade > 0 ? badgeCategoria(item.chave) : 'badge-ghost'"
+                        x-text="item.quantidade"></span>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
       </div>
-      <div class="text-xs text-base-content/40 mt-2">
-        Por enquanto, esta aba gerencia a conexão e o login automático no e-proc.
-        As credenciais são definidas no menu <strong>Configurações</strong>.
+    </template>
+
+    <!-- Seções por tipo de prazo (ocultas quando sem casos) -->
+    <template x-if="!resumo.length">
+      <div class="bg-base-200 rounded-lg border border-base-300 p-10 text-center text-base-content/50">
+        <span x-show="!sincronizando">Nenhuma intimação sincronizada ainda. Clique em <strong>Sincronizar intimações</strong>.</span>
+        <span x-show="sincronizando">Lendo o Painel do Procurador…</span>
       </div>
-    </div>
+    </template>
+
+    <template x-for="item in resumo" :key="'sec-' + item.chave">
+      <div x-show="(secoes[item.chave] || []).length" :id="'sec-' + item.chave"
+           class="bg-base-200 rounded-lg border border-base-300 overflow-hidden scroll-mt-4">
+        <div class="px-4 py-2 border-b border-base-300 flex items-center justify-center gap-2">
+          <span class="text-sm font-semibold" x-text="item.label"></span>
+          <span class="badge badge-sm" :class="badgeCategoria(item.chave)" x-text="(secoes[item.chave] || []).length + ' processo(s)'"></span>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="table table-sm intim-table">
+            <thead>
+              <tr class="text-sm font-bold text-base-content text-center">
+                <th>Processo / Partes</th>
+                <th>PAJ</th>
+                <th>Classe</th>
+                <th>Assunto</th>
+                <th>Evento / Prazo</th>
+                <th class="th-sort" @click="ordenar('enviado')">Enviado<span x-text="setaSort('enviado')"></span></th>
+                <th class="th-sort" @click="ordenar('inicio')">Início<span x-text="setaSort('inicio')"></span></th>
+                <th class="th-sort" @click="ordenar('final')">Final<span x-text="setaSort('final')"></span></th>
+              </tr>
+            </thead>
+            <tbody>
+              <template x-for="c in casosDe(item.chave)" :key="item.chave + '-' + c.processo">
+                <tr :class="c.cor ? 'linha-eproc' : ''" :style="c.cor ? ('background-color:' + c.cor) : ''">
+                  <td class="max-w-[15rem]">
+                    <div class="font-mono text-xs whitespace-nowrap">
+                      <template x-if="c.processo_url">
+                        <a href="#" @click.prevent="abrirProcesso(c)" class="link"
+                           title="Abrir o processo no e-proc (aba nova na janela do e-proc)" x-text="c.processo"></a>
+                      </template>
+                      <template x-if="!c.processo_url">
+                        <span x-text="c.processo"></span>
+                      </template>
+                      <template x-if="c.novo">
+                        <span class="badge badge-success badge-sm ml-1" title="Nova desde a última sincronização">novo</span>
+                      </template>
+                      <template x-if="c.n_prazos > 1">
+                        <span class="badge badge-warning badge-sm ml-1" :title="c.n_prazos + ' prazos neste processo'"
+                              x-text="c.n_prazos + ' prazos'"></span>
+                      </template>
+                      <template x-if="(c.lembrete_itens || []).length">
+                        <svg class="lembrete-icon inline-block ml-1" width="15" height="15" viewBox="0 0 16 16"
+                             @mouseenter="mostrarLembrete($event, c)" @mouseleave="lembreteTip.show = false"
+                             title="Lembrete do processo">
+                          <path d="M2 1.6h12A1.5 1.5 0 0 1 15.5 3.1v6.3A1.5 1.5 0 0 1 14 10.9H6.4L3.3 13.7v-2.8H2A1.5 1.5 0 0 1 .5 9.4V3.1A1.5 1.5 0 0 1 2 1.6z"
+                                fill="#fcfec4" stroke="#7c7a7c" stroke-width="1" stroke-linejoin="round"/>
+                        </svg>
+                      </template>
+                    </div>
+                    <div class="text-[10px] text-base-content/40" x-show="c.juizo" x-text="'Juízo: ' + c.juizo"></div>
+                    <template x-if="c.partes">
+                      <div class="text-xs cell-wrap mt-1 leading-tight text-center">
+                        <div class="font-bold" x-text="papelAtivo(c.partes)"></div>
+                        <div class="autor-nome" x-text="nomeAtivo(c.partes)"></div>
+                        <template x-if="poloPassivo(c.partes)">
+                          <div class="my-0.5">x</div>
+                        </template>
+                        <template x-if="poloPassivo(c.partes)">
+                          <div class="font-bold" x-text="papelPassivo(c.partes)"></div>
+                        </template>
+                        <div x-show="poloPassivo(c.partes)" x-text="nomePassivo(c.partes)"></div>
+                      </div>
+                    </template>
+                  </td>
+                  <td class="font-mono text-xs whitespace-nowrap">
+                    <template x-if="c.paj">
+                      <a :href="'/api/prazos/abrir-paj?paj=' + encodeURIComponent(c.paj)" target="_blank"
+                         class="link link-primary" title="Abrir o PAJ no SISDPU (nova aba)" x-text="c.paj"></a>
+                    </template>
+                    <template x-if="!c.paj"><span class="text-base-content/30">—</span></template>
+                  </td>
+                  <td class="text-xs cell-wrap max-w-[10rem]" x-text="c.classe"></td>
+                  <td class="text-xs cell-wrap max-w-[10rem]" x-text="c.assunto"></td>
+                  <td class="text-xs cell-wrap max-w-[16rem]">
+                    <template x-for="(p, i) in c.prazos" :key="i">
+                      <div class="mb-1">
+                        <span x-text="p.evento"></span>
+                        <template x-if="p.prazo_dias">
+                          <span class="badge badge-sm ml-1" :class="badgeDias(p.prazo_dias)" x-text="p.prazo_dias + 'd'"></span>
+                        </template>
+                      </div>
+                    </template>
+                  </td>
+                  <td class="text-center text-xs whitespace-nowrap tnum" x-text="dataEnvio(c)"></td>
+                  <td class="text-center text-xs whitespace-nowrap tnum">
+                    <template x-if="!temEstimativa(c, 'inicio')"><span x-text="campoPrazo(c, 'inicio_prazo')"></span></template>
+                    <template x-if="temEstimativa(c, 'inicio')">
+                      <div title="Estimativa: ciência tácita (10 dias corridos do envio) + próximo dia útil. Prazo ainda não aberto no e-proc.">
+                        <span class="badge badge-ghost badge-sm" x-text="valorPrazo(c, 'inicio')"></span>
+                        <div class="text-[9px] font-semibold" style="color:#c42b1c">estimado</div>
+                      </div>
+                    </template>
+                  </td>
+                  <td class="text-center text-xs whitespace-nowrap tnum">
+                    <template x-if="!temEstimativa(c, 'final')"><span x-text="campoPrazo(c, 'final_prazo')"></span></template>
+                    <template x-if="temEstimativa(c, 'final')">
+                      <div title="Estimativa: dias úteis a partir do início previsto. Pode variar ±1 dia útil. Prazo ainda não aberto no e-proc.">
+                        <span class="badge badge-ghost badge-sm" x-text="valorPrazo(c, 'final')"></span>
+                        <div class="text-[9px] font-semibold" style="color:#c42b1c">estimado</div>
+                      </div>
+                    </template>
+                  </td>
+                </tr>
+              </template>
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </template>
+
+  </div>
+
+  <!-- Tooltip do Lembrete (post-it estilo e-proc) -->
+  <div class="lembrete-pop" x-show="lembreteTip.show" x-cloak
+       :style="`left:${lembreteTip.x}px; top:${lembreteTip.y}px`">
+    <table><tbody>
+      <template x-for="(it, i) in lembreteTip.itens" :key="i">
+        <tr><td x-text="it.seq"></td><td x-text="it.texto"></td></tr>
+      </template>
+    </tbody></table>
   </div>
 
 </div>
@@ -86,46 +267,153 @@
 <script>
 function prazosEprocApp() {
   return {
-    sessaoOk: false,
-    sessaoBusy: false,
-    sessaoMsg: '',
-    cred: { configurado: false, destrancado: false, usuario: '' },
+    sessaoOk: false, sessaoBusy: false, sessaoMsg: '',
+    resumo: [], secoes: {}, sincronizadoEm: '',
+    diff: {}, saidas: [],
+    sincronizando: false, syncErro: '',
+    sortCampo: '', sortDir: 1,
+    lembreteTip: { show: false, x: 0, y: 0, itens: [] },
 
     async init() {
       this.verificarSessao();
-      this.carregarCred();
-      // atualização automática do selo de sessão e do estado do cofre (leve, não navega)
-      setInterval(() => { this.verificarSessaoLeve(); this.carregarCred(); }, 5000);
+      this.carregarIntimacoes();
+      setInterval(() => this.verificarSessaoLeve(), 5000);
     },
 
+    // Sessão
     async abrirEproc() {
       this.sessaoBusy = true; this.sessaoMsg = 'Abrindo a janela do e-proc…';
-      try {
-        const r = await (await fetch('/api/prazos/abrir')).json();
-        this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || '';
-      } catch (e) { this.sessaoMsg = 'Erro ao abrir a janela.'; }
+      try { const r = await (await fetch('/api/prazos/abrir')).json();
+        this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || ''; }
+      catch (e) { this.sessaoMsg = 'Erro ao abrir a janela.'; }
       finally { this.sessaoBusy = false; }
     },
     async verificarSessao() {
       this.sessaoBusy = true;
-      try {
-        const r = await (await fetch('/api/prazos/sessao-leve')).json();
-        this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || '';
-      } catch (e) { this.sessaoMsg = 'Erro ao verificar a sessão.'; }
+      try { const r = await (await fetch('/api/prazos/sessao-leve')).json();
+        this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || ''; }
+      catch (e) { this.sessaoMsg = 'Erro ao verificar a sessão.'; }
       finally { this.sessaoBusy = false; }
     },
     async verificarSessaoLeve() {
-      if (this.sessaoBusy) return;
-      try {
-        const r = await (await fetch('/api/prazos/sessao-leve')).json();
-        this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || '';
-      } catch (e) { /* silencioso — polling de fundo */ }
+      if (this.sessaoBusy || this.sincronizando) return;
+      try { const r = await (await fetch('/api/prazos/sessao-leve')).json();
+        this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || ''; } catch (e) {}
     },
-    async carregarCred() {
+    // Intimações
+    async carregarIntimacoes() {
+      try { const r = await (await fetch('/api/prazos/intimacoes')).json(); this.aplicar(r); } catch (e) {}
+    },
+    async sincronizar() {
+      this.sincronizando = true; this.syncErro = '';
       try {
-        const r = await (await fetch('/api/config/eproc/status')).json();
-        this.cred = { configurado: !!r.configurado, destrancado: !!r.destrancado, usuario: r.usuario || '' };
-      } catch (e) { /* silencioso */ }
+        const resp = await fetch('/api/prazos/sincronizar');
+        const r = await resp.json();
+        if (!resp.ok || r.ok === false) { this.syncErro = r.erro || 'Falha ao sincronizar.'; }
+        else { this.aplicar(r); }
+      } catch (e) { this.syncErro = 'Falha de rede na sincronização.'; }
+      finally { this.sincronizando = false; }
+    },
+    aplicar(r) {
+      this.resumo = r.resumo || [];
+      this.secoes = r.secoes || {};
+      this.sincronizadoEm = r.sincronizado_em || '';
+      this.diff = r.diff || {};
+      this.saidas = r.saidas || [];
+    },
+
+    // Abre o processo no e-proc (aba nova da janela do e-proc)
+    async abrirProcesso(c) {
+      if (!c.processo_url) return;
+      try { await fetch('/api/prazos/abrir-processo?url=' + encodeURIComponent(c.processo_url)); }
+      catch (e) { /* silencioso */ }
+    },
+
+    // Tooltip do lembrete (post-it) — posiciona ao lado do ícone
+    mostrarLembrete(ev, c) {
+      const r = ev.currentTarget.getBoundingClientRect();
+      let x = r.left, y = r.bottom + 6;
+      const limite = window.innerWidth - 500;
+      if (x > limite) x = Math.max(8, limite);
+      this.lembreteTip = { show: true, x, y, itens: c.lembrete_itens || [] };
+    },
+
+    // Rola até a seção correspondente ao clicar numa linha do resumo
+    irParaSecao(chave) {
+      const el = document.getElementById('sec-' + chave);
+      if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    },
+
+    // Partes → polo ativo (autor) / polo passivo (réu), separados por " X "
+    poloAtivo(p) { const i = (p || '').indexOf(' X '); return i < 0 ? (p || '') : p.slice(0, i).trim(); },
+    poloPassivo(p) { const i = (p || '').indexOf(' X '); return i < 0 ? '' : p.slice(i + 3).trim(); },
+    // Cada polo = "<Papel> <NOME (CPF)>": separa o rótulo (1ª palavra) do nome
+    _papel(s) { const t = (s || '').trim(); const i = t.indexOf(' '); return i < 0 ? t : t.slice(0, i); },
+    _nome(s) { const t = (s || '').trim(); const i = t.indexOf(' '); return i < 0 ? '' : t.slice(i + 1); },
+    papelAtivo(p) { return this._papel(this.poloAtivo(p)); },
+    nomeAtivo(p) { return this._nome(this.poloAtivo(p)); },
+    papelPassivo(p) { return this._papel(this.poloPassivo(p)); },
+    nomePassivo(p) { return this._nome(this.poloPassivo(p)); },
+
+    // Ordenação por data (enviado/início/final)
+    ordenar(campo) {
+      if (this.sortCampo === campo) { this.sortDir = -this.sortDir; }
+      else { this.sortCampo = campo; this.sortDir = 1; }
+    },
+    setaSort(campo) { return this.sortCampo === campo ? (this.sortDir > 0 ? ' ▲' : ' ▼') : ''; },
+    _dataKey(v) {
+      const m = (v || '').match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?/);
+      return m ? (m[3] + m[2] + m[1] + (m[4] || '00') + (m[5] || '00')) : '';
+    },
+    casosDe(chave) {
+      let arr = (this.secoes[chave] || []).slice();
+      if (this.sortCampo) {
+        // ordena pelo valor REAL; na ausência (prazo ainda não aberto), usa a
+        // ESTIMATIVA como fallback — permite classificar as tabelas "pendente"
+        // pelo início/final previstos.
+        const mapaReal = { enviado: 'data_envio', inicio: 'inicio_prazo', final: 'final_prazo' };
+        const mapaEst = { inicio: 'inicio_estimado', final: 'final_estimado' };
+        const fR = mapaReal[this.sortCampo], fE = mapaEst[this.sortCampo];
+        const getVal = (c) => { const p = this._p0(c); return p[fR] || (fE && p[fE]) || ''; };
+        arr.sort((a, b) => {
+          const ka = this._dataKey(getVal(a));
+          const kb = this._dataKey(getVal(b));
+          if (!ka && !kb) return 0;
+          if (!ka) return 1;   // vazios sempre no fim
+          if (!kb) return -1;
+          return (ka < kb ? -1 : ka > kb ? 1 : 0) * this.sortDir;
+        });
+      }
+      return arr;
+    },
+
+    // Helpers
+    dataEnvio(c) { return (c.prazos && c.prazos[0]) ? (c.prazos[0].data_envio || '').split(' ')[0] : ''; },
+    campoPrazo(c, campo) { if (!c.prazos || !c.prazos.length) return ''; return c.prazos[0][campo] || '—'; },
+    // início/final ESTIMADOS (prazo ainda não aberto no e-proc) — badges cinza
+    _p0(c) { return (c.prazos && c.prazos[0]) || {}; },
+    temEstimativa(c, campo) {
+      const p = this._p0(c);
+      const real = campo === 'inicio' ? p.inicio_prazo : p.final_prazo;
+      const est = campo === 'inicio' ? p.inicio_estimado : p.final_estimado;
+      return !real && !!est;
+    },
+    valorPrazo(c, campo) {
+      const p = this._p0(c);
+      return (campo === 'inicio' ? p.inicio_estimado : p.final_estimado) || '';
+    },
+    badgeDias(d) { const n = parseInt(d, 10);
+      if (isNaN(n)) return 'badge-ghost'; if (n <= 5) return 'badge-error'; if (n <= 10) return 'badge-warning'; return 'badge-success'; },
+    badgeCategoria(chave) {
+      if (chave.includes('urgente')) return 'badge-error';
+      if (chave === 'prazo_aberto') return 'badge-warning';
+      if (chave === 'decurso') return 'badge-error';
+      return 'badge-info';
+    },
+    formatarDataHora(iso) {
+      if (!iso) return '';
+      const m = iso.match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+      return m ? `${m[3]}/${m[2]}/${m[1]} ${m[4]}:${m[5]}` : iso;
     },
   };
 }

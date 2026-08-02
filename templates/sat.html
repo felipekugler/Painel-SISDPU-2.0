@@ -103,13 +103,28 @@
     <!-- Pendências -->
     <div class="card bg-base-200 shadow mb-6">
         <div class="card-body p-0">
-            <div class="flex items-center justify-between px-4 pt-3">
+            <div class="flex items-center justify-between px-4 pt-3 gap-2 flex-wrap">
                 <h3 class="font-semibold text-base-content/80">Pendências</h3>
-                <button class="btn btn-sm btn-primary" @click="recarregar()" :disabled="carregando">
-                    <span x-show="carregando" class="loading loading-spinner loading-xs"></span>
-                    Verificar PAJs pendentes
-                </button>
+                <div class="flex items-center gap-2 flex-wrap">
+                    <div class="flex items-center gap-1">
+                        <input type="text" class="input input-bordered input-sm w-44"
+                               placeholder="AAAA/UUU-NNNNN" x-model="manualPaj"
+                               @keydown.enter="adicionarManual()" :disabled="addingManual">
+                        <button class="btn btn-sm btn-outline" @click="adicionarManual()"
+                                :disabled="addingManual || !manualPaj.trim()"
+                                title="Adiciona um PAJ à lista extraindo os dados do SISDPU (mesmo que não esteja na sua caixa)">
+                            <span x-show="addingManual" class="loading loading-spinner loading-xs"></span>
+                            Adicionar PAJ
+                        </button>
+                    </div>
+                    <button class="btn btn-sm btn-primary" @click="recarregar()" :disabled="carregando">
+                        <span x-show="carregando" class="loading loading-spinner loading-xs"></span>
+                        Verificar PAJs pendentes
+                    </button>
+                </div>
             </div>
+            <p class="px-4 pt-1 text-sm" x-show="manualMsg"
+               :class="manualMsgErro ? 'text-error' : 'text-success'" x-text="manualMsg"></p>
             <div class="overflow-x-auto">
                 <table class="table table-sm">
                     <thead>
@@ -125,6 +140,9 @@
                                        class="link link-hover" style="color:var(--accent)"
                                        title="Abrir o PAJ no SISDPU (conferir a anexação)" x-text="p.paj"></a>
                                     <span x-show="!p.url_detalhe" x-text="p.paj"></span>
+                                    <span x-show="p.manual" class="badge badge-outline badge-xs ml-1" title="Adicionado manualmente — sem trâmite na caixa (não conclui)">manual</span>
+                                    <button x-show="p.manual" class="btn btn-ghost btn-xs text-error px-1" :disabled="rodando"
+                                            @click="removerManual(p)" title="Remover este PAJ manual da lista">✕</button>
                                 </td>
                                 <td x-text="p.assistido"></td>
                                 <td class="font-mono whitespace-nowrap">
@@ -179,7 +197,7 @@
                                     </button>
                                     <button x-show="p.n_arquivos > 0" class="btn btn-sm btn-outline ml-1" :disabled="rodando"
                                             @click="processar(p)"
-                                            title="Movimentar → tramitar → concluir no SISDPU">Anexar ao PAJ</button>
+                                            :title="p.manual ? 'PAJ manual: movimentar → tramitar (não há trâmite na caixa para concluir)' : 'Movimentar → tramitar → concluir no SISDPU'">Anexar ao PAJ</button>
                                 </td>
                             </tr>
                             <tr x-show="narrativaAberta[p.paj_norm]">
@@ -236,9 +254,10 @@
                         </tbody>
                     </template>
                     <tbody>
-                        <tr x-show="!carregando && !verificado">
+                        <tr x-show="!carregando && !verificado && pendentes.length === 0">
                             <td colspan="7" class="text-center text-base-content/40 py-6">
-                                Clique em <strong>Verificar PAJs pendentes</strong> para consultar a caixa de entrada do SISDPU.
+                                Clique em <strong>Verificar PAJs pendentes</strong> para consultar a caixa de entrada do SISDPU,
+                                ou use <strong>Adicionar PAJ</strong> para incluir um manualmente.
                             </td>
                         </tr>
                         <tr x-show="!carregando && verificado && pendentes.length === 0">
@@ -287,8 +306,9 @@
                                           :class="r.tram_status==='tramitado'?'badge-ocre':(r.tram_status==='ja_foi'?'badge-ghost':'badge-error')"
                                           x-text="r.tram_status==='tramitado' ? r.tram_caixa : (r.tram_status==='ja_foi' ? 'já foi' : (r.tram_status||'—'))"></span></td>
                                 <td><span class="badge badge-sm"
-                                          :class="r.concluido_status==='concluido'?'badge-ocre':(r.concluido_status==='ja_foi'?'badge-ghost':'badge-error')"
-                                          x-text="r.concluido_status==='concluido' ? 'Sim' : (r.concluido_status==='ja_foi' ? 'já foi' : (r.concluido_status||'—'))"></span></td>
+                                          :class="r.concluido_status==='concluido'?'badge-ocre':((r.concluido_status==='ja_foi'||r.concluido_status==='nao_aplicavel')?'badge-ghost':'badge-error')"
+                                          :title="r.concluido_status==='nao_aplicavel' ? 'PAJ manual — sem trâmite na caixa para concluir' : ''"
+                                          x-text="r.concluido_status==='concluido' ? 'Sim' : (r.concluido_status==='ja_foi' ? 'já foi' : (r.concluido_status==='nao_aplicavel' ? 'N/A' : (r.concluido_status||'—')))"></span></td>
                                 <td class="text-center whitespace-nowrap">
                                     <button class="btn btn-ghost btn-xs" @click="verLog(r)"
                                             title="Log das etapas (movimentação/tramitação/conclusão)">
@@ -401,11 +421,16 @@
                 registrado como "download complementar". Você resolve o CAPTCHA na janela.
             </p>
             <p class="text-sm text-base-content/70 mb-3" x-show="bmModo === 'pendente'">
-                Nova consulta ao SAT para <strong x-text="bmAlvo && bmAlvo.assistido"></strong>. Os selecionados
-                serão baixados e <strong>juntados ao acervo pendente</strong> deste PAJ (entram na futura
-                <em>Anexar ao PAJ</em>) — <strong>sem</strong> movimentação agora. Registrado no log como
-                complementar. Você resolve o CAPTCHA na janela.
+                Nova consulta ao SAT para <strong x-text="bmAlvo && bmAlvo.assistido"></strong>.
+                Selecione o que deseja baixar de forma complementar.
             </p>
+            <div class="alert alert-warning py-2 text-xs mb-3" x-show="bmSemInventario">
+                <span>
+                    Não há inventário do 1º download (interrompido ou sem log). A lista abaixo mostra os
+                    <strong>tipos de documento</strong> — selecione os que faltam para baixar <strong>todos os
+                    subitens</strong> daquele tipo. Tipos já baixados serão re-baixados se marcados.
+                </span>
+            </div>
             <div class="flex items-center gap-2 mb-2 flex-wrap">
                 <span class="text-sm font-medium">CPF:</span>
                 <input type="text" class="input input-bordered input-sm w-40" x-model="bmCpf" placeholder="000.000.000-00">
@@ -416,7 +441,7 @@
                     <span class="loading loading-spinner loading-xs"></span> Lendo o inventário do 1º download…
                 </div>
                 <div x-show="!bmCarregando && bmLista.length===0" class="text-sm text-base-content/50 py-4">
-                    Sem inventário do 1º download para este PAJ (nada a listar).
+                    Nada a listar para este PAJ.
                 </div>
                 <template x-for="cl in bmLista" :key="cl.grupo">
                     <div>
@@ -635,6 +660,7 @@ function satPage() {
         padrao: '01 - PREV_DIVPREV', grupoSel: '01 - PREV_DIVPREV',
         comPrazo: false, prazoDias: 15,
         verificado: false,
+        manualPaj: '', addingManual: false, manualMsg: '', manualMsgErro: false,
         carregando: false, carregandoGrupos: false, rodando: false,
         sseAberto: false, sseLog: [], sseStatus: '', sseFechavel: false, _es: null, sseTipo: '',
         logAberto: false, logAtual: [],
@@ -649,7 +675,7 @@ function satPage() {
         tiposInstituidor: null, tiposInstituidorDefault: [],
         patIgnorarModal: false, patIgnorar: [], patIgnorarNovo: '', patIgnorarMsg: '',
         instModal: false, instCpf: '', instNome: '', instAlvo: null,
-        baixarMaisModal: false, bmAlvo: null, bmCpf: '', bmSel: [], bmLista: [], bmCarregando: false, bmModo: 'concluido',
+        baixarMaisModal: false, bmAlvo: null, bmCpf: '', bmSel: [], bmLista: [], bmCarregando: false, bmModo: 'concluido', bmSemInventario: false,
 
         async init() {
             // NÃO abrir o navegador ao carregar a aba: checagem LEVE (peek) só LÊ o estado
@@ -657,11 +683,19 @@ function satPage() {
             this.verificarSessao();
             await this.carregarPrefs();
             this.carregarTipos();
-            // A busca de PAJs pendentes na caixa NÃO é automática: só pelo botão
-            // "Verificar PAJs pendentes" (evita consultar o SISDPU ao abrir a aba).
+            // A busca na CAIXA não é automática (só pelo botão "Verificar PAJs pendentes").
+            // Mas os PAJs adicionados MANUALMENTE são carregados do store local (rápido,
+            // sem tocar o SISDPU) para persistirem visíveis ao reabrir a aba.
+            this.carregarManuais();
             this.carregarHistorico();
             // atualização automática do selo de sessão (checagem LEVE, não navega)
             setInterval(() => this.verificarSessaoLeve(), 5000);
+        },
+        async carregarManuais() {
+            try {
+                const j = await (await fetch('/api/sat/pendentes/manuais')).json();
+                this.pendentes = j.itens || [];
+            } catch (e) {}
         },
         async carregarTipos() {
             try {
@@ -721,13 +755,34 @@ function satPage() {
             // modo 'pendente'  = PAJ ainda não anexado → baixa e junta ao acervo pendente.
             this.bmModo = modo;
             this.bmAlvo = r; this.bmCpf = r.cpf || ''; this.bmSel = []; this.bmLista = [];
+            this.bmSemInventario = false;
             this.baixarMaisModal = true; this.bmCarregando = true;
             try {
                 const j = await (await fetch(`/api/sat/${encodeURIComponent(r.paj_norm)}/inventario`)).json();
                 if (j.cpf) this.bmCpf = j.cpf;   // CPF vem do log de download
-                this.bmLista = this._montarBmLista(j.itens || [], j.tipos || []);
+                const itens = j.itens || [];
+                if (itens.length) {
+                    this.bmLista = this._montarBmLista(itens, j.tipos || []);
+                } else {
+                    // Sem inventário (1º download interrompido/sem log): oferece o CATÁLOGO
+                    // de tipos para selecionar o que baixar (todos os subitens de cada tipo).
+                    this.bmSemInventario = true;
+                    this.bmLista = this._montarBmListaCatalogo(j.tipos || []);
+                }
             } catch (e) { this.bmLista = []; }
             finally { this.bmCarregando = false; }
+        },
+        _montarBmListaCatalogo(tipos) {
+            // Um item por TIPO; alvo "key|" = curinga (baixa todos os subitens do tipo).
+            const grupos = []; tipos.forEach(t => { if (!grupos.includes(t.grupo)) grupos.push(t.grupo); });
+            const out = [];
+            grupos.forEach(g => {
+                const rows = tipos.filter(t => t.grupo === g).map(t => ({
+                    alvo: t.key + '|', label: t.label + ' — todos', status: '', ja_baixado: false, ja_anexado: false,
+                }));
+                if (rows.length) out.push({ grupo: g, rows });
+            });
+            return out;
         },
         _montarBmLista(itens, tipos) {
             const grupos = []; tipos.forEach(t => { if (!grupos.includes(t.grupo)) grupos.push(t.grupo); });
@@ -970,6 +1025,7 @@ function satPage() {
             } catch (e) {}
         },
         async recarregar() {
+            if (window.garantirCofre && !(await window.garantirCofre())) return;
             this.carregando = true;
             try {
                 const j = await (await fetch('/api/sat/pendentes')).json();
@@ -977,6 +1033,44 @@ function satPage() {
                 this.verificado = true;
             } catch (e) { this.pendentes = []; this.verificado = true; }
             finally { this.carregando = false; }
+        },
+        async adicionarManual() {
+            const txt = (this.manualPaj || '').trim();
+            if (!txt || this.addingManual) return;
+            // Cofre bloqueado → abre o modal de desbloqueio (senha-mestra). Só prossegue
+            // após desbloquear; o login no SISDPU é automático com os dados do cofre.
+            if (window.garantirCofre && !(await window.garantirCofre())) return;
+            this.addingManual = true; this.manualMsg = 'Verificando a autenticação no SISDPU e extraindo os dados do PAJ…'; this.manualMsgErro = false;
+            try {
+                const j = await (await fetch('/api/sat/pendentes/manual', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ paj: txt })
+                })).json();
+                if (j.ok && (j.itens || []).length) {
+                    this.manualPaj = '';
+                    this.manualMsg = `PAJ ${j.itens[0].numero} adicionado (${j.itens[0].assistido || 'sem nome'}).`;
+                    this.manualMsgErro = false;
+                    // Se a caixa já foi verificada, recarrega tudo (mescla caixa+manuais);
+                    // senão, só recarrega os manuais (rápido, sem tocar o SISDPU).
+                    if (this.verificado) await this.recarregar(); else await this.carregarManuais();
+                } else {
+                    const e = (j.erros && j.erros[0]) ? j.erros[0].erro : 'Não foi possível adicionar o PAJ.';
+                    this.manualMsg = e; this.manualMsgErro = true;
+                }
+            } catch (e) { this.manualMsg = 'Erro de comunicação com o servidor.'; this.manualMsgErro = true; }
+            finally { this.addingManual = false; }
+            clearTimeout(this._manualMsgT);
+            this._manualMsgT = setTimeout(() => { this.manualMsg = ''; }, 6000);
+        },
+        async removerManual(p) {
+            if (this.rodando) return;
+            try {
+                await fetch('/api/sat/pendentes/manual/del', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ paj_norm: p.paj_norm })
+                });
+                this.pendentes = this.pendentes.filter(x => x.paj_norm !== p.paj_norm);
+            } catch (e) {}
         },
         async carregarHistorico() {
             try {
@@ -1101,14 +1195,16 @@ function satPage() {
                 };
             });
         },
-        processar(p) {
+        async processar(p) {
             if (this.rodando) return;
+            if (window.garantirCofre && !(await window.garantirCofre())) return;
             return new Promise((resolve) => {
                 this.rodando = true; this.sseTipo = 'processar';
                 this.sseLog = []; this.sseStatus = '— em andamento'; this.sseFechavel = false; this.sseAberto = true;
                 const url = `/api/sat/${encodeURIComponent(p.paj_norm)}/processar`
                     + `?grupo=${encodeURIComponent(this.grupoSel)}`
-                    + `&prazo=${this.comPrazo ? (this.prazoDias || 0) : 0}`;
+                    + `&prazo=${this.comPrazo ? (this.prazoDias || 0) : 0}`
+                    + `&manual=${p.manual ? 1 : 0}`;
                 const es = new EventSource(url); this._es = es;
                 es.addEventListener('log', (ev) => {
                     try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {}

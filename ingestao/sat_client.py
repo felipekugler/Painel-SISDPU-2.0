@@ -227,6 +227,16 @@ _COMPILAR_LIMIAR = 3
 # NÃO é baixado (skip ANTES do clique). Setado no início de cada download principal.
 _PAT_IGNORAR: list[str] = []
 
+# Pasta do ACERVO (destino final dos PDFs) usada para VERIFICAÇÃO PRÉVIA: se o documento
+# já existe lá, pula o download (evita re-baixar/sobrescrever e permite RETOMAR um download
+# interrompido no meio de uma categoria). Setado no início de cada download.
+_PASTA_ACERVO: str | None = None
+
+# Callback de PERSISTÊNCIA INCREMENTAL do log: gravado a cada documento (não só no fim),
+# para que uma interrupção (perda de conexão) sempre deixe o log/inventário parcial em disco.
+# Padrão do painel: todo log de rotina longa deve ser gravado incrementalmente.
+_LOG_PERSIST = None
+
 
 def _pat_ignorado(servico: str) -> bool:
     """True se o Serviço do PAT casa (substring normalizada) alguma espécie da lista de
@@ -235,10 +245,34 @@ def _pat_ignorado(servico: str) -> bool:
     return bool(s) and any(_norm(t) in s for t in _PAT_IGNORAR if str(t).strip())
 
 
+def _ja_no_acervo(nome_arq: str) -> bool:
+    """True se o arquivo (nome final) já existe no acervo — verificação prévia p/ pular
+    o download e permitir retomar de onde parou."""
+    if not _PASTA_ACERVO or not nome_arq:
+        return False
+    with contextlib.suppress(Exception):
+        return (Path(_PASTA_ACERVO) / nome_arq).exists()
+    return False
+
+
+def _pat_ja_no_acervo(prot: str) -> bool:
+    """True se já existe um PROCADM do protocolo `prot` no acervo (o nome termina em
+    'PROT <prot>.pdf'). Verificação prévia p/ pular tarefas PAT já baixadas."""
+    if not _PASTA_ACERVO or not prot:
+        return False
+    with contextlib.suppress(Exception):
+        return any(Path(_PASTA_ACERVO).glob(f"*PROT {prot}.pdf"))
+    return False
+
+
 def _inv_add(key: str, sub: str, nome: str, status: str, rotulo: str = "") -> None:
     # `rotulo` = rótulo humano do item (ex.: o Serviço do PAT), para exibir no "Baixar mais".
     _INVENTARIO.append({"key": key, "sub": (sub or ""), "nome": (nome or ""),
                         "status": status, "rotulo": (rotulo or "")})
+    # Persistência incremental: grava o log a cada documento (não só no fim).
+    if _LOG_PERSIST is not None:
+        with contextlib.suppress(Exception):
+            _LOG_PERSIST()
 
 
 async def _ritmo(page) -> None:
@@ -760,6 +794,11 @@ async def _baixar_modal_tabela(page, ctx, cfg, nome, pasta_destino, salvos, pula
         else:
             base = f"{cfg['nome']} {nb}"
         nome_arq = _final_nome(base)
+        # Verificação prévia: já no acervo → pula (retomada sem re-baixar/sobrescrever).
+        if _ja_no_acervo(nome_arq):
+            _inv_add(cfg["key"], nb, nome_arq, "baixado")
+            yield reg(f"  ⏭ {nome_arq}: já baixado — pulando", "muted")
+            continue
         out = {}
         async for ev in _clicar_abre_aba(
                 page, ctx, (lambda idx=i: page.evaluate(_JS_ABRIR_PDF_LINHA, idx)),
@@ -844,6 +883,12 @@ async def _grupo2_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg, s
         if sel is not None and cfg["key"] not in sel:
             _inv_add(cfg["key"], "", "", "nao_selecionado")
             yield reg(f"  · {cfg['label']}: não baixado (desativado para esta pretensão)", "muted")
+            continue
+        # HISCRE é um único arquivo determinístico: se já está no acervo, pula ANTES de
+        # abrir o modal (retomada). Os demais (modais-tabela) checam por linha adiante.
+        if cfg["tipo"] == "hiscre" and _ja_no_acervo(_final_nome("HISCRE 5 anos")):
+            _inv_add(cfg["key"], "", _final_nome("HISCRE 5 anos"), "baixado")
+            yield reg("  ⏭ HISCRE: já baixado — pulando", "muted")
             continue
         alvo = _norm(cfg.get("titulo") or cfg["label"])
         garantido = cfg.get("garantido", False)
@@ -937,6 +982,11 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
             if _ALVOS is not None and f"pat|{prot}" not in _ALVOS and "pat|" not in _ALVOS:
                 continue
             servico = cells[prot_i + 1] if prot_i + 1 < len(cells) else ""
+            # Verificação prévia: PROCADM deste protocolo já no acervo → pula (retomada).
+            if _pat_ja_no_acervo(prot):
+                _inv_add("pat", prot, "", "baixado", rotulo=servico)
+                yield reg(f"  ⏭ tarefa {prot} ({servico}): já baixada — pulando", "muted")
+                continue
             # Espécies de PAT irrelevantes (lista de ignorados): pula ANTES de baixar.
             if _pat_ignorado(servico):
                 _inv_add("pat", prot, "", "ignorado", rotulo=servico)
@@ -1066,7 +1116,7 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                                 delay_s: float = 5.0, bloqueio_s: float = 45.0,
                                 tipos=None, pretensao="", rotulo="", alvos=None,
                                 nbs=None, compilar=False, compilar_limiar=3,
-                                pat_ignorar=None):
+                                pat_ignorar=None, pasta_acervo=None):
     """Consulta o CPF no SAT (usuário resolve o CAPTCHA na janela) e baixa o Grupo 1
     (1 clique), o Grupo 2 (modais: CCON, CRER, HISCRE, HISCONSIGNADOS, LAUDO MEDICO) e
     o PAT (2ª Via dos Processos, com deduplicação). `delay_s` = ritmo preventivo entre
@@ -1074,10 +1124,13 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
     (padrão 45s). `tipos` = coleção de keys de TIPOS_DOCUMENTOS a baixar (None = todos).
     `nbs` = coleção de NBs (qualquer formato) p/ filtrar Grupo 2 + PAT (None/vazio = sem
     filtro). `compilar`/`compilar_limiar` = compilar por tipo quando > limiar (só no
-    download principal). `pat_ignorar` = espécies de PAT (Serviço) a NÃO baixar. Gera
-    eventos SSE; termina com {'done':True,'resultado':{...}}."""
+    download principal). `pat_ignorar` = espécies de PAT (Serviço) a NÃO baixar.
+    `pasta_acervo` = pasta do acervo final para VERIFICAÇÃO PRÉVIA (pula docs já presentes;
+    permite RETOMAR downloads interrompidos); None = usa `pasta_destino`. O log é gravado
+    INCREMENTALMENTE (a cada documento) — uma interrupção deixa o inventário parcial em disco.
+    Gera eventos SSE; termina com {'done':True,'resultado':{...}}."""
     global _RITMO_MS, _PAUSA_BLOQUEIO_MS, _ROTULO_ARQ, _INVENTARIO, _ALVOS
-    global _NB_FILTRO, _COMPILAR, _COMPILAR_LIMIAR, _PAT_IGNORAR
+    global _NB_FILTRO, _COMPILAR, _COMPILAR_LIMIAR, _PAT_IGNORAR, _PASTA_ACERVO, _LOG_PERSIST
     _RITMO_MS = max(0, int(float(delay_s) * 1000))
     _PAUSA_BLOQUEIO_MS = max(0, int(float(bloqueio_s) * 1000))
     # filtro de NB: aceita formatado ("726.015.826-4") ou dígitos crus ("7260158264");
@@ -1089,11 +1142,26 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
     _ROTULO_ARQ = rotulo or ""  # prefixo dos nomes (ex.: "INSTITUIDOR - ")
     _INVENTARIO = []  # zera o inventário estruturado desta rodada
     _ALVOS = set(alvos) if alvos else None  # subitens específicos (download complementar)
+    _PASTA_ACERVO = str(pasta_acervo or pasta_destino)  # verificação prévia (já baixado)
     sel = None if tipos is None else set(tipos)  # None = todos os tipos
     Path(pasta_destino).mkdir(parents=True, exist_ok=True)
     salvos: list[str] = []
     pulados: list[str] = []
     log_msgs: list[dict] = []
+    from datetime import datetime as _dt
+    _ts_ini = _dt.now().isoformat(timespec="seconds")
+
+    def _gravar_log() -> None:
+        """Grava o _log_download.json com o estado ATUAL (chamado a cada documento e no
+        fim). Padrão do painel: log incremental — interrupção deixa o parcial em disco."""
+        import json as _json
+        Path(pasta_destino, "_log_download.json").write_text(
+            _json.dumps({"ts": _ts_ini, "cpf": cpf, "nome": nome, "salvos": salvos,
+                         "pulados": pulados, "inventario": list(_INVENTARIO),
+                         "eventos": log_msgs, "parcial": True},
+                        ensure_ascii=False, indent=2), encoding="utf-8")
+
+    _LOG_PERSIST = _gravar_log  # _inv_add passa a gravar o log a cada documento
 
     def reg(msg: str, level: str = "info") -> dict:
         e = _ev(msg, level)
@@ -1138,6 +1206,12 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
             if sel is not None and key not in sel:
                 _inv_add(key, "", "", "nao_selecionado")
                 yield reg(f"  · {prefixo}: não baixado (desativado para esta pretensão)", "muted")
+                continue
+            # Verificação prévia: já no acervo → pula (retomada sem re-baixar).
+            nome_arq_g1 = _final_nome(f"{prefixo} {nome}")
+            if _ja_no_acervo(nome_arq_g1):
+                _inv_add(key, "", nome_arq_g1, "baixado")
+                yield reg(f"  ⏭ {prefixo}: já baixado — pulando", "muted")
                 continue
             alvo_norm = _norm(label)
             nova, desfecho, msg = None, "bloqueio", ""
@@ -1229,15 +1303,17 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
         yield {"done": True, "resultado": {"ok": True, "detalhe": det,
                "salvos": salvos, "pulados": pulados, "pasta": pasta_destino}}
     finally:
-        # grava o LOG do download na pasta do PAJ (disponível na coluna "Log" da aba)
+        # Log já foi gravado INCREMENTALMENTE a cada documento; aqui grava a versão FINAL
+        # (marcando parcial=False). Se a rotina foi interrompida (perda de conexão), o
+        # parcial gravado no último _inv_add permanece em disco para permitir a retomada.
         with contextlib.suppress(Exception):
             import json as _json
-            from datetime import datetime as _dt
             Path(pasta_destino, "_log_download.json").write_text(
-                _json.dumps({"ts": _dt.now().isoformat(timespec="seconds"),
-                             "cpf": cpf, "nome": nome, "salvos": salvos,
+                _json.dumps({"ts": _ts_ini, "cpf": cpf, "nome": nome, "salvos": salvos,
                              "pulados": pulados, "inventario": list(_INVENTARIO),
-                             "eventos": log_msgs},
+                             "eventos": log_msgs, "parcial": False},
                             ensure_ascii=False, indent=2), encoding="utf-8")
+        _LOG_PERSIST = None  # desliga a persistência incremental desta rodada
+        _PASTA_ACERVO = None
         with contextlib.suppress(Exception):
             await browser.close()

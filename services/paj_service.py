@@ -150,7 +150,7 @@ def _ler_concluido_em(metadata: dict) -> str:
     return metadata.get("concluido_em") or metadata.get("arquivado_em", "")
 
 
-def listar_pajs(incluir_concluidos: bool = False) -> list[dict]:
+def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) -> list[dict]:
     """Retorna lista resumida de PAJs pro dashboard.
 
     "Concluido" aqui significa apenas "fora da caixa de entrada" (o PAJ
@@ -164,7 +164,8 @@ def listar_pajs(incluir_concluidos: bool = False) -> list[dict]:
 
     Resultado cacheado em memoria por _LIST_CACHE_TTL_SEG segundos (e ate o
     PAJS_DIR mudar de assinatura — vide _dir_signature)."""
-    chave = ("incluir" if incluir_concluidos else "ativos", *_dir_signature())
+    chave = ("incluir" if incluir_concluidos else "ativos",
+             "sub0" if excluir_submenu else "sub1", *_dir_signature())
     agora = time.monotonic()
     if (
         _list_cache["result"] is not None
@@ -198,6 +199,12 @@ def listar_pajs(incluir_concluidos: bool = False) -> list[dict]:
         # Excecao: se uma sync regular ja confirmou em_caixa_atual=True, e' um
         # PAJ "promovido" para a caixa e volta a aparecer normalmente.
         if metadata.get("via_watchlist") and em_caixa is not True:
+            continue
+
+        # PAJs que pertencem a um submenu especializado (Retornos/SAT) NÃO
+        # aparecem no dashboard — só no submenu próprio (decisão do usuário).
+        # Fail-safe: categoria ausente/"" → PAJ geral, aparece normalmente.
+        if excluir_submenu and metadata.get("categoria_caixa"):
             continue
 
         paj_norm = pasta.name

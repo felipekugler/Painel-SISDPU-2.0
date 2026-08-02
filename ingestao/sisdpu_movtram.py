@@ -626,12 +626,20 @@ async def tramitar_paj(
 async def concluir_paj(id_tramites: list[str], dry_run: bool = False) -> dict:
     """ADMITE (retira da caixa de grupo) e CONCLUI (baixa) o(s) trâmite(s) ORIGINÁRIO(S)
     pelo `id_tramite` (data-rk; não muda ao admitir). Retorna
-    {ok, status, detalhe, resultados:{id:{admitido,concluido}}}."""
+    {ok, status, detalhe, resultados:{id:{admitido,concluido,ja_ausente}}}.
+
+    IMPORTANTE: a checagem final só confirma que o id sumiu da caixa/grupo — isso é
+    verdadeiro tanto quando ESTA chamada admitiu+concluiu o trâmite quanto quando ele
+    JÁ estava ausente (concluído manualmente por fora, ou id incorreto) ANTES de
+    começar. Por isso rastreamos `visto[i]` (o id foi encontrado em algum momento,
+    na aba grupo OU na caixa pessoal, ANTES de qualquer ação) para não reportar
+    "concluído com sucesso" em cima de um id que nunca existiu nesta execução —
+    nesse caso o resultado é `status="ja_ausente"` (nada foi feito agora)."""
     ids = [str(i).strip() for i in (id_tramites or []) if str(i).strip()]
     if not ids:
         return {"ok": False, "status": "falha", "detalhe": "Nenhum id de trâmite informado."}
     _log.info("concluir_paj(%s) dry=%s", ids, dry_run)
-    res = {i: {"admitido": False, "concluido": False} for i in ids}
+    res = {i: {"admitido": False, "concluido": False, "ja_ausente": False} for i in ids}
     if dry_run:
         return {"ok": True, "status": "dry_run",
                 "detalhe": f"[dry_run] Admitiria+concluiria os trâmites {ids}.", "resultados": res}
@@ -646,9 +654,11 @@ async def concluir_paj(id_tramites: list[str], dry_run: bool = False) -> dict:
         return {"ok": False, "status": "falha", "detalhe": _MSG_CONFLITO_SESSAO, "resultados": res}
     await page.evaluate(_JS_ATIVA_ABA_GRUPO)
     await _wait_pf_ajax(page); await page.wait_for_timeout(900)
+    visto: dict[str, bool] = {i: False for i in ids}
     for i in ids:
         try:
             if await page.evaluate(_JS_TRAMITE_NO_GRUPO, i):
+                visto[i] = True
                 if await page.evaluate(_JS_ADMITIR_TRAMITE, i):
                     await _wait_pf_ajax(page, timeout=15000); await page.wait_for_timeout(800)
                     res[i]["admitido"] = True
@@ -662,8 +672,11 @@ async def concluir_paj(id_tramites: list[str], dry_run: bool = False) -> dict:
     marcados = 0
     for i in ids:
         try:
-            if await page.evaluate(_JS_TRAMITE_NA_CAIXA, i) and await page.evaluate(_JS_MARCA_CHECKBOX, i):
-                marcados += 1
+            achou_caixa = await page.evaluate(_JS_TRAMITE_NA_CAIXA, i)
+            if achou_caixa:
+                visto[i] = True
+                if await page.evaluate(_JS_MARCA_CHECKBOX, i):
+                    marcados += 1
         except Exception as e:  # noqa: BLE001
             _log.warning("concluir_paj: marcar %s falhou: %s", i, e)
     if marcados:
@@ -677,16 +690,32 @@ async def concluir_paj(id_tramites: list[str], dry_run: bool = False) -> dict:
     await _wait_pf_ajax(page); await page.wait_for_timeout(800)
     no_grupo = {i: await page.evaluate(_JS_TRAMITE_NO_GRUPO, i) for i in ids}
     for i in ids:
-        res[i]["concluido"] = not na_caixa[i] and not no_grupo[i]
+        ausente_agora = not na_caixa[i] and not no_grupo[i]
+        if ausente_agora and not visto[i]:
+            # Nunca foi encontrado (nem na aba grupo, nem na caixa pessoal) em NENHUM
+            # momento desta chamada — já estava ausente ANTES de começarmos. Não é uma
+            # conclusão desta execução (provável conclusão manual anterior, ou id errado).
+            res[i]["concluido"] = False
+            res[i]["ja_ausente"] = True
+        else:
+            res[i]["concluido"] = ausente_agora
 
     concluidos = [i for i in ids if res[i]["concluido"]]
+    ja_ausentes = [i for i in ids if res[i]["ja_ausente"]]
     if len(concluidos) == len(ids):
         status, ok = "concluido", True
-    elif concluidos:
+        detalhe = f"{len(concluidos)}/{len(ids)} trâmite(s) concluído(s)."
+    elif len(ja_ausentes) == len(ids):
+        status, ok = "ja_ausente", False
+        detalhe = (f"{len(ja_ausentes)}/{len(ids)} trâmite(s) já estava(m) ausente(s) da caixa/grupo "
+                   "antes desta execução — provavelmente já concluído(s) manualmente. Nada foi alterado agora.")
+    elif concluidos or ja_ausentes:
         status, ok = "parcial", False
+        detalhe = (f"{len(concluidos)}/{len(ids)} concluído(s) agora, {len(ja_ausentes)} já ausente(s) "
+                   "antes desta execução.")
     else:
         status, ok = "falha", False
-    detalhe = f"{len(concluidos)}/{len(ids)} trâmite(s) concluído(s)."
+        detalhe = f"{len(concluidos)}/{len(ids)} trâmite(s) concluído(s)."
     return {"ok": ok, "status": status, "detalhe": detalhe, "resultados": res}
 
 

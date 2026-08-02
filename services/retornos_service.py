@@ -33,6 +33,10 @@ from services import historico_painel, retornos_ia
 
 GRUPO_PADRAO = "01 - PREV_DIVPREV"
 
+
+def _log_noop(_msg: str) -> None:
+    """Log silencioso para a persistência unificada (o progresso da Retornos usa o SSE)."""
+
 # --- parâmetros de negócio (aprovados pelo usuário) ---
 DESCRICAO_ALVO = "atendimento de retorno"  # trecho p/ filtro (normalizado)
 
@@ -76,6 +80,91 @@ def _limpar_oficio(s: str) -> str:
     s = re.split(r"\s+-\s+", s, 1)[0].strip()   # remove '- (D) NOME ... Tramitar para titular'
     s = re.sub(r"^E\.\s*", "", s).strip()        # remove prefixo 'E. '
     return s
+
+
+def _extrair_processos(meta: dict) -> list[dict]:
+    """TODOS os processos judiciais vinculados ao PAJ, fiéis ao cadastrado no SISDPU
+    (o PAJ pode ter mais de um). Prioriza `metadata.processos_judiciais` (lista
+    completa, gravada direto do scrape — sem reparse de texto); cai no campo singular
+    antigo (`processo_judicial` + `sisdpu_raw.juizo`) para metadata.json gravados antes
+    desta extensão. Cada item: {numero, juizo, data_inclusao}."""
+    procs = meta.get("processos_judiciais")
+    if not procs and meta.get("processo_judicial"):
+        raw = meta.get("sisdpu_raw") or {}
+        procs = [{
+            "processo_judicial": meta["processo_judicial"],
+            "juizo": raw.get("juizo") or "",
+            "data_inclusao": raw.get("data_inclusao") or "",
+        }]
+    out = []
+    for p in (procs or []):
+        numero = (p.get("processo_judicial") or "").strip()
+        if not numero:
+            continue
+        out.append({
+            "numero": numero,
+            "juizo": (p.get("juizo") or "").strip(),
+            "data_inclusao": (p.get("data_inclusao") or "").strip(),
+        })
+    return out
+
+
+def _normalizar_num_processo(s: str) -> str:
+    """Só os dígitos do número CNJ — o SISDPU grava sem pontuação (ex.:
+    '50041632720264047000') e o e-proc com pontuação (ex.: '5004163-27.2026.4.04.7000');
+    normalizar para dígitos permite cruzar os dois."""
+    return re.sub(r"\D", "", s or "")
+
+
+def _mapa_intimacoes_eproc() -> dict[str, dict]:
+    """Índice {processo (só dígitos) -> caso} de TODAS as intimações/prazos JÁ
+    sincronizados na aba "Prazos e-proc" — leitura LOCAL do JSON persistido por
+    `eproc_intimacoes.salvar()` (não navega no e-proc; instantâneo). Vazio se essa
+    sincronização nunca rodou — nesse caso nenhum processo mostra o badge."""
+    from ingestao import eproc_intimacoes
+    dados = eproc_intimacoes.carregar()
+    idx: dict[str, dict] = {}
+    for categoria, casos in (dados.get("secoes") or {}).items():
+        for caso in casos:
+            num = _normalizar_num_processo(caso.get("processo", ""))
+            if num:
+                c = dict(caso)
+                c["categoria"] = categoria
+                idx[num] = c
+    return idx
+
+
+def _enriquecer_com_intimacoes(processos: list[dict], idx_eproc: dict[str, dict]) -> list[dict]:
+    """Anexa `intimacao` a cada processo com base no índice de Prazos e-proc (ver
+    `_mapa_intimacoes_eproc`). `intimacao` fica None quando o processo não aparece
+    nas intimações/prazos sincronizados (não é um erro — pode não ter pendência,
+    ou a sincronização de Prazos e-proc ainda não rodou)."""
+    for p in processos:
+        caso = idx_eproc.get(_normalizar_num_processo(p.get("numero", "")))
+        if not caso:
+            p["intimacao"] = None
+            continue
+        prazos = caso.get("prazos") or []
+        data_prazo, estimado = "", False
+        for pr in prazos:
+            if pr.get("final_prazo"):
+                data_prazo, estimado = pr["final_prazo"], False
+                break
+        if not data_prazo:
+            for pr in prazos:
+                if pr.get("final_estimado"):
+                    data_prazo, estimado = pr["final_estimado"], True
+                    break
+        p["intimacao"] = {
+            "categoria": caso.get("categoria", ""),
+            "urgente": bool(caso.get("urgente")),
+            "n_prazos": caso.get("n_prazos", len(prazos)),
+            "prazo_dias_min": caso.get("prazo_dias_min"),
+            "data_prazo": data_prazo,
+            "estimado": estimado,
+            "processo_url": caso.get("processo_url", ""),
+        }
+    return processos
 
 
 def _ler_metadata(paj_norm: str) -> dict:
@@ -133,16 +222,40 @@ def _gravar_store(store: dict) -> None:
 
 
 def listar() -> dict:
-    """Registros conhecidos, os que estão na caixa primeiro, mais recentes no topo."""
+    """Registros da Retornos. O NÚCLEO do PAJ (assistido, ofício, pretensão,
+    descrição do retorno, nº de movs) vem do `metadata.json` — FONTE ÚNICA. O store
+    guarda só os campos exclusivos (IA, ponteiros) + um cache leve usado como fallback
+    para registros antigos ainda sem metadata. Os que estão na caixa vêm primeiro,
+    mais recentes no topo."""
     store = _ler_store()
-    itens = list(store.values())
-    itens.sort(key=lambda r: (not r.get("em_caixa", True), r.get("atualizado_em", "")), reverse=False)
+    idx_eproc = _mapa_intimacoes_eproc()
+    itens = []
+    for rec in store.values():
+        item = dict(rec)
+        meta = _ler_metadata(rec.get("paj_norm", ""))
+        if meta:  # fonte de verdade
+            item["assistido"] = meta.get("assistido_caixa") or item.get("assistido", "")
+            item["oficio"] = meta.get("oficio_caixa") or item.get("oficio", "")
+            item["pretensao"] = (meta.get("pretensaopura") or meta.get("pretensao")
+                                 or item.get("pretensao", ""))
+            processos = _extrair_processos(meta) or item.get("processos_judiciais", [])
+            item["processos_judiciais"] = _enriquecer_com_intimacoes(processos, idx_eproc)
+            movs = (meta.get("detalhes_sisdpu", {}) or {}).get("movimentacoes", []) or []
+            if movs:
+                item["n_movimentacoes"] = len(movs)
+                r = _extrair_retorno_das_movs(movs)
+                if r.get("descricao_retorno"):
+                    item["descricao_retorno"] = r["descricao_retorno"]
+                    item["data_retorno"] = r.get("data") or item.get("data_retorno", "")
+        # compat: registro antigo guardava o array `movimentacoes`; deriva a contagem.
+        if "n_movimentacoes" not in item:
+            item["n_movimentacoes"] = len(item.get("movimentacoes", []) or [])
+        item.pop("movimentacoes", None)  # nunca trafega o array pela listagem
+        item["oficio"] = _limpar_oficio(item.get("oficio", ""))
+        itens.append(item)
     # em_caixa=True antes; dentro de cada grupo, mais recentes primeiro
     itens.sort(key=lambda r: r.get("atualizado_em", ""), reverse=True)
     itens.sort(key=lambda r: 0 if r.get("em_caixa", True) else 1)
-    # normaliza o ofício na leitura (cobre registros antigos com ofício sujo) — idempotente
-    for r in itens:
-        r["oficio"] = _limpar_oficio(r.get("oficio", ""))
     return {"ok": True, "itens": itens}
 
 
@@ -170,10 +283,15 @@ async def reanalisar(id_tramite: str, prompt_extra: str = "") -> dict:
     if not rec:
         return {"ok": False, "detalhe": "Retorno não encontrado (sincronize novamente)."}
 
-    narrativa = _narrativa_do_paj(rec.get("paj_norm", ""))
+    paj_norm = rec.get("paj_norm", "")
+    narrativa = _narrativa_do_paj(paj_norm)
+    # movs da FONTE ÚNICA (metadata); fallback ao array antigo do store, se houver.
+    meta = _ler_metadata(paj_norm)
+    movs = ((meta.get("detalhes_sisdpu", {}) or {}).get("movimentacoes", [])
+            or rec.get("movimentacoes", []))
     analise = await asyncio.to_thread(
         retornos_ia.analisar_retorno,
-        narrativa, rec.get("movimentacoes", []), rec.get("descricao_retorno", ""),
+        narrativa, movs, rec.get("descricao_retorno", ""),
         rec.get("assistido", ""), rec.get("pretensao", ""), prompt_extra or "",
     )
     if not analise:
@@ -235,7 +353,13 @@ async def sincronizar_stream() -> AsyncIterator[dict]:
     """Gera eventos de progresso (dicts) enquanto sincroniza os retornos.
     Eventos de log: {level, msg}. Evento final: {done: True, resultado: {...}}."""
     yield _ev("info", "Lendo a caixa de entrada do SISDPU…")
-    caixa = await movtram.listar_caixa_estruturada()
+    caixa, exc, eventos = await _com_auto_reconexao(movtram.listar_caixa_estruturada)
+    for ev in eventos:
+        yield ev
+    if exc is not None:
+        yield _ev("erro", f"Falha ao ler a caixa ({type(exc).__name__}): {str(exc)[:200]}.")
+        yield {"done": True, "resultado": {"ok": False, "detalhe": str(exc)[:300]}}
+        return
     if not caixa.get("ok"):
         yield _ev("erro", caixa.get("detalhe", "Falha ao ler a caixa."))
         yield {"done": True, "resultado": {"ok": False, "detalhe": caixa.get("detalhe", "")}}
@@ -251,6 +375,7 @@ async def sincronizar_stream() -> AsyncIterator[dict]:
     yield _ev("info", f"{len(pendentes)} atendimento(s) de retorno na caixa.")
 
     store = _ler_store()
+    idx_eproc = _mapa_intimacoes_eproc()
     ids_caixa: set[str] = set()
     ia_ok = retornos_ia.disponivel()
     if not ia_ok:
@@ -281,29 +406,50 @@ async def sincronizar_stream() -> AsyncIterator[dict]:
         id_tramite = it.get("id_tramite", "")
         ids_caixa.add(id_tramite)
         n += 1
-        yield _ev("novo", f"[{n}/{len(pendentes)}] {paj} — detalhando…")
+        yield _ev("novo", f"[{n}/{len(pendentes)}] {paj} — sincronizando (dados unificados)…")
 
-        det = await _detalhar(paj)
-        movs = (det.get("movimentacoes") or [])[:30]
-        ret = _extrair_retorno_das_movs(det.get("movimentacoes") or [])
+        # Sincroniza o PAJ pelo PIPELINE UNIFICADO (mesma persistência do dashboard):
+        # grava metadata.json com movs NORMALIZADAS + narrativa + categoria_caixa=
+        # "retorno". Assim a Retornos NÃO mantém dados paralelos do PAJ — só os
+        # campos exclusivos (IA, id_tramite, caixas abertas) + cache leve.
+        # Caminho RÁPIDO (a análise de retorno não precisa de documentos por seq):
+        #   `baixar_anexos=False`  → não baixa os binários da aba Arquivos;
+        #   `extrair_documentos=False` → pula a abertura de 1 popup por movimentação
+        #        com anexo (o gargalo da sync de retorno); docs já conhecidos ficam;
+        #   `esperas_curtas=True`  → esperas fixas curtas no detalhamento.
+        # Um sync completo do dashboard depois reextrai os documentos que faltarem.
+        from ingestao import sincronizador
+        adapter = {
+            "paj": paj,
+            "assistido": it.get("assistido", ""),
+            "oficio": "",
+            "etiqueta": "",
+            "data": it.get("data_envio", ""),
+            # descrição concatenada p/ o classificador central marcar categoria="retorno"
+            "desc": (it.get("descricao", "") + " | " + it.get("linha_texto", "")).strip(),
+        }
+        _, exc, eventos = await _com_auto_reconexao(lambda: sincronizador._processar_paj(
+            adapter, _log_noop, baixar_anexos=False,
+            extrair_documentos=False, esperas_curtas=True))
+        for ev in eventos:
+            yield ev
+        if exc is not None:
+            yield _ev("muted", f"    {paj} — falha ao gravar dados unificados: {exc}")
 
-        # cabeçalho do retorno: prioriza a movimentação; cai na linha da caixa
+        # Deriva o núcleo do metadata recém-gravado (fonte única). Fallback: linha da caixa.
+        meta = _ler_metadata(paj_norm)
+        movs = (meta.get("detalhes_sisdpu", {}) or {}).get("movimentacoes", []) or []
+        ret = _extrair_retorno_das_movs(movs) if movs else {}
+        assistido = (meta.get("assistido_caixa") or it.get("assistido", "")).strip()
+        oficio = _limpar_oficio(meta.get("oficio_caixa", "")).strip()
+        pretensao = (meta.get("pretensaopura") or meta.get("pretensao", "")).strip()
+        processos_judiciais = _enriquecer_com_intimacoes(_extrair_processos(meta), idx_eproc)
+        narrativa = _narrativa_do_paj(paj_norm)
         data_retorno = ret.get("data") or it.get("data_envio", "")
         remetente = ret.get("remetente") or it.get("remetente", "")
         descricao_retorno = ret.get("descricao_retorno") or it.get("descricao", "")
 
-        meta = _ler_metadata(paj_norm)
-        assistido = (det.get("assistido") or it.get("assistido", "")
-                     or meta.get("assistido_caixa", "")).strip()
-        # ofício: prioriza o metadata (limpo, igual à tabela de PAJs); limpa o fallback
-        oficio = (meta.get("oficio_caixa") or _limpar_oficio(det.get("oficio", ""))).strip()
-        pretensao = (det.get("pretensao") or meta.get("pretensaopura")
-                     or meta.get("pretensao", "")).strip()
-        # narrativa vem da MESMA navegação (movimentacoes_paj); fallback: metadata local
-        narrativa = _html_para_texto(det.get("narrativa") or "") or _narrativa_do_paj(paj_norm)
-
-        # onde o PAJ está aberto agora (tramitações sem conclusão) — extraído JÁ na
-        # sincronização e cacheado, para o badge aparecer instantâneo ao expandir.
+        # onde o PAJ está aberto agora (tramitações sem conclusão) — cache p/ o badge.
         try:
             abertas = await movtram.caixas_abertas_paj(it.get("id", ""))
         except Exception:  # noqa: BLE001
@@ -311,22 +457,26 @@ async def sincronizar_stream() -> AsyncIterator[dict]:
 
         rec_antigo = store.get(id_tramite, {})
         rec: dict[str, Any] = {
+            # ponteiros + exclusivos da Retornos
             "id_tramite": id_tramite,
             "id_processo": it.get("id", ""),
             "paj": paj,
             "paj_norm": paj_norm,
-            "assistido": assistido,
-            "oficio": oficio,
-            "pretensao": pretensao,
-            "data_retorno": data_retorno,
-            "remetente": remetente,
-            "descricao_retorno": descricao_retorno,
             "url_detalhe": it.get("url_detalhe", ""),
-            "movimentacoes": movs,
             "caixas_abertas": abertas,
             "em_caixa": True,
             "atualizado_em": _now_iso(),
-            # preserva edição manual da sugestão entre sincronizações
+            # cache LEVE p/ a listagem (fonte de verdade = metadata; ver listar()).
+            # NUNCA guardamos o array de movimentações aqui (vem do metadata).
+            "assistido": assistido,
+            "oficio": oficio,
+            "pretensao": pretensao,
+            "processos_judiciais": processos_judiciais,
+            "data_retorno": data_retorno,
+            "remetente": remetente,
+            "descricao_retorno": descricao_retorno,
+            "n_movimentacoes": len(movs),
+            # IA (exclusivo) — preservado entre sincronizações
             "sugestao_editada": rec_antigo.get("sugestao_editada", ""),
             "resumo_ia": rec_antigo.get("resumo_ia", ""),
             "precisa_acao": rec_antigo.get("precisa_acao"),
@@ -365,19 +515,120 @@ async def sincronizar_stream() -> AsyncIterator[dict]:
             store[id_tramite] = rec
             _gravar_store(store)
 
-    # marca como fora da caixa os registros conhecidos que não vieram desta leitura
+    # Retornos é espelho da caixa: quem não veio nesta leitura SAIU da caixa (foi
+    # despachado/concluído por fora, ou a tramitação de retorno não existe mais) —
+    # remove do store em vez de só marcar, para não poluir a lista.
+    idts_conhecidos = list(store.keys())
     saidos = 0
-    for idt, rec in store.items():
-        if rec.get("em_caixa") and idt not in ids_caixa:
-            rec["em_caixa"] = False
-            rec["atualizado_em"] = _now_iso()
+    for idt in idts_conhecidos:
+        if idt not in ids_caixa:
+            store.pop(idt, None)
             saidos += 1
     if saidos:
         _gravar_store(store)
 
     yield _ev("ok", f"Sincronização concluída: {len(pendentes)} na caixa"
-                    + (f", {saidos} saíram." if saidos else "."))
+                    + (f", {saidos} removido(s) por terem saído da caixa." if saidos else "."))
     yield {"done": True, "resultado": {"ok": True, "n_caixa": len(pendentes), "n_saidos": saidos}}
+
+
+async def ressincronizar_paj_stream(id_tramite: str) -> AsyncIterator[dict]:
+    """Ressincroniza UM retorno já conhecido, pelo MESMO caminho leve da sincronização
+    em lote (`sincronizador._processar_paj` com `baixar_anexos=False,
+    extrair_documentos=False, esperas_curtas=True`) — NUNCA a sincronização pesada da
+    aba PAJs. Não dispara a IA (isso é o botão "Reanálise pela IA"); só refresca o
+    núcleo do metadata (ofício, assistido, pretensão, movimentações) + caixas abertas."""
+    store = _ler_store()
+    rec = store.get(id_tramite)
+    if not rec:
+        yield _ev("erro", "Retorno não encontrado (sincronize novamente).")
+        yield {"done": True, "resultado": {"ok": False, "detalhe": "Retorno não encontrado."}}
+        return
+
+    paj = rec.get("paj", "")
+    yield _ev("novo", f"Ressincronizando {paj}…")
+
+    yield _ev("info", "Localizando o trâmite na caixa de entrada…")
+    caixa, exc, eventos = await _com_auto_reconexao(movtram.listar_caixa_estruturada)
+    for ev in eventos:
+        yield ev
+    if exc is not None:
+        yield _ev("erro", f"Falha ao ler a caixa ({type(exc).__name__}): {str(exc)[:200]}.")
+        yield {"done": True, "resultado": {"ok": False, "detalhe": str(exc)[:300]}}
+        return
+    if not caixa.get("ok"):
+        yield _ev("erro", caixa.get("detalhe", "Falha ao ler a caixa."))
+        yield {"done": True, "resultado": {"ok": False, "detalhe": caixa.get("detalhe", "")}}
+        return
+    it = next((x for x in caixa.get("itens", []) if x.get("id_tramite") == id_tramite), None)
+    if not it:
+        # Espelho da caixa: se não está mais lá, remove do store (mesma regra do sync em lote).
+        store.pop(id_tramite, None)
+        _gravar_store(store)
+        yield _ev("erro", f"{paj} não está mais na caixa de entrada — removido da lista.")
+        yield {"done": True, "resultado": {"ok": False, "detalhe": "PAJ saiu da caixa."}}
+        return
+
+    paj_norm = _num_to_norm(it.get("paj", paj))
+    from ingestao import sincronizador
+    adapter = {
+        "paj": it.get("paj", paj),
+        "assistido": it.get("assistido", ""),
+        "oficio": "",
+        "etiqueta": "",
+        "data": it.get("data_envio", ""),
+        "desc": (it.get("descricao", "") + " | " + it.get("linha_texto", "")).strip(),
+    }
+    yield _ev("info", "Regravando dados unificados (modo rápido, sem anexos)…")
+    _, exc, eventos = await _com_auto_reconexao(lambda: sincronizador._processar_paj(
+        adapter, _log_noop, baixar_anexos=False,
+        extrair_documentos=False, esperas_curtas=True))
+    for ev in eventos:
+        yield ev
+    if exc is not None:
+        yield _ev("erro", f"Falha ao ressincronizar {paj}: {type(exc).__name__}: {exc}")
+        yield {"done": True, "resultado": {"ok": False, "detalhe": str(exc)[:300]}}
+        return
+
+    meta = _ler_metadata(paj_norm)
+    movs = (meta.get("detalhes_sisdpu", {}) or {}).get("movimentacoes", []) or []
+    ret = _extrair_retorno_das_movs(movs) if movs else {}
+    assistido = (meta.get("assistido_caixa") or it.get("assistido", "")).strip()
+    oficio = _limpar_oficio(meta.get("oficio_caixa", "")).strip()
+    pretensao = (meta.get("pretensaopura") or meta.get("pretensao", "")).strip()
+    processos_judiciais = _enriquecer_com_intimacoes(_extrair_processos(meta), _mapa_intimacoes_eproc())
+    data_retorno = ret.get("data") or it.get("data_envio", "")
+    remetente = ret.get("remetente") or it.get("remetente", "")
+    descricao_retorno = ret.get("descricao_retorno") or it.get("descricao", "")
+
+    yield _ev("info", "Verificando caixas onde o PAJ está aberto…")
+    try:
+        abertas = await movtram.caixas_abertas_paj(it.get("id", ""))
+    except Exception:  # noqa: BLE001
+        abertas = rec.get("caixas_abertas", [])
+
+    rec.update({
+        "id_processo": it.get("id", rec.get("id_processo", "")),
+        "paj": it.get("paj", paj),
+        "paj_norm": paj_norm,
+        "url_detalhe": it.get("url_detalhe", rec.get("url_detalhe", "")),
+        "caixas_abertas": abertas,
+        "atualizado_em": _now_iso(),
+        "assistido": assistido,
+        "oficio": oficio,
+        "processos_judiciais": processos_judiciais,
+        "pretensao": pretensao,
+        "data_retorno": data_retorno,
+        "remetente": remetente,
+        "descricao_retorno": descricao_retorno,
+        "n_movimentacoes": len(movs),
+        # IA preservada — este botão não reanalisa (ver "Reanálise pela IA").
+    })
+    store[id_tramite] = rec
+    _gravar_store(store)
+
+    yield _ev("ok", f"{paj} — ressincronizado com sucesso.")
+    yield {"done": True, "resultado": {"ok": True}}
 
 
 # ---------------------------------------------------------------------------
@@ -440,6 +691,50 @@ def _iso_to_br(s: str) -> str:
     return f"{m.group(3)}/{m.group(2)}/{m.group(1)}" if m else s
 
 
+def _parece_problema_sessao(resultado, excecao: Exception | None) -> bool:
+    """True quando a falha indica SESSÃO indisponível (conflito, deslogado, cofre
+    bloqueado) — casos em que vale reconectar e tentar de novo, em vez de desistir.
+    Qualquer exceção aqui (timeout de navegação, RuntimeError de credenciais) é
+    candidata: o pior caso é reconectar à toa antes de reportar o erro original.
+    `resultado` pode não ser um dict (ex.: `_processar_paj` retorna tupla) — nesse
+    caso só a exceção é considerada, já que não há campo "ok"/"detalhe" pra checar."""
+    if excecao is not None:
+        return True
+    if isinstance(resultado, dict) and not resultado.get("ok"):
+        det = _norm(str(resultado.get("detalhe") or ""))
+        return any(t in det for t in ("conflito de sessao", "sessao", "login", "cofre bloqueado"))
+    return False
+
+
+async def _com_auto_reconexao(chamada):
+    """Executa `chamada()` (coroutine factory); se falhar por sessão indisponível,
+    RECONECTA automaticamente (login fresco no SISDPU — via `sisdpu_client.reconectar()`,
+    que usa as credenciais do cofre se já destrancado) e tenta a MESMA ação mais uma vez.
+    Retorna (resultado, excecao, eventos_sse) — eventos_sse já prontos para `yield`."""
+    eventos: list[dict] = []
+    try:
+        resultado = await chamada()
+        excecao = None
+    except Exception as e:  # noqa: BLE001
+        resultado, excecao = None, e
+
+    if _parece_problema_sessao(resultado, excecao):
+        eventos.append(_ev("muted", "Sessão do SISDPU indisponível — reconectando automaticamente…"))
+        try:
+            rec_conn = await sisdpu_client.reconectar()
+        except Exception as e:  # noqa: BLE001
+            rec_conn = {"ok": False, "detalhe": str(e)[:300]}
+        eventos.append(_ev("ok" if rec_conn.get("ok") else "erro",
+                           f"Reconexão automática: {rec_conn.get('detalhe', '')}"))
+        if rec_conn.get("ok"):
+            try:
+                resultado = await chamada()
+                excecao = None
+            except Exception as e:  # noqa: BLE001
+                resultado, excecao = None, e
+    return resultado, excecao, eventos
+
+
 async def executar_stream(id_tramite: str, fase: str, descricao: str,
                           grupo: str | None = None, prazo_dias: int = 0,
                           prazo_data: str = "", concluir: bool = True,
@@ -490,12 +785,14 @@ async def executar_stream(id_tramite: str, fase: str, descricao: str,
     mv: dict = {}
     if fase:
         yield _ev("info", f"Movimentando (fase: {fase})…")
-        try:
-            mv = await movtram.movimentar_paj(pajs, descricao, fase, [], "Documentos do Assistido", dry_run)
-        except Exception as e:  # noqa: BLE001
-            yield _ev("erro", f"Falha na movimentação ({type(e).__name__}): {str(e)[:200]}. "
+        mv, exc, eventos = await _com_auto_reconexao(
+            lambda: movtram.movimentar_paj(pajs, descricao, fase, [], "Documentos do Assistido", dry_run))
+        for ev in eventos:
+            yield ev
+        if exc is not None:
+            yield _ev("erro", f"Falha na movimentação ({type(exc).__name__}): {str(exc)[:200]}. "
                               "Verifique a conexão do SISDPU (selo/Reconectar) e tente de novo.")
-            yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": str(e)[:300]}}
+            yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": str(exc)[:300]}}
             return
         yield _ev("ok" if mv.get("ok") else "erro", f"Movimentação: {mv.get('detalhe', '')}")
         if not mv.get("ok"):
@@ -507,13 +804,15 @@ async def executar_stream(id_tramite: str, fase: str, descricao: str,
     if grupo:
         prazo_txt = f"prazo até {prazo_data_final}" if prazo_data_final else "sem prazo"
         yield _ev("info", f"Tramitando para {grupo} ({prazo_txt})…")
-        try:
-            tr = await movtram.tramitar_paj(pajs, grupo=grupo, descricao=descricao,
-                                            prazo_data=prazo_data_final, dry_run=dry_run)
-        except Exception as e:  # noqa: BLE001
-            yield _ev("erro", f"Falha na tramitação ({type(e).__name__}): {str(e)[:200]}. "
+        tr, exc, eventos = await _com_auto_reconexao(
+            lambda: movtram.tramitar_paj(pajs, grupo=grupo, descricao=descricao,
+                                         prazo_data=prazo_data_final, dry_run=dry_run))
+        for ev in eventos:
+            yield ev
+        if exc is not None:
+            yield _ev("erro", f"Falha na tramitação ({type(exc).__name__}): {str(exc)[:200]}. "
                               "A movimentação já foi registrada; verifique o PAJ.")
-            yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": str(e)[:300]}}
+            yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": str(exc)[:300]}}
             return
         yield _ev("ok" if tr.get("ok") else "erro", f"Tramitação: {tr.get('detalhe', '')}")
         if not tr.get("ok"):
@@ -523,40 +822,64 @@ async def executar_stream(id_tramite: str, fase: str, descricao: str,
 
     # 3) CONCLUIR (opcional) — é o que retira o retorno da caixa de entrada
     concluido = False
+    ja_ausente = False
     if concluir:
         yield _ev("info", "Concluindo o trâmite de retorno…")
-        try:
-            cc = await movtram.concluir_paj([id_tramite], dry_run)
-        except Exception as e:  # noqa: BLE001
-            yield _ev("erro", f"Falha na conclusão ({type(e).__name__}): {str(e)[:200]}. "
+        cc, exc, eventos = await _com_auto_reconexao(lambda: movtram.concluir_paj([id_tramite], dry_run))
+        for ev in eventos:
+            yield ev
+        if exc is not None:
+            yield _ev("erro", f"Falha na conclusão ({type(exc).__name__}): {str(exc)[:200]}. "
                               "Mov./tramitação já podem ter sido registradas; verifique o PAJ.")
-            yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": str(e)[:300]}}
+            yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": str(exc)[:300]}}
             return
-        yield _ev("ok" if cc.get("ok") else "erro", f"Conclusão: {cc.get('detalhe', '')}")
-        if not cc.get("ok"):
-            yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": cc.get("detalhe", "")}}
-            return
-        concluido = not dry_run
-
-    # sucesso — registra no histórico do painel e remove da lista se concluído
-    if not dry_run:
-        if concluido:
-            atividade = "Conclusão de atendimento de retorno"
-        elif tram_caixa:
-            atividade = "Tramitação de atendimento de retorno"
+        if cc.get("status") == "ja_ausente":
+            # O trâmite já não estava na caixa/grupo ANTES desta execução — provável
+            # conclusão manual anterior (ou id desatualizado). NADA foi concluído agora;
+            # eventual movimentação/tramitação acima, se houve, já foi efetivada de
+            # verdade e permanece registrada abaixo.
+            yield _ev("muted", f"Conclusão: {cc.get('detalhe', '')}")
+            ja_ausente = True
         else:
-            atividade = "Movimentação de atendimento de retorno"
-        historico_painel.registrar({
-            "paj": paj, "paj_norm": paj_norm, "url_detalhe": rec.get("url_detalhe", ""),
-            "assistido": rec.get("assistido", ""),
-            "origem": "retorno", "atividade": atividade,
-            "movimentacao": fase or "—", "tramitado_para": tram_caixa,
-            "concluido": concluido, "detalhe": descricao[:300],
-        })
-        if concluido:
+            yield _ev("ok" if cc.get("ok") else "erro", f"Conclusão: {cc.get('detalhe', '')}")
+            if not cc.get("ok"):
+                yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": cc.get("detalhe", "")}}
+                return
+            concluido = not dry_run
+
+    # registra no histórico do painel SÓ se algo foi de fato efetivado nesta execução
+    # (movimentação, tramitação ou conclusão real — não um "ja_ausente" isolado, que é
+    # um no-op). Remove da lista de Retornos quando concluído OU quando confirmamos que
+    # o trâmite já não está mais na caixa (espelho da caixa).
+    if not dry_run:
+        algo_efetivado = bool(concluido or tram_caixa or fase)
+        if algo_efetivado:
+            if concluido:
+                atividade = "Conclusão de atendimento de retorno"
+            elif tram_caixa:
+                atividade = "Tramitação de atendimento de retorno"
+            else:
+                atividade = "Movimentação de atendimento de retorno"
+            historico_painel.registrar({
+                "paj": paj, "paj_norm": paj_norm, "url_detalhe": rec.get("url_detalhe", ""),
+                "assistido": rec.get("assistido", ""),
+                "origem": "retorno", "atividade": atividade,
+                "movimentacao": fase or "—", "tramitado_para": tram_caixa,
+                "concluido": concluido, "detalhe": descricao[:300],
+            })
+        if concluido or ja_ausente:
             store = _ler_store()
             store.pop(id_tramite, None)
             _gravar_store(store)
+
+    if ja_ausente:
+        yield _ev("muted", f"{paj} — o trâmite de retorno já não estava na caixa antes desta "
+                           "execução (provável conclusão manual anterior). Removido da lista.")
+        yield {"done": True, "resultado": {"ok": False, "status": "ja_ausente", "concluido": False,
+                                           "tramitado_para": tram_caixa,
+                                           "detalhe": "Trâmite já estava ausente antes desta execução — "
+                                                     "nada foi concluído agora."}}
+        return
 
     yield _ev("ok", f"{paj} — executado com sucesso.")
     yield {"done": True, "resultado": {"ok": True, "concluido": concluido,

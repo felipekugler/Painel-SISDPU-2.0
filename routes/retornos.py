@@ -5,6 +5,8 @@
 - GET  /api/retornos/sincronizar        — SSE: lê a caixa, filtra os retornos,
                                           detalha e analisa com a IA leve.
 - POST /api/retornos/{id_tramite}/sugestao — salva a edição manual da sugestão.
+- GET  /api/retornos/{id_tramite}/ressincronizar-paj — refaz a leitura de UM PAJ
+                                          no SISDPU (modo rápido) e atualiza o metadata.
 """
 
 from __future__ import annotations
@@ -85,6 +87,22 @@ async def api_grupos():
 async def api_caixas_abertas(id_tramite: str):
     """Caixas/usuários onde o PAJ está aberto agora (badge acima dos cards)."""
     return JSONResponse(await retornos_service.caixas_abertas(id_tramite))
+
+
+async def _stream_ressincronizar_paj(id_tramite: str):
+    async for ev in retornos_service.ressincronizar_paj_stream(id_tramite):
+        if ev.get("done"):
+            yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
+        else:
+            yield {"event": "log", "data": json.dumps(ev, ensure_ascii=False)}
+
+
+@router.get("/api/retornos/{id_tramite}/ressincronizar-paj")
+async def ressincronizar_paj(id_tramite: str):
+    """Ressincroniza SÓ este PAJ pelo MESMO caminho leve da sincronização em lote da
+    aba Retornos (sem anexos/OCR, esperas curtas) — NUNCA a sincronização pesada da
+    aba PAJs. Atualiza o núcleo do metadata (ofício, assistido, pretensão etc.)."""
+    return EventSourceResponse(_stream_ressincronizar_paj(id_tramite))
 
 
 async def _stream_executar(id_tramite: str, fase: str, descricao: str, grupo: str,

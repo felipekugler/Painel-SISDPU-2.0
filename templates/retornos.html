@@ -53,8 +53,9 @@
                         <tr>
                             <th class="w-6"></th>
                             <th class="w-32">PAJ</th>
-                            <th class="w-48">Ofício</th>
                             <th class="w-56">Assistido</th>
+                            <th class="w-48">Ofício</th>
+                            <th class="w-40">Processo</th>
                             <th>Descrição do retorno</th>
                             <th class="w-28 text-center">Ações</th>
                         </tr>
@@ -74,11 +75,31 @@
                                        class="link link-hover" style="color:var(--accent)" @click.stop
                                        title="Abrir o PAJ no SISDPU" x-text="r.paj"></a>
                                     <span x-show="!r.url_detalhe" x-text="r.paj"></span>
-                                    <span x-show="!r.em_caixa" class="badge badge-ghost badge-xs ml-1"
-                                          title="Não está mais na caixa de entrada">fora da caixa</span>
                                 </td>
-                                <td class="text-xs text-base-content/70 align-top" x-text="r.oficio || '—'"></td>
                                 <td class="align-top" x-text="r.assistido || '—'"></td>
+                                <td class="text-xs text-base-content/70 align-top" x-text="r.oficio || '—'"></td>
+                                <td class="text-xs align-top">
+                                    <template x-for="p in (r.processos_judiciais || [])" :key="p.numero">
+                                        <div class="mb-1.5">
+                                            <div class="font-mono"
+                                                 :title="(p.juizo ? ('Juízo: ' + p.juizo) : '') + (p.data_inclusao ? (' · Incluído em ' + p.data_inclusao) : '')"
+                                                 x-text="p.numero"></div>
+                                            <div class="flex flex-col items-start gap-1 mt-1" x-show="p.intimacao">
+                                                <span class="badge badge-xs badge-warning normal-case"
+                                                      :title="p.intimacao ? ('Categoria: ' + intimacaoLabel(p.intimacao.categoria) + (p.intimacao.n_prazos > 1 ? (' · ' + p.intimacao.n_prazos + ' prazos') : '')) : ''">
+                                                    Possui intimação
+                                                </span>
+                                                <button type="button" @click.stop="abrirProcessoEproc(p.intimacao)"
+                                                        class="badge badge-xs gap-1 normal-case cursor-pointer"
+                                                        :class="p.intimacao && p.intimacao.urgente ? 'badge-error' : 'badge-warning'"
+                                                        title="Clique para abrir no e-proc">
+                                                    Prazo <span x-text="p.intimacao ? p.intimacao.data_prazo : ''"></span><span x-show="p.intimacao && p.intimacao.estimado"> (estim.)</span>
+                                                </button>
+                                            </div>
+                                        </div>
+                                    </template>
+                                    <span x-show="!(r.processos_judiciais && r.processos_judiciais.length)" class="text-base-content/40">—</span>
+                                </td>
                                 <td class="align-top">
                                     <div class="text-[11px] text-base-content/60 mb-0.5">
                                         <span x-text="r.data_retorno || '—'"></span>
@@ -88,14 +109,22 @@
                                     <div class="ret-desc text-[12.5px] leading-[1.5]" x-text="r.descricao_retorno || '(sem descrição)'"></div>
                                 </td>
                                 <td class="text-center align-top" @click.stop>
-                                    <button class="btn btn-xs btn-outline"
-                                            @click="toggle(r)">Despachar</button>
+                                    <div class="flex flex-col items-center gap-1">
+                                        <button class="btn btn-xs btn-outline"
+                                                @click="toggle(r)">Despachar</button>
+                                        <button class="btn btn-xs btn-outline" @click="ressincronizarPaj(r)"
+                                                :disabled="r._ressync"
+                                                title="Ressincronizar este PAJ (atualiza ofício, assistido, pretensão etc. a partir do SISDPU)">
+                                            <span x-show="r._ressync" class="loading loading-spinner loading-xs"></span>
+                                            <span x-show="!r._ressync">Sincronizar</span>
+                                        </button>
+                                    </div>
                                 </td>
                             </tr>
                             <!-- Linha retrátil -->
                             <tr x-show="expandido[r.id_tramite]" class="ret-cards-row">
                                 <td></td>
-                                <td colspan="5" class="bg-base-100">
+                                <td colspan="6" class="bg-base-100">
                                     <!-- Caixas onde o PAJ está aberto -->
                                     <div class="ret-caixas mx-2 mt-2 mb-1 p-2">
                                         <span class="ret-card-label">Caixas onde o PAJ está aberto</span>
@@ -122,8 +151,8 @@
                                                 </template>
                                             </div>
                                             <button class="btn btn-ghost btn-xs mt-2" @click="abrirMovs(r)"
-                                                    :disabled="!(r.movimentacoes && r.movimentacoes.length)">
-                                                <span x-text="(r.movimentacoes ? r.movimentacoes.length : 0) + ' últimas movimentações'"></span>
+                                                    :disabled="!r.n_movimentacoes">
+                                                <span x-text="(r.n_movimentacoes || 0) + ' movimentações'"></span>
                                             </button>
                                         </div>
                                         <!-- Card Sugestão IA -->
@@ -231,32 +260,12 @@
       </div>
     </template>
 
-    <!-- Modal de movimentações -->
+    <!-- Modal de movimentações (usa a MESMA tabela da aba do PAJ) -->
     <div class="modal" :class="{'modal-open': movModal}">
-        <div class="modal-box max-w-[60vw]">
+        <div class="modal-box max-w-[85vw]">
             <h3 class="font-bold text-lg mb-2" x-text="movTitulo"></h3>
-            <div class="max-h-[60vh] overflow-y-auto">
-                <table class="table table-xs">
-                    <thead><tr class="text-[11px] text-base-content/50">
-                        <th class="w-12">Seq</th><th class="w-28">Data</th><th>Movimentação</th></tr></thead>
-                    <tbody>
-                        <template x-for="(m, i) in movAtual" :key="i">
-                            <tr class="hover align-top">
-                                <td class="tabular-nums align-top" x-text="m.seq"></td>
-                                <td class="whitespace-nowrap align-top text-[11px]" x-text="m.data"></td>
-                                <td class="align-top">
-                                    <div class="font-medium text-[12px]" x-text="m.movimentacao"></div>
-                                    <div class="text-[11px] text-base-content/50" x-show="m.fases" x-text="m.fases"></div>
-                                    <div class="text-[11.5px] whitespace-pre-wrap mt-0.5"
-                                         x-text="m.descricao_retorno || m.descricao || ''"></div>
-                                </td>
-                            </tr>
-                        </template>
-                        <tr x-show="movAtual.length === 0">
-                            <td colspan="3" class="text-base-content/40">Sem movimentações.</td>
-                        </tr>
-                    </tbody>
-                </table>
+            <div class="max-h-[70vh] overflow-y-auto">
+                {% include "partials/movimentacoes_tabela.html" %}
             </div>
             <div class="modal-action">
                 <button class="btn btn-sm" @click="movModal=false">Fechar</button>
@@ -369,7 +378,7 @@ function retornosPage() {
         itens: [], expandido: {},
         carregando: false, sincronizando: false,
         sseAberto: false, sseLog: [], sseStatus: '', sseTitulo: 'Sincronizando retornos', _es: null,
-        movModal: false, movAtual: [], movTitulo: '',
+        movModal: false, movTitulo: '',
         // preferências da coluna Ações (favoritas=dropdown, frequentes=badges) — cache local
         fasesFav: [], fasesFreq: [], fasesTodas: [],
         caixasFav: [], caixasFreq: [], caixasTodas: [], faseDefault: '', caixaPadrao: '',
@@ -413,6 +422,7 @@ function retornosPage() {
                     // caixas abertas: já vêm da sincronização (cache); null = fallback lazy
                     _caixas: Array.isArray(r.caixas_abertas) ? r.caixas_abertas : null,
                     _caixasLoad: false,
+                    _ressync: false,
                 }));
             } catch (e) { this.itens = []; }
             finally { this.carregando = false; }
@@ -421,6 +431,20 @@ function retornosPage() {
             const id = (typeof r === 'object' && r) ? r.id_tramite : r;
             this.expandido[id] = !this.expandido[id];
             if (this.expandido[id] && typeof r === 'object' && r) this.carregarCaixas(r);
+        },
+        intimacaoLabel(categoria) {
+            const labels = {
+                prazo_aberto: 'Prazo em aberto', prazo_aberto_urgente: 'Prazo em aberto (urgente)',
+                pendente_urgente: 'Pendente de citação/intimação (urgente)', pendente: 'Pendente de citação/intimação',
+                pendente_acordo: 'Pendente de homologação de acordo', art334: 'Pendente — art. 334 CPC',
+                decurso: 'Decurso de prazo (últimos 30 dias)',
+            };
+            return labels[categoria] || categoria || '—';
+        },
+        async abrirProcessoEproc(intimacao) {
+            if (!intimacao || !intimacao.processo_url) return;
+            try { await fetch('/api/prazos/abrir-processo?url=' + encodeURIComponent(intimacao.processo_url)); }
+            catch (e) {}
         },
         async carregarCaixas(r) {
             if (r._caixas || r._caixasLoad) return;  // já carregado / carregando
@@ -431,13 +455,16 @@ function retornosPage() {
             } catch (e) { r._caixas = []; }
             finally { r._caixasLoad = false; }
         },
-        executar(r) {
+        async executar(r) {
             if (r._exec || (!r._fase && !r._grupo && !r._concluir)) return;
             const prazoTxt = r._grupo ? (r._prazoData ? ' (prazo ' + r._prazoData + ')' : (r._prazo > 0 ? ' (prazo ' + r._prazo + ' dias)' : '')) : '';
             if (!confirm('Executar em ' + r.paj + '?\n\n'
                 + (r._fase ? 'Movimentar (fase: ' + r._fase + ')' : 'Sem movimentação')
                 + (r._grupo ? '\nTramitar para: ' + r._grupo + prazoTxt : '\nSem tramitação')
                 + (r._concluir ? '\nConcluir o trâmite (retira da caixa)' : '\nSem conclusão'))) return;
+            // Garante o cofre desbloqueado ANTES de acionar o SISDPU — se estiver
+            // trancado, pede a senha-mestra agora (evita falhar lá na frente).
+            if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
             r._exec = true;
             this.sseTitulo = 'Executando despacho — ' + r.paj;
             this.sseLog = []; this.sseStatus = ''; this.sseAberto = true;
@@ -455,9 +482,13 @@ function retornosPage() {
             });
             es.addEventListener('done', async (ev) => {
                 let res = {}; try { res = JSON.parse(ev.data); } catch (e) {}
-                this.sseStatus = res.ok ? '— executado ✓' : '— com aviso';
+                if (res.status === 'ja_ausente') {
+                    this.sseStatus = '— já estava concluído (nada foi feito agora)';
+                } else {
+                    this.sseStatus = res.ok ? '— executado ✓' : '— com aviso';
+                }
                 r._exec = false; es.close(); this._es = null;
-                await this.carregarLista();  // se concluído, o PAJ saiu do store e some da lista
+                await this.carregarLista();  // se concluído/já ausente, o PAJ saiu do store e some da lista
             });
             es.onerror = () => {
                 this.sseStatus = '— erro de conexão';
@@ -477,10 +508,50 @@ function retornosPage() {
             if (outros.length) gs.push({ key:'outros',    titulo:'Sem análise / a revisar',  classe:'grp-outros',    itens:outros });
             return gs;
         },
-        abrirMovs(r) {
-            this.movAtual = r.movimentacoes || [];
-            this.movTitulo = r.paj + ' — ' + (r.assistido || '') + ' · ' + this.movAtual.length + ' movimentações';
+        async abrirMovs(r) {
+            this.movTitulo = r.paj + ' — ' + (r.assistido || '');
             this.movModal = true;
+            // Preferir as movimentações NORMALIZADAS (canônicas, com documentos) do
+            // metadata — mesma fonte da aba "Movimentações" do PAJ. Fallback: as movs
+            // do store (bruto) quando o PAJ ainda não foi sincronizado.
+            let cfg = null;
+            try {
+                const resp = await fetch('/api/paj/' + encodeURIComponent(r.paj_norm) + '/movimentacoes');
+                if (resp.ok) {
+                    const d = await resp.json();
+                    cfg = { movs: d.movimentacoes || [], anexos: d.anexos_sisdpu || [],
+                            pajNorm: r.paj_norm, maxSeq: -1 };
+                }
+            } catch (e) { /* rede — cai no fallback */ }
+            if (!cfg) {
+                cfg = { movs: r.movimentacoes || [], anexos: [], pajNorm: r.paj_norm, maxSeq: -1 };
+            }
+            this.movTitulo = r.paj + ' — ' + (r.assistido || '') + ' · ' + cfg.movs.length + ' movimentações';
+            // Entrega ao componente COMPARTILHADO (o modal contém o partial que escuta o evento).
+            window.dispatchEvent(new CustomEvent('mov-tabela-carregar', { detail: cfg }));
+        },
+        async ressincronizarPaj(r) {
+            if (r._ressync) return;
+            if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
+            r._ressync = true;
+            this.sseTitulo = 'Ressincronizando PAJ — ' + r.paj;
+            this.sseLog = []; this.sseStatus = ''; this.sseAberto = true;
+            const es = new EventSource('/api/retornos/' + encodeURIComponent(r.id_tramite) + '/ressincronizar-paj');
+            this._es = es;
+            es.addEventListener('log', (ev) => {
+                try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {}
+                this.$nextTick(() => { const b = this.$refs.sseBox; if (b) b.scrollTop = b.scrollHeight; });
+            });
+            es.addEventListener('done', async (ev) => {
+                let res = {}; try { res = JSON.parse(ev.data); } catch (e) {}
+                this.sseStatus = res.ok ? '— concluído ✓' : '— com aviso';
+                r._ressync = false; es.close(); this._es = null;
+                await this.carregarLista();  // relê o metadata.json atualizado (ofício, assistido etc.)
+            });
+            es.onerror = () => {
+                this.sseStatus = '— erro de conexão';
+                r._ressync = false; es.close(); this._es = null;
+            };
         },
         async reanalisar(r) {
             if (r._reanalisando) return;
@@ -519,8 +590,9 @@ function retornosPage() {
             } catch (e) {}
             finally { r._salvando = false; }
         },
-        sincronizar() {
+        async sincronizar() {
             if (this.sincronizando) return;
+            if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
             this.sincronizando = true;
             this.sseTitulo = 'Sincronizando retornos';
             this.sseLog = []; this.sseStatus = ''; this.sseAberto = true;

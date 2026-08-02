@@ -111,6 +111,7 @@ def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
         oficio = oficio_det
     else:
         oficio = ""
+    processos_judiciais = det.get("processos_judiciais") or []
     processo_judicial = det.get("processo_judicial", "")
     juizo = det.get("juizo", "")
     foro_detalhado = (det.get("foro_detalhado") or "").strip()
@@ -129,7 +130,18 @@ def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
         linhas.append(f"Decurso: {decurso}")
     if oficio:
         linhas.append(f"Ofício: {oficio}")
-    if processo_judicial:
+    if processos_judiciais:
+        # Lista TODOS os processos vinculados (o PAJ pode ter mais de um) — fiel
+        # ao que está cadastrado, não só o último (comportamento antigo).
+        for _p in processos_judiciais:
+            _num = (_p.get("processo_judicial") or "").strip()
+            if not _num:
+                continue
+            _info_extra = foro_detalhado or (_p.get("juizo") or "").strip()
+            _sufixo = f" ({_info_extra})" if _info_extra else ""
+            linhas.append(f"PROCESSO JUDICIAL VINCULADO: {_num}{_sufixo}")
+    elif processo_judicial:
+        # Caminho antigo (ex.: extração via busca global, que só produz um valor).
         # Foro detalhado tem precedencia sobre juizo na anotacao entre
         # parenteses — e' o que o paj_detail.html consome (meta.foro_detalhado).
         info_extra = foro_detalhado or juizo
@@ -651,6 +663,8 @@ async def _processar_paj(
     deve_cancelar: Callable[[], bool] | None = None,
     baixar_anexos: bool = True,
     rodar_ocr: bool = False,
+    extrair_documentos: bool = True,
+    esperas_curtas: bool = False,
 ) -> tuple[str, bool]:
     """Processa um PAJ vindo da CAIXA DE ENTRADA. Retorna (paj_norm, novo_ou_atualizado).
 
@@ -659,6 +673,14 @@ async def _processar_paj(
 
     `baixar_anexos=False` pula o download/OCR da aba 'Arquivos' — util pra
     sincronizacao rapida (so movs/metadata).
+
+    `extrair_documentos=False` pula a extracao dos documentos por seq (abre um
+    popup por movimentacao com anexo — caro em PAJ nunca sincronizado). Usado
+    pela aba Retornos, que so precisa das movs/narrativa pra IA. Documentos ja
+    conhecidos de sync anterior sao PRESERVADOS.
+
+    `esperas_curtas=True` reduz as esperas fixas pos-navegacao (repassado a
+    `movimentacoes_paj`) — tambem usado pela Retornos.
 
     `rodar_ocr=False` (padrao) pula o OCR simples nos PDFs baixados — so
     baixa os arquivos. O OCR simples e' de qualidade baixa; para texto de
@@ -679,7 +701,8 @@ async def _processar_paj(
 
     log(f"  [sisdpu] abrindo detalhamento {paj}")
     try:
-        det = await sisdpu_client.movimentacoes_paj(numero, ano, unidade)
+        det = await sisdpu_client.movimentacoes_paj(
+            numero, ano, unidade, esperas_curtas=esperas_curtas)
     except Exception as e:
         log(f"  [ERRO] movimentacoes_paj {paj}: {type(e).__name__}: {e}")
         return (paj_norm, False)
@@ -695,6 +718,7 @@ async def _processar_paj(
         deve_cancelar=deve_cancelar,
         baixar_anexos=baixar_anexos,
         rodar_ocr=rodar_ocr,
+        extrair_documentos=extrair_documentos,
         via_busca_global=False,
     )
 
@@ -706,6 +730,7 @@ async def _processar_paj_pos_detalhamento(
     deve_cancelar: Callable[[], bool] | None = None,
     baixar_anexos: bool = True,
     rodar_ocr: bool = False,
+    extrair_documentos: bool = True,
     via_busca_global: bool = False,
 ) -> tuple[str, bool]:
     """Etapa pos-detalhamento: a page do Playwright ja esta no detalhamento do
@@ -760,6 +785,13 @@ async def _processar_paj_pos_detalhamento(
     # Snapshot da estrutura bruta devolvida pelo SISDPU para diagnostico/posteridade
     metadata["sisdpu_raw"] = det
 
+    # TODOS os processos judiciais vinculados ao PAJ — direto do `det` (sem reparse
+    # de texto, evita perda de dados), mesmo padrão usado para movimentações abaixo.
+    # `processo_judicial` (singular, em metadata via parser) continua existindo
+    # para os consumidores antigos (compat), representando o ÚLTIMO da lista.
+    if det.get("processos_judiciais"):
+        metadata["processos_judiciais"] = det["processos_judiciais"]
+
     # Preenchido abaixo (se houver movimentacoes) e usado no bloco de anexos,
     # mais adiante, pra nomear os arquivos baixados com a seq real.
     seq_por_file_id: dict[str, int] = {}
@@ -783,14 +815,22 @@ async def _processar_paj_pos_detalhamento(
             for mov_antiga in movs_antigas
             if mov_antiga.get("documentos")
         }
-        try:
-            resultado_docs = await sisdpu_client.extrair_documentos_por_seq(
-                seqs_conhecidos=list(documentos_conhecidos_por_seq.keys()),
-                deve_cancelar=deve_cancelar,
-                log=log,
-            )
-        except Exception as e:
-            log(f"  [docs] erro ao extrair documentos por seq: {type(e).__name__}: {e}")
+        # `extrair_documentos=False` (ex.: aba Retornos): PULA a extracao por seq
+        # (cara — 1 popup por movimentacao com anexo), mas ainda preserva os
+        # documentos ja conhecidos de sync anterior (nada e' perdido). Um sync
+        # completo posterior reextrai as seqs que faltarem (custo incremental).
+        if extrair_documentos:
+            try:
+                resultado_docs = await sisdpu_client.extrair_documentos_por_seq(
+                    seqs_conhecidos=list(documentos_conhecidos_por_seq.keys()),
+                    deve_cancelar=deve_cancelar,
+                    log=log,
+                )
+            except Exception as e:
+                log(f"  [docs] erro ao extrair documentos por seq: {type(e).__name__}: {e}")
+                resultado_docs = {}
+        else:
+            log("  [docs] extracao por seq PULADA (sync rapida — documentos conhecidos preservados)")
             resultado_docs = {}
 
         docs_novos_por_seq = {
@@ -839,6 +879,16 @@ async def _processar_paj_pos_detalhamento(
         # Etiqueta SISDPU (rotulo livre aplicado pelo Defensor na caixa, tipo "Aleg finais")
         etiqueta = (item.get("etiqueta") or "").strip()
         metadata["etiqueta_sisdpu"] = etiqueta
+
+    # Categoria de submenu (retorno/SAT/geral) — regra ÚNICA em services.categorias_caixa.
+    # Fail-safe: descrição que não casa nenhuma regra → "" (geral, aparece no dashboard).
+    # Na busca global (sem descrição confiável da caixa) preserva a categoria já gravada.
+    from services import categorias_caixa
+    if via_busca_global:
+        metadata["categoria_caixa"] = meta_antiga.get("categoria_caixa", "")
+    else:
+        metadata["categoria_caixa"] = categorias_caixa.classificar(
+            item.get("desc", ""), item.get("descricao", ""), item.get("etiqueta", ""))
 
     (pasta / "metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2, default=str),

@@ -38,6 +38,35 @@ async def api_pendentes():
     return JSONResponse(await sat_service.listar_pendentes())
 
 
+@router.get("/api/sat/pendentes/manuais", response_class=JSONResponse)
+async def api_pendentes_manuais():
+    """SÓ os PAJs manuais salvos (sem ler a caixa) — pré-carga rápida ao abrir a aba."""
+    return JSONResponse(sat_service.listar_pendentes_manuais())
+
+
+@router.post("/api/sat/pendentes/manual", response_class=JSONResponse)
+async def api_add_manual(request: Request):
+    """Adiciona 1+ PAJs à lista de pendências, extraindo os dados AO VIVO do SISDPU.
+    Body: {paj: "AAAA/UUU-NNNNN"} ou {pajs: [...]}. Retorna {ok, itens, erros}."""
+    body = await request.json()
+    entradas = body.get("pajs") or ([body.get("paj")] if body.get("paj") else [])
+    itens, erros = [], []
+    for txt in entradas:
+        r = await sat_service.add_paj_manual(str(txt))
+        if r.get("ok"):
+            itens.append(r["item"])
+        else:
+            erros.append({"paj": str(txt), "erro": r.get("erro", "falha")})
+    return JSONResponse({"ok": not erros, "itens": itens, "erros": erros})
+
+
+@router.post("/api/sat/pendentes/manual/del", response_class=JSONResponse)
+async def api_del_manual(request: Request):
+    """Remove um PAJ manual da lista. Body: {paj_norm}."""
+    body = await request.json()
+    return JSONResponse(sat_service.del_paj_manual(body.get("paj_norm", "")))
+
+
 @router.get("/api/sat/abrir", response_class=JSONResponse)
 async def api_sat_abrir():
     """Abre a janela do SAT na tela para o login (usuário/senha/2FA/CAPTCHA)."""
@@ -71,9 +100,9 @@ async def api_historico():
     return JSONResponse({"registros": regs})
 
 
-async def _stream_processar(paj_norm: str, grupo: str, dry: bool, prazo: int):
+async def _stream_processar(paj_norm: str, grupo: str, dry: bool, prazo: int, manual: bool = False):
     async for ev in sat_service.processar_paj_stream(
-        paj_norm, grupo=grupo or None, prazo_dias=prazo, dry_run=dry
+        paj_norm, grupo=grupo or None, prazo_dias=prazo, dry_run=dry, manual=manual
     ):
         if ev.get("done"):
             yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
@@ -300,10 +329,11 @@ async def api_tipos_set(request: Request):
 
 
 @router.get("/api/sat/{paj_norm}/processar")
-async def processar(paj_norm: str, grupo: str = "", dry: int = 0, prazo: int = 0):
+async def processar(paj_norm: str, grupo: str = "", dry: int = 0, prazo: int = 0, manual: int = 0):
     """SSE do processamento (mov→tram→concluir). `dry=1` => simulação; `prazo` = dias
-    de prazo de conclusão da tramitação (0 = sem prazo)."""
-    return EventSourceResponse(_stream_processar(paj_norm, grupo, bool(dry), int(prazo)))
+    de prazo de conclusão da tramitação (0 = sem prazo); `manual=1` => PAJ adicionado à
+    mão (movimenta e tramita, SEM conclusão — não há trâmite na caixa)."""
+    return EventSourceResponse(_stream_processar(paj_norm, grupo, bool(dry), int(prazo), bool(manual)))
 
 
 async def _stream_anexar_instituidor(paj_norm: str, id_processo: str, assistido: str):
@@ -330,10 +360,13 @@ async def _stream_baixar_complementar(paj_norm: str, cpf: str, nome: str, delay:
         shutil.rmtree(pasta, ignore_errors=True)  # isola esta rodada
     alvos = [a for a in (alvos_csv or "").split(",") if a] or None  # "key|sub"
     tipos = sorted({a.split("|", 1)[0] for a in alvos}) if alvos else None
+    # acervo = pasta principal do PAJ: verificação prévia pula o que já foi baixado
+    # (retomada de download interrompido, sem re-baixar os já presentes).
+    acervo = str(sat_service.pasta_arquivos_sat(paj_norm))
     try:
         async for ev in sat_client.baixar_cidadao_stream(
                 cpf, nome, str(pasta), delay_s=delay, bloqueio_s=bloqueio,
-                tipos=tipos, pretensao="", rotulo="", alvos=alvos):
+                tipos=tipos, pretensao="", rotulo="", alvos=alvos, pasta_acervo=acervo):
             if ev.get("done"):
                 yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
             else:

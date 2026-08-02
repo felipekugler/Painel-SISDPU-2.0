@@ -417,17 +417,11 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
             );
             if (aberturaMatch) r.data_abertura = aberturaMatch[1].trim();
 
-            // Extração de Processo Judicial com Validação Cruzada
-            // Busca dados na tabela de "Processo Judicial" e valida contra movimentações
+            // Extração de Processo(s) Judicial(is) — TODOS os vinculados ao PAJ (a
+            // tabela "Processo Judicial" pode ter mais de uma linha de dados).
             // IMPORTANTE: Todos os campos capturam DADOS COMPLETOS SEM LIMITE DE TAMANHO
-            const extrairProcessoJudicial = () => {
-              const resultado = {
-                processo_judicial: null,     // Tamanho variável (número do processo)
-                juizo: null,                 // Tamanho variável (nome/código do juízo)
-                data_inclusao: null,         // Tamanho variável (data em DD/MM/YYYY)
-                observacoes_processo: null,  // Tamanho variável SEM LIMITE (campo livre)
-                validacao: { sucesso: false, motivo: '' }
-              };
+            const extrairProcessosJudiciais = () => {
+              const processos = [];
 
               // Buscar tabela de "Processo Judicial"
               const tabelas = document.querySelectorAll('table.epaj_sistema_formulario_tabela.epaj_sistema_formulario_tabela_filtro');
@@ -441,40 +435,43 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
                 }
               }
 
-              if (!tabelaProcesso) return resultado;
+              if (!tabelaProcesso) return processos;
 
               const linhas = tabelaProcesso.querySelectorAll('tbody tr');
+              let atual = null;  // processo em construção — recebe a próxima linha "Observações:", se houver
 
-              // Processar linhas
               for (let i = 0; i < linhas.length; i++) {
                 const linha = linhas[i];
                 const celulas = linha.querySelectorAll('td');
 
-                // Linha de DADOS (3+ colunas, sem "Observações")
+                // Linha de DADOS (3+ colunas, sem "Observações") — INICIA um novo processo
                 if (celulas.length >= 3 && !linha.textContent.includes('Observações:')) {
-                  // Coluna 1: Processo (span com font-weight:bold)
                   const spanProc = celulas[0]?.querySelector('span[style*="font-weight"]');
-                  resultado.processo_judicial = spanProc?.textContent.trim() || null;
+                  const numero = spanProc?.textContent.trim() || '';
+                  if (!numero) { atual = null; continue; }  // linha sem número — não é um processo válido
 
-                  // Coluna 2: Juízo (span com id contendo "juizo")
                   const spanJuizo = celulas[1]?.querySelector('span[id*="juizo"]');
-                  resultado.juizo = spanJuizo?.textContent.trim() || null;
-
-                  // Coluna 3: Data de Inclusão (primeiro span)
                   const spanData = celulas[2]?.querySelector('span');
-                  resultado.data_inclusao = spanData?.textContent.trim() || null;
+                  atual = {
+                    processo_judicial: numero,
+                    juizo: spanJuizo?.textContent.trim() || null,
+                    data_inclusao: spanData?.textContent.trim() || null,
+                    observacoes_processo: null,
+                    validacao: { sucesso: false, motivo: '' },
+                  };
+                  processos.push(atual);
                 }
 
-                // Linha de OBSERVAÇÕES
-                if (linha.textContent.includes('Observações:')) {
+                // Linha de OBSERVAÇÕES — pertence ao processo da linha de dados ANTERIOR
+                if (linha.textContent.includes('Observações:') && atual) {
                   const celulasObs = linha.querySelectorAll('td');
                   if (celulasObs.length >= 2) {
-                    resultado.observacoes_processo = celulasObs[1]?.textContent.trim() || null;
+                    atual.observacoes_processo = celulasObs[1]?.textContent.trim() || null;
                   }
                 }
               }
 
-              return resultado;
+              return processos;
             };
 
             // Tabela de movimentacoes do SISDPU (EXTRAIR ANTES da validação cruzada)
@@ -536,46 +533,51 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
             }
             if (movs.length > 0) r.movimentacoes = movs.slice(0, 500);
 
-            // AGORA fazer a extração de Processo Judicial com validação cruzada
-            // (após movimentações já estarem carregadas)
-            const dadosProcesso = extrairProcessoJudicial();
+            // AGORA fazer a extração de TODOS os Processos Judiciais com validação
+            // cruzada individual (após movimentações já estarem carregadas)
+            const processosJudiciais = extrairProcessosJudiciais();
 
-            // Validação cruzada contra movimentações
-            if (dadosProcesso.processo_judicial && dadosProcesso.data_inclusao) {
-              const movCadastro = movs.find(mov =>
-                mov.movimentacao?.includes('Cadastramento de processo judicial')
-              );
+            // Validação cruzada contra movimentações — UMA por processo (casa pelo
+            // NÚMERO na descrição, não só a primeira "Cadastramento" encontrada —
+            // necessário quando há mais de um processo/cadastramento no PAJ).
+            for (const p of processosJudiciais) {
+              if (p.processo_judicial && p.data_inclusao) {
+                const movCadastro = movs.find(mov =>
+                  mov.movimentacao?.includes('Cadastramento de processo judicial') &&
+                  (mov.descricao || '').includes(p.processo_judicial)
+                );
 
-              if (movCadastro) {
-                // Validar 1: Número aparece na descrição
-                const descricao = movCadastro.descricao || '';
-                const numeroMatch = descricao.match(/Número do Processo Judicial[:\\s]+([\\S]+)/i);
-                const numeroNaMov = numeroMatch ? numeroMatch[1] : '';
+                if (movCadastro) {
+                  const descricao = movCadastro.descricao || '';
+                  const numeroMatch = descricao.match(/Número do Processo Judicial[:\\s]+([\\S]+)/i);
+                  const numeroNaMov = numeroMatch ? numeroMatch[1] : '';
+                  const dataMov = movCadastro.data.substring(0, 10); // DD/MM/YYYY
 
-                // Validar 2: Data coincide (formato DD/MM/YYYY)
-                const dataMov = movCadastro.data.substring(0, 10); // DD/MM/YYYY
-                const dataInclusaoFormatada = dadosProcesso.data_inclusao;
-
-                if (numeroNaMov === dadosProcesso.processo_judicial &&
-                    dataMov === dataInclusaoFormatada) {
-                  dadosProcesso.validacao.sucesso = true;
-                  dadosProcesso.validacao.motivo = 'Validação cruzada bem-sucedida';
+                  if (numeroNaMov === p.processo_judicial && dataMov === p.data_inclusao) {
+                    p.validacao.sucesso = true;
+                    p.validacao.motivo = 'Validação cruzada bem-sucedida';
+                  } else {
+                    p.validacao.motivo = 'Dados não coincidem com movimentação';
+                  }
                 } else {
-                  dadosProcesso.validacao.motivo = 'Dados não coincidem com movimentação';
+                  p.validacao.motivo = 'Movimentação de cadastramento não encontrada';
                 }
               } else {
-                dadosProcesso.validacao.motivo = 'Movimentação de cadastramento não encontrada';
+                p.validacao.motivo = 'Dados incompletos (sem número ou data)';
               }
-            } else {
-              dadosProcesso.validacao.motivo = 'Dados incompletos (sem número ou data)';
             }
 
-            // Armazenar dados extraídos
-            r.processo_judicial = dadosProcesso.processo_judicial;
-            r.juizo = dadosProcesso.juizo;
-            r.data_inclusao = dadosProcesso.data_inclusao;
-            r.observacoes_processo = dadosProcesso.observacoes_processo;
-            r.validacao_processo = dadosProcesso.validacao;
+            // Armazenar dados extraídos — campos SINGULARES preservados (compat com
+            // consumidores existentes: ÚLTIMO processo da tabela, mesmo comportamento
+            // de antes) + a LISTA COMPLETA e fiel de todos os processos vinculados.
+            const ultimoProcesso = processosJudiciais.length
+                ? processosJudiciais[processosJudiciais.length - 1] : null;
+            r.processo_judicial = ultimoProcesso ? ultimoProcesso.processo_judicial : null;
+            r.juizo = ultimoProcesso ? ultimoProcesso.juizo : null;
+            r.data_inclusao = ultimoProcesso ? ultimoProcesso.data_inclusao : null;
+            r.observacoes_processo = ultimoProcesso ? ultimoProcesso.observacoes_processo : null;
+            r.validacao_processo = ultimoProcesso ? ultimoProcesso.validacao : { sucesso: false, motivo: '' };
+            r.processos_judiciais = processosJudiciais;
 
             // Extração da Narrativa
             const extrairNarrativa = () => {
@@ -860,6 +862,9 @@ async def buscar_paj_global(
     numero: str,
     ano: str,
     unidade: str = "44",
+    forcar_sessao: bool = True,
+    esperas_curtas: bool = False,
+    somente_url: bool = False,
 ) -> dict:
     """Busca um PAJ via campo de pesquisa global do SISDPU (header da caixa).
 
@@ -867,18 +872,24 @@ async def buscar_paj_global(
     caixa de entrada do defensor — usa o campo "Pesquisar" que aceita qualquer
     PAJ da unidade. Extrai os mesmos dados de cabecalho e movimentacoes.
 
+    `forcar_sessao` (padrao True): fecha o navegador e refaz o login do zero
+    (estado 100% limpo, porem LENTO). Passe False para REAPROVEITAR a sessao ja
+    aberta — `_ensure_logged_in` verifica a autenticacao e so refaz o login se a
+    sessao tiver expirado (muito mais rapido; usado pela inclusao manual de PAJ).
+
     Retorna `{"erro": "..."}` se a busca falhar. Em caso de falha, salva
     screenshot + HTML + info em `logs/sisdpu_debug/` para diagnostico.
     """
     paj_texto = f"{ano}/{unidade.zfill(3)}-{numero}"
-    _log.info("INICIO termo='%s'", paj_texto)
+    _log.info("INICIO termo='%s' forcar_sessao=%s", paj_texto, forcar_sessao)
 
-    # Forca sessao fresca — fecha qualquer browser/page residual e refaz login
-    # do zero. Garante estado limpo (sem sessao expirada silenciosamente, sem
-    # pagina morta de uma execucao anterior).
-    _log.info("forcando nova sessao (fechar+login)...")
-    with contextlib.suppress(Exception):
-        await fechar()
+    # Autenticacao: com forcar_sessao=True, fecha e reloga do zero (estado limpo,
+    # lento). Com False, apenas garante login (reaproveita a sessao viva; so reloga
+    # se expirou) — checagem de auth + login automatico, sem o custo de reabrir tudo.
+    if forcar_sessao:
+        _log.info("forcando nova sessao (fechar+login)...")
+        with contextlib.suppress(Exception):
+            await fechar()
     await _ensure_logged_in()
     page = await _get_page()
     _log.info("logado, url pos-login: %s", page.url)
@@ -1227,6 +1238,14 @@ async def buscar_paj_global(
     # (busca navegou a janela atual em vez de abrir popup), a atribuicao e' no-op.
     global _page
     _page = page_detalhe
+
+    # Atalho: quem só quer a URL de detalhe (ex.: montar link para abrir o PAJ no
+    # navegador do usuário) retorna aqui, ANTES da extração pesada de cabeçalho e
+    # movimentações. A URL do `detalhamentoProcesso` é stateless (só precisa do
+    # cookie de sessão), então funciona em qualquer navegador logado no SISDPU.
+    if somente_url:
+        _log.info("FIM(somente_url) url=%s", page_detalhe.url)
+        return {"url": page_detalhe.url, "paj": paj_texto}
 
     # Extrai os campos do cabecalho do detalhamento. Estrategia hibrida:
     # (1) DOM-based para label/valor (mais robusto que regex no innerText)

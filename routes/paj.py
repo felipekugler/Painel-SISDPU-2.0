@@ -35,6 +35,22 @@ async def api_paj(paj_norm: PajNorm):
     return dados_resumo
 
 
+@router.get("/api/paj/{paj_norm}/movimentacoes", response_class=JSONResponse)
+async def api_paj_movimentacoes(paj_norm: PajNorm):
+    """Movimentações NORMALIZADAS do PAJ (unificadas, com documentos) + anexos, para a
+    tabela COMPARTILHADA de movimentações (aba do PAJ e modal da Retornos usam a mesma).
+    Retorna 404 se o PAJ ainda não foi sincronizado (sem metadata)."""
+    dados = ler_paj(paj_norm)
+    if not dados:
+        return JSONResponse({"ok": False, "erro": "PAJ não sincronizado"}, status_code=404)
+    return {
+        "ok": True,
+        "movimentacoes": dados.get("movimentacoes", []),
+        "anexos_sisdpu": dados.get("anexos_sisdpu", []),
+        "max_seq": dados.get("max_seq_mov", 0),
+    }
+
+
 @router.get("/api/paj/{paj_norm}/limpar-anexos/preview", response_class=JSONResponse)
 async def limpar_anexos_preview(paj_norm: PajNorm):
     """Dry-run: lista o que seria apagado e mostra bloqueios de seguranca."""

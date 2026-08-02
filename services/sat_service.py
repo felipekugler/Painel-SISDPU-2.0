@@ -402,6 +402,122 @@ def recuperar_arquivo_sat(paj_norm: str, nome: str) -> dict:
 
 
 # ---------------------------------------------------------------------------
+# PAJs adicionados MANUALMENTE (persistem entre "Verificar PAJs pendentes")
+# ---------------------------------------------------------------------------
+_ARQ_MANUAIS = Path(config.OFICIO_GERAL) / "_pajs_manuais.json"
+
+
+def _parse_paj_input(txt: str):
+    """Aceita 'AAAA/UUU-NNNNN', 'AAAA-UUU-NNNNN', 'PAJ-AAAA-UUU-NNNNN' ou 12 dígitos.
+    Retorna (paj_norm, ano, unidade, numero_seq) ou None se não reconhecer."""
+    s = re.sub(r"\s+", "", txt or "")
+    m = re.search(r"(\d{4})\D{0,3}(\d{3})\D{0,3}(\d{3,})", s)
+    if not m:
+        return None
+    ano, uni, num = m.group(1), m.group(2), m.group(3)
+    return (f"PAJ-{ano}-{uni}-{num}", ano, uni, num)
+
+
+def _ler_pajs_manuais() -> list[dict]:
+    if not _ARQ_MANUAIS.exists():
+        return []
+    try:
+        return json.loads(_ARQ_MANUAIS.read_text(encoding="utf-8")) or []
+    except Exception:  # noqa: BLE001
+        return []
+
+
+def _salvar_pajs_manuais(lst: list[dict]) -> None:
+    _ARQ_MANUAIS.parent.mkdir(parents=True, exist_ok=True)
+    _ARQ_MANUAIS.write_text(json.dumps(lst, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def listar_pajs_manuais() -> list[dict]:
+    return _ler_pajs_manuais()
+
+
+async def add_paj_manual(texto: str) -> dict:
+    """Adiciona um PAJ à lista de pendências extraindo os dados AO VIVO do SISDPU (busca
+    global, mesma sessão headless). O PAJ só é aceito se localizado e com CPF extraído.
+    Retorna {ok, item} ou {ok:False, erro}."""
+    parsed = _parse_paj_input(texto)
+    if not parsed:
+        return {"ok": False, "erro": f"Número de PAJ inválido: '{texto}'. Use AAAA/UUU-NNNNN."}
+    paj_norm, ano, uni, num = parsed
+    numero = f"{ano}/{uni}-{num}"
+    from ingestao import sisdpu_client as _sc
+    try:
+        # forcar_sessao=False: reaproveita a sessão viva (login automático só se expirou),
+        # em vez de fechar e relogar do zero a cada inclusão (que era lento e frágil).
+        dados = await _sc.buscar_paj_global(num, ano, uni, forcar_sessao=False)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"Falha na autenticação/consulta ao SISDPU: {e}. "
+                                     f"Verifique as credenciais do SISDPU nas Configurações."}
+    if not isinstance(dados, dict) or dados.get("erro"):
+        return {"ok": False, "erro": (dados or {}).get("erro") or "PAJ não localizado no SISDPU."}
+    cpf = (dados.get("cpf_assistido") or "").strip()
+    if not cpf:
+        return {"ok": False, "erro": "PAJ localizado, mas não consegui extrair o CPF do assistido."}
+    url = dados.get("url", "") or ""
+    mid = re.search(r"[?&]id=(\d+)", url)
+    id_processo = mid.group(1) if mid else ""
+    pret = (dados.get("pretensao") or "").strip()
+    try:
+        from ingestao import parser as _parser
+        pret = (_parser.extrair_pretensao_pura(pret) or pret).strip()
+    except Exception:  # noqa: BLE001
+        pass
+    item = {
+        "paj_norm": paj_norm, "numero": numero, "id_processo": id_processo,
+        "cpf": cpf, "assistido": (dados.get("assistido") or "").strip(),
+        "pretensao": pret, "narrativa": _html_para_texto(dados.get("narrativa") or ""),
+        "url_detalhe": url,
+    }
+    lst = [x for x in _ler_pajs_manuais() if x.get("paj_norm") != paj_norm]
+    lst.append(item)
+    _salvar_pajs_manuais(lst)
+    return {"ok": True, "item": item}
+
+
+def del_paj_manual(paj_norm: str) -> dict:
+    _salvar_pajs_manuais([x for x in _ler_pajs_manuais() if x.get("paj_norm") != paj_norm])
+    return {"ok": True}
+
+
+def _item_pendencia_manual(mp: dict) -> dict:
+    """Monta o item de pendência (para a tabela) a partir de um PAJ manual do store."""
+    pn = mp.get("paj_norm", "")
+    arquivos = listar_arquivos_sat(pn)
+    return {
+        "paj": mp.get("numero") or _norm_to_num(pn),
+        "paj_norm": pn,
+        "id_processo": mp.get("id_processo", ""),
+        "id_tramite": "",
+        "assistido": mp.get("assistido", ""),
+        "cpf": mp.get("cpf", ""),
+        "pretensao": mp.get("pretensao", ""),
+        "descricao": "",
+        "url_detalhe": mp.get("url_detalhe", ""),
+        "n_arquivos": len(arquivos),
+        "n_instituidor": len(listar_arquivos_instituidor(pn)),
+        "tem_pasta": _pasta_paj(pn).exists(),
+        "sincronizado": bool(_ler_metadata(pn)),
+        "tem_log": (pasta_arquivos_sat(pn) / "_log_download.json").exists(),
+        "tem_falha": _download_tem_falha(pn),
+        "ja_processado": False,
+        "manual": True,
+        "narrativa": mp.get("narrativa", ""),
+    }
+
+
+def listar_pendentes_manuais() -> dict:
+    """SÓ os PAJs manuais (do store local), SEM ler a caixa do SISDPU. Usado para
+    pré-carregar a tabela ao abrir a aba (rápido, offline)."""
+    itens = [_item_pendencia_manual(mp) for mp in _ler_pajs_manuais() if mp.get("paj_norm")]
+    return {"ok": True, "itens": itens}
+
+
+# ---------------------------------------------------------------------------
 # listagem de pendências (para a tabela)
 # ---------------------------------------------------------------------------
 async def listar_pendentes() -> dict:
@@ -409,11 +525,10 @@ async def listar_pendentes() -> dict:
     de juntada dos documentos do SAT Central. Cruza CPF/nome do metadata e conta os
     PDFs já baixados. Retorna {ok, itens, detalhe}."""
     caixa = await movtram.listar_caixa_estruturada()
-    if not caixa.get("ok"):
-        return {"ok": False, "itens": [], "detalhe": caixa.get("detalhe", "Falha ao ler a caixa.")}
+    caixa_ok = bool(caixa.get("ok"))
     alvo = DESCRICAO_ALVO
     itens = []
-    for it in caixa.get("itens", []):
+    for it in (caixa.get("itens", []) if caixa_ok else []):
         texto = _norm(it.get("descricao", "") + " | " + it.get("linha_texto", ""))
         if alvo not in texto:
             continue
@@ -458,6 +573,18 @@ async def listar_pendentes() -> dict:
             if det.get("narrativa"):
                 item["narrativa"] = _html_para_texto(det["narrativa"])
         itens.append(item)
+
+    # PAJs adicionados MANUALMENTE (persistem entre verificações). Só entram os que não
+    # já vieram da caixa. Flag `manual: True` → na anexação, movimenta+tramita SEM concluir.
+    presentes = {i["paj_norm"] for i in itens}
+    for mp in _ler_pajs_manuais():
+        pn = mp.get("paj_norm")
+        if not pn or pn in presentes:
+            continue
+        itens.append(_item_pendencia_manual(mp))
+
+    if not caixa_ok and not itens:
+        return {"ok": False, "itens": [], "detalhe": caixa.get("detalhe", "Falha ao ler a caixa.")}
     return {"ok": True, "itens": itens, "detalhe": f"{len(itens)} pendência(s)."}
 
 
@@ -479,10 +606,13 @@ async def processar_paj_stream(
     grupo: str | None = None,
     prazo_dias: int = 0,
     dry_run: bool = False,
+    manual: bool = False,
 ) -> AsyncIterator[dict]:
     """Gera eventos SSE do processamento de UM PAJ. Assume os PDFs já baixados em
     'Arquivos SAT'. `prazo_dias` > 0 define prazo de conclusão da tramitação (hoje +
-    N dias); 0 = sem prazo. Termina com {'done': True, 'resultado': {...}}."""
+    N dias); 0 = sem prazo. `manual` = PAJ adicionado à mão (não está na caixa com o
+    trâmite do SAT): movimenta e tramita usando o id do processo salvo, e NÃO conclui
+    (não há trâmite na caixa). Termina com {'done': True, 'resultado': {...}}."""
     grupo = grupo or GRUPO_PADRAO
     prazo_data = None
     if prazo_dias and int(prazo_dias) > 0:
@@ -499,27 +629,43 @@ async def processar_paj_stream(
     prefixo = "[dry-run] " if dry_run else ""
     yield _ev("novo", f"{prefixo}Processando {num} (grupo destino: {grupo})")
 
-    # 1) localizar o trâmite na caixa (ids frescos)
-    yield _ev("info", "Localizando o trâmite na caixa de entrada...")
-    caixa = await movtram.listar_caixa_estruturada()
-    if not caixa.get("ok"):
-        yield passo("Leitura da caixa", False, caixa.get("detalhe", ""))
-        yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": caixa.get("detalhe", "")}}
-        return
-    item = None
-    for it in caixa.get("itens", []):
-        if _num_to_norm(it.get("paj", "")) == paj_norm and \
-           DESCRICAO_ALVO in _norm(it.get("descricao", "") + " | " + it.get("linha_texto", "")):
-            item = it
-            break
-    if not item:
-        d = f"Trâmite de juntada do SAT não encontrado na caixa para {num}."
-        yield passo("Localização do trâmite", False, d)
-        yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": d}}
-        return
-    id_proc = item.get("id", "")
-    id_tramite = item.get("id_tramite", "")
-    yield passo("Localização do trâmite", True, f"id_processo={id_proc} · id_tramite={id_tramite}")
+    # 1) localizar o processo/trâmite
+    if manual:
+        # PAJ manual: não está na caixa com o trâmite do SAT. Usa o id do processo salvo
+        # ao adicionar. Movimenta e tramita, mas NÃO conclui (não há trâmite na caixa).
+        mp = next((m for m in _ler_pajs_manuais() if m.get("paj_norm") == paj_norm), None)
+        if not mp or not mp.get("id_processo"):
+            d = (f"PAJ manual {num} sem id do processo. Remova-o e adicione novamente "
+                 f"(a extração do SISDPU obtém o id).")
+            yield passo("PAJ manual", False, d)
+            yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": d}}
+            return
+        id_proc = mp["id_processo"]
+        id_tramite = ""
+        item = {"id": id_proc, "id_tramite": "", "assistido": mp.get("assistido", "")}
+        yield passo("PAJ manual (sem trâmite na caixa)", True,
+                    f"id_processo={id_proc} — vai movimentar e tramitar, SEM conclusão")
+    else:
+        yield _ev("info", "Localizando o trâmite na caixa de entrada...")
+        caixa = await movtram.listar_caixa_estruturada()
+        if not caixa.get("ok"):
+            yield passo("Leitura da caixa", False, caixa.get("detalhe", ""))
+            yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": caixa.get("detalhe", "")}}
+            return
+        item = None
+        for it in caixa.get("itens", []):
+            if _num_to_norm(it.get("paj", "")) == paj_norm and \
+               DESCRICAO_ALVO in _norm(it.get("descricao", "") + " | " + it.get("linha_texto", "")):
+                item = it
+                break
+        if not item:
+            d = f"Trâmite de juntada do SAT não encontrado na caixa para {num}."
+            yield passo("Localização do trâmite", False, d)
+            yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": d}}
+            return
+        id_proc = item.get("id", "")
+        id_tramite = item.get("id_tramite", "")
+        yield passo("Localização do trâmite", True, f"id_processo={id_proc} · id_tramite={id_tramite}")
 
     # 2) anexos (PDFs do SAT já baixados)
     anexos = listar_arquivos_sat(paj_norm)
@@ -560,20 +706,31 @@ async def processar_paj_stream(
         yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": tr.get("detalhe", "")}}
         return
 
-    # 5) CONCLUIR o trâmite originário
-    yield _ev("info", "Concluindo o trâmite originário...")
-    cc = await movtram.concluir_paj([id_tramite], dry_run)
-    yield passo("Conclusão do trâmite originário", cc.get("ok"), cc.get("detalhe", ""))
-    resultado["concluido_status"] = cc.get("status")
-    resultado["concluido_detalhe"] = cc.get("detalhe", "")
-
-    status = "dry_run" if dry_run else ("concluido" if cc.get("ok") else "parcial")
-    detalhe = ("[dry-run] Simulação concluída — nada foi efetivado." if dry_run
-               else ("Fluxo concluído: movimentado, tramitado e trâmite concluído."
-                     if cc.get("ok") else "Movimentou e tramitou, mas a conclusão falhou."))
-    # Compilação: apagar os PDFs originais SÓ APÓS a anexação/conclusão (o compilado já foi
-    # anexado na movimentação; os originais ficaram numa subpasta não-anexada até aqui).
-    if cc.get("ok") and not dry_run:
+    # 5) CONCLUIR o trâmite originário — PULADO em PAJ manual (não há trâmite na caixa)
+    if manual:
+        resultado["concluido_status"] = "nao_aplicavel"
+        resultado["concluido_detalhe"] = "PAJ manual — sem trâmite na caixa para concluir."
+        yield passo("Conclusão", None,
+                    "PAJ manual: não há trâmite na caixa para concluir — etapa ignorada.")
+        anexacao_ok = tr.get("ok")
+        status = "dry_run" if dry_run else ("concluido" if tr.get("ok") else "parcial")
+        detalhe = ("[dry-run] Simulação concluída — nada foi efetivado." if dry_run
+                   else ("PAJ manual: movimentado e tramitado (conclusão não se aplica)."
+                         if tr.get("ok") else "Movimentou, mas falhou a tramitação."))
+    else:
+        yield _ev("info", "Concluindo o trâmite originário...")
+        cc = await movtram.concluir_paj([id_tramite], dry_run)
+        yield passo("Conclusão do trâmite originário", cc.get("ok"), cc.get("detalhe", ""))
+        resultado["concluido_status"] = cc.get("status")
+        resultado["concluido_detalhe"] = cc.get("detalhe", "")
+        anexacao_ok = cc.get("ok")
+        status = "dry_run" if dry_run else ("concluido" if cc.get("ok") else "parcial")
+        detalhe = ("[dry-run] Simulação concluída — nada foi efetivado." if dry_run
+                   else ("Fluxo concluído: movimentado, tramitado e trâmite concluído."
+                         if cc.get("ok") else "Movimentou e tramitou, mas a conclusão falhou."))
+    # Compilação: apagar os PDFs originais SÓ APÓS a anexação (o compilado já foi anexado na
+    # movimentação; os originais ficaram numa subpasta não-anexada até aqui).
+    if anexacao_ok and not dry_run:
         orig = pasta_arquivos_sat(paj_norm) / SUBPASTA_ORIGINAIS_COMPILADOS
         if orig.is_dir():
             n = len(list(orig.glob("*.pdf")))
@@ -584,7 +741,11 @@ async def processar_paj_stream(
             except Exception as e:  # noqa: BLE001
                 yield passo("Limpeza dos originais compilados", None, str(e))
     _gravar_hist(paj_norm, item, anexos, grupo, resultado, status, detalhe, log)
-    # Histórico UNIFICADO do painel (aba "Histórico de PAJs Concluídos") — só em conclusão real.
+    # PAJ manual processado com sucesso sai da lista de pendências (some do store).
+    if manual and status == "concluido" and not dry_run:
+        with __import__("contextlib").suppress(Exception):
+            del_paj_manual(paj_norm)
+    # Histórico UNIFICADO do painel (aba "Histórico de PAJs Concluídos") — só em sucesso.
     if status == "concluido" and not dry_run:
         try:
             from services import historico_painel
@@ -592,13 +753,15 @@ async def processar_paj_stream(
                 "paj": num, "paj_norm": paj_norm,
                 "url_detalhe": item.get("url_detalhe", ""),
                 "assistido": item.get("assistido", ""),
-                "origem": "sat", "atividade": "Juntada de documentos do SAT Central",
+                "origem": "sat",
+                "atividade": ("Juntada de documentos do SAT Central"
+                              + (" (PAJ manual — sem conclusão)" if manual else "")),
                 "movimentacao": FASE_MOV, "tramitado_para": grupo,
-                "concluido": True, "detalhe": f"{len(anexos)} arquivo(s) juntado(s).",
+                "concluido": (not manual), "detalhe": f"{len(anexos)} arquivo(s) juntado(s).",
             })
         except Exception:  # noqa: BLE001
             pass
-    yield {"done": True, "resultado": {"ok": bool(dry_run or cc.get("ok")), "status": status, "detalhe": detalhe}}
+    yield {"done": True, "resultado": {"ok": bool(dry_run or anexacao_ok), "status": status, "detalhe": detalhe}}
 
 
 async def _mov_extra_stream(

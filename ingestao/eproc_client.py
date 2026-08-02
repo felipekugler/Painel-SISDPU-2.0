@@ -328,3 +328,25 @@ async def peek() -> dict:
     finally:
         with contextlib.suppress(Exception):
             await browser.close()
+
+
+async def abrir_processo(url: str) -> dict:
+    """Abre a Consulta Processual do e-proc em uma ABA NOVA da janela (onde o
+    usuário está logado), espelhando o clique no nº do processo dentro do eproc.
+
+    O `url` vem capturado na sincronização (hash assinado, válido na sessão). Fechar
+    a conexão CDP no fim NÃO fecha a aba — ela permanece aberta para o usuário."""
+    if not url:
+        return {"ok": False, "erro": "URL do processo vazia."}
+    browser, page = await _connect()
+    ctx = page.context
+    try:
+        nova = await ctx.new_page()
+        with contextlib.suppress(Exception):
+            await nova.goto(url, wait_until="domcontentloaded", timeout=60000)
+            await nova.wait_for_timeout(400)
+            await nova.bring_to_front()
+        return {"ok": True, "url": nova.url}
+    finally:
+        with contextlib.suppress(Exception):
+            await browser.close()
