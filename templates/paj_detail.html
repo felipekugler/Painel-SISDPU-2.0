@@ -175,62 +175,6 @@
              Linha 2 = controles de elaboracao (skills + Elaborar + Ver Resumo). -->
         <div class="flex flex-col gap-2 sm:items-end">
 
-            <div class="flex items-center gap-2">
-                <!-- Baixar PAJ Completo: PDF unico com capa, narrativa, historico de
-                     movimentacoes e todos os anexos deste PAJ. Antes de gerar, verifica
-                     se a sincronizacao completa (com anexos) ja rodou — ver baixarPajCompleto() -->
-                <button onclick="baixarPajCompleto('{{ paj_norm }}')"
-                        class="btn btn-sm btn-outline btn-secondary gap-1.5"
-                        title="Gera um único PDF com capa, narrativa, histórico de movimentações e todos os anexos deste PAJ, em ordem cronológica">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 12m0 0 4.5-4.5M12 12V3"></path></svg>
-                    Baixar PAJ Completo
-                </button>
-
-                <!-- Sincronizar PAJ: split button (com anexos por padrao) -->
-                <div class="join">
-                    <button class="join-item btn btn-sm btn-outline btn-primary normal-case gap-1.5"
-                            onclick="sincronizarPaj('{{ paj_norm }}', true)"
-                            title="Sincroniza este PAJ com o SISDPU (movimentações, metadata e anexos)">
-                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12a7.5 7.5 0 0 1-13.05 5.07M4.5 12A7.5 7.5 0 0 1 17.55 6.93M4.5 4.5v4.5h4.5M19.5 19.5V15h-4.5"></path></svg>
-                        Sincronizar PAJ
-                    </button>
-                    <div class="dropdown dropdown-end">
-                        <div tabindex="0" role="button"
-                             class="join-item btn btn-sm btn-outline btn-primary px-2"
-                             title="Mais opções de sincronização">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"></path></svg>
-                        </div>
-                        <ul tabindex="0" class="dropdown-content menu bg-base-200 rounded-box z-[1] w-64 p-2 shadow border border-base-content/10 mt-1">
-                            <li>
-                                <a onclick="sincronizarPaj('{{ paj_norm }}', true)" class="text-sm">
-                                    <div class="flex flex-col">
-                                        <span class="font-semibold">Sincronizar (com anexos)</span>
-                                        <span class="text-xs text-base-content/60">baixa os PDFs</span>
-                                    </div>
-                                </a>
-                            </li>
-                            <li>
-                                <a onclick="sincronizarPaj('{{ paj_norm }}', false)" class="text-sm">
-                                    <div class="flex flex-col">
-                                        <span class="font-semibold">Sincronizar rápido (sem anexos)</span>
-                                        <span class="text-xs text-base-content/60">só movimentações e metadata</span>
-                                    </div>
-                                </a>
-                            </li>
-                            <li class="border-t border-base-content/10 mt-1 pt-1">
-                                <label class="flex items-center justify-between gap-2 text-sm cursor-pointer">
-                                    <div class="flex flex-col">
-                                        <span class="font-semibold">OCR simples</span>
-                                        <span class="text-xs text-base-content/60">roda OCR rápido/fraco ao baixar — use "Melhorar OCR" depois se precisar</span>
-                                    </div>
-                                    <input type="checkbox" class="toggle toggle-xs toggle-primary ocr-simples-checkbox">
-                                </label>
-                            </li>
-                        </ul>
-                    </div>
-                </div>
-            </div>
-
             <!-- Última Sincronização -->
             {% if meta.data_mov_caixa %}
             <div class="text-xs text-base-content/60 text-center sm:text-right">
@@ -410,13 +354,105 @@
 </div>
 {% endif %}
 
+<!-- Barra de ações (estilo e-proc) — ações rápidas deste PAJ -->
+<div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3 mb-4">
+    <div class="flex items-center gap-2 mb-2.5">
+        <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-base-content/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
+        </svg>
+        <span class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Ações</span>
+    </div>
+    <div class="flex flex-wrap items-center gap-2">
+        <!-- Sincronizar PAJ: split button (com anexos por padrão) -->
+        <div class="join">
+            <button class="join-item btn btn-sm btn-outline btn-primary normal-case gap-1.5"
+                    onclick="sincronizarPaj('{{ paj_norm }}', true)"
+                    title="Sincroniza este PAJ com o SISDPU (movimentações, metadata e anexos)">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12a7.5 7.5 0 0 1-13.05 5.07M4.5 12A7.5 7.5 0 0 1 17.55 6.93M4.5 4.5v4.5h4.5M19.5 19.5V15h-4.5"></path></svg>
+                Sincronizar PAJ
+            </button>
+            <div class="dropdown dropdown-end">
+                <div tabindex="0" role="button"
+                     class="join-item btn btn-sm btn-outline btn-primary px-2"
+                     title="Mais opções de sincronização">
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"></path></svg>
+                </div>
+                <ul tabindex="0" class="dropdown-content menu bg-base-200 rounded-box z-[1] w-64 p-2 shadow border border-base-content/10 mt-1">
+                    <li>
+                        <a onclick="sincronizarPaj('{{ paj_norm }}', true)" class="text-sm">
+                            <div class="flex flex-col">
+                                <span class="font-semibold">Sincronizar (com anexos)</span>
+                                <span class="text-xs text-base-content/60">baixa os PDFs</span>
+                            </div>
+                        </a>
+                    </li>
+                    <li>
+                        <a onclick="sincronizarPaj('{{ paj_norm }}', false)" class="text-sm">
+                            <div class="flex flex-col">
+                                <span class="font-semibold">Sincronizar rápido (sem anexos)</span>
+                                <span class="text-xs text-base-content/60">só movimentações e metadata</span>
+                            </div>
+                        </a>
+                    </li>
+                    <li class="border-t border-base-content/10 mt-1 pt-1">
+                        <label class="flex items-center justify-between gap-2 text-sm cursor-pointer">
+                            <div class="flex flex-col">
+                                <span class="font-semibold">OCR simples</span>
+                                <span class="text-xs text-base-content/60">roda OCR rápido/fraco ao baixar — use "Melhorar OCR" depois se precisar</span>
+                            </div>
+                            <input type="checkbox" class="toggle toggle-xs toggle-primary ocr-simples-checkbox">
+                        </label>
+                    </li>
+                </ul>
+            </div>
+        </div>
+
+        <!-- Baixar PAJ Completo: PDF único com capa, narrativa, histórico e anexos -->
+        <button onclick="baixarPajCompleto('{{ paj_norm }}')"
+                class="btn btn-sm btn-outline btn-secondary gap-1.5"
+                title="Gera um único PDF com capa, narrativa, histórico de movimentações e todos os anexos deste PAJ, em ordem cronológica">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 12m0 0 4.5-4.5M12 12V3"></path></svg>
+            Baixar PAJ Completo
+        </button>
+
+        <!-- Baixar Arquivos SAT: inclui este PAJ (manualmente) na página Arquivos SAT -->
+        <button onclick="baixarArquivosSat('{{ paj_norm }}', this)"
+                class="btn btn-sm btn-outline btn-accent gap-1.5"
+                title="Inclui este PAJ na página Arquivos SAT para baixar os documentos do SAT Central (INSS/Dataprev) e anexá-los ao PAJ">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"></path></svg>
+            Baixar Arquivos SAT
+        </button>
+    </div>
+</div>
+
+<!-- Narrativa (seção retrátil) — aberta por padrão -->
+<div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg mb-4">
+    <input type="checkbox" checked aria-label="Expandir/recolher Narrativa" />
+    <div class="collapse-title text-lg font-semibold">Narrativa</div>
+    <div class="collapse-content">
+        {% if dados.narrativa %}
+        <div class="text-sm text-base-content/80 leading-relaxed break-words bg-base-100 p-4 rounded border border-base-300/50 prose prose-sm max-w-none">{{ dados.narrativa|safe }}</div>
+        {% else %}
+        <p class="text-sm text-base-content/50 italic">Narrativa não disponível para este PAJ</p>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Movimentações (seção retrátil) — recolhida por padrão -->
+<div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg mb-6">
+    <input type="checkbox" aria-label="Expandir/recolher Movimentações" />
+    <div class="collapse-title text-lg font-semibold flex items-center gap-2">
+        Movimentações
+        <span class="badge badge-ghost badge-sm">{{ dados.movimentacoes|length }}</span>
+    </div>
+    <div class="collapse-content">
+        {% include "partials/movimentacoes_tabela.html" %}
+    </div>
+</div>
+
 <!-- Tabs -->
-<div x-data="{ tab: 'resumo' }" class="mt-4">
+<div x-data="{ tab: 'anexos' }" class="mt-4">
     <div role="tablist" class="tabs tabs-bordered mb-4">
-        <a role="tab" class="tab" :class="tab === 'resumo' && 'tab-active'" @click="tab = 'resumo'">Narrativa</a>
-        <a role="tab" class="tab" :class="tab === 'mov2' && 'tab-active'" @click="tab = 'mov2'">
-            Movimentações <span class="badge badge-ghost badge-xs ml-1">{{ dados.movimentacoes|length }}</span>
-        </a>
         <a role="tab" class="tab" :class="tab === 'anexos' && 'tab-active'" @click="tab = 'anexos'"
            title="Documentos anexados ao PAJ no SISDPU (PDFs de petições, laudos, despachos, etc.)">
             Anexos SISDPU <span class="badge badge-primary badge-xs ml-1">{{ dados.anexos_sisdpu|length }}</span>
@@ -531,21 +567,6 @@
                 </template>
             </div>
         </template>
-    </div>
-
-    <!-- Tab: Narrativa -->
-    <div x-show="tab === 'resumo'" class="bg-base-200 rounded-lg border border-base-300 p-6">
-        <h3 class="text-lg font-semibold mb-4">Narrativa</h3>
-        {% if dados.narrativa %}
-        <div class="text-sm text-base-content/80 leading-relaxed break-words bg-base-100 p-4 rounded border border-base-300/50 prose prose-sm max-w-none">{{ dados.narrativa|safe }}</div>
-        {% else %}
-        <p class="text-sm text-base-content/50 italic">Narrativa não disponível para este PAJ</p>
-        {% endif %}
-    </div>
-
-    <!-- Tab: Pesquisa Movimentações - Tabela completa com sorting e filtros -->
-    <div x-show="tab === 'mov2'" class="bg-base-200 rounded-lg border border-base-300 p-6">
-        {% include "partials/movimentacoes_tabela.html" %}
     </div>
 
     <!-- Tab: Anexos SISDPU (arquivos baixados pelo sync do botao "Arquivos" do PAJ) -->
@@ -947,6 +968,41 @@
 
 {% block scripts %}
 <script>
+// Botão "Baixar Arquivos SAT": inclui este PAJ (manualmente) na página Arquivos SAT
+// — reusa o endpoint de inclusão manual (extrai CPF/dados AO VIVO do SISDPU) e, em
+// caso de sucesso, redireciona para /sat, onde o download do SAT Central é disparado.
+async function baixarArquivosSat(pajNorm, btn) {
+    let htmlOrig = null;
+    if (btn) {
+        htmlOrig = btn.innerHTML;
+        btn.classList.add('btn-disabled');
+        btn.innerHTML = '<span class="loading loading-spinner loading-xs"></span> Incluindo…';
+    }
+    try {
+        const r = await fetch('/api/sat/pendentes/manual', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paj: pajNorm }),
+        });
+        const d = await r.json().catch(() => ({}));
+        if (r.ok && d.ok && (d.itens || []).length) {
+            showToast('PAJ incluído em Arquivos SAT — abrindo a página…', 'success');
+            window.location.href = '/sat';
+            return;  // mantém o botão desabilitado durante a navegação
+        }
+        const msg = (d.erros && d.erros[0] && d.erros[0].erro) || d.erro
+                    || 'Não foi possível incluir o PAJ em Arquivos SAT.';
+        showToast(msg, 'error');
+    } catch (e) {
+        showToast('Falha de rede: ' + e, 'error');
+    } finally {
+        if (btn && htmlOrig !== null && !window.location.href.endsWith('/sat')) {
+            btn.classList.remove('btn-disabled');
+            btn.innerHTML = htmlOrig;
+        }
+    }
+}
+
 function copiarPrompt() {
     var el = document.getElementById('prompt-content');
     if (!el) return;

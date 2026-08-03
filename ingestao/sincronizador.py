@@ -879,6 +879,12 @@ async def _processar_paj_pos_detalhamento(
         # Etiqueta SISDPU (rotulo livre aplicado pelo Defensor na caixa, tipo "Aleg finais")
         etiqueta = (item.get("etiqueta") or "").strip()
         metadata["etiqueta_sisdpu"] = etiqueta
+        # Descricao do tramite como aparece na caixa de entrada (coluna "Descricao"
+        # do dashboard). Vem da linha da caixa (item.desc / item.descricao); o parser
+        # de sisdpu.txt deixa desc_mov_caixa vazio no fluxo atual, entao gravamos aqui.
+        desc_caixa = (item.get("desc") or item.get("descricao") or "").strip()
+        if desc_caixa:
+            metadata["desc_mov_caixa"] = desc_caixa[:500]
 
     # Categoria de submenu (retorno/SAT/geral) — regra ÚNICA em services.categorias_caixa.
     # Fail-safe: descrição que não casa nenhuma regra → "" (geral, aparece no dashboard).

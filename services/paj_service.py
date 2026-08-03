@@ -85,6 +85,20 @@ def _normalizar(texto: str) -> str:
     return "".join(c for c in nfkd if not unicodedata.combining(c)).lower()
 
 
+_RE_HTML_TAGS = re.compile(r"<[^>]+>")
+
+
+def _strip_html(texto: str) -> str:
+    """Remove tags HTML e normaliza espacos — usado para exibir descricoes de
+    movimentacao (que vem em HTML) como texto simples no dashboard."""
+    if not texto:
+        return ""
+    import html as _html
+
+    limpo = _html.unescape(_RE_HTML_TAGS.sub(" ", texto))
+    return re.sub(r"\s+", " ", limpo).strip()
+
+
 def _e_pasta_paj(p: Path) -> bool:
     return p.is_dir() and p.name.startswith("PAJ-")
 
@@ -251,7 +265,12 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
             "classificacao": metadata.get("classificacao", "?"),
             "pretensaopura": metadata.get("pretensaopura", ""),
             "data_caixa": metadata.get("data_mov_caixa", ""),
-            "desc_caixa": metadata.get("desc_mov_caixa", ""),
+            # Descricao do tramite da caixa de entrada (coluna "Descricao" do
+            # dashboard). Fonte primaria: desc_mov_caixa (gravado pelo sync a
+            # partir da linha da caixa). Fallback ate o proximo sync: descricao
+            # da ultima movimentacao, com HTML removido.
+            "desc_caixa": (metadata.get("desc_mov_caixa") or "").strip()
+            or _strip_html(ultima_mov.get("descricao") or "")[:300],
             "processo_judicial": metadata.get("processo_judicial", ""),
             "n_pecas": n_pecas_geradas,
             "n_anexos_sisdpu": n_anexos_sisdpu,

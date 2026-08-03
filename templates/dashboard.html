@@ -22,6 +22,10 @@
     display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical;
     overflow: hidden; text-overflow: ellipsis;
   }
+  .truncate-2 {
+    display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+    overflow: hidden; text-overflow: ellipsis;
+  }
 
   @keyframes softpulse {
     0%, 100% { opacity: 1; transform: scale(1); }
@@ -487,7 +491,8 @@
               <th class="px-4 py-2 text-left w-[160px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('paj')">PAJ <span x-text="iconOrdem('paj')"></span></button></th>
               <th class="px-4 py-2 text-left w-[200px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('assistido')">Assistido <span x-text="iconOrdem('assistido')"></span></button></th>
               <th class="px-4 py-2 text-left w-[160px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('oficio')">Ofício <span x-text="iconOrdem('oficio')"></span></button></th>
-              <th class="px-4 py-2 text-left w-[450px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('classificacao')">Pretensão <span x-text="iconOrdem('classificacao')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[280px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('classificacao')">Pretensão <span x-text="iconOrdem('classificacao')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[300px]">Descrição</th>
               <th class="px-4 py-2 text-left w-[88px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('data_caixa')">Data <span x-text="iconOrdem('data_caixa')"></span></button></th>
               <th class="px-4 py-2 text-left w-[76px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('n_documentos_indexados')">Anexos</button></th>
               <th class="px-4 py-2 text-left flex-1">Elaboração</th>
@@ -537,6 +542,13 @@
                       :class="corPretensao(paj.pretensaopura)"
                       :title="paj.pretensaopura"
                       x-text="paj.pretensaopura || '—'"></span>
+              </td>
+
+              <!-- Descrição (trâmite da caixa de entrada) -->
+              <td class="px-4 py-3 align-top">
+                <div class="text-[12px] leading-snug text-base-content/70 truncate-2"
+                     :title="paj.desc_caixa"
+                     x-text="paj.desc_caixa || '—'"></div>
               </td>
 
               <!-- Data -->
