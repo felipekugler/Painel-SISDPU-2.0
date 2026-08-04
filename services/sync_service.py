@@ -288,3 +288,25 @@ async def rodar_sync_anexos_desde_data(
         None,
     ):
         yield linha
+
+
+async def rodar_sync_baixar_documentos(
+    paj_norm: str,
+    ids: list[str],
+) -> AsyncGenerator[str, None]:
+    """Baixa documentos ESPECIFICOS (por ID) de um PAJ ja sincronizado — SSE.
+
+    Bem mais leve que as demais syncs: le as URLs direto do metadata.json
+    existente, sem reabrir a caixa nem reextrair movimentacoes/documentos.
+    Reusa o lock global pra nao colidir com outras sincronizacoes em curso.
+    """
+    async for linha in _rodar_com_cancel(
+        lambda emit: sincronizador.rodar_baixar_documentos(
+            paj_norm,
+            ids,
+            emit,
+            deve_cancelar=deve_cancelar,
+        ),
+        None,
+    ):
+        yield linha

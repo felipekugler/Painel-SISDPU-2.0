@@ -165,7 +165,7 @@
                     {{ meta.pretensaopura or meta.classificacao or '—' }}
                 </span>
                 {% if meta.oficio_caixa %}
-                <span class="text-base-content/60 text-xs">{{ meta.oficio_caixa }}</span>
+                <span class="text-base-content/60 text-xs" title="{{ meta.oficio_caixa }}">{{ meta.oficio_caixa | oficio_sigla }}</span>
                 {% endif %}
             </div>
         </div>
@@ -252,7 +252,7 @@
 
 <!-- Info cards (uma linha) -->
 <div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3 mb-6">
-    <div class="flex items-center gap-4 text-sm">
+    <div class="flex items-center gap-4 gap-y-2 text-sm flex-wrap">
         <div class="flex items-center gap-1">
             <span class="text-xs text-base-content/50">Data abertura:</span>
             <span class="font-semibold">{{ meta.data_abertura | data_br }}</span>
@@ -263,7 +263,7 @@
         </div>
         <div class="flex items-center gap-1 border-l border-base-300 pl-4">
             <span class="text-xs text-base-content/50">Últ. movim.:</span>
-            <span class="font-semibold">{{ meta.data_mov_caixa | data_br }}</span>
+            <span class="font-semibold">{{ dados.ultima_mov_data | data_br }}</span>
         </div>
     </div>
 </div>
@@ -272,7 +272,7 @@
 {% set sisdpu_raw = meta.sisdpu_raw or {} %}
 {% if sisdpu_raw.processo_judicial %}
 <div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3 mb-6">
-    <div class="flex items-center gap-4 text-sm">
+    <div class="flex items-center gap-4 gap-y-2 text-sm flex-wrap">
         <!-- Número do Processo -->
         <div class="flex items-center gap-1 flex-1" x-data="{ copied_proc: false }">
             <span class="text-xs text-base-content/50">Processo:</span>
@@ -363,8 +363,8 @@
         <span class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Ações</span>
     </div>
     <div class="flex flex-wrap items-center gap-2">
-        <!-- Sincronizar PAJ: split button (com anexos por padrão) -->
-        <div class="join">
+        <!-- Sincronizar PAJ (à direita): split button (com anexos por padrão) -->
+        <div class="join order-last ml-auto">
             <button class="join-item btn btn-sm btn-outline btn-primary normal-case gap-1.5"
                     onclick="sincronizarPaj('{{ paj_norm }}', true)"
                     title="Sincroniza este PAJ com o SISDPU (movimentações, metadata e anexos)">
@@ -425,9 +425,9 @@
     </div>
 </div>
 
-<!-- Narrativa (seção retrátil) — aberta por padrão -->
+<!-- Narrativa (seção retrátil) — recolhida por padrão -->
 <div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg mb-4">
-    <input type="checkbox" checked aria-label="Expandir/recolher Narrativa" />
+    <input type="checkbox" aria-label="Expandir/recolher Narrativa" />
     <div class="collapse-title text-lg font-semibold">Narrativa</div>
     <div class="collapse-content">
         {% if dados.narrativa %}
@@ -450,13 +450,155 @@
     </div>
 </div>
 
+<!-- Anexos SISDPU (seção retrátil) — recolhida por padrão -->
+<div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg mb-4">
+    <input type="checkbox" aria-label="Expandir/recolher Anexos SISDPU" />
+    <div class="collapse-title text-lg font-semibold flex items-center gap-2">
+        Anexos SISDPU
+        <span class="badge badge-primary badge-sm">{{ dados.anexos_sisdpu|length }}</span>
+    </div>
+    <div class="collapse-content">
+        <!-- Ações da seção -->
+        <div class="flex items-center justify-end gap-2 mb-3 flex-wrap">
+            <button class="btn btn-sm btn-outline btn-primary gap-1.5"
+                    onclick="baixarTodosDocumentos('{{ paj_norm }}')"
+                    title="Baixa todos os documentos referenciados nas movimentações que ainda não estão em Arquivos/ — só login + download, sem re-sincronizar o restante.">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 12m0 0 4.5-4.5M12 12V3"></path></svg>
+                Baixar todos
+            </button>
+            {% if dados.anexos_sisdpu %}
+            <button class="btn btn-warning btn-sm"
+                    onclick="abrirLimpezaModal('{{ paj_norm }}')"
+                    title="Apaga os binários (PDF/DOCX/etc) após OCR — preserva os .txt extraídos">
+                Limpar anexos
+            </button>
+            {% endif %}
+        </div>
+        <p class="text-xs text-base-content/40 mb-4">
+            Documentos juntados ao PAJ no SISDPU (PDFs de petições, laudos, despachos, atas, etc.).
+            Baixados pelo sync — quando é PDF, o OCR também tenta extrair o texto pro lado.
+        </p>
+
+        {# Banner de overflow: PAJ tem mais anexos no SISDPU do que o limite padrao baixou #}
+        {% if meta.anexos_extras %}
+        {% set ax = meta.anexos_extras %}
+        <div class="alert alert-warning mb-4">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+            </svg>
+            <div class="flex-1">
+                <h4 class="font-bold">Este PAJ tem mais anexos no SISDPU do que o limite padrão</h4>
+                <p class="text-sm mt-1">
+                    <strong>{{ ax.baixados }} de {{ ax.total_no_sisdpu }}</strong> anexos baixados
+                    (limite padrão: {{ ax.limite_aplicado }}).
+                    Mais antigo baixado: <strong>{{ ax.data_min_baixada | data_br }}</strong>.
+                    É possível baixar desde a data de instauração do PAJ
+                    (<strong>{{ meta.data_abertura | data_br }}</strong>).
+                </p>
+                <p class="text-sm mt-2 font-medium">
+                    Para completar, escolha uma data de corte — todos os anexos com data ≥ essa
+                    serão baixados (sem limite de quantidade).
+                </p>
+                <div class="flex flex-wrap items-center gap-2 mt-3">
+                    <label class="form-control">
+                        <span class="label-text text-sm font-semibold !text-black">
+                            Baixar a partir de:
+                        </span>
+                        <input type="date" id="anexos-desde-data"
+                               value="{{ meta.data_abertura }}"
+                               max="{{ ax.data_min_baixada }}"
+                               class="input input-bordered input-sm !bg-gray-300 !text-black !border-gray-500" />
+                    </label>
+                    <button class="btn btn-primary btn-sm"
+                            onclick="baixarAnexosDesde('{{ paj_norm }}')">
+                        Baixar mais antigos
+                    </button>
+                </div>
+            </div>
+        </div>
+        {% endif %}
+
+        {% if dados.anexos_sisdpu %}
+        <div class="flex items-start justify-between gap-3 mb-3 flex-wrap">
+            <p class="text-xs text-base-content/50 max-w-xl">
+                Anexos baixados do SIS. Para os de <strong>OCR fraco/ausente</strong>, o botão
+                tenta primeiro o <strong>OCR local</strong> (ocrmypdf, grátis) e só usa o
+                <strong>Sonnet (visão)</strong> no que faltar. Roda automaticamente antes de
+                elaborar; aqui é para antecipar.
+            </p>
+            <div class="flex gap-1.5 shrink-0">
+                <button id="btn-melhorar-ocr"
+                        class="btn btn-sm btn-outline btn-accent gap-1.5"
+                        onclick="melhorarOcr('{{ paj_norm }}', this)"
+                        title="Melhora o OCR dos anexos: OCR local (ocrmypdf, grátis) primeiro, Sonnet só no resíduo (idempotente — pula os já bons)">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"></path></svg>
+                    Melhorar OCR
+                </button>
+            </div>
+        </div>
+        <div class="overflow-x-auto rounded-lg border border-base-300">
+            <table class="table table-sm">
+                <thead>
+                    <tr class="bg-base-300/50">
+                        <th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>OCR</th><th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for a in dados.anexos_sisdpu %}
+                    <tr class="hover:bg-base-300/30 anexo-item" data-anexo-mtime="{{ a.modificado }}">
+                        <td class="font-mono text-xs break-all max-w-xl">{{ a.nome }}</td>
+                        <td>
+                            <span class="badge badge-sm border border-black/15 {% if a.tipo == 'pdf' %}badge-error{% elif a.tipo in ('doc','docx') %}badge-info{% elif a.tipo in ('jpg','jpeg','png','gif') %}badge-warning{% else %}bg-base-200 text-base-content/60{% endif %}">
+                                {{ a.tipo|upper or 'FILE' }}
+                            </span>
+                        </td>
+                        <td class="text-sm">{{ (a.tamanho / 1024)|round(1) }} KB</td>
+                        <td>
+                            {% if a.tem_ocr %}
+                            <span class="badge badge-success badge-xs">ok</span>
+                            {% else %}
+                            <span class="badge badge-ghost badge-xs">—</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <div class="flex flex-wrap gap-1">
+                                <a href="/files/{{ paj_norm }}/{{ a.caminho }}" target="_blank"
+                                   class="btn btn-primary btn-xs">Abrir</a>
+                                {% if a.tem_ocr %}
+                                <button class="btn btn-ghost btn-xs"
+                                        @click="verTxt('{{ paj_norm }}', '{{ a.caminho_ocr }}', '{{ a.nome|e }} (OCR)')">
+                                    Ler OCR
+                                </button>
+                                {% endif %}
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="alert">
+            <div>
+                <p class="text-sm">Nenhum anexo do SISDPU foi baixado ainda.</p>
+                <p class="text-xs text-base-content/50 mt-1">
+                    Rode <strong>Sincronizar</strong> no dashboard, ou clique em
+                    <strong>Baixar todos</strong> acima para baixar os documentos deste PAJ.
+                </p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+</div>
+
+<!-- Outros (seção retrátil): Peças, Despachos, Notas, Discutir, PROMPT_MAX — recolhida por padrão -->
+<div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg mb-6">
+    <input type="checkbox" aria-label="Expandir/recolher Outros" />
+    <div class="collapse-title text-lg font-semibold">Outros</div>
+    <div class="collapse-content">
 <!-- Tabs -->
-<div x-data="{ tab: 'anexos' }" class="mt-4">
+<div x-data="{ tab: 'pecas_jud' }" class="mt-2">
     <div role="tablist" class="tabs tabs-bordered mb-4">
-        <a role="tab" class="tab" :class="tab === 'anexos' && 'tab-active'" @click="tab = 'anexos'"
-           title="Documentos anexados ao PAJ no SISDPU (PDFs de petições, laudos, despachos, etc.)">
-            Anexos SISDPU <span class="badge badge-primary badge-xs ml-1">{{ dados.anexos_sisdpu|length }}</span>
-        </a>
         <a role="tab" class="tab" :class="tab === 'pecas_jud' && 'tab-active'" @click="tab = 'pecas_jud'"
            title="Peças judiciais geradas pelo Claude (recursos, agravos, embargos, memoriais, petições...)">
             Peças <span class="badge badge-ghost badge-xs ml-1">{{ dados.pecas_judiciais|length }}</span>
@@ -567,174 +709,6 @@
                 </template>
             </div>
         </template>
-    </div>
-
-    <!-- Tab: Anexos SISDPU (arquivos baixados pelo sync do botao "Arquivos" do PAJ) -->
-    <div x-show="tab === 'anexos'" class="bg-base-200 rounded-lg border border-base-300 p-6">
-        <div class="flex items-start justify-between gap-4 mb-1">
-            <h3 class="text-lg font-semibold">Anexos SISDPU</h3>
-            <div class="flex gap-2">
-                {% if dados.anexos_sisdpu %}
-                <button class="btn btn-warning btn-sm"
-                        onclick="abrirLimpezaModal('{{ paj_norm }}')"
-                        title="Apaga os binários (PDF/DOCX/etc) após OCR — preserva os .txt extraídos">
-                    Limpar anexos
-                </button>
-                {% endif %}
-                <div class="join">
-                    <button class="join-item btn btn-primary btn-sm"
-                            onclick="sincronizarPaj('{{ paj_norm }}', true)">
-                        Sincronizar anexos deste PAJ
-                    </button>
-                    <div class="dropdown dropdown-end">
-                        <div tabindex="0" role="button" class="join-item btn btn-primary btn-sm px-2" title="Mais opções">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"></path></svg>
-                        </div>
-                        <ul tabindex="0" class="dropdown-content menu bg-base-200 rounded-box z-[1] w-64 p-2 shadow border border-base-content/10 mt-1">
-                            <li>
-                                <a onclick="sincronizarPaj('{{ paj_norm }}', true)" class="text-sm">
-                                    <div class="flex flex-col">
-                                        <span class="font-semibold">Sincronizar (com anexos)</span>
-                                        <span class="text-xs text-base-content/60">baixa os PDFs</span>
-                                    </div>
-                                </a>
-                            </li>
-                            <li>
-                                <a onclick="sincronizarPaj('{{ paj_norm }}', false)" class="text-sm">
-                                    <div class="flex flex-col">
-                                        <span class="font-semibold">Sincronizar rápido</span>
-                                        <span class="text-xs text-base-content/60">só movimentações e metadata</span>
-                                    </div>
-                                </a>
-                            </li>
-                            <li class="border-t border-base-content/10 mt-1 pt-1">
-                                <label class="flex items-center justify-between gap-2 text-sm cursor-pointer">
-                                    <div class="flex flex-col">
-                                        <span class="font-semibold">OCR simples</span>
-                                        <span class="text-xs text-base-content/60">roda OCR rápido/fraco ao baixar — use "Melhorar OCR" depois se precisar</span>
-                                    </div>
-                                    <input type="checkbox" class="toggle toggle-xs toggle-primary ocr-simples-checkbox">
-                                </label>
-                            </li>
-                        </ul>
-                    </div>
-                </div>
-            </div>
-        </div>
-        <p class="text-xs text-base-content/40 mb-4">
-            Documentos juntados ao PAJ no SISDPU (PDFs de petições, laudos, despachos, atas, etc.).
-            Baixados pelo sync — quando é PDF, o OCR também tenta extrair o texto pro lado.
-        </p>
-
-        {# Banner de overflow: PAJ tem mais anexos no SISDPU do que o limite padrao baixou #}
-        {% if meta.anexos_extras %}
-        {% set ax = meta.anexos_extras %}
-        <div class="alert alert-warning mb-4">
-            <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-            </svg>
-            <div class="flex-1">
-                <h4 class="font-bold">Este PAJ tem mais anexos no SISDPU do que o limite padrão</h4>
-                <p class="text-sm mt-1">
-                    <strong>{{ ax.baixados }} de {{ ax.total_no_sisdpu }}</strong> anexos baixados
-                    (limite padrão: {{ ax.limite_aplicado }}).
-                    Mais antigo baixado: <strong>{{ ax.data_min_baixada | data_br }}</strong>.
-                    É possível baixar desde a data de instauração do PAJ
-                    (<strong>{{ meta.data_abertura | data_br }}</strong>).
-                </p>
-                <p class="text-sm mt-2 font-medium">
-                    Para completar, escolha uma data de corte — todos os anexos com data ≥ essa
-                    serão baixados (sem limite de quantidade).
-                </p>
-                <div class="flex flex-wrap items-center gap-2 mt-3">
-                    <label class="form-control">
-                        <span class="label-text text-sm font-semibold !text-black">
-                            Baixar a partir de:
-                        </span>
-                        <input type="date" id="anexos-desde-data"
-                               value="{{ meta.data_abertura }}"
-                               max="{{ ax.data_min_baixada }}"
-                               class="input input-bordered input-sm !bg-gray-300 !text-black !border-gray-500" />
-                    </label>
-                    <button class="btn btn-primary btn-sm"
-                            onclick="baixarAnexosDesde('{{ paj_norm }}')">
-                        Baixar mais antigos
-                    </button>
-                </div>
-            </div>
-        </div>
-        {% endif %}
-
-        {% if dados.anexos_sisdpu %}
-        <div class="flex items-start justify-between gap-3 mb-3 flex-wrap">
-            <p class="text-xs text-base-content/50 max-w-xl">
-                Anexos baixados do SIS. Para os de <strong>OCR fraco/ausente</strong>, o botão
-                tenta primeiro o <strong>OCR local</strong> (ocrmypdf, grátis) e só usa o
-                <strong>Sonnet (visão)</strong> no que faltar. Roda automaticamente antes de
-                elaborar; aqui é para antecipar.
-            </p>
-            <div class="flex gap-1.5 shrink-0">
-                <button id="btn-melhorar-ocr"
-                        class="btn btn-sm btn-outline btn-accent gap-1.5"
-                        onclick="melhorarOcr('{{ paj_norm }}', this)"
-                        title="Melhora o OCR dos anexos: OCR local (ocrmypdf, grátis) primeiro, Sonnet só no resíduo (idempotente — pula os já bons)">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"></path></svg>
-                    Melhorar OCR
-                </button>
-            </div>
-        </div>
-        <div class="overflow-x-auto rounded-lg border border-base-300">
-            <table class="table table-sm">
-                <thead>
-                    <tr class="bg-base-300/50">
-                        <th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>OCR</th><th>Ações</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for a in dados.anexos_sisdpu %}
-                    <tr class="hover:bg-base-300/30 anexo-item" data-anexo-mtime="{{ a.modificado }}">
-                        <td class="font-mono text-xs break-all max-w-xl">{{ a.nome }}</td>
-                        <td>
-                            <span class="badge badge-sm {% if a.tipo == 'pdf' %}badge-error{% elif a.tipo in ('doc','docx') %}badge-info{% elif a.tipo in ('jpg','jpeg','png','gif') %}badge-warning{% else %}badge-ghost{% endif %}">
-                                {{ a.tipo|upper or 'FILE' }}
-                            </span>
-                        </td>
-                        <td class="text-sm">{{ (a.tamanho / 1024)|round(1) }} KB</td>
-                        <td>
-                            {% if a.tem_ocr %}
-                            <span class="badge badge-success badge-xs">ok</span>
-                            {% else %}
-                            <span class="badge badge-ghost badge-xs">—</span>
-                            {% endif %}
-                        </td>
-                        <td>
-                            <div class="flex flex-wrap gap-1">
-                                <a href="/files/{{ paj_norm }}/{{ a.caminho }}" target="_blank"
-                                   class="btn btn-primary btn-xs">Abrir</a>
-                                {% if a.tem_ocr %}
-                                <button class="btn btn-ghost btn-xs"
-                                        @click="verTxt('{{ paj_norm }}', '{{ a.caminho_ocr }}', '{{ a.nome|e }} (OCR)')">
-                                    Ler OCR
-                                </button>
-                                {% endif %}
-                            </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <div class="alert">
-            <div>
-                <p class="text-sm">Nenhum anexo do SISDPU foi baixado ainda.</p>
-                <p class="text-xs text-base-content/50 mt-1">
-                    Rode <strong>Sincronizar</strong> no dashboard, ou use o endpoint
-                    <code>POST /api/sync/paj/{{ paj_norm }}</code> pra baixar só este PAJ.
-                </p>
-            </div>
-        </div>
-        {% endif %}
     </div>
 
     <!-- Tab: Pecas Judiciais -->
@@ -884,6 +858,8 @@
         {% endif %}
     </div>
 </div>
+    </div>
+</div>
 
 <!-- Modal de leitura de TXT -->
 <dialog id="txt-modal" class="modal">
@@ -999,6 +975,52 @@ async function baixarArquivosSat(pajNorm, btn) {
         if (btn && htmlOrig !== null && !window.location.href.endsWith('/sat')) {
             btn.classList.remove('btn-disabled');
             btn.innerHTML = htmlOrig;
+        }
+    }
+}
+
+// "Baixar todos" (seção Anexos SISDPU): baixa todos os documentos referenciados
+// nas movimentações que ainda NÃO estão em Arquivos/. Reusa o download por IDs
+// (só login + fetch das URLs já no metadata — NÃO re-sincroniza nada). Ao fechar
+// o modal de progresso, recarrega a página para a tabela de anexos refletir os
+// novos arquivos.
+async function baixarTodosDocumentos(pajNorm) {
+    var movs = window._paj_movimentacoes || [];
+    var anexos = window._paj_anexos_sisdpu || [];
+    // IDs já baixados localmente (nome de arquivo "seqNNN - ID - nome").
+    var jaLocal = new Set();
+    anexos.forEach(function (a) {
+        var m = (a.nome || '').match(/^seq\d+\s*-\s*(\d+)\s*-/);
+        if (m) jaLocal.add(m[1]);
+    });
+    // Coleta os IDs de todos os documentos das movimentações ainda não baixados.
+    var ids = new Set();
+    movs.forEach(function (mov) {
+        (mov.documentos || []).forEach(function (doc) {
+            var m = (doc.urlDownload || '').match(/\/(\d+)\/[^/]*$/);
+            if (m && !jaLocal.has(m[1])) ids.add(m[1]);
+        });
+    });
+    var lista = Array.from(ids);
+    if (lista.length === 0) {
+        showToast('Todos os documentos deste PAJ já estão baixados.', 'info');
+        return;
+    }
+    if (typeof baixarDocumentosPaj !== 'function') {
+        showToast('Função de download indisponível — recarregue a página.', 'error');
+        return;
+    }
+    var atualizados = await baixarDocumentosPaj(pajNorm, lista);
+    // Recarrega quando o usuário fechar o modal (a tabela de Anexos é server-rendered).
+    if (atualizados !== null) {
+        var modal = document.getElementById('sync-modal');
+        if (modal) {
+            modal.addEventListener('close', function onClose() {
+                modal.removeEventListener('close', onClose);
+                window.location.reload();
+            }, { once: true });
+        } else {
+            window.location.reload();
         }
     }
 }

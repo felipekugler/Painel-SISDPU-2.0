@@ -82,6 +82,15 @@ def _limpar_oficio(s: str) -> str:
     return s
 
 
+def _sigla_oficio(s: str) -> str:
+    """Sigla padronizada do ofício (Tabela de Ofícios das Configurações)."""
+    try:
+        from services.config_painel_service import sigla_de_oficio
+        return sigla_de_oficio(s)
+    except Exception:  # noqa: BLE001
+        return _limpar_oficio(s)
+
+
 def _extrair_processos(meta: dict) -> list[dict]:
     """TODOS os processos judiciais vinculados ao PAJ, fiéis ao cadastrado no SISDPU
     (o PAJ pode ter mais de um). Prioriza `metadata.processos_judiciais` (lista
@@ -252,6 +261,7 @@ def listar() -> dict:
             item["n_movimentacoes"] = len(item.get("movimentacoes", []) or [])
         item.pop("movimentacoes", None)  # nunca trafega o array pela listagem
         item["oficio"] = _limpar_oficio(item.get("oficio", ""))
+        item["oficio_sigla"] = _sigla_oficio(item["oficio"])
         itens.append(item)
     # em_caixa=True antes; dentro de cada grupo, mais recentes primeiro
     itens.sort(key=lambda r: r.get("atualizado_em", ""), reverse=True)
@@ -470,6 +480,7 @@ async def sincronizar_stream() -> AsyncIterator[dict]:
             # NUNCA guardamos o array de movimentações aqui (vem do metadata).
             "assistido": assistido,
             "oficio": oficio,
+            "oficio_sigla": _sigla_oficio(oficio),
             "pretensao": pretensao,
             "processos_judiciais": processos_judiciais,
             "data_retorno": data_retorno,
@@ -616,6 +627,7 @@ async def ressincronizar_paj_stream(id_tramite: str) -> AsyncIterator[dict]:
         "atualizado_em": _now_iso(),
         "assistido": assistido,
         "oficio": oficio,
+        "oficio_sigla": _sigla_oficio(oficio),
         "processos_judiciais": processos_judiciais,
         "pretensao": pretensao,
         "data_retorno": data_retorno,

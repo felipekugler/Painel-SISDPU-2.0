@@ -70,6 +70,19 @@ async def importar_config_sisdpu():
                          "n_fases": len(fases), "n_caixas": len(caixas)})
 
 
+# --- Tabela de Ofícios: nome completo -> sigla (padronização de exibição) ---
+@router.get("/api/config/oficios", response_class=JSONResponse)
+async def get_config_oficios():
+    return JSONResponse({"itens": config_painel_service.get_oficios_siglas()})
+
+
+@router.post("/api/config/oficios", response_class=JSONResponse)
+async def set_config_oficios(request: Request):
+    body = await request.json()
+    itens = config_painel_service.set_oficios_siglas(body.get("itens") or [])
+    return JSONResponse({"ok": True, "itens": itens})
+
+
 # --- Acesso ao e-proc (compat): delega ao COFRE UNIFICADO (sistema "eproc") ----
 # Endpoints legados mantidos para a tela de Configurações atual continuar
 # funcionando. As credenciais do e-proc agora vivem no cofre unificado

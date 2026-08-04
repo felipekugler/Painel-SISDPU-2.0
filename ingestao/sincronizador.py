@@ -885,6 +885,12 @@ async def _processar_paj_pos_detalhamento(
         desc_caixa = (item.get("desc") or item.get("descricao") or "").strip()
         if desc_caixa:
             metadata["desc_mov_caixa"] = desc_caixa[:500]
+        # Data do tramite que esta na caixa de entrada (data da linha da caixa).
+        # Substitui o fallback do parser do sisdpu.txt (que caia na data de
+        # ABERTURA). Convertida p/ ISO (YYYY-MM-DD) — e' a "Data" do dashboard.
+        _data_caixa_iso = parser.parse_data_br(item.get("data") or "")
+        if _data_caixa_iso:
+            metadata["data_mov_caixa"] = _data_caixa_iso
 
     # Categoria de submenu (retorno/SAT/geral) — regra ÚNICA em services.categorias_caixa.
     # Fail-safe: descrição que não casa nenhuma regra → "" (geral, aparece no dashboard).
@@ -1480,6 +1486,110 @@ async def rodar_anexos_desde_data(
         "ocr_ok": resultado_anexos["ocr_ok"],
         "overflow_residual": overflow_residual,
     }
+
+
+async def rodar_baixar_documentos(
+    paj_norm: str,
+    ids: list[str],
+    log_callback: Callable[[str], None],
+    deve_cancelar: Callable[[], bool] | None = None,
+) -> dict:
+    """Baixa documentos ESPECIFICOS (por ID) de um PAJ ja sincronizado — sem
+    ressincronizar nada. Le as URLs direto do metadata.json existente
+    (populado pela extracao por seq de uma sincronizacao anterior, completa
+    ou rapida) e baixa so o que foi pedido.
+
+    Bem mais leve que uma sincronizacao completa: nao abre a caixa de
+    entrada, nao reabre o detalhamento do PAJ, nao reextrai movimentacoes
+    nem documentos — so login (reaproveitando sessao se ja estiver valida) +
+    fetch dos arquivos pedidos. Usado pelos botoes "Baixar todos"/"Baixar
+    selecionados" da coluna Documentos.
+
+    `ids`: lista de IDs de arquivo (numero na URL de download do SISDPU —
+    o mesmo usado no nome do arquivo local "seqNNN - ID - nome").
+
+    Retorna dict: {baixados, erros, total, nao_encontrados, cancelado?}.
+    """
+
+    def log(msg: str) -> None:
+        with contextlib.suppress(Exception):
+            log_callback(msg)
+
+    pasta = PAJS_DIR / paj_norm
+    meta_path = pasta / "metadata.json"
+    if not meta_path.exists():
+        log(f"[baixar-docs] PAJ {paj_norm} nao encontrado (sem metadata.json)")
+        return {"baixados": 0, "erros": ["PAJ nao encontrado"], "total": 0, "nao_encontrados": list(ids)}
+
+    try:
+        metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception as e:
+        log(f"[baixar-docs] erro ao ler metadata: {type(e).__name__}: {e}")
+        return {"baixados": 0, "erros": [str(e)], "total": 0, "nao_encontrados": list(ids)}
+
+    movs = metadata.get("detalhes_sisdpu", {}).get("movimentacoes", []) or []
+
+    # Monta a lista de download + o mapa seq_por_file_id a partir do que ja
+    # esta indexado no metadata — mesma fonte da coluna "Documentos" no painel,
+    # entao nao precisa reabrir o SISDPU pra descobrir nada disso de novo.
+    ids_pedidos = set(ids)
+    lista_arquivos: list[dict] = []
+    seq_por_file_id: dict[str, int] = {}
+    ids_encontrados: set[str] = set()
+    for mov in movs:
+        seq = mov.get("seq")
+        for doc in mov.get("documentos", []) or []:
+            file_id = sisdpu_client.extrair_id_arquivo(doc.get("urlDownload", ""))
+            if not file_id:
+                continue
+            seq_por_file_id[file_id] = seq
+            if file_id in ids_pedidos:
+                ids_encontrados.add(file_id)
+                lista_arquivos.append({
+                    "seq": seq,
+                    "nomeArq": doc.get("nomeArquivo", "arquivo"),
+                    "href": doc.get("urlDownload", ""),
+                })
+
+    nao_encontrados = [i for i in ids if i not in ids_encontrados]
+    if nao_encontrados:
+        log(f"[baixar-docs] aviso: {len(nao_encontrados)} id(s) nao encontrado(s) no metadata: {', '.join(nao_encontrados)}")
+
+    if not lista_arquivos:
+        log("[baixar-docs] nenhum documento valido pra baixar")
+        return {"baixados": 0, "erros": [], "total": 0, "nao_encontrados": nao_encontrados}
+
+    log(f"[baixar-docs] {len(lista_arquivos)} documento(s) selecionado(s) — entrando no SISDPU...")
+    try:
+        await sisdpu_client._ensure_logged_in()
+    except Exception as e:
+        log(f"[ERRO] login: {type(e).__name__}: {e}")
+        return {"baixados": 0, "erros": [str(e)], "total": len(lista_arquivos), "nao_encontrados": nao_encontrados}
+
+    if deve_cancelar is not None and deve_cancelar():
+        log("[baixar-docs] cancelado antes do download")
+        return {
+            "baixados": 0,
+            "erros": [],
+            "total": len(lista_arquivos),
+            "nao_encontrados": nao_encontrados,
+            "cancelado": True,
+        }
+
+    resultado = await sisdpu_client.baixar_todos_arquivos(
+        pasta / "Arquivos",
+        lista_arquivos=lista_arquivos,
+        log=log,
+        seq_por_file_id=seq_por_file_id,
+    )
+
+    with contextlib.suppress(Exception):
+        await sisdpu_client.fechar()
+
+    resultado["nao_encontrados"] = nao_encontrados
+    log("=" * 60)
+    log(f"[baixar-docs] FIM: {resultado['baixados']}/{resultado['total']} documento(s) baixado(s)")
+    return resultado
 
 
 async def rodar_paj_unico(

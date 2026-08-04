@@ -871,7 +871,8 @@ async def _baixar_hiscre(page, ctx, pasta_destino, salvos, pulados, reg):
     else:
         pulados.append("HISCRE (antirobô — não recuperado)")
         _inv_add("hiscre", "", "", "antirobo")
-        yield reg("  ✗ HISCRE: proteção antirobô — não recuperado (doc sempre existe)", "erro")
+        yield reg(f"  ✗ HISCRE: proteção antirobô — não recuperado após {_MAX_TENT - 1} "
+                  f"esperas de {_PAUSA_BLOQUEIO_MS // 1000}s", "erro")
 
 
 async def _grupo2_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg, sel=None,
@@ -953,7 +954,7 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
     if estado != "modal":
         pulados.append("PAT (antirobô — não recuperado)")
         _inv_add("pat", "", "", "antirobo")
-        yield reg("  ✗ PAT: modal não abriu — proteção antirobô (doc sempre existe)", "erro")
+        yield reg("  ✗ PAT: proteção antirobô — não recuperado", "erro")
         return
 
     tmp = Path(pasta_destino) / "_pat_tmp"

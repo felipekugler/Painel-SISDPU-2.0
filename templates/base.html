@@ -239,10 +239,17 @@
         .main-content {
             margin-left: 260px;
             transition: margin-left 0.3s ease;
+            /* Permite ao main (flex item) encolher abaixo da largura do conteudo,
+               para que tabelas largas (ex.: movimentacoes) rolem no proprio
+               overflow-x em vez de esticar a pagina toda (barra horizontal). */
+            min-width: 0;
         }
         .main-content.expanded {
             margin-left: 0;
         }
+        /* Colapsos (DaisyUI) com conteudo largo: a coluna do grid vira
+           minmax(0,1fr) para o conteudo interno rolar no proprio overflow-x. */
+        .collapse { grid-template-columns: minmax(0, 1fr); }
         .toggle-sidebar {
             display: none;
         }

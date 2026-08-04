@@ -107,6 +107,29 @@
         </div>
     </div>
 
+    <!-- Exibição de documentos (coluna "Documentos" da tabela de movimentações) -->
+    <div class="card bg-base-200 shadow mb-6">
+        <div class="card-body gap-4">
+            <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
+                Exibição de documentos
+            </h3>
+            <p class="text-sm text-base-content/60">
+                Como cada documento aparece na coluna "Documentos" da tabela de movimentações.
+                A escolha vale neste navegador.
+            </p>
+            <div id="docs-exib-seg" class="tema-seg">
+                <button type="button" data-docs-exib="tipo" onclick="definirExibicaoDocumentos('tipo')">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z" /></svg>
+                    Só tipo de arquivo
+                </button>
+                <button type="button" data-docs-exib="nome" onclick="definirExibicaoDocumentos('nome')">
+                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" /></svg>
+                    Nome do arquivo
+                </button>
+            </div>
+        </div>
+    </div>
+
     <div class="card bg-base-200 shadow">
         <div class="card-body gap-6">
 
@@ -453,11 +476,19 @@
     </div><!-- /cfg-panel sat -->
 
     <!-- ===================== Aba: SISDPU ===================== -->
-    <div class="cfg-panel" data-panel="sisdpu">
-    <div class="card bg-base-200 shadow" x-data="sisdpuPrefs()" x-init="init()">
+    <div class="cfg-panel" data-panel="sisdpu" x-data="{ subaba: 'fases' }">
+
+    <!-- Subabas do SISDPU -->
+    <div class="cfg-subtabs">
+        <button type="button" :class="subaba==='fases' && 'ativa'" @click="subaba='fases'">Fases do SISDPU</button>
+        <button type="button" :class="subaba==='caixas' && 'ativa'" @click="subaba='caixas'">Caixas do SISDPU</button>
+        <button type="button" :class="subaba==='oficios' && 'ativa'" @click="subaba='oficios'">Tabela de Ofícios</button>
+    </div>
+
+    <div class="card bg-base-200 shadow" x-data="sisdpuPrefs()" x-init="init()" x-show="subaba==='fases' || subaba==='caixas'">
         <div class="card-body gap-5">
             <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
-                <h3 class="text-lg font-semibold text-base-content/80">Fases e caixas do SISDPU</h3>
+                <h3 class="text-lg font-semibold text-base-content/80" x-text="subaba==='caixas' ? 'Caixas de tramitação' : 'Fases de movimentação'">Fases do SISDPU</h3>
                 <button class="btn btn-sm btn-ghost" @click="importar()" :disabled="importando"
                         title="Consulta o SISDPU e atualiza a lista completa de fases e caixas.">
                     <span x-show="importando" class="loading loading-spinner loading-xs"></span>
@@ -472,7 +503,7 @@
             <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
 
             <!-- Fases de movimentação -->
-            <div class="pt-1">
+            <div class="pt-1" x-show="subaba==='fases'">
                 <p class="font-medium mb-2">Fases de movimentação
                     <span class="text-base-content/50" x-text="'(' + fasesTodas.length + ')'"></span>
                 </p>
@@ -497,7 +528,7 @@
             </div>
 
             <!-- Caixas de tramitação -->
-            <div class="pt-2 border-t border-base-300">
+            <div class="pt-1" x-show="subaba==='caixas'">
                 <p class="font-medium mb-2">Caixas de tramitação
                     <span class="text-base-content/50" x-text="'(' + caixasTodas.length + ')'"></span>
                 </p>
@@ -527,6 +558,46 @@
                     Salvar curadoria
                 </button>
                 <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg2" x-show="msg2"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tabela de Ofícios (nome completo -> sigla) -->
+    <div class="card bg-base-200 shadow" x-data="oficiosSiglas()" x-init="init()" x-show="subaba==='oficios'">
+        <div class="card-body gap-4">
+            <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
+                <h3 class="text-lg font-semibold text-base-content/80">Tabela de Ofícios</h3>
+                <button class="btn btn-sm btn-ghost" @click="adicionar()">+ Adicionar ofício</button>
+            </div>
+            <p class="text-sm text-base-content/60">
+                A <strong>sigla</strong> é exibida no lugar do nome completo do ofício nos campos de
+                Ofício do painel (PAJs, Retornos). O nome é casado de forma tolerante — ignora
+                acentos, maiúsculas/minúsculas, zero à esquerda e o prefixo de área
+                (<strong>B.</strong>/<strong>C.</strong>/<strong>E.</strong>).
+            </p>
+            <div class="cfg-of-grid">
+                <div class="cfg-of-head"><span>Nome do ofício</span><span>Sigla</span><span></span></div>
+                <div x-show="itens.length===0" class="text-sm text-base-content/40 px-3 py-2">
+                    Nenhum ofício cadastrado. Clique em <strong>+ Adicionar ofício</strong>.
+                </div>
+                <template x-for="(o, i) in itens" :key="i">
+                    <div class="cfg-of-row">
+                        <input type="text" class="input input-sm input-bordered w-full" x-model="o.nome"
+                               placeholder="Ex: E. 04º OFÍCIO PREVIDENCIÁRIO">
+                        <input type="text" class="input input-sm input-bordered w-full uppercase" x-model="o.sigla"
+                               placeholder="Ex: PREV4">
+                        <button class="btn btn-xs btn-ghost text-error" @click="remover(i)" title="Remover">✕</button>
+                    </div>
+                </template>
+            </div>
+            <div class="flex items-center gap-3 pt-2 border-t border-base-300 flex-wrap">
+                <button class="btn btn-primary btn-sm" :disabled="salvando" @click="salvar()">
+                    <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
+                    Salvar tabela
+                </button>
+                <button class="btn btn-sm btn-ghost" @click="restaurar()"
+                        title="Volta às siglas padrão da DPU Curitiba">Restaurar padrão</button>
+                <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
             </div>
         </div>
     </div>
@@ -583,6 +654,16 @@
 .cfg-tab.ativa { color: var(--accent, #005FB8); border-bottom-color: var(--accent, #005FB8); }
 .cfg-panel { display: none; }
 .cfg-panel.ativa { display: block; }
+/* Subabas (segmented control) — dentro de uma aba principal (ex.: SISDPU) */
+.cfg-subtabs { display: inline-flex; gap: 4px; margin-bottom: 20px; flex-wrap: wrap;
+    background: var(--layer-alt, #f0f0f0); padding: 4px; border-radius: 8px;
+    border: 1px solid var(--stroke, rgba(0,0,0,0.08)); }
+.cfg-subtabs button { padding: 6px 14px; border: none; background: transparent;
+    color: var(--text-secondary, #6b7280); font-size: 13px; font-weight: 600;
+    border-radius: 6px; cursor: pointer; transition: background .12s, color .12s; }
+.cfg-subtabs button:hover { color: var(--text, #1a1a1a); }
+.cfg-subtabs button.ativa { background: var(--card, #fff); color: var(--accent, #005FB8);
+    box-shadow: var(--shadow-sm, 0 1px 2px rgba(0,0,0,0.08)); }
 /* Grade de curadoria (fase/caixa · favorita · frequente) — aba SISDPU */
 .cfg-pref-grid { border: 1px solid var(--stroke, rgba(0,0,0,0.1)); border-radius: 8px; overflow: hidden;
     max-height: 22rem; overflow-y: auto; }
@@ -594,6 +675,18 @@
     font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
     color: var(--text-secondary, rgba(0,0,0,0.55)); }
 .cfg-pref-head span:not(:first-child), .cfg-pref-row input { justify-self: center; text-align: center; }
+/* Tabela de Ofícios (nome · sigla · remover) — aba SISDPU */
+.cfg-of-grid { border: 1px solid var(--stroke, rgba(0,0,0,0.1)); border-radius: 8px; overflow: hidden;
+    max-height: 26rem; overflow-y: auto; }
+.cfg-of-head, .cfg-of-row {
+    display: grid; grid-template-columns: 1fr 8rem 2.5rem; align-items: center; gap: 8px;
+    padding: 6px 12px;
+}
+.cfg-of-head { position: sticky; top: 0; background: var(--layer-alt, #f6f6f6);
+    font-size: 11.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .02em;
+    color: var(--text-secondary, rgba(0,0,0,0.55)); }
+.cfg-of-row:not(:last-child) { border-bottom: 1px solid var(--stroke, rgba(0,0,0,0.06)); }
+.cfg-of-head span:last-child { text-align: center; }
 .cfg-pref-row { border-top: 1px solid var(--stroke, rgba(0,0,0,0.07)); cursor: pointer; font-size: 13px; }
 .cfg-pref-row:hover { background: color-mix(in srgb, var(--accent, #005FB8) 6%, transparent); }
 .tema-seg {
@@ -674,6 +767,26 @@ function temaMarcarAtivo(t) {
     temaMarcarAtivo(t);
 })();
 
+// Exibição de documentos na coluna "Documentos" (tipo de arquivo / nome do
+// arquivo) — salvo neste navegador, lido por static/js/movimentacoes.js.
+function definirExibicaoDocumentos(v) {
+    try { localStorage.setItem('docsExibicao', v); } catch(e){}
+    docsExibicaoMarcarAtivo(v);
+}
+
+function docsExibicaoMarcarAtivo(v) {
+    document.querySelectorAll('#docs-exib-seg button').forEach(b => {
+        b.classList.toggle('ativo', b.dataset.docsExib === v);
+    });
+}
+
+// Restaurar exibição de documentos ao carregar a página
+(function() {
+    let v = 'tipo';
+    try { v = localStorage.getItem('docsExibicao') || 'tipo'; } catch(e){}
+    docsExibicaoMarcarAtivo(v);
+})();
+
 // Aba SISDPU — fases/caixas: importar do SISDPU + curadoria de favoritas/frequentes.
 function sisdpuPrefs() {
     return {
@@ -734,6 +847,54 @@ function sisdpuPrefs() {
 
 // Valores padrão da aba "Arquivos SAT Central" (caixa de tramitação padrão, prazo,
 // ritmo antirrobô e compilação por tipo).
+// Aba SISDPU — Tabela de Ofícios (nome completo -> sigla).
+function oficiosSiglas() {
+    return {
+        itens: [], salvando: false, msg: '', msgErro: false,
+        async init() { await this.carregar(); },
+        async carregar() {
+            try {
+                const r = await fetch('/api/config/oficios');
+                const d = await r.json();
+                this.itens = (d.itens || []).map(x => ({ nome: x.nome, sigla: x.sigla }));
+            } catch (e) { this.itens = []; }
+        },
+        adicionar() { this.itens.push({ nome: '', sigla: '' }); },
+        remover(i) { this.itens.splice(i, 1); },
+        _flash(t, err) { this.msg = t; this.msgErro = !!err; setTimeout(() => { this.msg = ''; }, 3000); },
+        async salvar() {
+            this.salvando = true; this.msg = '';
+            try {
+                const limpos = this.itens
+                    .map(o => ({ nome: (o.nome || '').trim(), sigla: (o.sigla || '').trim().toUpperCase() }))
+                    .filter(o => o.nome && o.sigla);
+                const r = await fetch('/api/config/oficios', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ itens: limpos })
+                });
+                const d = await r.json();
+                if (d.ok) {
+                    this.itens = (d.itens || []).map(x => ({ nome: x.nome, sigla: x.sigla }));
+                    this._flash('Tabela salva.', false);
+                } else { this._flash(d.erro || 'Falha ao salvar.', true); }
+            } catch (e) { this._flash('Falha de rede.', true); }
+            finally { this.salvando = false; }
+        },
+        async restaurar() {
+            if (!confirm('Restaurar a tabela de ofícios padrão? Alterações não salvas serão perdidas.')) return;
+            try {
+                const r = await fetch('/api/config/oficios', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ itens: [] })
+                });
+                const d = await r.json();
+                this.itens = (d.itens || []).map(x => ({ nome: x.nome, sigla: x.sigla }));
+                this._flash('Padrão restaurado.', false);
+            } catch (e) { this._flash('Falha de rede.', true); }
+        }
+    };
+}
+
 function satCentralDefaults() {
     return {
         caixa: '01 - PREV_DIVPREV', prazoModo: 'sem_prazo', prazoDias: 15,

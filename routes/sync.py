@@ -13,6 +13,7 @@ from services.sync_service import (
     rodar_sync,
     rodar_sync_paj,
     rodar_sync_anexos_desde_data,
+    rodar_sync_baixar_documentos,
     rodar_sync_watchlist,
     solicitar_cancelamento,
 )
@@ -43,6 +44,12 @@ async def _stream_watchlist(baixar_anexos: bool, rodar_ocr: bool):
     async for linha in rodar_sync_watchlist(baixar_anexos=baixar_anexos, rodar_ocr=rodar_ocr):
         yield {"event": "log", "data": linha.rstrip("\n")}
     yield {"event": "done", "data": "Sincronização da watchlist finalizada"}
+
+
+async def _stream_baixar_documentos(paj_norm: str, ids: list[str]):
+    async for linha in rodar_sync_baixar_documentos(paj_norm, ids):
+        yield {"event": "log", "data": linha.rstrip("\n")}
+    yield {"event": "done", "data": "Download de documentos finalizado"}
 
 
 @router.get("/sync")
@@ -97,6 +104,24 @@ async def sync_watchlist(anexos: int = 1, ocr: int = 0):
     ?ocr=1 => roda o OCR simples nos PDFs baixados (padrao: desabilitado).
     """
     return EventSourceResponse(_stream_watchlist(baixar_anexos=bool(anexos), rodar_ocr=bool(ocr)))
+
+
+@router.get("/sync/paj/{paj_norm}/baixar-documentos")
+async def sync_baixar_documentos(paj_norm: str, ids: str = ""):
+    """Baixa documentos ESPECIFICOS (por ID) de um PAJ ja sincronizado.
+
+    Nao ressincroniza nada — le as URLs direto do metadata.json existente
+    (populado pela extracao por seq de uma sincronizacao anterior). Usado
+    pelos botoes "Baixar todos"/"Baixar selecionados" da coluna Documentos.
+
+    Query: ?ids=41893728,41893730 (obrigatorio, separados por virgula — o
+    numero na URL de download do SISDPU, igual ao usado no nome do arquivo
+    local "seqNNN - ID - nome").
+    """
+    lista_ids = [i.strip() for i in ids.split(",") if i.strip()]
+    if not lista_ids:
+        return JSONResponse({"erro": "parametro 'ids' obrigatorio"}, status_code=400)
+    return EventSourceResponse(_stream_baixar_documentos(paj_norm, lista_ids))
 
 
 @router.post("/sync/cancel")

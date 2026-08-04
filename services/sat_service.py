@@ -41,6 +41,9 @@ MOV_DESCRICAO_COMPLEMENTAR = ("Juntada complementar de documentos obtidos junto 
                               "Central (INSS/Dataprev)")
 TRAM_DESCRICAO = "Documentos do SAT Central juntados ao PAJ"
 GRUPO_PADRAO = "01 - PREV_DIVPREV"
+# Sentinela de "grupo" = opção "Não tramitar" (só movimenta/anexa os documentos ao PAJ,
+# sem tramitar para nenhuma caixa e sem concluir). É o PADRÃO da aba.
+NAO_TRAMITAR = "__nao_tramitar__"
 SUBPASTA_SAT = "Arquivos SAT"
 SUBPASTA_INSTITUIDOR = "Instituidor"  # dentro de "Arquivos SAT" (download/anexação à parte)
 SUBPASTA_COMPLEMENTAR = "Complementar"  # download complementar (anexado por movimentação)
@@ -614,8 +617,9 @@ async def processar_paj_stream(
     trâmite do SAT): movimenta e tramita usando o id do processo salvo, e NÃO conclui
     (não há trâmite na caixa). Termina com {'done': True, 'resultado': {...}}."""
     grupo = grupo or GRUPO_PADRAO
+    nao_tramitar = (grupo == NAO_TRAMITAR)
     prazo_data = None
-    if prazo_dias and int(prazo_dias) > 0:
+    if prazo_dias and int(prazo_dias) > 0 and not nao_tramitar:
         prazo_data = (date.today() + timedelta(days=int(prazo_dias))).strftime("%d/%m/%Y")
     log: list[dict] = []
 
@@ -692,32 +696,33 @@ async def processar_paj_stream(
         yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": mv.get("detalhe", "")}}
         return
 
-    # 4) TRAMITAR
-    prazo_txt = f"prazo até {prazo_data}" if prazo_data else "sem prazo"
-    yield _ev("info", f"Tramitando para {grupo} ({prazo_txt})...")
-    tr = await movtram.tramitar_paj(pajs, grupo=grupo, descricao=TRAM_DESCRICAO,
-                                    prazo_data=prazo_data, dry_run=dry_run)
-    yield passo(f"Tramitação para {grupo} ({prazo_txt})", tr.get("ok"), tr.get("detalhe", ""))
-    resultado["tram_status"] = tr.get("status")
-    resultado["tram_caixa"] = grupo
-    resultado["tram_detalhe"] = tr.get("detalhe", "")
-    if not tr.get("ok"):
-        _gravar_hist(paj_norm, item, anexos, grupo, resultado, "parcial", "Movimentou, mas falhou a tramitação.", log)
-        yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": tr.get("detalhe", "")}}
-        return
-
-    # 5) CONCLUIR o trâmite originário — PULADO em PAJ manual (não há trâmite na caixa)
-    if manual:
-        resultado["concluido_status"] = "nao_aplicavel"
-        resultado["concluido_detalhe"] = "PAJ manual — sem trâmite na caixa para concluir."
-        yield passo("Conclusão", None,
-                    "PAJ manual: não há trâmite na caixa para concluir — etapa ignorada.")
-        anexacao_ok = tr.get("ok")
-        status = "dry_run" if dry_run else ("concluido" if tr.get("ok") else "parcial")
-        detalhe = ("[dry-run] Simulação concluída — nada foi efetivado." if dry_run
-                   else ("PAJ manual: movimentado e tramitado (conclusão não se aplica)."
-                         if tr.get("ok") else "Movimentou, mas falhou a tramitação."))
+    # 4) TRAMITAR — PULADO se o usuário escolheu "Não tramitar"
+    if nao_tramitar:
+        yield passo("Tramitação", None,
+                    'Não realizada — opção "Não tramitar" escolhida pelo usuário.')
+        resultado["tram_status"] = "nao_tramitado"
+        resultado["tram_caixa"] = ""
+        resultado["tram_detalhe"] = 'Tramitação não realizada — opção "Não tramitar".'
+        tr_ok = True  # a movimentação (anexação) já teve sucesso; não há tramitação a avaliar
     else:
+        prazo_txt = f"prazo até {prazo_data}" if prazo_data else "sem prazo"
+        yield _ev("info", f"Tramitando para {grupo} ({prazo_txt})...")
+        tr = await movtram.tramitar_paj(pajs, grupo=grupo, descricao=TRAM_DESCRICAO,
+                                        prazo_data=prazo_data, dry_run=dry_run)
+        yield passo(f"Tramitação para {grupo} ({prazo_txt})", tr.get("ok"), tr.get("detalhe", ""))
+        resultado["tram_status"] = tr.get("status")
+        resultado["tram_caixa"] = grupo
+        resultado["tram_detalhe"] = tr.get("detalhe", "")
+        tr_ok = tr.get("ok")
+        if not tr_ok:
+            _gravar_hist(paj_norm, item, anexos, grupo, resultado, "parcial", "Movimentou, mas falhou a tramitação.", log)
+            yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": tr.get("detalhe", "")}}
+            return
+
+    # 5) CONCLUIR o trâmite originário — se HOUVER trâmite aberto na caixa. O "Não
+    # tramitar" NÃO afeta esta etapa: só pula a tramitação; movimentar e concluir
+    # permanecem. PAJ manual não tem trâmite na caixa → nada a concluir.
+    if id_tramite:
         yield _ev("info", "Concluindo o trâmite originário...")
         cc = await movtram.concluir_paj([id_tramite], dry_run)
         yield passo("Conclusão do trâmite originário", cc.get("ok"), cc.get("detalhe", ""))
@@ -725,9 +730,27 @@ async def processar_paj_stream(
         resultado["concluido_detalhe"] = cc.get("detalhe", "")
         anexacao_ok = cc.get("ok")
         status = "dry_run" if dry_run else ("concluido" if cc.get("ok") else "parcial")
-        detalhe = ("[dry-run] Simulação concluída — nada foi efetivado." if dry_run
-                   else ("Fluxo concluído: movimentado, tramitado e trâmite concluído."
-                         if cc.get("ok") else "Movimentou e tramitou, mas a conclusão falhou."))
+        if dry_run:
+            detalhe = "[dry-run] Simulação concluída — nada foi efetivado."
+        elif not cc.get("ok"):
+            detalhe = "Movimentou, mas a conclusão do trâmite falhou."
+        elif nao_tramitar:
+            detalhe = 'Movimentado e trâmite concluído (sem tramitação — opção "Não tramitar").'
+        else:
+            detalhe = "Fluxo concluído: movimentado, tramitado e trâmite concluído."
+    else:
+        resultado["concluido_status"] = "nao_aplicavel"
+        resultado["concluido_detalhe"] = "Sem trâmite aberto na caixa para concluir."
+        yield passo("Conclusão", None,
+                    "Sem trâmite aberto na caixa para concluir — etapa ignorada.")
+        anexacao_ok = tr_ok  # movimentou (e tramitou, se aplicável)
+        status = "dry_run" if dry_run else ("concluido" if tr_ok else "parcial")
+        if dry_run:
+            detalhe = "[dry-run] Simulação concluída — nada foi efetivado."
+        elif nao_tramitar:
+            detalhe = 'Movimentado — documentos anexados (sem tramitação — opção "Não tramitar").'
+        else:
+            detalhe = "Movimentado e tramitado (sem trâmite na caixa para concluir)."
     # Compilação: apagar os PDFs originais SÓ APÓS a anexação (o compilado já foi anexado na
     # movimentação; os originais ficaram numa subpasta não-anexada até aqui).
     if anexacao_ok and not dry_run:
@@ -740,7 +763,8 @@ async def processar_paj_stream(
                             f"{n} PDF(s) originais removidos após a anexação do(s) compilado(s).")
             except Exception as e:  # noqa: BLE001
                 yield passo("Limpeza dos originais compilados", None, str(e))
-    _gravar_hist(paj_norm, item, anexos, grupo, resultado, status, detalhe, log)
+    grupo_hist = "" if nao_tramitar else grupo  # não grava o sentinel de "não tramitar"
+    _gravar_hist(paj_norm, item, anexos, grupo_hist, resultado, status, detalhe, log)
     # PAJ manual processado com sucesso sai da lista de pendências (some do store).
     if manual and status == "concluido" and not dry_run:
         with __import__("contextlib").suppress(Exception):
@@ -749,15 +773,22 @@ async def processar_paj_stream(
     if status == "concluido" and not dry_run:
         try:
             from services import historico_painel
+            concluiu = (resultado.get("concluido_status") == "concluido")
+            _partes = []
+            if nao_tramitar:
+                _partes.append("sem tramitação")
+            if not id_tramite:
+                _partes.append("sem trâmite para concluir")
+            _nota = f" ({' — '.join(_partes)})" if _partes else ""
             historico_painel.registrar({
                 "paj": num, "paj_norm": paj_norm,
                 "url_detalhe": item.get("url_detalhe", ""),
                 "assistido": item.get("assistido", ""),
                 "origem": "sat",
-                "atividade": ("Juntada de documentos do SAT Central"
-                              + (" (PAJ manual — sem conclusão)" if manual else "")),
-                "movimentacao": FASE_MOV, "tramitado_para": grupo,
-                "concluido": (not manual), "detalhe": f"{len(anexos)} arquivo(s) juntado(s).",
+                "atividade": "Juntada de documentos do SAT Central" + _nota,
+                "movimentacao": FASE_MOV, "tramitado_para": grupo_hist,
+                "concluido": concluiu,
+                "detalhe": f"{len(anexos)} arquivo(s) juntado(s).",
             })
         except Exception:  # noqa: BLE001
             pass

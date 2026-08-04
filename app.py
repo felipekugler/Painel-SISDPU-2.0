@@ -68,7 +68,7 @@ _configurar_logging()
 # Versao do painel — fonte unica. Usada pelo FastAPI (OpenAPI/docs) e tambem
 # exposta a todos os templates via Jinja globals (renderizada no rodape da
 # sidebar). Para incrementar: mude aqui e so aqui.
-APP_VERSION = "0.3.16"
+APP_VERSION = "0.3.18"
 
 app = FastAPI(title="oficio-geral-ui", version=APP_VERSION)
 app.state.jinja = jinja2.Environment(
@@ -138,9 +138,21 @@ def _data_hora_br(valor) -> str:
     return _data_br(s)
 
 
+def _oficio_sigla(valor) -> str:
+    """Converte um nome de ofício na sigla padronizada (Tabela de Ofícios das
+    Configurações). Tolerante a falhas — devolve o valor original se algo der errado."""
+    try:
+        from services.config_painel_service import sigla_de_oficio
+
+        return sigla_de_oficio(valor)
+    except Exception:
+        return valor or ""
+
+
 app.state.jinja.filters["formatar_area"] = _formatar_area
 app.state.jinja.filters["data_br"] = _data_br
 app.state.jinja.filters["data_hora_br"] = _data_hora_br
+app.state.jinja.filters["oficio_sigla"] = _oficio_sigla
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 app.include_router(dashboard_router)
 app.include_router(paj_router)

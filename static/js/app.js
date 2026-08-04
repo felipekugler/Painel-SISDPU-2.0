@@ -391,6 +391,79 @@ function sincronizarPaj(pajNorm, baixarAnexos) {
     };
 }
 
+/* Download seletivo de documentos (sincronizacao parcial por seq) — usado
+ * pelos botoes "Baixar todos"/"Baixar selecionados" da coluna Documentos
+ * (static/js/movimentacoes.js). Diferente das demais syncs: NAO recarrega a
+ * pagina ao concluir — busca só os anexos atualizados e devolve pro
+ * componente Alpine atualizar os badges no lugar. Retorna a lista
+ * `anexos_sisdpu` atualizada, ou null se deu erro/cancelou. */
+function baixarDocumentosPaj(pajNorm, ids) {
+    return new Promise(function(resolve) {
+        let modal = document.getElementById('sync-modal');
+        let logEl = document.getElementById('sync-log');
+        let statusEl = document.getElementById('sync-status');
+        let closeBtn = document.getElementById('sync-close-btn');
+        let titleEl = document.getElementById('sync-title');
+        if (!modal || !logEl) {
+            showToast('Modal de sync não encontrado na página', 'error');
+            resolve(null);
+            return;
+        }
+
+        if (titleEl) titleEl.textContent = 'Baixar documento(s) selecionado(s)';
+        logEl.textContent = '';
+        statusEl.textContent = 'baixando ' + ids.length + ' documento(s)...';
+        statusEl.className = 'badge badge-sm badge-warning';
+        closeBtn.disabled = true;
+        const cancelBtn = document.getElementById('sync-cancel-btn');
+        if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.textContent = 'Cancelar'; }
+        _syncBtnCancel(true);
+        modal.showModal();
+
+        if (_syncSource) {
+            _syncSource.close();
+            _syncSource = null;
+        }
+
+        let url = '/api/sync/paj/' + encodeURIComponent(pajNorm)
+                + '/baixar-documentos?ids=' + encodeURIComponent(ids.join(','));
+        _syncSource = new EventSource(url);
+
+        function atualizarAnexosEResolver() {
+            fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes')
+                .then(function(r) { return r.json(); })
+                .then(function(data) { resolve(data.anexos_sisdpu || []); })
+                .catch(function() { resolve(null); });
+        }
+
+        _syncSource.addEventListener('log', function(e) {
+            logEl.textContent += e.data + '\n';
+            logEl.scrollTop = logEl.scrollHeight;
+        });
+
+        _syncSource.addEventListener('done', function(e) {
+            logEl.textContent += '\n' + e.data + '\n';
+            logEl.scrollTop = logEl.scrollHeight;
+            statusEl.textContent = 'concluído';
+            statusEl.className = 'badge badge-sm badge-success';
+            closeBtn.disabled = false;
+            _syncBtnCancel(false);
+            if (_syncSource) { _syncSource.close(); _syncSource = null; }
+            showToast('Documento(s) baixado(s)', 'success');
+            atualizarAnexosEResolver();
+        });
+
+        _syncSource.onerror = function() {
+            statusEl.textContent = 'erro/desconectado';
+            statusEl.className = 'badge badge-sm badge-error';
+            closeBtn.disabled = false;
+            _syncBtnCancel(false);
+            if (_syncSource) { _syncSource.close(); _syncSource = null; }
+            resolve(null);
+        };
+    });
+}
+
 /* Baixar PAJ Completo — antes de gerar o PDF, confirma que a sincronizacao
    completa (com download de anexos) ja rodou com sucesso. Sem isso o PDF
    sairia "completo" faltando os documentos que nunca foram baixados. */

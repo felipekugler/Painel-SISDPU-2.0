@@ -4,8 +4,11 @@ Armazenadas em painel_config.json na raiz do projeto. Ausência do arquivo equiv
 a todos os defaults ligados (comportamento original do sistema).
 """
 
+import contextlib
 import json
 import os
+import re
+import unicodedata
 from pathlib import Path
 
 _CONFIG_FILE = Path(__file__).parent.parent / "painel_config.json"
@@ -39,9 +42,33 @@ def _ler_raw() -> dict:
 
 
 def _salvar_raw(data: dict) -> None:
-    _CONFIG_FILE.write_text(
-        json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
-    )
+    """Grava o config de forma ATÔMICA (arquivo temp + os.replace) com algumas tentativas.
+    Evita o `PermissionError`/sharing-violation intermitente no Windows quando o JSON está
+    aberto/lido por outro processo (editor, outra requisição, antivírus)."""
+    import time
+    txt = json.dumps(data, indent=2, ensure_ascii=False)
+    tmp = str(_CONFIG_FILE) + ".tmp"
+    ultimo_erro: Exception | None = None
+    for _ in range(6):
+        try:
+            with open(tmp, "w", encoding="utf-8") as fh:
+                fh.write(txt)
+            os.replace(tmp, _CONFIG_FILE_STR)  # troca atômica
+            return
+        except PermissionError as e:  # sharing violation transitória → espera e retenta
+            ultimo_erro = e
+            time.sleep(0.2)
+        except Exception:
+            with contextlib.suppress(Exception):
+                os.remove(tmp)
+            raise
+    # esgotou as tentativas atômicas: tenta escrita direta como último recurso
+    try:
+        _CONFIG_FILE.write_text(txt, encoding="utf-8")
+    except Exception:
+        if ultimo_erro:
+            raise ultimo_erro
+        raise
 
 
 def salvar_config(config: dict) -> dict:
@@ -271,6 +298,97 @@ def set_sisdpu_prefs(d: dict) -> dict:
         raw["sisdpu_caixa_padrao"] = str(d.get("caixa_padrao") or "")
     _salvar_raw(raw)
     return get_sisdpu_prefs()
+
+
+# --- Tabela de Ofícios: nome completo -> SIGLA (padronização de exibição) ---
+# Exibida no lugar do nome completo do ofício em todo o painel (dashboard, PAJ,
+# Retornos). Editável na aba SISDPU das Configurações. O casamento nome->sigla é
+# TOLERANTE (ver _norm_oficio_key): ignora acentos, caixa, zero à esquerda e o
+# prefixo de área "B."/"C."/"E.". Semeada com os ofícios da DPU Curitiba.
+_OFICIOS_SIGLAS_DEFAULT = [
+    {"nome": "B. 01º OFÍCIO CÍVEL", "sigla": "CIV1"},
+    {"nome": "B. 02º OFÍCIO CÍVEL", "sigla": "CIV2"},
+    {"nome": "B. 03º OFÍCIO CÍVEL", "sigla": "CIV3"},
+    {"nome": "B. 04º OFÍCIO CÍVEL", "sigla": "CIV4"},
+    {"nome": "B. 05º OFÍCIO CÍVEL", "sigla": "CIV5"},
+    {"nome": "C. 01º OFÍCIO CRIMINAL", "sigla": "CRIM1"},
+    {"nome": "C. 02º OFÍCIO CRIMINAL", "sigla": "CRIM2"},
+    {"nome": "C. 03º OFÍCIO CRIMINAL", "sigla": "CRIM3"},
+    {"nome": "C. 04º OFÍCIO CRIMINAL", "sigla": "CRIM4"},
+    {"nome": "C. 05º OFÍCIO CRIMINAL", "sigla": "CRIM5"},
+    {"nome": "E. 01º OFÍCIO PREVIDENCIÁRIO", "sigla": "PREV1"},
+    {"nome": "E. 02º OFÍCIO PREVIDENCIÁRIO", "sigla": "PREV2"},
+    {"nome": "E. 03º OFÍCIO PREVIDENCIÁRIO", "sigla": "PREV3"},
+    {"nome": "E. 04º OFÍCIO PREVIDENCIÁRIO", "sigla": "PREV4"},
+]
+
+
+def _norm_oficio_key(s: str) -> str:
+    """Chave normalizada para casar nome de ofício de forma tolerante."""
+    s = str(s or "")
+    if re.search(r"anterior\s*:", s, re.IGNORECASE):
+        return ""  # "Anterior: ..." não é o ofício atual
+    s = s.split("|")[0]                        # texto antes de "|"
+    s = re.sub(r"^\s*[A-Za-z]\.\s*", "", s)    # remove prefixo de área "E. "/"B. "/"C. "
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(c for c in s if not unicodedata.combining(c)).upper()  # sem acento, maiúsculo
+    s = re.sub(r"[^A-Z0-9]+", " ", s)          # 'º', pontuação -> espaço
+    s = re.sub(r"\b0+(\d)", r"\1", s)          # zero à esquerda: "03" -> "3"
+    return re.sub(r"\s+", " ", s).strip()
+
+
+def get_oficios_siglas() -> list[dict]:
+    """Lista [{nome, sigla}] — a salva pelo usuário, ou os defaults se nunca configurada."""
+    v = _ler_raw().get("oficios_siglas")
+    if isinstance(v, list):
+        out = []
+        for it in v:
+            if isinstance(it, dict):
+                nome = str(it.get("nome", "")).strip()
+                sigla = str(it.get("sigla", "")).strip()
+                if nome and sigla:
+                    out.append({"nome": nome, "sigla": sigla})
+        if out:
+            return out
+    return [dict(x) for x in _OFICIOS_SIGLAS_DEFAULT]
+
+
+def set_oficios_siglas(itens: list[dict]) -> list[dict]:
+    """Grava a tabela de ofícios (dedup por nome normalizado). Lista vazia = volta
+    aos defaults (get devolve as sementes). Retorna a lista resultante."""
+    raw = _ler_raw()
+    limpos: list[dict] = []
+    vistos: set[str] = set()
+    for it in (itens or []):
+        if not isinstance(it, dict):
+            continue
+        nome = str(it.get("nome", "")).strip()
+        sigla = str(it.get("sigla", "")).strip()
+        if not nome or not sigla:
+            continue
+        k = _norm_oficio_key(nome)
+        if k in vistos:
+            continue
+        vistos.add(k)
+        limpos.append({"nome": nome, "sigla": sigla})
+    raw["oficios_siglas"] = limpos
+    _salvar_raw(raw)
+    return get_oficios_siglas()
+
+
+def sigla_de_oficio(raw: str) -> str:
+    """Converte um nome de ofício (cru, como vem do SISDPU) na SIGLA correspondente.
+    Sem correspondência → devolve uma versão limpa do nome (sem prefixo de área/'|')."""
+    raw = str(raw or "").strip()
+    if not raw:
+        return ""
+    key = _norm_oficio_key(raw)
+    if key:
+        for it in get_oficios_siglas():
+            if _norm_oficio_key(it.get("nome", "")) == key:
+                return it.get("sigla", "") or raw
+    limpo = re.sub(r"^\s*[A-Za-z]\.\s*", "", raw.split("|")[0]).strip()
+    return limpo or raw
 
 
 def limpar_dados_narrativa() -> int:

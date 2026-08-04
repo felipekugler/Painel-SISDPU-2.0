@@ -188,6 +188,13 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
     ):
         return _list_cache["result"]
 
+    # Sigla padronizada do ofício (Tabela de Ofícios das Configurações).
+    try:
+        from services.config_painel_service import sigla_de_oficio as _sigla_of
+    except Exception:  # noqa: BLE001
+        def _sigla_of(x):
+            return x
+
     ativos: list[dict] = []
     concluidos: list[dict] = []
 
@@ -235,6 +242,17 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
         )
         max_seq_mov = max((int(m.get("seq", 0) or 0) for m in movs), default=0)
 
+        # "Data" do dashboard = data do TRAMITE que esta na caixa de entrada.
+        # Fonte: metadata.data_mov_caixa (gravado pelo sync a partir da linha da
+        # caixa). Quando ele == data_abertura, e' o fallback antigo do parser (o
+        # sisdpu.txt nao tinha movs) -> usa a data da ultima movimentacao real
+        # ate um novo "Sincronizar caixa" gravar a data exata da linha da caixa.
+        _dmc = metadata.get("data_mov_caixa", "")
+        _data_caixa = (
+            _dmc if (_dmc and _dmc != metadata.get("data_abertura", ""))
+            else (ultima_mov.get("data") or _dmc)
+        )
+
         # Contagem de pecas GERADAS pelo defensor/Claude (na raiz do PAJ)
         n_pecas_geradas = 0
         for f in pasta.iterdir():
@@ -260,11 +278,12 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
             "paj_norm": paj_norm,
             "assistido": metadata.get("assistido_caixa", ""),
             "oficio": metadata.get("oficio_caixa", ""),
+            "oficio_sigla": _sigla_of(metadata.get("oficio_caixa", "")),
             "etiqueta": metadata.get("etiqueta_sisdpu", ""),
             "foro": metadata.get("foro_detectado", "?"),
             "classificacao": metadata.get("classificacao", "?"),
             "pretensaopura": metadata.get("pretensaopura", ""),
-            "data_caixa": metadata.get("data_mov_caixa", ""),
+            "data_caixa": _data_caixa,
             # Descricao do tramite da caixa de entrada (coluna "Descricao" do
             # dashboard). Fonte primaria: desc_mov_caixa (gravado pelo sync a
             # partir da linha da caixa). Fallback ate o proximo sync: descricao
@@ -360,6 +379,15 @@ def ler_paj(paj_norm: str) -> dict | None:
     movs = det.get("movimentacoes", []) or []
     movs_sorted = sorted(movs, key=lambda m: int(m.get("seq", 0) or 0))
     max_seq_mov = max((int(m.get("seq", 0) or 0) for m in movs), default=0)
+    # Data da ULTIMA movimentacao real (das movs estruturadas). NAO usar
+    # metadata.data_mov_caixa: no fluxo atual ele cai no fallback = data de
+    # abertura (o parser do sisdpu.txt nao acha movs), o que fazia a pagina do
+    # PAJ mostrar "Ult. movim." igual a "Data abertura".
+    ultima_mov = max(
+        movs,
+        key=lambda m: (m.get("data") or "", int(m.get("seq", 0) or 0)),
+        default={},
+    )
 
     # Anexos SISDPU: arquivos em `Arquivos/` baixados pelo sincronizador.
     # O OCR gera um `.txt` companion com o mesmo stem — associamos pro frontend
@@ -409,6 +437,7 @@ def ler_paj(paj_norm: str) -> dict | None:
         "anexos_sisdpu": anexos_sisdpu,
         "movimentacoes": movs_sorted,
         "max_seq_mov": max_seq_mov,
+        "ultima_mov_data": ultima_mov.get("data", ""),
         "n_anexos_sisdpu": len(anexos_sisdpu),
         "prazos_abertos": metadata.get("prazos_abertos", []),
         "pasta": str(pasta),

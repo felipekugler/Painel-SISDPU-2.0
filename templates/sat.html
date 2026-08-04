@@ -52,50 +52,58 @@
         </div>
     </div>
 
-    <!-- Duas seções lado a lado: (1) tramitação (2) tipos de documentos -->
-    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4 mb-4">
-        <!-- (1) Tramitar para + Prazo -->
-        <div class="card bg-base-200 shadow">
-            <div class="card-body py-3">
-                <div class="flex items-center gap-2 flex-wrap">
-                    <span class="text-sm font-medium mr-1">Tramitar para:</span>
-                    <template x-for="g in caixasRapidas()" :key="g">
-                        <button class="btn btn-xs" :class="grupoSel===g ? 'btn-primary' : 'btn-outline'"
-                                @click="grupoSel=g" x-text="g"></button>
-                    </template>
-                    <button class="btn btn-xs btn-ghost" @click="carregarGrupos()" :disabled="carregandoGrupos">
-                        <span x-show="carregandoGrupos" class="loading loading-spinner loading-xs"></span>
-                        outra caixa…
-                    </button>
-                    <select x-show="grupos.length" class="select select-bordered select-xs" x-model="grupoSel">
-                        <template x-for="g in grupos" :key="g"><option :value="g" x-text="g"></option></template>
-                    </select>
-                    <span class="mx-2 text-base-content/30">|</span>
-                    <span class="text-sm font-medium mr-1">Prazo:</span>
-                    <label class="flex items-center gap-1.5 text-sm cursor-pointer">
-                        <input type="radio" class="sat-radio" :checked="!comPrazo" @change="comPrazo=false">
-                        sem prazo
-                    </label>
-                    <label class="flex items-center gap-1.5 text-sm cursor-pointer">
-                        <input type="radio" class="sat-radio" :checked="comPrazo" @change="comPrazo=true">
-                        em
-                        <input type="number" min="1" max="365" class="input input-bordered input-xs w-16"
-                               x-model.number="prazoDias" @focus="comPrazo=true">
-                        dias
-                    </label>
-                    <span class="text-xs text-base-content/50" x-show="comPrazo" x-text="'(conclui até ' + dataPrazo() + ')'"></span>
-                </div>
+    <!-- O que baixar (barra inteira, logo abaixo da Sessão SAT) -->
+    <div class="card bg-base-200 shadow mb-4">
+        <div class="card-body py-3">
+            <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-sm font-medium mr-1">O que baixar:</span>
+                <button class="btn btn-xs btn-outline" @click="abrirTipos()">Escolher documentos</button>
+                <button class="btn btn-xs btn-outline" @click="abrirPatIgnorar()"
+                        title="Espécies de processo administrativo (PAT) que não devem ser baixadas">Ignorar</button>
             </div>
         </div>
-        <!-- (2) Tipos de documentos a baixar (por pretensão) -->
-        <div class="card bg-base-200 shadow">
-            <div class="card-body py-3">
-                <div class="flex items-center gap-2 flex-wrap">
-                    <span class="text-sm font-medium mr-1">O que baixar:</span>
-                    <button class="btn btn-xs btn-outline" @click="abrirTipos()">Escolher documentos</button>
-                    <button class="btn btn-xs btn-outline" @click="abrirPatIgnorar()"
-                            title="Espécies de processo administrativo (PAT) que não devem ser baixadas">Ignorar</button>
-                </div>
+    </div>
+
+    <!-- Tramitar para + Prazo (barra inteira). Padrão = "Não tramitar" (só anexa) -->
+    <div class="card bg-base-200 shadow mb-4">
+        <div class="card-body py-3">
+            <div class="flex items-center gap-2 flex-wrap">
+                <span class="text-sm font-medium mr-1">Tramitar para:</span>
+                <button class="btn btn-xs" :class="grupoSel===NAO_TRAMITAR ? 'btn-primary' : 'btn-outline'"
+                        @click="grupoSel=NAO_TRAMITAR"
+                        title="Não tramita para nenhuma caixa — movimenta (anexa os documentos) e conclui o trâmite, se houver">Não tramitar</button>
+                <template x-for="g in caixasRapidas()" :key="g">
+                    <button class="btn btn-xs" :class="grupoSel===g ? 'btn-primary' : 'btn-outline'"
+                            @click="grupoSel=g" x-text="g"></button>
+                </template>
+                <button class="btn btn-xs btn-ghost" @click="carregarGrupos()" :disabled="carregandoGrupos">
+                    <span x-show="carregandoGrupos" class="loading loading-spinner loading-xs"></span>
+                    outra caixa…
+                </button>
+                <select x-show="grupos.length" class="select select-bordered select-xs" x-model="grupoSel">
+                    <template x-for="g in grupos" :key="g"><option :value="g" x-text="g"></option></template>
+                </select>
+                <template x-if="grupoSel!==NAO_TRAMITAR">
+                    <span class="flex items-center gap-2 flex-wrap">
+                        <span class="mx-2 text-base-content/30">|</span>
+                        <span class="text-sm font-medium mr-1">Prazo:</span>
+                        <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                            <input type="radio" class="sat-radio" :checked="!comPrazo" @change="comPrazo=false">
+                            sem prazo
+                        </label>
+                        <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                            <input type="radio" class="sat-radio" :checked="comPrazo" @change="comPrazo=true">
+                            em
+                            <input type="number" min="1" max="365" class="input input-bordered input-xs w-16"
+                                   x-model.number="prazoDias" @focus="comPrazo=true">
+                            dias
+                        </label>
+                        <span class="text-xs text-base-content/50" x-show="comPrazo" x-text="'(conclui até ' + dataPrazo() + ')'"></span>
+                    </span>
+                </template>
+                <span class="text-xs text-base-content/50" x-show="grupoSel===NAO_TRAMITAR">
+                    Sem tramitar para nenhuma caixa — movimenta (anexa os documentos) e conclui o trâmite (exceto PAJ manual, que não conclui).
+                </span>
             </div>
         </div>
     </div>
@@ -197,7 +205,7 @@
                                     </button>
                                     <button x-show="p.n_arquivos > 0" class="btn btn-sm btn-outline ml-1" :disabled="rodando"
                                             @click="processar(p)"
-                                            :title="p.manual ? 'PAJ manual: movimentar → tramitar (não há trâmite na caixa para concluir)' : 'Movimentar → tramitar → concluir no SISDPU'">Anexar ao PAJ</button>
+                                            :title="grupoSel===NAO_TRAMITAR ? (p.manual ? 'PAJ manual: só movimenta/anexa (sem tramitar e sem concluir)' : 'Movimenta e conclui o trâmite — sem tramitar para nenhuma caixa') : (p.manual ? 'PAJ manual: movimentar → tramitar (não há trâmite na caixa para concluir)' : 'Movimentar → tramitar → concluir no SISDPU')">Anexar ao PAJ</button>
                                 </td>
                             </tr>
                             <tr x-show="narrativaAberta[p.paj_norm]">
@@ -303,8 +311,9 @@
                                 <td><span class="badge badge-sm" :class="r.mov_status==='movimentado'?'badge-ocre':'badge-error'"
                                           x-text="r.mov_seq ? ('Mov ' + r.mov_seq) : (r.mov_status||'—')"></span></td>
                                 <td><span class="badge badge-sm"
-                                          :class="r.tram_status==='tramitado'?'badge-ocre':(r.tram_status==='ja_foi'?'badge-ghost':'badge-error')"
-                                          x-text="r.tram_status==='tramitado' ? r.tram_caixa : (r.tram_status==='ja_foi' ? 'já foi' : (r.tram_status||'—'))"></span></td>
+                                          :class="r.tram_status==='tramitado'?'badge-ocre':((r.tram_status==='ja_foi'||r.tram_status==='nao_tramitado')?'badge-ghost':'badge-error')"
+                                          :title="r.tram_status==='nao_tramitado' ? 'O usuário escolheu não tramitar — só os documentos foram anexados' : ''"
+                                          x-text="r.tram_status==='tramitado' ? r.tram_caixa : (r.tram_status==='ja_foi' ? 'já foi' : (r.tram_status==='nao_tramitado' ? 'não tramitado' : (r.tram_status||'—')))"></span></td>
                                 <td><span class="badge badge-sm"
                                           :class="r.concluido_status==='concluido'?'badge-ocre':((r.concluido_status==='ja_foi'||r.concluido_status==='nao_aplicavel')?'badge-ghost':'badge-error')"
                                           :title="r.concluido_status==='nao_aplicavel' ? 'PAJ manual — sem trâmite na caixa para concluir' : ''"
@@ -657,7 +666,8 @@
 function satPage() {
     return {
         pendentes: [], historico: [], frequentes: [], grupos: [],
-        padrao: '01 - PREV_DIVPREV', grupoSel: '01 - PREV_DIVPREV',
+        NAO_TRAMITAR: '__nao_tramitar__',
+        padrao: '01 - PREV_DIVPREV', grupoSel: '__nao_tramitar__',
         comPrazo: false, prazoDias: 15,
         verificado: false,
         manualPaj: '', addingManual: false, manualMsg: '', manualMsgErro: false,
@@ -1017,7 +1027,9 @@ function satPage() {
             // tramitação, prazo (sem prazo/dias), tempo entre consultas e espera após bloqueio.
             try {
                 const s = await (await fetch('/api/config/sat-central')).json();
-                if (s.caixa) { this.padrao = s.caixa; this.grupoSel = s.caixa; }
+                // s.caixa alimenta o BOTÃO da caixa padrão; a seleção inicial permanece
+                // "Não tramitar" (padrão) — o usuário escolhe tramitar clicando na caixa.
+                if (s.caixa) this.padrao = s.caixa;
                 this.comPrazo = (s.prazo_modo === 'dias');
                 if (s.prazo_dias) this.prazoDias = s.prazo_dias;
                 if (typeof s.tempo_entre === 'number') this.tempoEntre = s.tempo_entre;

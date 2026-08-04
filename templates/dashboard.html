@@ -345,13 +345,6 @@
           <span class="text-base-content/40 tnum" x-show="!mostrarConcluidos && totalConcluidos > 0" x-text="`(+${totalConcluidos})`"></span>
         </span>
       </label>
-      <button class="btn btn-royal btn-sm gap-2 normal-case"
-              :disabled="pajs.length === 0"
-              @click="abrirLoteModal()"
-              title="Elabora automaticamente todos os PAJs filtrados que tenham anexos baixados e estejam em sincronia">
-        <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"></path></svg>
-        Elaborar todos
-      </button>
       <div class="join">
         <button class="join-item btn btn-primary btn-sm gap-2 normal-case" onclick="sincronizarCaixa(true)">
           <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12a7.5 7.5 0 0 1-13.05 5.07M4.5 12A7.5 7.5 0 0 1 17.55 6.93M4.5 4.5v4.5h4.5M19.5 19.5V15h-4.5"></path></svg>
@@ -485,60 +478,55 @@
     <div class="bg-base-300 rounded-xl border border-base-content/5 flex-1 overflow-hidden flex flex-col">
       <div class="overflow-y-auto flex-1 min-h-0">
 
-        <table class="w-full border-collapse text-sm">
+        <table class="w-full border-collapse text-sm table-fixed">
           <thead class="sticky top-0 z-10 bg-base-100">
             <tr class="text-[11px] text-base-content/40 font-semibold border-b border-base-content/10">
               <th class="px-4 py-2 text-left w-[160px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('paj')">PAJ <span x-text="iconOrdem('paj')"></span></button></th>
-              <th class="px-4 py-2 text-left w-[200px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('assistido')">Assistido <span x-text="iconOrdem('assistido')"></span></button></th>
-              <th class="px-4 py-2 text-left w-[160px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('oficio')">Ofício <span x-text="iconOrdem('oficio')"></span></button></th>
-              <th class="px-4 py-2 text-left w-[280px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('classificacao')">Pretensão <span x-text="iconOrdem('classificacao')"></span></button></th>
-              <th class="px-4 py-2 text-left w-[300px]">Descrição</th>
+              <th class="px-4 py-2 text-left w-[280px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('assistido')">Assistido <span x-text="iconOrdem('assistido')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[100px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('oficio')">Ofício <span x-text="iconOrdem('oficio')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[470px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('classificacao')">Pretensão <span x-text="iconOrdem('classificacao')"></span></button></th>
+              <th class="px-4 py-2 text-left w-full min-w-[360px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('desc_caixa')">Descrição <span x-text="iconOrdem('desc_caixa')"></span></button></th>
               <th class="px-4 py-2 text-left w-[88px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('data_caixa')">Data <span x-text="iconOrdem('data_caixa')"></span></button></th>
               <th class="px-4 py-2 text-left w-[76px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('n_documentos_indexados')">Anexos</button></th>
-              <th class="px-4 py-2 text-left flex-1">Elaboração</th>
             </tr>
           </thead>
           <tbody class="divide-y divide-base-content/5">
             <template x-for="paj in pajsFiltrados" :key="paj.paj_norm">
               <tr class="paj-row group cursor-pointer hover:bg-base-200/50 transition-colors"
-                  :class="novidadesDe(paj).tem ? 'border-l-2 border-l-info/70' : 'border-l-2 border-l-transparent'"
                   @click="window.location.href = '/paj/' + paj.paj_norm">
 
               <!-- PAJ -->
               <td class="px-4 py-3 align-top whitespace-nowrap">
-                <div class="font-mono text-sm font-semibold tracking-tight" x-text="paj.paj"></div>
-                <div class="flex items-center gap-1 mt-0.5">
-                  <template x-if="novidadesDe(paj).tem">
-                    <span class="inline-flex items-center gap-0.5 text-[9px] font-bold text-info bg-info/15 rounded-full px-1 py-0.5 leading-none shrink-0" :title="(novidadesDe(paj).novo ? 'Nunca visitado' : 'Mudanças desde sua última visita')">
-                      <span class="w-0.5 h-0.5 rounded-full bg-info"></span>
-                      <template x-if="novidadesDe(paj).movs > 0"><span x-text="'+' + novidadesDe(paj).movs + 'm'"></span></template>
-                      <template x-if="novidadesDe(paj).anexos > 0"><span x-text="'+' + novidadesDe(paj).anexos + 'a'"></span></template>
-                      <template x-if="novidadesDe(paj).novo"><span>novo</span></template>
-                    </span>
+                <!-- 1ª linha: número do PAJ (ponto azul = PAJ novo, ainda não visitado) -->
+                <div class="font-mono text-sm font-semibold tracking-tight flex items-center gap-1.5">
+                  <template x-if="novidadesDe(paj).novo">
+                    <span class="w-2 h-2 rounded-full bg-info shrink-0" title="PAJ novo — ainda não visitado"></span>
                   </template>
-                  <div class="font-mono text-[10.5px] text-base-content/40 truncate flex-1" x-text="paj.processo_judicial || ''"></div>
+                  <span x-text="paj.paj"></span>
                 </div>
+                <!-- 2ª linha: processo judicial -->
+                <div class="font-mono text-[10.5px] text-base-content/40 truncate mt-0" x-text="paj.processo_judicial || ''"></div>
                 <template x-if="paj.etiqueta">
-                  <span class="inline-flex items-center gap-1 mt-1 text-[10px] font-medium text-accent/80 bg-accent/10 rounded px-1.5 py-0.5">
+                  <span class="inline-flex items-center gap-1 mt-0 text-[10px] font-medium text-accent/80 bg-accent/10 rounded px-1.5 py-0.5">
                     <span class="w-1 h-1 rounded-full bg-accent"></span>
                     <span x-text="paj.etiqueta"></span>
                   </span>
                 </template>
               </td>
 
-              <!-- Assistido -->
+              <!-- Assistido (nome completo — quebra de linha, sem corte) -->
               <td class="px-4 py-3 align-top">
-                <div class="text-[13px] font-semibold truncate" x-text="paj.assistido || '—'"></div>
+                <div class="text-[13px] font-semibold whitespace-normal break-words leading-snug" x-text="paj.assistido || '—'"></div>
               </td>
 
               <!-- Ofício -->
               <td class="px-4 py-3 align-top">
-                <div class="text-[12px] text-base-content/70 truncate" x-text="normalizarOficio(paj.oficio) || '—'"></div>
+                <div class="text-[12px] text-base-content/70 truncate" :title="paj.oficio" x-text="paj.oficio_sigla || '—'"></div>
               </td>
 
               <!-- Pretensão -->
               <td class="px-4 py-3 align-top">
-                <span class="pretensao-badge"
+                <span class="pretensao-badge inline-block max-w-full truncate align-middle"
                       :class="corPretensao(paj.pretensaopura)"
                       :title="paj.pretensaopura"
                       x-text="paj.pretensaopura || '—'"></span>
@@ -571,30 +559,6 @@
                   <span class="font-mono text-xs font-semibold tnum text-success" x-show="paj.n_pecas > 0" x-text="paj.n_pecas + '✓'"></span>
                 </div>
                 <span class="text-xs text-base-content/30" x-show="!(paj.n_documentos_indexados > 0) && !paj.n_pecas">—</span>
-              </td>
-
-              <!-- Elaboração (status em tempo real) -->
-              <td class="px-4 py-3 align-top" @click.stop>
-                <template x-if="statusOf(paj.paj_norm).status === 'running'">
-                  <div class="flex items-center gap-2">
-                    <span class="loading loading-spinner loading-xs text-warning"></span>
-                    <span class="text-xs text-base-content/70 truncate max-w-[140px]"
-                          x-text="statusOf(paj.paj_norm).last_action || 'trabalhando...'"></span>
-                  </div>
-                </template>
-                <template x-if="statusOf(paj.paj_norm).status === 'queued'">
-                  <span class="badge badge-ghost badge-sm">em fila</span>
-                </template>
-                <template x-if="statusOf(paj.paj_norm).status === 'done'">
-                  <button class="btn btn-sm btn-success normal-case gap-1.5 font-medium"
-                          @click.stop="abrirResumoCaixa(paj.paj_norm)">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.036 12.322a1.01 1.01 0 0 1 0-.644C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .644C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z"></path></svg>
-                    Ver Resumo
-                  </button>
-                </template>
-                <template x-if="statusOf(paj.paj_norm).status === 'error'">
-                  <span class="badge badge-error badge-sm">erro</span>
-                </template>
               </td>
             </tr>
           </template>
@@ -907,7 +871,7 @@ function dashboardApp() {
 
         get oficiosUnicos() {
             return [...new Set(
-                this.pajs.map(p => this.normalizarOficio(p.oficio)).filter(Boolean)
+                this.pajs.map(p => p.oficio_sigla).filter(Boolean)
             )].sort();
         },
 
@@ -984,7 +948,7 @@ function dashboardApp() {
         aplicarFiltros() {
             let lista = this.pajs;
             if (this.filtroOficio) {
-                lista = lista.filter(p => this.normalizarOficio(p.oficio) === this.filtroOficio);
+                lista = lista.filter(p => p.oficio_sigla === this.filtroOficio);
             }
             if (this.filtroForo) {
                 lista = lista.filter(p => p.foro === this.filtroForo);

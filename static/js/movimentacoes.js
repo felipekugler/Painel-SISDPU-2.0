@@ -33,6 +33,11 @@ function tabelaMovimentacoes() {
         colunhaOrdenacao: 'seq',
         direcaoOrdenacao: 'desc',
 
+        // Download seletivo por documento (sincronizacao parcial) — ver
+        // toggleSelecao/baixarDocumentos abaixo.
+        selecionados: new Set(),
+        baixando: false,
+
         bootstrap() {
             // Carga inicial (página do PAJ passa window.__movInicial).
             if (window.__movInicial) this.carregar(window.__movInicial);
@@ -96,6 +101,61 @@ function tabelaMovimentacoes() {
             const id = this._idDocumento(doc);
             const caminhoLocal = id ? this._mapaArquivoLocalPorId[id] : null;
             return caminhoLocal ? `/files/${this.pajNorm}/${caminhoLocal}` : null;
+        },
+
+        // Preferencia de exibicao da coluna Documentos (Configurações > Geral
+        // > Exibição de documentos) — "tipo" (badge com extensão, padrão) ou
+        // "nome" (nome do arquivo truncado, um abaixo do outro). Por navegador.
+        get mostrarNomeArquivo() {
+            try { return localStorage.getItem('docsExibicao') === 'nome'; } catch (e) { return false; }
+        },
+
+        // Documentos da seq ainda nao baixados (candidatos a "Baixar todos").
+        naoBaixados(mov) {
+            return (mov.documentos || []).filter(d => !this.temArquivoLocal(d));
+        },
+
+        estaSelecionado(doc) {
+            const id = this._idDocumento(doc);
+            return !!(id && this.selecionados.has(id));
+        },
+
+        // Clique num badge ainda nao baixado alterna selecao (em vez de nao
+        // fazer nada). Documento ja baixado ignora — o clique dele abre o
+        // arquivo normalmente.
+        toggleSelecao(doc) {
+            if (this.temArquivoLocal(doc)) return;
+            const id = this._idDocumento(doc);
+            if (!id) return;
+            if (this.selecionados.has(id)) this.selecionados.delete(id);
+            else this.selecionados.add(id);
+        },
+
+        // Dentre os nao-baixados da seq, quantos/quais estao selecionados —
+        // usado pelo botao "Baixar selecionados".
+        selecionadosNaSeq(mov) {
+            return this.naoBaixados(mov).filter(d => this.estaSelecionado(d));
+        },
+
+        // Baixa uma lista de documentos (sincronizacao parcial — so os IDs
+        // pedidos, sem ressincronizar o PAJ). `docs` vem de naoBaixados(mov)
+        // ou selecionadosNaSeq(mov). Ao concluir, atualiza so os badges
+        // (refaz o mapa de arquivo local), sem recarregar a pagina.
+        async baixarDocumentos(docs) {
+            if (!docs || !docs.length || this.baixando) return;
+            const ids = docs.map(d => this._idDocumento(d)).filter(Boolean);
+            if (!ids.length) return;
+            this.baixando = true;
+            try {
+                const novosAnexos = await baixarDocumentosPaj(this.pajNorm, ids);
+                if (novosAnexos) {
+                    this.anexos = novosAnexos;
+                    this.__mapaArquivoLocal = null;
+                }
+                ids.forEach(id => this.selecionados.delete(id));
+            } finally {
+                this.baixando = false;
+            }
         },
 
         extDocumento(nomeArquivo) {

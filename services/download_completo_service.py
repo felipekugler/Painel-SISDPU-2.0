@@ -308,6 +308,24 @@ def _truncar(texto: str, limite: int) -> str:
     return texto if len(texto) <= limite else texto[: limite - 3] + "..."
 
 
+_RE_TAG_QUALQUER = re.compile(r"<[^>]+>")
+
+
+def _texto_simples(texto: str | None) -> str:
+    """Remove marcacao HTML que o SISDPU as vezes embute em campos de texto
+    livre da movimentacao (descricao, descricao_retorno) — vem do editor
+    rich-text do SISDPU (ex: '<span style="...">​<p>Remessa ao Cartório</p>
+    </span>'), nao e' HTML de verdade pra renderizar, so' contaminacao do
+    campo. Uso EXCLUSIVO deste gerador de PDF — o resto do painel (abas
+    Narrativa/Movimentacoes na tela) continua exibindo via Jinja `| safe`,
+    sem qualquer mudanca aqui."""
+    if not texto:
+        return ""
+    limpo = _RE_TAG_QUALQUER.sub(" ", texto)  # tag vira espaco — evita colar palavras
+    limpo = unescape(limpo).replace("\xa0", " ")
+    return re.sub(r"\s+", " ", limpo).strip()
+
+
 def _linha_tabela_mov(page: fitz.Page, x0: float, y: float, valores: list[str], cabecalho: bool = False) -> None:
     altura = ALTURA_CABECALHO_MOV if cabecalho else ALTURA_LINHA_MOV
     fontname = FONTE_NEGRITO if cabecalho else FONTE
@@ -343,7 +361,7 @@ def _escrever_movimentacoes(doc: fitz.Document, paj_norm: str, movs: list[dict])
                 f"Sim ({len(documentos)})" if documentos else "-",
                 mov.get("data_original") or mov.get("data") or "-",
                 _truncar(_limpar_fase(mov.get("fases", "")), 75),
-                _truncar(mov.get("descricao", ""), 195),
+                _truncar(_texto_simples(mov.get("descricao")), 195),
                 _truncar(mov.get("usuario", ""), 60),
             ]
             _linha_tabela_mov(page, MARGEM, y, valores)
@@ -432,7 +450,7 @@ def _pagina_separadora(
         data_hora = mov.get("data_original") or mov.get("data") or ""
         fase = _limpar_fase(mov.get("fases", ""))
         usuario = mov.get("usuario", "") or ""
-        desc = _truncar(mov.get("descricao", ""), 380)
+        desc = _truncar(_texto_simples(mov.get("descricao")), 380)
         for rotulo, valor, altura in [
             ("Data/Hora", data_hora, 20),
             ("Fase", fase, 20),
@@ -449,7 +467,7 @@ def _pagina_separadora(
             # texto burocratico ("Fase incluída automaticamente..."); o
             # conteudo real do atendimento fica no campo `descricao_retorno`
             # do metadata — por isso e' obrigatorio mostra-lo aqui.
-            desc_retorno = _truncar(mov.get("descricao_retorno", ""), 380)
+            desc_retorno = _truncar(_texto_simples(mov.get("descricao_retorno")), 380)
             _texto(page, MARGEM, y, MARGEM + 90, 130, "Descrição Retorno:", fontsize=10, fontname=FONTE_NEGRITO)
             _texto(page, MARGEM + 95, y, A4.width - MARGEM, 130, desc_retorno or "(não informado no SISDPU)", fontsize=10)
             y += 140
