@@ -34,8 +34,9 @@ async def api_prazos(processo: list[str] = Query(default=[])):
 @router.post("/api/acoes-eproc/comprimir-anexo", response_class=JSONResponse)
 async def api_comprimir_anexo(request: Request):
     """Comprime/divide um anexo PDF de um PAJ (reaproveita a skill global
-    PDF-Comprimir_Dividir) para caber no limite de tamanho do e-proc. Registra o(s)
-    resultado(s) em metadata.json — ficam selecionáveis em "Adicionar do SISDPU"."""
+    PDF-Comprimir_Dividir) para caber no limite de tamanho do e-proc. O(s) resultado(s)
+    ficam gravados na pasta `Arquivos/` do PAJ (NÃO em metadata.json — `anexos_sisdpu`
+    é recalculado ao vivo dali) e já aparecem selecionáveis em "Adicionar do SISDPU"."""
     body = await request.json()
     paj_norm = (body.get("paj_norm") or "").strip()
     caminho = (body.get("caminho") or "").strip()

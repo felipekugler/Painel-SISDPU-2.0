@@ -409,10 +409,12 @@ function retornosPage() {
         async abrirMovs(r) {
             this.movTitulo = r.paj + ' — ' + (r.assistido || '');
             this.movModal = true;
-            // Preferir as movimentações NORMALIZADAS (canônicas, com documentos) do
-            // metadata — mesma fonte da aba "Movimentações" do PAJ. Fallback: as movs
-            // do store (bruto) quando o PAJ ainda não foi sincronizado.
-            let cfg = null;
+            // Movimentações NORMALIZADAS (canônicas, com documentos) do metadata —
+            // mesma fonte da aba "Movimentações" do PAJ. Desde a unificação (Fase B),
+            // o store da Retornos não guarda mais um array próprio de movimentações
+            // — se a chamada falhar (rede/PAJ ainda não sincronizado), a lista fica
+            // vazia mesmo (não há fallback local para cair).
+            let cfg = { movs: [], anexos: [], pajNorm: r.paj_norm, maxSeq: -1 };
             try {
                 const resp = await fetch('/api/paj/' + encodeURIComponent(r.paj_norm) + '/movimentacoes');
                 if (resp.ok) {
@@ -420,10 +422,7 @@ function retornosPage() {
                     cfg = { movs: d.movimentacoes || [], anexos: d.anexos_sisdpu || [],
                             pajNorm: r.paj_norm, maxSeq: -1 };
                 }
-            } catch (e) { /* rede — cai no fallback */ }
-            if (!cfg) {
-                cfg = { movs: r.movimentacoes || [], anexos: [], pajNorm: r.paj_norm, maxSeq: -1 };
-            }
+            } catch (e) { /* rede — mantém cfg vazio */ }
             this.movTitulo = r.paj + ' — ' + (r.assistido || '') + ' · ' + cfg.movs.length + ' movimentações';
             // Entrega ao componente COMPARTILHADO (o modal contém o partial que escuta o evento).
             window.dispatchEvent(new CustomEvent('mov-tabela-carregar', { detail: cfg }));
