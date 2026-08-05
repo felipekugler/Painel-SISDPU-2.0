@@ -215,8 +215,9 @@
                                          })" x-init="init()">
                                         {% include "partials/acoes_sisdpu.html" %}
                                     </div>
-                                    <!-- Ações no Eproc (módulo reutilizável — static/js/acoes_eproc.js) -->
-                                    <div class="mx-2 mb-2"
+                                    <!-- Ações no Eproc (módulo reutilizável — static/js/acoes_eproc.js) —
+                                         só existe quando o PAJ tem processo judicial vinculado. -->
+                                    <div class="mx-2 mb-2" x-show="(r.processos_judiciais || []).length"
                                          x-data="acoesEprocBlock({
                                              processos: r.processos_judiciais || [],
                                              paj: r.paj, pajNorm: r.paj_norm,

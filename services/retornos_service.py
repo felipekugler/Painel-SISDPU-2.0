@@ -326,12 +326,18 @@ async def reanalisar(id_tramite: str, prompt_extra: str = "") -> dict:
 # ---------------------------------------------------------------------------
 def _extrair_retorno_das_movs(movs: list[dict]) -> dict:
     """Localiza a movimentação de 'Atendimento de retorno' (a que caiu na caixa) e
-    devolve {descricao_retorno, data, remetente}. Usa a mais recente encontrada."""
+    devolve {descricao_retorno, data, remetente}. Usa a mais recente encontrada.
+
+    A descrição às vezes vem em HTML bruto (e-mail do assistido colado/encaminhado
+    dentro do SISDPU por um editor rico) — passa pelo mesmo `_html_para_texto` usado
+    na narrativa, senão as tags aparecem literalmente na tela (x-text não as renderiza,
+    só exibe como texto)."""
     for m in movs:
         fases = _norm(m.get("fases", ""))
         if "atendimento de retorno" in fases:
+            bruto = (m.get("descricao_retorno") or m.get("descricao") or "").strip()
             return {
-                "descricao_retorno": (m.get("descricao_retorno") or m.get("descricao") or "").strip(),
+                "descricao_retorno": _html_para_texto(bruto) if "<" in bruto else bruto,
                 "data": (m.get("data") or "").strip(),
                 "remetente": (m.get("usuario") or "").strip(),
             }

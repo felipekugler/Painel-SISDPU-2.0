@@ -438,7 +438,9 @@
 
         <!-- Ações no e-proc: abre o console de peticionamento (módulo compartilhado
              com a aba Retornos — static/js/acoes_eproc.js). Ícone remete ao logo do
-             e-proc (aglomerado de círculos sobrepostos). -->
+             e-proc (aglomerado de círculos sobrepostos). Só existe quando o PAJ tem
+             processo judicial vinculado — sem processo não há o que peticionar. -->
+        {% if dados.processos_judiciais %}
         <button type="button" @click="mostrarAcoesEproc = !mostrarAcoesEproc"
                 class="btn btn-sm btn-outline btn-info gap-1.5"
                 title="Peticionar ou lançar evento no processo judicial (e-proc) vinculado a este PAJ">
@@ -449,6 +451,7 @@
             </svg>
             Ações no e-proc
         </button>
+        {% endif %}
     </div>
 
     <!-- Console "Ações no SISDPU" (movimentar/tramitar/concluir) — oculto até clicar no botão acima -->
@@ -468,21 +471,19 @@
         {% endif %}
     </div>
 
-    <!-- Console "Ações no e-proc" (peticionamento) — oculto até clicar no botão acima -->
+    <!-- Console "Ações no e-proc" (peticionamento) — oculto até clicar no botão acima.
+         Só é renderizado quando há processo judicial vinculado — o botão que o abre
+         (acima) já não existe caso contrário, então este bloco nunca fica órfão. -->
+    {% if dados.processos_judiciais %}
     <div x-show="mostrarAcoesEproc" x-transition x-cloak class="mt-3 pt-3 border-t border-base-300">
-        {% if dados.processos_judiciais %}
         <div x-data="acoesEprocBlock({
                  processos: window._paj_processos_judiciais || [],
                  paj: '{{ meta.paj }}', pajNorm: '{{ paj_norm }}', aberto: true,
              })" x-init="init()">
             {% include "partials/acoes_eproc.html" %}
         </div>
-        {% else %}
-        <div class="alert alert-warning text-sm">
-            Nenhum processo judicial vinculado a este PAJ (sincronize novamente para atualizar).
-        </div>
-        {% endif %}
     </div>
+    {% endif %}
 </div>
 
 <!-- Narrativa (seção retrátil) — recolhida por padrão -->
