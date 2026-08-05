@@ -553,7 +553,7 @@
         </template>
 
         <template x-if="(status === 'done' || status === 'error') && summary">
-            <div class="text-sm leading-relaxed break-words bg-base-100 p-4 rounded border border-base-300/50 prose prose-sm max-w-none whitespace-pre-wrap" x-text="summary"></div>
+            <div class="text-sm leading-relaxed break-words bg-base-100 p-4 rounded border border-base-300/50 prose prose-sm max-w-none" x-html="renderedSummary()"></div>
         </template>
 
         <template x-if="status === 'done' || status === 'error'">

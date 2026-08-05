@@ -666,7 +666,11 @@ async function abrirResumo(pajNorm) {
     try {
         const resp = await fetch('/api/elaborar/status/' + pajNorm);
         const data = await resp.json();
-        content.textContent = data.summary || '(resumo vazio — elaboração ainda não concluída?)';
+        // Resumo vem em Markdown — renderiza de verdade (lib `marked`, base.html)
+        // em vez de mostrar a sintaxe crua (##, |tabelas|, **negrito**...).
+        content.innerHTML = data.summary
+            ? marked.parse(data.summary)
+            : '<p>(resumo vazio — elaboração ainda não concluída?)</p>';
     } catch (e) {
         content.textContent = 'Erro ao carregar resumo: ' + e.message;
     }

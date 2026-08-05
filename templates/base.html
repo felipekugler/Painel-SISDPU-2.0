@@ -5,14 +5,22 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Ofício Geral{% endblock %} — DPU</title>
 
-    <!-- Tailwind + DaisyUI via CDN -->
+    <!-- Tailwind + DaisyUI via CDN. "?plugins=typography" ativa as classes
+         `prose` (tabelas, listas, headings bem formatados) — já eram usadas
+         em vários pontos do painel (Narrativa, PROMPT_MAX, resumo da
+         elaboração, Análise feita pela IA) mas ficavam inertes sem isso: o
+         Tailwind Play CDN não inclui o plugin de tipografia por padrão. -->
     <link href="https://cdn.jsdelivr.net/npm/daisyui@4.12.23/dist/full.min.css" rel="stylesheet" type="text/css" />
-    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.tailwindcss.com?plugins=typography"></script>
 
     <!-- HTMX + Alpine.js -->
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
     <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
+
+    <!-- Markdown -> HTML (respostas da IA vêm em markdown: PROMPT_MAX, resumo
+         da elaboração, Análise feita pela IA) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
 
     <style>
         /* Tema Fluent (Windows 11) — harmonizado com PAINEL COMUNICAÇÕES */
@@ -568,6 +576,49 @@
             word-break: break-word;
         }
 
+        /* Classes `prose` (plugin @tailwindcss/typography, ativado via
+           "?plugins=typography" no <script> do Tailwind acima) — usadas para
+           renderizar Markdown/HTML vindos da IA (Análise feita pela IA, Ver
+           Resumo da elaboração, Narrativa). Em vez de `.prose-invert`
+           (estático, sempre "modo escuro"), mapeamos as variáveis do próprio
+           plugin para as CSS vars já theme-aware do painel — assim o texto
+           acompanha automaticamente o tema claro/escuro/sistema, igual ao
+           resto da UI. Ver `--text`/`--stroke`/etc. mais acima neste arquivo.
+           `!important`: o Tailwind Play CDN reinjeta seu proprio stylesheet
+           em runtime (mesmo motivo documentado em `.btn-primary` acima) — sem
+           isso, a declaracao nativa do plugin (`--tw-prose-body: <cinza fixo>`
+           etc.) vence a cascata e o texto fica cinza igual em claro e escuro. */
+        .prose {
+            --tw-prose-body: var(--text) !important;
+            --tw-prose-headings: var(--text) !important;
+            --tw-prose-lead: var(--text-secondary) !important;
+            --tw-prose-links: var(--accent) !important;
+            --tw-prose-bold: var(--text) !important;
+            --tw-prose-counters: var(--text-secondary) !important;
+            --tw-prose-bullets: var(--text-tertiary) !important;
+            --tw-prose-hr: var(--stroke) !important;
+            --tw-prose-quotes: var(--text) !important;
+            --tw-prose-quote-borders: var(--stroke-strong) !important;
+            --tw-prose-captions: var(--text-tertiary) !important;
+            --tw-prose-code: var(--text) !important;
+            --tw-prose-pre-code: var(--text) !important;
+            --tw-prose-pre-bg: var(--layer-alt) !important;
+            --tw-prose-th-borders: var(--stroke-strong) !important;
+            --tw-prose-td-borders: var(--stroke) !important;
+        }
+        /* As variaveis acima cascateiam corretamente (confirmado via
+           getComputedStyle), mas o proprio `border-bottom-width` que o
+           plugin aplica em th/td fica zerado por outra regra do Tailwind com
+           prioridade — declarando explicito aqui garante a borda aparecer
+           independente dessa disputa de especificidade. */
+        .prose table { border-collapse: collapse !important; }
+        .prose thead th {
+            border-bottom: 1px solid var(--stroke-strong) !important;
+        }
+        .prose tbody td, .prose tbody tr:not(:last-child) td {
+            border-bottom: 1px solid var(--stroke) !important;
+        }
+
         /* Módulo compartilhado "Ações no SISDPU" (partials/acoes_sisdpu.html,
            static/js/acoes_sisdpu.js) — usado na Retornos e na página do PAJ.
            Centralizado aqui (em vez de duplicado por página) para as duas
@@ -854,7 +905,7 @@
             </div>
 
             <!-- Conteudo (preenchido via JS) -->
-            <div id="resumo-content" class="prose prose-sm prose-invert max-w-none whitespace-pre-wrap text-sm bg-base-300 p-4 rounded-lg max-h-[60vh] overflow-y-auto mb-4"></div>
+            <div id="resumo-content" class="prose prose-sm max-w-none text-sm bg-base-300 p-4 rounded-lg max-h-[60vh] overflow-y-auto mb-4"></div>
 
             <!-- Discordar / Corrigir -->
             <div class="collapse collapse-arrow bg-base-200 border border-base-300">

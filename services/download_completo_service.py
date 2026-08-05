@@ -553,6 +553,15 @@ def _montar_grupos(movs: list[dict], anexos: list[dict]) -> tuple[dict[int, list
     anexos reais)."""
     por_id: dict[tuple[int, str], dict] = {}
     por_nome: dict[tuple[int, str], dict] = {}
+    # Fallback SEM seq: alguns anexos (imagens coladas direto na descricao da
+    # movimentacao, sem link de download de verdade — urlDownload aponta pra
+    # pagina do tramite, nao pro arquivo) sempre baixam com id=0 sob um seq
+    # generico (na pratica, sempre "seq001"), que pode nao bater com o seq
+    # real da movimentacao dona do documento. Sem esse fallback por nome
+    # (ignorando seq), esses anexos ficam pra sempre marcados como "nao
+    # baixado" mesmo apos sincronizacoes repetidas — o arquivo ja esta' no
+    # disco, so' catalogado sob o seq errado.
+    por_nome_qualquer_seq: dict[str, dict] = {}
     for a in anexos:
         seq_a, id_a, nome_orig = _parse_anexo(a["nome"])
         if seq_a is None:
@@ -560,7 +569,9 @@ def _montar_grupos(movs: list[dict], anexos: list[dict]) -> tuple[dict[int, list
         if id_a and id_a != "0":
             por_id[(seq_a, id_a)] = a
         if nome_orig:
-            por_nome[(seq_a, nome_orig.lower())] = a
+            chave_nome = nome_orig.lower()
+            por_nome[(seq_a, chave_nome)] = a
+            por_nome_qualquer_seq.setdefault(chave_nome, a)
 
     grupos: dict[int, list[dict]] = {}
     usados: set[str] = set()
@@ -573,8 +584,15 @@ def _montar_grupos(movs: list[dict], anexos: list[dict]) -> tuple[dict[int, list
         itens = []
         for doc_meta in mov.get("documentos", []) or []:
             id_doc = _extrair_id_url(doc_meta.get("urlDownload", ""))
-            nome_doc = (doc_meta.get("nomeArquivo") or "").lower()
-            anexo = por_id.get((seq, id_doc or "")) or por_nome.get((seq, nome_doc))
+            # Extensao removida pra bater com a chave de `por_nome` (que vem
+            # do NOME DO ARQUIVO BAIXADO ja sem extensao, via `_parse_anexo`)
+            # — comparar com extensao aqui nunca dava match.
+            nome_doc = Path(doc_meta.get("nomeArquivo") or "").stem.lower()
+            anexo = (
+                por_id.get((seq, id_doc or ""))
+                or por_nome.get((seq, nome_doc))
+                or por_nome_qualquer_seq.get(nome_doc)
+            )
             if anexo:
                 usados.add(anexo["caminho"])
             descricao = (

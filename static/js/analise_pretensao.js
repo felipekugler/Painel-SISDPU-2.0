@@ -28,6 +28,20 @@ function analiseIaApp(pajNorm, tipoPadrao) {
             if (this.status === 'running') this.startPolling();
         },
 
+        // Resposta da IA vem em Markdown (títulos, tabelas, listas) — converte
+        // pra HTML (lib `marked`, carregada em base.html) pra renderizar de
+        // verdade em vez de mostrar a sintaxe crua. Combinar com a classe
+        // `prose` no elemento (ver base.html: Tailwind CDN com
+        // `?plugins=typography`) pra tabelas/listas ficarem legíveis.
+        renderedSummary() {
+            if (!this.summary) return '';
+            try {
+                return marked.parse(this.summary);
+            } catch (e) {
+                return this.summary;
+            }
+        },
+
         async fetchStatus() {
             try {
                 const r = await fetch('/api/analise-pretensao/status/' + this.pajNorm);
