@@ -10,7 +10,39 @@ from __future__ import annotations
 
 import contextlib
 import datetime as _dt
+import html as _html
 import re
+
+
+_RE_HTML_BR = re.compile(r"(?i)<\s*br\s*/?>")
+_RE_HTML_BLOCK_CLOSE = re.compile(r"(?i)</\s*(p|div|tr|li|table)\s*>")
+_RE_HTML_TAG = re.compile(r"<[^>]+>")
+
+
+def html_para_texto(texto: str) -> str:
+    """Converte HTML (como vem de campos do SISDPU: narrativa, descricao de
+    movimentacao — inclusive com tabelas aninhadas listando documentos) para
+    texto simples LEGIVEL, preservando quebras de linha (em vez de esmagar tudo
+    numa unica linha). Usado ao montar sisdpu.txt e PROMPT_MAX.md — arquivos
+    lidos pelo Claude durante a elaboracao, onde HTML bruto so' adiciona ruido
+    (tags, aspas de atributo, `&nbsp;`) sem ajudar a leitura.
+
+    Funcao PUBLICA e compartilhada (evita duplicar a mesma logica em varios
+    services — ver equivalentes privados `_html_para_texto`/`_remover_html`
+    em services/retornos_service.py, services/sat_service.py e
+    ingestao/sincronizador.py, mantidos por ora para nao alterar comportamento
+    de codigo ja em produção)."""
+    if not texto:
+        return ""
+    t = _RE_HTML_BR.sub("\n", texto)
+    t = _RE_HTML_BLOCK_CLOSE.sub("\n", t)
+    t = _RE_HTML_TAG.sub("", t)
+    t = _html.unescape(t)
+    t = t.replace("\xa0", " ")
+    t = re.sub(r"[ \t]+", " ", t)
+    t = re.sub(r" *\n *", "\n", t)
+    t = re.sub(r"\n{3,}", "\n\n", t)
+    return t.strip()
 
 
 HEADER_KEYS = {

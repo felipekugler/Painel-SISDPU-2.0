@@ -24,6 +24,7 @@ from routes.chat_livre import router as chat_livre_router
 from routes.cofre import router as cofre_router
 from routes.acoes_eproc import router as acoes_eproc_router
 from routes.acoes_sisdpu import router as acoes_sisdpu_router
+from routes.analise_pretensao import router as analise_pretensao_router
 from routes.configuracoes import router as configuracoes_router
 from routes.dashboard import router as dashboard_router
 from routes.docgen import router as docgen_router
@@ -70,7 +71,7 @@ _configurar_logging()
 # Versao do painel — fonte unica. Usada pelo FastAPI (OpenAPI/docs) e tambem
 # exposta a todos os templates via Jinja globals (renderizada no rodape da
 # sidebar). Para incrementar: mude aqui e so aqui.
-APP_VERSION = "0.3.36"
+APP_VERSION = "0.3.38"
 
 app = FastAPI(title="oficio-geral-ui", version=APP_VERSION)
 app.state.jinja = jinja2.Environment(
@@ -151,13 +152,27 @@ def _oficio_sigla(valor) -> str:
         return valor or ""
 
 
+def _tipo_analise_pretensao(valor) -> str:
+    """Pretensão do PAJ -> tipo de skill de diagnóstico cabível ('bpc', ...),
+    ou '' se nenhuma. Usado pela página do PAJ para decidir se mostra o botão
+    'Analisar PAJ de <tipo>'. Tolerante a falhas."""
+    try:
+        from services.analise_pretensao_service import tipo_aplicavel
+
+        return tipo_aplicavel(valor)
+    except Exception:
+        return ""
+
+
 app.state.jinja.filters["formatar_area"] = _formatar_area
 app.state.jinja.filters["data_br"] = _data_br
 app.state.jinja.filters["data_hora_br"] = _data_hora_br
 app.state.jinja.filters["oficio_sigla"] = _oficio_sigla
+app.state.jinja.filters["tipo_analise_pretensao"] = _tipo_analise_pretensao
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 app.include_router(acoes_eproc_router)
 app.include_router(acoes_sisdpu_router)
+app.include_router(analise_pretensao_router)
 app.include_router(dashboard_router)
 app.include_router(paj_router)
 app.include_router(files_router)

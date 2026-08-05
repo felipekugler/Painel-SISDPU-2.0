@@ -13,6 +13,7 @@ import json
 from pathlib import Path
 
 from config import PAJS_DIR
+from ingestao import parser
 from services import historico
 
 
@@ -159,7 +160,10 @@ def gerar_prompt_max(paj_norm: str) -> Path | None:
         )
         for mov in movs_ord[:MAX_MOVIMENTACOES_RESUMO]:
             data = mov.get("data_original") or mov.get("data") or "?"
-            descr = (mov.get("descricao") or "").strip()
+            # descricao vem em HTML do SISDPU (as vezes com tabela aninhada
+            # listando documentos) — convertida para texto simples, senao o
+            # Claude le tags/atributos brutos em vez de conteudo legivel.
+            descr = parser.html_para_texto((mov.get("descricao") or "").strip())
             if len(descr) > 400:
                 descr = descr[:400].rstrip() + "..."
                 truncou_alguma = True
@@ -232,7 +236,12 @@ def gerar_prompt_max(paj_norm: str) -> Path | None:
     partes.append("")
     partes.append("## Texto completo do SISDPU")
     partes.append("")
-    partes.append(sisdpu_texto.strip() or "(sem texto de SISDPU)")
+    # Rede de seguranca: sisdpu.txt de PAJs sincronizados ANTES da correcao em
+    # ingestao/sincronizador.py ainda tem HTML bruto embutido nas descricoes de
+    # movimentacao (a geracao antiga nao limpava). Passar por html_para_texto
+    # aqui e' inofensivo pro texto que ja esta limpo (sem tags, so' normaliza
+    # espacos) e corrige o residual sem depender de uma nova sincronizacao.
+    partes.append(parser.html_para_texto(sisdpu_texto) or "(sem texto de SISDPU)")
     partes.append("")
     partes.append("---")
     partes.append("")

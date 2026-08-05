@@ -4,6 +4,7 @@
 {% block content %}
 {% set meta = dados.metadata %}
 {% set det = meta.detalhes_sisdpu or {} %}
+{% set tipo_pretensao_ia = (meta.pretensaopura or meta.classificacao or '') | tipo_analise_pretensao %}
 
 {# Snapshot da visita anterior (pra highlight) + auto-marca como visto AGORA.
    Roda inline antes do DOM render pra capturar o estado anterior do localStorage,
@@ -452,6 +453,32 @@
             Ações no e-proc
         </button>
         {% endif %}
+
+        <!-- Analisar PAJ de BPC: dispara o diagnóstico (skill /SISDPU-AnalisarPAJ-BPC)
+             na seção "Análise feita pela IA" abaixo. Só aparece quando a pretensão
+             do PAJ é BPC/LOAS (filtro tipo_analise_pretensao). -->
+        {% if tipo_pretensao_ia == 'bpc' %}
+        <button type="button"
+                onclick="document.getElementById('analise-ia-checkbox').checked = true;
+                         document.getElementById('secao-analise-ia').scrollIntoView({behavior:'smooth'});
+                         window.dispatchEvent(new CustomEvent('iniciar-analise-ia', {detail:{tipo:'bpc'}}));"
+                class="btn btn-sm btn-outline btn-warning gap-1.5"
+                title="Diagnostica o caso de BPC/LOAS aplicando o playbook de teses (skill /SISDPU-AnalisarPAJ-BPC)">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.3-4.3m1.8-5.7a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"></path></svg>
+            Analisar PAJ de BPC
+        </button>
+        {% endif %}
+
+        <!-- Organizar Documentos para Ajuizamento (skill /SISDPU-OrganizarArquivos):
+             habilitado só depois que uma petição inicial existir na pasta do PAJ. -->
+        <button type="button"
+                onclick="organizarAjuizamento('{{ paj_norm }}', this)"
+                class="btn btn-sm btn-outline gap-1.5"
+                {% if not dados.tem_peticao_inicial %}disabled{% endif %}
+                title="{% if dados.tem_peticao_inicial %}{% if dados.tem_pasta_ajuizamento %}Reorganiza{% else %}Organiza{% endif %} os documentos deste PAJ numa subpasta 'Ajuizamento', prontos para peticionamento (skill /SISDPU-OrganizarArquivos){% else %}Disponível depois que uma petição inicial for gerada para este PAJ{% endif %}">
+            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0v6a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-6m-19.5 0h19.5M5.25 9.75V6a2.25 2.25 0 0 1 2.25-2.25h4.5a2.25 2.25 0 0 1 1.591.659l1.409 1.409a2.25 2.25 0 0 0 1.591.659H18a2.25 2.25 0 0 1 2.25 2.25v3.75"></path></svg>
+            Organizar Documentos para Ajuizamento
+        </button>
     </div>
 
     <!-- Console "Ações no SISDPU" (movimentar/tramitar/concluir) — oculto até clicar no botão acima -->
@@ -485,6 +512,75 @@
     </div>
     {% endif %}
 </div>
+
+{% if tipo_pretensao_ia %}
+<!-- Análise feita pela IA (diagnóstico por pretensão + reenvio p/ ajuste ou
+     pedido de petição inicial) — recolhida por padrão, exceto quando o botão
+     "Analisar PAJ de <tipo>" da barra de ações a abre/dispara. -->
+<div id="secao-analise-ia" class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg mb-4"
+     x-data="analiseIaApp('{{ paj_norm }}', '{{ tipo_pretensao_ia }}')" x-init="init()"
+     @iniciar-analise-ia.window="iniciar($event.detail && $event.detail.tipo)">
+    <input type="checkbox" id="analise-ia-checkbox" aria-label="Expandir/recolher Análise feita pela IA" />
+    <div class="collapse-title text-lg font-semibold flex items-center gap-2">
+        Análise feita pela IA
+        <span class="badge badge-sm"
+              :class="{
+                  'badge-warning': status === 'running',
+                  'badge-success': status === 'done',
+                  'badge-error': status === 'error',
+                  'badge-ghost': status === 'idle',
+              }"
+              x-text="status === 'running' ? 'em andamento' : (status === 'done' ? 'concluída' : (status === 'error' ? 'erro' : 'não iniciada'))"></span>
+    </div>
+    <div class="collapse-content">
+        <template x-if="status === 'idle'">
+            <div class="alert text-sm">
+                Nenhuma análise realizada ainda. Clique em
+                <strong>"Analisar PAJ de {{ tipo_pretensao_ia|upper }}"</strong> na barra de ações
+                para diagnosticar este caso.
+            </div>
+        </template>
+
+        <template x-if="status === 'running'">
+            <div class="flex items-center gap-2 text-sm text-base-content/70 py-4">
+                <span class="loading loading-spinner loading-sm"></span>
+                <span x-text="lastAction || 'processando…'"></span>
+            </div>
+        </template>
+
+        <template x-if="status === 'error' && error">
+            <div class="alert alert-error text-sm mb-3" x-text="error"></div>
+        </template>
+
+        <template x-if="(status === 'done' || status === 'error') && summary">
+            <div class="text-sm leading-relaxed break-words bg-base-100 p-4 rounded border border-base-300/50 prose prose-sm max-w-none whitespace-pre-wrap" x-text="summary"></div>
+        </template>
+
+        <template x-if="status === 'done' || status === 'error'">
+            <div class="mt-4 pt-4 border-t border-base-300">
+                <label class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1 block">
+                    Reenviar para a IA
+                </label>
+                <p class="text-xs text-base-content/40 mb-2">
+                    Peça um ajuste no diagnóstico, ou peça a redação da petição inicial —
+                    a conversa continua com todo o contexto já analisado.
+                </p>
+                <textarea class="textarea textarea-bordered w-full text-sm" rows="3"
+                          x-model="mensagemReenvio"
+                          placeholder="Ex: reconsidere o cenário C1, o INSS negou por cadastro desatualizado, não por renda. / Redija a petição inicial."
+                          :disabled="enviando || status === 'running'"></textarea>
+                <div class="flex justify-end mt-2">
+                    <button type="button" class="btn btn-sm btn-primary" @click="enviarReenvio()"
+                            :disabled="enviando || status === 'running'">
+                        <span x-show="enviando" class="loading loading-spinner loading-xs"></span>
+                        Enviar
+                    </button>
+                </div>
+            </div>
+        </template>
+    </div>
+</div>
+{% endif %}
 
 <!-- Narrativa (seção retrátil) — recolhida por padrão -->
 <div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg mb-4">
@@ -1038,6 +1134,59 @@ async function baixarArquivosSat(pajNorm, btn) {
             btn.innerHTML = htmlOrig;
         }
     }
+}
+
+// Botão "Organizar Documentos para Ajuizamento": chama a skill (script
+// determinístico) organizar_ajuizamento.py sobre a pasta deste PAJ. Se a pasta
+// Ajuizamento já existir, pede confirmação antes de sobrescrever (mesma regra
+// da própria skill). Faz polling do status até concluir e recarrega a página.
+async function organizarAjuizamento(pajNorm, btn) {
+    if (btn) btn.disabled = true;
+    try {
+        let resp = await fetch('/api/organizar-ajuizamento/' + pajNorm, { method: 'POST' });
+        let data = await resp.json().catch(() => ({}));
+        if (!data.ok && data.precisa_confirmar) {
+            const ok = confirm('A pasta "Ajuizamento" já existe para este PAJ. Reorganizar e sobrescrever?');
+            if (!ok) {
+                if (btn) btn.disabled = false;
+                return;
+            }
+            resp = await fetch('/api/organizar-ajuizamento/' + pajNorm, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ forcar: true }),
+            });
+            data = await resp.json().catch(() => ({}));
+        }
+        if (!data.ok) {
+            showToast('Erro: ' + (data.erro || 'falha ao organizar'), 'error');
+            if (btn) btn.disabled = false;
+            return;
+        }
+        showToast('Organizando documentos — isso pode levar alguns minutos (OCR)…', 'info');
+        _pollOrganizarAjuizamento(pajNorm, btn);
+    } catch (e) {
+        showToast('Falha de rede: ' + e, 'error');
+        if (btn) btn.disabled = false;
+    }
+}
+
+function _pollOrganizarAjuizamento(pajNorm, btn) {
+    const timer = setInterval(async () => {
+        try {
+            const r = await fetch('/api/organizar-ajuizamento/status/' + pajNorm);
+            const d = await r.json();
+            if (d.status === 'done') {
+                clearInterval(timer);
+                showToast('Documentos organizados em "Ajuizamento" — recarregando…', 'success');
+                setTimeout(() => window.location.reload(), 1200);
+            } else if (d.status === 'error') {
+                clearInterval(timer);
+                showToast('Erro ao organizar: ' + (d.error || 'ver log no servidor'), 'error');
+                if (btn) btn.disabled = false;
+            }
+        } catch (e) { /* falha transitória de rede — próximo tick tenta de novo */ }
+    }, 3000);
 }
 
 // "Baixar todos" (seção Anexos SISDPU): baixa todos os documentos referenciados

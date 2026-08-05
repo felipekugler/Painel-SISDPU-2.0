@@ -42,6 +42,8 @@ IGNORAR = {
     "historico.jsonl",
     "sisdpu.txt",
     "NOTAS.md",
+    "analise_pretensao.json",
+    "organizar_ajuizamento.json",
 }
 
 PREFIXOS_DESPACHO = ("despacho",)
@@ -304,6 +306,15 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
             "concluido_em": _ler_concluido_em(metadata) if esta_concluido else "",
             "sync_incompleto": bool(metadata.get("sync_incompleto", False)),
             "sync_incompleto_motivo": metadata.get("sync_incompleto_motivo", ""),
+            # Coluna "Análise" do dashboard — SIM se o diagnostico por
+            # pretensao (BPC/BI) foi concluido dentro do painel
+            # (analise_pretensao.json com status "done", vide
+            # analise_pretensao_service). So conta o que roda pelo painel —
+            # analise gerada por fora (skill manual) nao entra aqui.
+            "tem_analise_ia": bool(
+                isinstance(_ap := _ler_json(pasta / "analise_pretensao.json"), dict)
+                and _ap.get("status") == "done"
+            ),
             # Estado atual usado pelo frontend pra detectar novidades desde a
             # ultima visita (snapshot guardado em localStorage). Vide
             # static/js/app.js -> calcularNovidades().
@@ -375,6 +386,29 @@ def ler_paj(paj_norm: str) -> dict | None:
         else:
             pecas_judiciais.append(item)
 
+    # Subpasta "Peças IA": petições/peças geradas pela análise de pretensão
+    # (services/analise_pretensao_service.py — skills de diagnóstico BPC/BI) são
+    # salvas aqui, separadas dos demais arquivos da raiz. Entram na MESMA aba
+    # "Peças" da página do PAJ — caminho relativo prefixado com a subpasta,
+    # mesmo padrão de `Arquivos/` (anexos_sisdpu, abaixo).
+    pasta_pecas_ia = pasta / "Peças IA"
+    if pasta_pecas_ia.exists() and pasta_pecas_ia.is_dir():
+        for f in sorted(pasta_pecas_ia.iterdir()):
+            if not f.is_file() or f.name in IGNORAR:
+                continue
+            item = {
+                "nome": f.name,
+                "caminho": f"Peças IA/{f.name}",
+                "tipo": f.suffix.lstrip(".").lower(),
+                "tamanho": f.stat().st_size,
+                "modificado": f.stat().st_mtime,
+            }
+            nome_norm = _normalizar(f.name)
+            if nome_norm.startswith(PREFIXOS_DESPACHO):
+                despachos.append(item)
+            else:
+                pecas_judiciais.append(item)
+
     det = metadata.get("detalhes_sisdpu", {}) or {}
     movs = det.get("movimentacoes", []) or []
     movs_sorted = sorted(movs, key=lambda m: int(m.get("seq", 0) or 0))
@@ -443,6 +477,19 @@ def ler_paj(paj_norm: str) -> dict | None:
     except Exception:  # noqa: BLE001
         processos_judiciais = []
 
+    # Flags para o botão "Organizar Documentos para Ajuizamento" (habilita só
+    # depois que uma petição inicial existir na pasta do PAJ).
+    try:
+        from services.organizar_ajuizamento_service import (
+            pasta_ajuizamento_existe,
+            tem_peticao_inicial,
+        )
+        _tem_peticao = tem_peticao_inicial(paj_norm)
+        _tem_ajuizamento = pasta_ajuizamento_existe(paj_norm)
+    except Exception:  # noqa: BLE001
+        _tem_peticao = False
+        _tem_ajuizamento = False
+
     return {
         "metadata": metadata,
         "narrativa": narrativa,
@@ -462,6 +509,8 @@ def ler_paj(paj_norm: str) -> dict | None:
         "id_processo": id_processo,
         "id_tramite": id_tramite,
         "processos_judiciais": processos_judiciais,
+        "tem_peticao_inicial": _tem_peticao,
+        "tem_pasta_ajuizamento": _tem_ajuizamento,
         "pasta": str(pasta),
     }
 

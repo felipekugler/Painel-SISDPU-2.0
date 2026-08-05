@@ -1122,6 +1122,66 @@ def _reconciliar_concluidos(
     return concluidos
 
 
+async def atualizar_caixa(log_callback: Callable[[str], None]) -> dict:
+    """Reconciliacao RAPIDA: le so' a listagem da caixa de entrada (1 pagina,
+    sem abrir cada PAJ) e marca `em_caixa_atual=False` para os PAJs ja
+    sincronizados em disco que nao aparecem mais nela — mesma reconciliacao
+    de `rodar()`, mas sem o custo de visitar PAJ por PAJ.
+
+    Usado pelo botao "Atualizar" do dashboard: NAO adiciona PAJs novos (isso
+    continua sendo papel do "Sincronizar caixa" completo) — so' remove da
+    lista quem saiu. Os dados/anexos ja baixados sao preservados (exceto pela
+    limpeza automatica de anexos binarios que ja acontece em qualquer
+    transicao ativo->concluido, igual ao sync completo).
+
+    Retorna {"ok": bool, "total_caixa": int, "removidos": int, "mensagem": str}.
+    """
+
+    def log(msg: str) -> None:
+        with contextlib.suppress(Exception):
+            log_callback(msg)
+
+    log("[atualizar] abrindo caixa de entrada...")
+    try:
+        data = await sisdpu_client.caixa_de_entrada()
+    except Exception as e:
+        log(f"[FATAL] falha ao abrir caixa: {type(e).__name__}: {e}")
+        with contextlib.suppress(Exception):
+            await sisdpu_client.fechar()
+        return {
+            "ok": False,
+            "total_caixa": 0,
+            "removidos": 0,
+            "mensagem": f"falha ao abrir caixa: {e}",
+        }
+
+    itens_raw = data.get("itens_tabela", []) or []
+    pajs_na_caixa: set[str] = set()
+    for raw in itens_raw:
+        it = sisdpu_client.parse_item_caixa(raw)
+        if it and it.get("paj"):
+            pajs_na_caixa.add(_normalizar_paj(it["paj"]))
+
+    log(f"[atualizar] caixa: {len(pajs_na_caixa)} PAJs")
+
+    with contextlib.suppress(Exception):
+        await sisdpu_client.fechar()
+
+    log("[atualizar] reconciliando PAJs que saíram da caixa...")
+    removidos = _reconciliar_concluidos(pajs_na_caixa, log)
+    if removidos:
+        log(f"[atualizar] {removidos} PAJ(s) saíram da caixa e foram removidos do dashboard")
+    else:
+        log("[atualizar] nenhum PAJ saiu da caixa — tudo em dia")
+
+    return {
+        "ok": True,
+        "total_caixa": len(pajs_na_caixa),
+        "removidos": removidos,
+        "mensagem": "",
+    }
+
+
 async def rodar(
     log_callback: Callable[[str], None],
     deve_cancelar: Callable[[], bool] | None = None,

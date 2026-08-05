@@ -9,6 +9,7 @@ from fastapi.responses import JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 from services.sync_service import (
+    atualizar_caixa,
     esta_rodando,
     rodar_sync,
     rodar_sync_paj,
@@ -122,6 +123,19 @@ async def sync_baixar_documentos(paj_norm: str, ids: str = ""):
     if not lista_ids:
         return JSONResponse({"erro": "parametro 'ids' obrigatorio"}, status_code=400)
     return EventSourceResponse(_stream_baixar_documentos(paj_norm, lista_ids))
+
+
+@router.post("/sync/atualizar-caixa")
+async def sync_atualizar_caixa():
+    """Le a caixa de entrada (rapido — 1 pagina, sem abrir cada PAJ) e remove
+    do dashboard os PAJs ja sincronizados que saíram dela.
+
+    Diferente de /api/sync: NAO processa PAJs novos, so' reconcilia quem
+    saiu. Usado pelo botao "Atualizar" do dashboard. Sem SSE — responde
+    direto com o resultado (poucos segundos).
+    """
+    resultado = await atualizar_caixa()
+    return JSONResponse(resultado)
 
 
 @router.post("/sync/cancel")

@@ -255,6 +255,35 @@ function sincronizarCaixa(baixarAnexos) {
     };
 }
 
+/* Atualizar caixa — reconciliacao rapida (1 pagina, sem abrir cada PAJ):
+ * remove do dashboard os PAJs ja sincronizados que saíram da caixa de
+ * entrada. NAO adiciona PAJs novos — isso continua sendo papel do
+ * "Sincronizar caixa" completo. Sem modal/SSE — endpoint responde direto. */
+function atualizarCaixa() {
+    const btn = document.getElementById('atualizar-caixa-btn');
+    if (btn) { btn.disabled = true; }
+    showToast('Verificando caixa de entrada...', 'info');
+
+    fetch('/api/sync/atualizar-caixa', { method: 'POST' })
+        .then(function(r) { return r.json(); })
+        .then(function(d) {
+            if (!d.ok) {
+                showToast('Erro ao atualizar: ' + (d.mensagem || 'falha desconhecida'), 'error');
+                return;
+            }
+            if (d.removidos > 0) {
+                showToast(d.removidos + ' PAJ(s) saíram da caixa e foram removidos do dashboard', 'success');
+                window.location.reload();
+            } else {
+                showToast('Nenhum PAJ saiu da caixa — tudo em dia', 'info');
+            }
+        })
+        .catch(function(e) { showToast('Falha de rede: ' + e.message, 'error'); })
+        .finally(function() {
+            if (btn) { btn.disabled = false; }
+        });
+}
+
 /* Sincronizacao da watchlist inteira — mesmo modal, endpoint /api/sync/watchlist.
  * Itera todos os PAJs ativos via busca global do SIS-DPU (nao depende deles
  * estarem na caixa de entrada). */

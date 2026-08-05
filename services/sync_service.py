@@ -214,6 +214,68 @@ async def rodar_sync_watchlist(
         yield linha
 
 
+async def atualizar_caixa() -> dict:
+    """Verifica a caixa de entrada e remove do dashboard os PAJs que saíram
+    dela — sem reabrir cada PAJ (bem mais rápido que `rodar_sync`).
+
+    Reusa o lock global das demais syncs (compartilham o browser Playwright).
+    Sem SSE — e' uma operacao curta (poucos segundos, 1 pagina) que retorna
+    o resultado direto.
+
+    Retorna {ok, total_caixa, removidos, mensagem, log}.
+    """
+    if _sync_lock.locked():
+        return {
+            "ok": False,
+            "total_caixa": 0,
+            "removidos": 0,
+            "mensagem": "já existe uma sincronização em andamento — tente novamente em alguns segundos",
+            "log": [],
+        }
+    if not SISDPU_USERNAME or not SISDPU_PASSWORD:
+        return {
+            "ok": False,
+            "total_caixa": 0,
+            "removidos": 0,
+            "mensagem": "credenciais SISDPU ausentes — preencha SISDPU_USERNAME/SISDPU_PASSWORD no .env",
+            "log": [],
+        }
+
+    logs: list[str] = []
+
+    async with _sync_lock:
+        try:
+            resultado = await asyncio.wait_for(
+                sincronizador.atualizar_caixa(logs.append),
+                timeout=60,
+            )
+        except TimeoutError:
+            resultado = {
+                "ok": False,
+                "total_caixa": 0,
+                "removidos": 0,
+                "mensagem": "timeout de 60s atingido ao abrir a caixa",
+            }
+        except CredenciaisInvalidas as e:
+            resultado = {
+                "ok": False,
+                "total_caixa": 0,
+                "removidos": 0,
+                "mensagem": f"credenciais SISDPU rejeitadas: {e}",
+            }
+        except Exception as e:
+            resultado = {
+                "ok": False,
+                "total_caixa": 0,
+                "removidos": 0,
+                "mensagem": f"erro inesperado: {type(e).__name__}: {e}",
+            }
+        finally:
+            invalidar_cache_listagem()
+        resultado["log"] = logs
+        return resultado
+
+
 async def buscar_resumo_paj(paj_identificador: str) -> dict:
     """Versao leve da sincronizacao: busca um PAJ via campo de pesquisa do
     SIS-DPU e grava apenas o metadata.json com dados de cabecalho. Sem SSE —
