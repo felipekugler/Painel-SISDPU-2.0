@@ -298,6 +298,124 @@ def set_sisdpu_prefs(d: dict) -> dict:
     return get_sisdpu_prefs()
 
 
+def get_eproc_eventos_prefs() -> dict:
+    """Lista de eventos do e-proc — importada (ao vivo, por processo de referência) +
+    favoritos (dropdown) + frequentes (badges) para a seção "Ações no Eproc"."""
+    raw = _ler_raw()
+    return {
+        "eventos_todos": _lst(raw, "eproc_eventos_todos"),
+        "eventos_favoritos": _lst(raw, "eproc_eventos_favoritos"),
+        "eventos_frequentes": _lst(raw, "eproc_eventos_frequentes"),
+        "evento_padrao": str(raw.get("eproc_evento_padrao") or ""),
+        "processo_referencia": str(raw.get("eproc_processo_referencia") or ""),
+    }
+
+
+def set_eproc_eventos_todos(eventos: list[str], processo_referencia: str = "") -> dict:
+    """Grava a lista COMPLETA de eventos importada do e-proc (mantém a curadoria
+    existente, só descartando favoritos/frequentes que sumiram da lista nova)."""
+    raw = _ler_raw()
+    eventos = [str(x) for x in (eventos or [])]
+    raw["eproc_eventos_todos"] = eventos
+    if processo_referencia:
+        raw["eproc_processo_referencia"] = str(processo_referencia)
+    for k in ("eproc_eventos_favoritos", "eproc_eventos_frequentes"):
+        if isinstance(raw.get(k), list) and eventos:
+            raw[k] = [x for x in _lst(raw, k) if x in eventos]
+    _salvar_raw(raw)
+    return get_eproc_eventos_prefs()
+
+
+def set_eproc_eventos_prefs(d: dict) -> dict:
+    """Grava a curadoria (favoritos/frequentes/padrão) presente em `d`."""
+    raw = _ler_raw()
+    for chave in ("eventos_favoritos", "eventos_frequentes"):
+        if chave in d and isinstance(d[chave], list):
+            raw["eproc_" + chave] = [str(x) for x in d[chave]]
+    if "evento_padrao" in d:
+        raw["eproc_evento_padrao"] = str(d.get("evento_padrao") or "")
+    _salvar_raw(raw)
+    return get_eproc_eventos_prefs()
+
+
+def get_eproc_tipos_doc_prefs() -> dict:
+    """Lista de tipos de documento do e-proc — importada + favoritos (dropdown) +
+    frequentes (badges), usada para classificar cada anexo antes de peticionar."""
+    raw = _ler_raw()
+    return {
+        "tipos_todos": _lst(raw, "eproc_tipos_doc_todos"),
+        "tipos_favoritos": _lst(raw, "eproc_tipos_doc_favoritos"),
+        "tipos_frequentes": _lst(raw, "eproc_tipos_doc_frequentes"),
+        "tipo_padrao": str(raw.get("eproc_tipo_doc_padrao") or ""),
+        "processo_referencia": str(raw.get("eproc_processo_referencia") or ""),
+    }
+
+
+def set_eproc_tipos_doc_todos(tipos: list[str], processo_referencia: str = "") -> dict:
+    """Grava a lista COMPLETA de tipos de documento importada do e-proc (mantém a
+    curadoria existente, só descartando favoritos/frequentes que sumiram da lista nova)."""
+    raw = _ler_raw()
+    tipos = [str(x) for x in (tipos or [])]
+    raw["eproc_tipos_doc_todos"] = tipos
+    if processo_referencia:
+        raw["eproc_processo_referencia"] = str(processo_referencia)
+    for k in ("eproc_tipos_doc_favoritos", "eproc_tipos_doc_frequentes"):
+        if isinstance(raw.get(k), list) and tipos:
+            raw[k] = [x for x in _lst(raw, k) if x in tipos]
+    _salvar_raw(raw)
+    return get_eproc_tipos_doc_prefs()
+
+
+def set_eproc_tipos_doc_prefs(d: dict) -> dict:
+    """Grava a curadoria (favoritos/frequentes/padrão) presente em `d`."""
+    raw = _ler_raw()
+    mapa_chaves = {"tipos_favoritos": "eproc_tipos_doc_favoritos",
+                   "tipos_frequentes": "eproc_tipos_doc_frequentes"}
+    for chave, chave_raw in mapa_chaves.items():
+        if chave in d and isinstance(d[chave], list):
+            raw[chave_raw] = [str(x) for x in d[chave]]
+    if "tipo_padrao" in d:
+        raw["eproc_tipo_doc_padrao"] = str(d.get("tipo_padrao") or "")
+    _salvar_raw(raw)
+    return get_eproc_tipos_doc_prefs()
+
+
+# Sigilo por documento: lista curta e estável (3 níveis no e-proc) — sem
+# favoritos/frequentes (não faz sentido "curar" 3 itens), só a lista importada +
+# o valor padrão de cada novo anexo (usuário pediu "Sem Sigilo" como padrão).
+def get_eproc_sigilo_prefs() -> dict:
+    raw = _ler_raw()
+    return {
+        "sigilos_todos": _lst(raw, "eproc_sigilos_todos"),
+        "sigilo_padrao": str(raw.get("eproc_sigilo_padrao") or ""),
+    }
+
+
+def set_eproc_sigilo_padrao(valor: str) -> dict:
+    """Grava o nível de sigilo padrão para novos anexos (usuário escolhe em Configurações)."""
+    raw = _ler_raw()
+    raw["eproc_sigilo_padrao"] = str(valor or "")
+    _salvar_raw(raw)
+    return get_eproc_sigilo_prefs()
+
+
+def set_eproc_sigilos_todos(sigilos: list[str], processo_referencia: str = "") -> dict:
+    """Grava a lista importada do e-proc. Se ainda não houver padrão definido (ou o
+    padrão salvo sumiu da lista nova), escolhe automaticamente o item que contém
+    "sem sigilo" (ou o primeiro da lista, se nenhum casar)."""
+    raw = _ler_raw()
+    sigilos = [str(x) for x in (sigilos or [])]
+    raw["eproc_sigilos_todos"] = sigilos
+    if processo_referencia:
+        raw["eproc_processo_referencia"] = str(processo_referencia)
+    padrao_atual = str(raw.get("eproc_sigilo_padrao") or "")
+    if sigilos and padrao_atual not in sigilos:
+        sem_sigilo = next((s for s in sigilos if "sem sigilo" in s.lower()), sigilos[0])
+        raw["eproc_sigilo_padrao"] = sem_sigilo
+    _salvar_raw(raw)
+    return get_eproc_sigilo_prefs()
+
+
 # --- Tabela de Ofícios: nome completo -> SIGLA (padronização de exibição) ---
 # Exibida no lugar do nome completo do ofício em todo o painel (dashboard, PAJ,
 # Retornos). Editável na aba SISDPU das Configurações. O casamento nome->sigla é

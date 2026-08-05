@@ -206,59 +206,22 @@
                                             </button>
                                         </div>
                                     </div>
-                                    <!-- Console de Ações: movimentar → tramitar → concluir -->
-                                    <div class="ret-acoes mx-2 mb-2 p-3">
-                                        <div class="ret-card-label mb-3">Ações — executar despacho</div>
-                                        <div class="flex flex-col gap-3 text-[12.5px]">
-                                            <!-- Movimentar -->
-                                            <div class="ret-acao-bloco">
-                                                <div class="ret-acao-titulo">Movimentar</div>
-                                                <div class="flex items-center gap-2 flex-wrap">
-                                                    <select class="select select-bordered select-sm min-w-[18rem]" x-model="r._fase">
-                                                        <option value="">Sem movimentação</option>
-                                                        <template x-for="f in fasesDropdown()" :key="f"><option :value="f" x-text="f"></option></template>
-                                                    </select>
-                                                    <template x-for="f in fasesFreq" :key="f">
-                                                        <button class="btn btn-xs" :class="r._fase===f ? 'btn-primary' : 'btn-outline'" @click="r._fase=f" x-text="f"></button>
-                                                    </template>
-                                                    <span x-show="!fasesDropdown().length" class="text-[11px] text-base-content/50">configure em Configurações › SISDPU</span>
-                                                </div>
-                                            </div>
-                                            <!-- Tramitar -->
-                                            <div class="ret-acao-bloco">
-                                                <div class="ret-acao-titulo">Tramitar</div>
-                                                <div class="flex items-center gap-2 flex-wrap">
-                                                    <select class="select select-bordered select-sm min-w-[18rem]" x-model="r._grupo">
-                                                        <option value="">Sem tramitação</option>
-                                                        <template x-for="c in caixasDropdown()" :key="c"><option :value="c" x-text="c"></option></template>
-                                                    </select>
-                                                    <template x-for="c in caixasFreq" :key="c">
-                                                        <button class="btn btn-xs" :class="r._grupo===c ? 'btn-primary' : 'btn-outline'" @click="r._grupo=c" x-text="c"></button>
-                                                    </template>
-                                                </div>
-                                                <div class="flex items-center gap-2 flex-wrap mt-2" x-show="r._grupo">
-                                                    <span class="text-[11px] text-base-content/60 mr-1">Prazo:</span>
-                                                    <template x-for="p in [0,5,10,15,30]" :key="p">
-                                                        <button class="btn btn-xs" :class="(!r._prazoData && r._prazo===p) ? 'btn-primary' : 'btn-outline'" @click="r._prazo=p; r._prazoData=''" x-text="p===0 ? 'Sem prazo' : (p + ' dias')"></button>
-                                                    </template>
-                                                    <span class="text-[11px] text-base-content/60 ml-1">ou data:</span>
-                                                    <input type="date" class="input input-bordered input-xs w-36"
-                                                           :class="r._prazoData ? 'border-primary' : ''"
-                                                           x-model="r._prazoData" @change="if (r._prazoData) r._prazo = -1">
-                                                </div>
-                                            </div>
-                                            <!-- Concluir + Executar (última linha) -->
-                                            <div class="flex items-center gap-2 flex-wrap pt-2 border-t border-base-300">
-                                                <span class="font-medium">Concluir trâmite:</span>
-                                                <button class="btn btn-xs" :class="r._concluir ? 'btn-primary' : 'btn-outline'" @click="r._concluir=true">Sim</button>
-                                                <button class="btn btn-xs" :class="!r._concluir ? 'btn-primary' : 'btn-outline'" @click="r._concluir=false">Não</button>
-                                                <span class="text-[11px] text-base-content/50">(retira o PAJ da caixa)</span>
-                                                <button class="btn btn-sm btn-success ml-auto ret-btn-exec" @click="executar(r)" :disabled="(!r._fase && !r._grupo && !r._concluir) || r._exec">
-                                                    <span x-show="r._exec" class="loading loading-spinner loading-xs"></span>
-                                                    Executar
-                                                </button>
-                                            </div>
-                                        </div>
+                                    <!-- Ações no SISDPU (módulo reutilizável — static/js/acoes_sisdpu.js) -->
+                                    <div class="mx-2 mb-2"
+                                         x-data="acoesSisdpuBlock({
+                                             idProcesso: r.id_processo, paj: r.paj, idTramite: r.id_tramite,
+                                             getDescricao: () => r._sug,
+                                             onExecutado: () => carregarLista(),
+                                         })" x-init="init()">
+                                        {% include "partials/acoes_sisdpu.html" %}
+                                    </div>
+                                    <!-- Ações no Eproc (módulo reutilizável — static/js/acoes_eproc.js) -->
+                                    <div class="mx-2 mb-2"
+                                         x-data="acoesEprocBlock({
+                                             processos: r.processos_judiciais || [],
+                                             paj: r.paj, pajNorm: r.paj_norm,
+                                         })" x-init="init()">
+                                        {% include "partials/acoes_eproc.html" %}
                                     </div>
                                 </td>
                             </tr>
@@ -352,26 +315,10 @@
 :root[data-theme="dark"] .ret-block-head.grp-conclusao { color: #4ade80; }
 :root[data-theme="dark"] .ret-block-head .ret-block-count { background: rgba(255,255,255,0.12); }
 
-/* Console de Ações */
-.ret-acoes {
-    background: var(--surface, rgba(0,0,0,0.02));
-    border: 1px solid var(--border, rgba(0,0,0,0.08));
-    border-radius: 8px;
-}
+/* Console de Ações — .ret-acoes/.ret-card-label/.ret-caret/.ret-acao-bloco/
+   .ret-acao-titulo/.ret-btn-exec agora vivem em base.html (compartilhados
+   com a página do PAJ, que também inclui partials/acoes_sisdpu.html). */
 .ret-acoes-lbl { min-width: 8.5rem; font-weight: 600; color: var(--text-secondary, rgba(0,0,0,0.55)); }
-.ret-acao-bloco {
-    padding: 8px 10px; border-radius: 8px;
-    background: var(--card, rgba(255,255,255,0.5));
-    border: 1px solid var(--border, rgba(0,0,0,0.06));
-}
-.ret-acao-titulo {
-    font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
-    color: var(--accent, #005FB8); margin-bottom: 6px;
-}
-/* Botão Executar em verde (independe dos overrides de tema do btn-primary) */
-.ret-btn-exec { background-color: #1f9d55 !important; border-color: #1f9d55 !important; color: #fff !important; }
-.ret-btn-exec:hover:not(:disabled) { background-color: #18864a !important; border-color: #18864a !important; }
-.ret-btn-exec:disabled { opacity: .6; }
 .ret-caixas {
     background: var(--accent-soft, rgba(0,95,184,0.08));
     border: 1px solid var(--border, rgba(0,0,0,0.08));
@@ -391,34 +338,10 @@ function retornosPage() {
         carregando: false, sincronizando: false,
         sseAberto: false, sseLog: [], sseStatus: '', sseTitulo: 'Sincronizando retornos', _es: null,
         movModal: false, movTitulo: '',
-        // preferências da coluna Ações (favoritas=dropdown, frequentes=badges) — cache local
-        fasesFav: [], fasesFreq: [], fasesTodas: [],
-        caixasFav: [], caixasFreq: [], caixasTodas: [], faseDefault: '', caixaPadrao: '',
 
         async init() {
-            await this.carregarPreferencias();
             await this.carregarLista();
         },
-        async carregarPreferencias() {
-            try {
-                const j = await (await fetch('/api/retornos/preferencias')).json();
-                this.fasesFav = j.fases_favoritas || [];
-                this.fasesFreq = j.fases_frequentes || [];
-                this.fasesTodas = j.fases_todas || [];
-                this.caixasFav = j.caixas_favoritas || [];
-                this.caixasFreq = j.caixas_frequentes || [];
-                this.caixasTodas = j.caixas_todas || [];
-                this.caixaPadrao = j.caixa_padrao || '';
-                // fase pré-selecionada: padrão configurado; senão, Sem movimentação ('')
-                this.faseDefault = j.fase_padrao || '';
-                this.itens.forEach(r => {
-                    if (!r._fase) r._fase = this.faseDefault;
-                    if (r._grupo === undefined || r._grupo === '') r._grupo = this.caixaPadrao;
-                });
-            } catch (e) {}
-        },
-        fasesDropdown() { return this.fasesFav.length ? this.fasesFav : this.fasesTodas; },
-        caixasDropdown() { return this.caixasFav.length ? this.caixasFav : this.caixasTodas; },
         async carregarLista() {
             this.carregando = true;
             try {
@@ -427,9 +350,6 @@ function retornosPage() {
                     ...r,
                     _sug: (r.sugestao_editada || r.sugestao_ia || ''),
                     _salvando: false, _salvo: false,
-                    // estado da coluna Ações
-                    _fase: this.faseDefault, _grupo: this.caixaPadrao, _prazo: 0, _prazoData: '',
-                    _concluir: true, _exec: false,
                     _promptReanalise: '', _reanalisando: false,
                     // caixas abertas: já vêm da sincronização (cache); null = fallback lazy
                     _caixas: Array.isArray(r.caixas_abertas) ? r.caixas_abertas : null,
@@ -471,46 +391,6 @@ function retornosPage() {
                 r._caixas = j.abertas || [];
             } catch (e) { r._caixas = []; }
             finally { r._caixasLoad = false; }
-        },
-        async executar(r) {
-            if (r._exec || (!r._fase && !r._grupo && !r._concluir)) return;
-            const prazoTxt = r._grupo ? (r._prazoData ? ' (prazo ' + r._prazoData + ')' : (r._prazo > 0 ? ' (prazo ' + r._prazo + ' dias)' : '')) : '';
-            if (!confirm('Executar em ' + r.paj + '?\n\n'
-                + (r._fase ? 'Movimentar (fase: ' + r._fase + ')' : 'Sem movimentação')
-                + (r._grupo ? '\nTramitar para: ' + r._grupo + prazoTxt : '\nSem tramitação')
-                + (r._concluir ? '\nConcluir o trâmite (retira da caixa)' : '\nSem conclusão'))) return;
-            // Garante o cofre desbloqueado ANTES de acionar o SISDPU — se estiver
-            // trancado, pede a senha-mestra agora (evita falhar lá na frente).
-            if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
-            r._exec = true;
-            this.sseTitulo = 'Executando despacho — ' + r.paj;
-            this.sseLog = []; this.sseStatus = ''; this.sseAberto = true;
-            const qs = new URLSearchParams({
-                fase: r._fase, descricao: r._sug || '',
-                grupo: r._grupo || '', prazo: String(r._prazo > 0 ? r._prazo : 0),
-                prazo_data: r._prazoData || '',
-                concluir: r._concluir ? '1' : '0',
-            });
-            const es = new EventSource('/api/retornos/' + encodeURIComponent(r.id_tramite) + '/executar?' + qs.toString());
-            this._es = es;
-            es.addEventListener('log', (ev) => {
-                try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {}
-                this.$nextTick(() => { const b = this.$refs.sseBox; if (b) b.scrollTop = b.scrollHeight; });
-            });
-            es.addEventListener('done', async (ev) => {
-                let res = {}; try { res = JSON.parse(ev.data); } catch (e) {}
-                if (res.status === 'ja_ausente') {
-                    this.sseStatus = '— já estava concluído (nada foi feito agora)';
-                } else {
-                    this.sseStatus = res.ok ? '— executado ✓' : '— com aviso';
-                }
-                r._exec = false; es.close(); this._es = null;
-                await this.carregarLista();  // se concluído/já ausente, o PAJ saiu do store e some da lista
-            });
-            es.onerror = () => {
-                this.sseStatus = '— erro de conexão';
-                r._exec = false; es.close(); this._es = null;
-            };
         },
         grupos() {
             // Agrupa os retornos por classificação da IA para agilizar as ações.

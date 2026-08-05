@@ -1,0 +1,86 @@
+{# Módulo reutilizável "Ações no SISDPU" — movimentar/tramitar/concluir um PAJ.
+   Inclua dentro de um elemento com x-data="acoesSisdpuBlock({...})" (ver
+   static/js/acoes_sisdpu.js) — autocontido, não depende do escopo pai. #}
+<div class="ret-acoes p-3">
+    <button type="button" class="flex items-center justify-between w-full text-left" @click="aberto = !aberto">
+        <span class="ret-card-label mb-0">Ações no SISDPU</span>
+        <svg class="ret-caret" :class="aberto ? 'ret-caret-open' : ''"
+             xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" style="width:14px;height:14px">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7" />
+        </svg>
+    </button>
+    <div x-show="aberto" class="flex flex-col gap-3 text-[12.5px] mt-3">
+        <!-- Movimentar -->
+        <div class="ret-acao-bloco">
+            <div class="ret-acao-titulo">Movimentar</div>
+            <div class="flex items-center gap-2 flex-wrap">
+                <select class="select select-bordered select-sm min-w-[18rem]" x-model="fase">
+                    <option value="">Sem movimentação</option>
+                    <template x-for="f in fasesDropdown()" :key="f"><option :value="f" x-text="f"></option></template>
+                </select>
+                <template x-for="f in fasesFreq" :key="f">
+                    <button type="button" class="btn btn-xs" :class="fase===f ? 'btn-primary' : 'btn-outline'" @click="fase=f" x-text="f"></button>
+                </template>
+                <span x-show="!fasesDropdown().length" class="text-[11px] text-base-content/50">configure em Configurações › SISDPU</span>
+            </div>
+        </div>
+        <!-- Tramitar -->
+        <div class="ret-acao-bloco">
+            <div class="ret-acao-titulo">Tramitar</div>
+            <div class="flex items-center gap-2 flex-wrap">
+                <select class="select select-bordered select-sm min-w-[18rem]" x-model="grupo">
+                    <option value="">Sem tramitação</option>
+                    <template x-for="c in caixasDropdown()" :key="c"><option :value="c" x-text="c"></option></template>
+                </select>
+                <template x-for="c in caixasFreq" :key="c">
+                    <button type="button" class="btn btn-xs" :class="grupo===c ? 'btn-primary' : 'btn-outline'" @click="grupo=c" x-text="c"></button>
+                </template>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap mt-2" x-show="grupo">
+                <span class="text-[11px] text-base-content/60 mr-1">Prazo:</span>
+                <template x-for="p in [0,5,10,15,30]" :key="p">
+                    <button type="button" class="btn btn-xs" :class="(!prazoData && prazo===p) ? 'btn-primary' : 'btn-outline'" @click="prazo=p; prazoData=''" x-text="p===0 ? 'Sem prazo' : (p + ' dias')"></button>
+                </template>
+                <span class="text-[11px] text-base-content/60 ml-1">ou data:</span>
+                <input type="date" class="input input-bordered input-xs w-36"
+                       :class="prazoData ? 'border-primary' : ''"
+                       x-model="prazoData" @change="if (prazoData) prazo = -1">
+            </div>
+        </div>
+        <!-- Concluir + Executar -->
+        <div class="flex items-center gap-2 flex-wrap pt-2 border-t border-base-300">
+            <template x-if="idTramite">
+                <div class="flex items-center gap-2">
+                    <span class="font-medium">Concluir trâmite:</span>
+                    <button type="button" class="btn btn-xs" :class="concluir ? 'btn-primary' : 'btn-outline'" @click="concluir=true">Sim</button>
+                    <button type="button" class="btn btn-xs" :class="!concluir ? 'btn-primary' : 'btn-outline'" @click="concluir=false">Não</button>
+                    <span class="text-[11px] text-base-content/50">(retira o PAJ da caixa)</span>
+                </div>
+            </template>
+            <button type="button" class="btn btn-sm btn-success ml-auto ret-btn-exec" @click="executar()"
+                    :disabled="(!fase && !grupo && !(idTramite && concluir)) || exec">
+                <span x-show="exec" class="loading loading-spinner loading-xs"></span>
+                Executar no SISDPU
+            </button>
+        </div>
+    </div>
+
+    <!-- Modal de progresso (SSE) próprio deste bloco -->
+    <div class="modal" :class="{'modal-open': sseAberto}">
+        <div class="modal-box max-w-[50vw]">
+            <h3 class="font-bold text-lg mb-2"><span x-text="sseTitulo"></span> <span x-text="sseStatus"></span></h3>
+            <div class="bg-base-300 rounded p-3 text-[11px] leading-[1.65] font-mono h-[340px] overflow-y-auto" x-ref="acoesSisdpuSseBox">
+                <template x-for="(l, i) in sseLog" :key="i">
+                    <div :class="{
+                        'text-success': l.level==='ok', 'text-error': l.level==='erro',
+                        'text-base-content/50': l.level==='muted', 'text-info': l.level==='info',
+                        'text-primary font-semibold': l.level==='novo'}" x-text="l.msg"></div>
+                </template>
+            </div>
+            <div class="modal-action">
+                <button type="button" class="btn btn-sm" :disabled="exec" @click="sseAberto=false">Fechar</button>
+            </div>
+        </div>
+    </div>
+</div>

@@ -1,0 +1,248 @@
+{# Módulo reutilizável "Ações no Eproc" — peticionamento no processo judicial vinculado
+   ao PAJ (EM CONSTRUÇÃO). Inclua dentro de x-data="acoesEprocBlock({...})" (ver
+   static/js/acoes_eproc.js) — autocontido, não depende do escopo pai. #}
+<div class="ret-acoes p-3">
+    <button type="button" class="flex items-center justify-between w-full text-left" @click="abrir()">
+        <span class="ret-card-label mb-0">Ações no Eproc</span>
+        <svg class="ret-caret" :class="aberto ? 'ret-caret-open' : ''"
+             xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+             stroke="currentColor" stroke-width="2" style="width:14px;height:14px">
+            <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7" />
+        </svg>
+    </button>
+    <div x-show="aberto" class="flex flex-col gap-3 text-[12.5px] mt-3">
+        <div class="text-[11px] text-base-content/50 -mt-1">
+            Módulo em construção — a movimentação real no e-proc (evento, anexos, protocolo) ainda não está implementada.
+        </div>
+        <!-- Seleção do processo judicial — só aparece quando o PAJ tem MAIS DE UM
+             processo vinculado, para não movimentar/peticionar no processo errado. -->
+        <div class="ret-acao-bloco" x-show="processos.length > 1">
+            <div class="ret-acao-titulo">Processo judicial a movimentar</div>
+            <select class="select select-bordered select-sm w-full" x-model="processoSelecionado" @change="trocarProcesso()">
+                <template x-for="p in processos" :key="p.numero">
+                    <option :value="p.numero" x-text="p.numero + (p.juizo ? (' — ' + p.juizo) : '')"></option>
+                </template>
+            </select>
+            <div class="text-[11px] text-warning mt-1">
+                Este PAJ tem mais de um processo judicial vinculado — confira qual está selecionado antes de continuar.
+            </div>
+        </div>
+        <!-- Prazos a fechar -->
+        <div class="ret-acao-bloco">
+            <div class="ret-acao-titulo">Selecione o(s) prazo(s) a ser(em) fechado(s) (opcional)</div>
+            <div x-show="carregandoPrazos" class="text-[11px] text-base-content/50">
+                <span class="loading loading-spinner loading-xs"></span> Carregando prazos…
+            </div>
+            <div x-show="!carregandoPrazos && prazosCarregados && prazos.length === 0" class="text-[11px] text-base-content/40">
+                Nenhum prazo aberto/pendente encontrado (Prazos e-proc) para os processos deste PAJ.
+            </div>
+            <div class="flex flex-col gap-1" x-show="!carregandoPrazos && prazos.length">
+                <template x-for="p in prazos" :key="p.id">
+                    <label class="flex items-start gap-2 cursor-pointer">
+                        <input type="checkbox" class="checkbox checkbox-xs mt-0.5" x-model="prazosSelecionados[p.id]">
+                        <span>
+                            <span x-text="prazoLabel(p)"></span>
+                            <span class="text-base-content/40 font-mono" x-text="' · ' + p.processo"></span>
+                        </span>
+                    </label>
+                </template>
+            </div>
+        </div>
+        <!-- Evento a ser lançado -->
+        <div class="ret-acao-bloco">
+            <div class="ret-acao-titulo">Evento a ser lançado</div>
+            <div class="flex items-center gap-2 flex-wrap">
+                <select class="select select-bordered select-sm min-w-[18rem]" x-model="evento">
+                    <option value="">Selecione o evento</option>
+                    <template x-for="e in eventosDropdown()" :key="e"><option :value="e" x-text="e"></option></template>
+                </select>
+                <template x-for="e in eventosFreq" :key="e">
+                    <button type="button" class="btn btn-xs" :class="evento===e ? 'btn-primary' : 'btn-outline'" @click="evento=e" x-text="e"></button>
+                </template>
+                <span x-show="!eventosDropdown().length" class="text-[11px] text-base-content/50">configure em Configurações › e-proc</span>
+            </div>
+        </div>
+        <!-- Petição -->
+        <div class="ret-acao-bloco">
+            <div class="ret-acao-titulo">Petição</div>
+            <textarea class="textarea textarea-bordered w-full text-[12.5px] leading-[1.6]" rows="4"
+                      x-model="peticaoTexto"
+                      placeholder="Texto da petição ou referência a um PDF já pronto (formato em definição — próxima fase)."></textarea>
+        </div>
+        <!-- Anexos: tabela de itens adicionáveis, numerados (arquivo + tipo + sigilo, um por linha).
+             Desabilitada quando o evento escolhido não aceita anexo (ex.: "Ciência, com
+             renúncia ao prazo" — o e-proc não permite anexar documento nesse evento). -->
+        <div class="ret-acao-bloco" :class="eventoSemAnexo() ? 'opacity-50 pointer-events-none' : ''">
+            <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
+                <div class="ret-acao-titulo mb-0">Anexos</div>
+                <div class="flex gap-2">
+                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="eventoSemAnexo()" @click="abrirModalDocs()">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                        </svg>
+                        Adicionar do SISDPU
+                    </button>
+                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="eventoSemAnexo()" @click="adicionarExterno()">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                        </svg>
+                        Adicionar Externo
+                    </button>
+                    <input type="file" multiple class="hidden" x-ref="inputExterno"
+                           accept=".pdf,.htm,.html,.kml,.mp3,.wma,.wav,.jpeg,.jpg,.png,.mp4,.wmv,.mpg,.mpeg"
+                           @change="onArquivosExternos($event)">
+                </div>
+            </div>
+            <div class="text-[11px] text-base-content/50 mb-1" x-text="formatosLegenda()"></div>
+            <div x-show="eventoSemAnexo()" class="text-[11px] text-warning py-1">
+                O evento "<span x-text="evento"></span>" não aceita anexos no e-proc —
+                <span x-show="anexos.length"><strong x-text="anexos.length"></strong> anexo(s) abaixo <strong>NÃO serão enviados</strong> nesta petição (ficam só guardados na lista, ignorados na execução).</span>
+                <span x-show="!anexos.length">a tabela abaixo fica desabilitada.</span>
+            </div>
+            <div x-show="!eventoSemAnexo() && !anexos.length" class="text-[11px] text-base-content/40 py-1">Nenhum anexo adicionado.</div>
+            <div class="overflow-x-auto" x-show="anexos.length">
+                <table class="table table-xs w-full">
+                    <thead>
+                        <tr>
+                            <th class="w-8">#</th>
+                            <th>Arquivo</th>
+                            <th class="w-20">Visualizar</th>
+                            <th class="w-20">Tamanho</th>
+                            <th class="w-56">Tipo</th>
+                            <th class="w-56">Sigilo</th>
+                            <th class="w-8"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="(a, i) in anexos" :key="i">
+                            <tr>
+                                <td x-text="i + 1"></td>
+                                <td>
+                                    <template x-if="a.origem === 'paj'">
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            <span class="badge badge-ghost badge-xs">Do PAJ</span>
+                                            <span class="font-mono text-xs break-all" x-text="a.docLabelCache"></span>
+                                            <button type="button" class="btn btn-xs btn-outline btn-warning" x-show="podeComprimir(a)"
+                                                    :disabled="a._comprimindo" @click="comprimirEDividir(i)"
+                                                    title="Reduz a resolução/qualidade do PDF e, se ainda faltar, divide em partes por página inteira (mesma skill /PDF-Comprimir_Dividir). O arquivo original é preservado.">
+                                                <span x-show="a._comprimindo" class="loading loading-spinner loading-xs"></span>
+                                                <span x-show="!a._comprimindo">Comprimir/Dividir</span>
+                                            </button>
+                                        </div>
+                                    </template>
+                                    <template x-if="a.origem === 'upload'">
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            <span class="badge badge-ghost badge-xs">Externo</span>
+                                            <span class="font-mono text-xs break-all" x-text="a.arquivo ? a.arquivo.name : ''"></span>
+                                        </div>
+                                    </template>
+                                    <div class="mt-0.5" x-show="validarAnexo(a) && !validarAnexo(a).ok">
+                                        <div class="text-[10.5px] text-error" x-text="validarAnexo(a) ? validarAnexo(a).msg : ''"></div>
+                                        <div class="text-[10.5px] text-base-content/50 mt-1" x-show="a.origem === 'upload' && validarAnexo(a) && !validarAnexo(a).ok && extensaoDe(nomeAnexo(a)) === 'pdf'">
+                                            Comprima antes de anexar (skill <code>/PDF-Comprimir_Dividir</code>) — arquivos externos ainda não são enviados ao servidor para compressão automática.
+                                        </div>
+                                    </div>
+                                </td>
+                                <td>
+                                    <a :href="linkVisualizarAnexo(a)" target="_blank" @click.stop x-show="linkVisualizarAnexo(a)"
+                                       class="badge badge-sm gap-1 border border-black/15 cursor-pointer"
+                                       :class="corBadgeTipo(extensaoDe(nomeAnexo(a)))" :title="'Abrir ' + nomeAnexo(a)">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                        </svg>
+                                        <span x-text="(extensaoDe(nomeAnexo(a)) || 'file').toUpperCase()"></span>
+                                    </a>
+                                </td>
+                                <td class="text-xs whitespace-nowrap" x-text="formatarTamanho(tamanhoAnexo(a))"></td>
+                                <td>
+                                    <select class="select select-bordered select-xs w-full" :class="!a.tipo ? 'select-error' : ''" x-model="a.tipo">
+                                        <option value="">Tipo…</option>
+                                        <template x-for="t in tiposDropdown()" :key="t"><option :value="t" x-text="t"></option></template>
+                                    </select>
+                                </td>
+                                <td>
+                                    <select class="select select-bordered select-xs w-full" x-model="a.sigilo">
+                                        <template x-for="s in sigilosTodos" :key="s"><option :value="s" x-text="s"></option></template>
+                                    </select>
+                                </td>
+                                <td>
+                                    <button type="button" class="btn btn-ghost btn-xs text-error" @click="removerAnexo(i)" title="Remover anexo">✕</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+            <span x-show="!tiposDropdown().length" class="text-[11px] text-base-content/50 block mt-1">configure tipos em Configurações › e-proc</span>
+            <span x-show="!sigilosTodos.length" class="text-[11px] text-base-content/50 block mt-1">configure níveis de sigilo em Configurações › e-proc</span>
+        </div>
+
+        <!-- Modal: adicionar documentos do SISDPU (mesma tabela da seção "Anexos SISDPU" do PAJ) -->
+        <div class="modal" :class="{'modal-open': modalDocsAberto}" @click.self="fecharModalDocs()">
+            <div class="modal-box max-w-3xl">
+                <h3 class="font-bold text-lg mb-1">Adicionar documentos do SISDPU</h3>
+                <p class="text-xs text-base-content/50 mb-3">
+                    Marque os documentos a anexar à petição. Clique no selo do tipo para abrir/visualizar o arquivo.
+                </p>
+                <div x-show="!docsPaj.length" class="text-sm text-base-content/40 py-4 text-center">
+                    Nenhum documento do PAJ carregado (ou o PAJ ainda não tem anexos do SISDPU baixados).
+                </div>
+                <div class="overflow-x-auto max-h-[55vh] overflow-y-auto" x-show="docsPaj.length">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr class="bg-base-300/50">
+                                <th class="w-8"></th>
+                                <th>Arquivo</th>
+                                <th>Tamanho</th>
+                                <th class="w-20">Visualizar</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="d in docsPaj" :key="docKey(d)">
+                                <tr class="hover:bg-base-300/30" :class="!formatoAceito(docLabel(d)) ? 'opacity-50' : ''">
+                                    <td>
+                                        <input type="checkbox" class="checkbox checkbox-sm"
+                                               :disabled="!formatoAceito(docLabel(d))"
+                                               x-model="modalSelecionados[docKey(d)]">
+                                    </td>
+                                    <td class="font-mono text-xs break-all max-w-md">
+                                        <span x-text="docLabel(d)"></span>
+                                        <span class="text-error block" x-show="!formatoAceito(docLabel(d))">formato não aceito pelo e-proc</span>
+                                    </td>
+                                    <td class="text-xs whitespace-nowrap" x-text="formatarTamanho(d.tamanho)"></td>
+                                    <td>
+                                        <a :href="linkArquivoPaj(d)" target="_blank" @click.stop
+                                           class="badge badge-sm gap-1 border border-black/15 cursor-pointer"
+                                           :class="corBadgeTipo(d.tipo)" :title="'Abrir ' + docLabel(d)">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                            </svg>
+                                            <span x-text="(d.tipo || 'file').toUpperCase()"></span>
+                                        </a>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="modal-action">
+                    <button type="button" class="btn btn-sm" @click="fecharModalDocs()">Cancelar</button>
+                    <button type="button" class="btn btn-sm btn-primary" @click="confirmarAdicaoDocs()">Adicionar anexos</button>
+                </div>
+            </div>
+        </div>
+        <!-- Executar -->
+        <div class="flex items-center gap-2 flex-wrap pt-2 border-t border-base-300">
+            <span class="text-[11px] text-error font-medium" x-show="temAnexoInvalido()">
+                Há anexo(s) com formato/tamanho não aceito pelo e-proc ou sem Tipo selecionado — corrija antes de executar.
+            </span>
+            <span class="text-[11px] text-base-content/50" x-show="!temAnexoInvalido()">Peticionamento real ainda não implementado.</span>
+            <button type="button" class="btn btn-sm btn-success ml-auto ret-btn-exec" disabled
+                    :title="temAnexoInvalido()
+                        ? 'Bloqueado: há anexo(s) inválido(s) (formato, tamanho ou Tipo não selecionado) — o e-proc rejeitaria o peticionamento.'
+                        : 'Em desenvolvimento — disponível após inspeção da tela de peticionamento do e-proc'">
+                Executar no e-proc
+            </button>
+        </div>
+    </div>
+</div>

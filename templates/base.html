@@ -567,6 +567,36 @@
             width: auto !important;
             word-break: break-word;
         }
+
+        /* Módulo compartilhado "Ações no SISDPU" (partials/acoes_sisdpu.html,
+           static/js/acoes_sisdpu.js) — usado na Retornos e na página do PAJ.
+           Centralizado aqui (em vez de duplicado por página) para as duas
+           telas ficarem sempre visualmente iguais. */
+        .ret-acoes {
+            background: var(--surface, rgba(0, 0, 0, 0.02));
+            border: 1px solid var(--border, rgba(0, 0, 0, 0.08));
+            border-radius: 8px;
+        }
+        .ret-card-label {
+            font-size: 11px; font-weight: 600; text-transform: uppercase;
+            letter-spacing: 0.03em; color: var(--text-secondary, rgba(0, 0, 0, 0.55));
+            margin-bottom: 6px;
+        }
+        .ret-caret { transition: transform 0.15s ease; opacity: 0.6; }
+        .ret-caret-open { transform: rotate(90deg); }
+        .ret-acao-bloco {
+            padding: 8px 10px; border-radius: 8px;
+            background: var(--card, rgba(255, 255, 255, 0.5));
+            border: 1px solid var(--border, rgba(0, 0, 0, 0.06));
+        }
+        .ret-acao-titulo {
+            font-weight: 700; font-size: 11px; text-transform: uppercase; letter-spacing: 0.04em;
+            color: var(--accent, #005FB8); margin-bottom: 6px;
+        }
+        /* Botão Executar em verde (independe dos overrides de tema do btn-primary) */
+        .ret-btn-exec { background-color: #1f9d55 !important; border-color: #1f9d55 !important; color: #fff !important; }
+        .ret-btn-exec:hover:not(:disabled) { background-color: #18864a !important; border-color: #18864a !important; }
+        .ret-btn-exec:disabled { opacity: .6; }
     </style>
 
     {% block head %}{% endblock %}
@@ -877,6 +907,8 @@
 
     <script src="/static/js/app.js?v={{ app_version }}"></script>
     <script src="/static/js/movimentacoes.js?v={{ app_version }}"></script>
+    <script src="/static/js/acoes_sisdpu.js?v={{ app_version }}"></script>
+    <script src="/static/js/acoes_eproc.js?v={{ app_version }}"></script>
     {% block scripts %}{% endblock %}
 
     <script>

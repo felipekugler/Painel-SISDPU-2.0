@@ -13,6 +13,7 @@
         <button class="cfg-tab" data-tab="geral" onclick="abrirTab('geral')">Geral</button>
         <button class="cfg-tab" data-tab="sat" onclick="abrirTab('sat')">Arquivos SAT</button>
         <button class="cfg-tab" data-tab="sisdpu" onclick="abrirTab('sisdpu')">SISDPU</button>
+        <button class="cfg-tab" data-tab="eproc" onclick="abrirTab('eproc')">e-proc</button>
     </div>
 
     <!-- ===================== Aba: Geral ===================== -->
@@ -503,6 +504,179 @@
     </div>
     </div><!-- /cfg-panel sisdpu -->
 
+    <!-- ===================== Aba: e-proc ===================== -->
+    <div class="cfg-panel" data-panel="eproc">
+    <div class="card bg-base-200 shadow" x-data="eprocEventosPrefs()" x-init="init()">
+        <div class="card-body gap-5">
+            <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
+                <h3 class="text-lg font-semibold text-base-content/80">Eventos de peticionamento (e-proc)</h3>
+            </div>
+            <p class="text-sm text-base-content/60">
+                A lista de eventos disponíveis para peticionar/movimentar depende da
+                <strong>classe judicial</strong> do processo — por isso a importação pede um
+                <strong>processo de referência</strong> (qualquer processo previdenciário já
+                cadastrado serve; a lista importada vale para os demais da mesma classe).
+                Requer a janela do <strong>e-proc aberta e logada</strong>.
+            </p>
+            <div class="flex items-end gap-2 flex-wrap">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Processo de referência</span></label>
+                    <input type="text" class="input input-bordered input-sm w-64 font-mono"
+                           x-model="processoReferencia" placeholder="Ex: 5005326-13.2024.4.04.7000">
+                </div>
+                <button class="btn btn-sm btn-ghost" @click="importar()" :disabled="importando || !processoReferencia.trim()"
+                        title="Consulta o e-proc (tela Movimentar/Peticionar → Listar Todos) e atualiza a lista completa de eventos.">
+                    <span x-show="importando" class="loading loading-spinner loading-xs"></span>
+                    <span x-text="eventosTodos.length ? 'Reimportar do e-proc' : 'Importar do e-proc'"></span>
+                </button>
+            </div>
+            <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
+
+            <div class="pt-1">
+                <p class="font-medium mb-2">Eventos
+                    <span class="text-base-content/50" x-text="'(' + eventosTodos.length + ')'"></span>
+                </p>
+                <div x-show="eventosTodos.length===0" class="text-sm text-base-content/40">
+                    Nenhum evento importado. Informe um processo de referência e clique em <strong>Importar do e-proc</strong>.
+                </div>
+                <label class="flex items-center gap-2 mb-2 text-sm cursor-pointer" x-show="eventosTodos.length">
+                    <input type="radio" class="radio radio-sm" :checked="eventoPadrao===''" @change="eventoPadrao=''">
+                    <span>Padrão: <strong>nenhum</strong> (escolher na hora)</span>
+                </label>
+                <div class="cfg-pref-grid" x-show="eventosTodos.length">
+                    <div class="cfg-pref-head"><span>Evento</span><span>Favorito</span><span>Frequente</span><span>Padrão</span></div>
+                    <template x-for="ev in eventosTodos" :key="ev">
+                        <label class="cfg-pref-row">
+                            <span x-text="ev"></span>
+                            <input type="checkbox" class="checkbox checkbox-sm" :checked="eventosFav.includes(ev)" @change="toggleIn('eventosFav', ev)">
+                            <input type="checkbox" class="checkbox checkbox-sm" :checked="eventosFreq.includes(ev)" @change="toggleIn('eventosFreq', ev)">
+                            <input type="radio" class="radio radio-sm" :checked="eventoPadrao===ev" @change="eventoPadrao=ev">
+                        </label>
+                    </template>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-4 pt-2 border-t border-base-300">
+                <button class="btn btn-primary btn-sm" :disabled="salvando" @click="salvar()">
+                    <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
+                    Salvar curadoria
+                </button>
+                <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg2" x-show="msg2"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tipos de Documento (classificação de anexos ao peticionar) -->
+    <div class="card bg-base-200 shadow mt-4" x-data="eprocTiposDocPrefs()" x-init="init()">
+        <div class="card-body gap-5">
+            <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
+                <h3 class="text-lg font-semibold text-base-content/80">Tipos de Documento (anexos)</h3>
+            </div>
+            <p class="text-sm text-base-content/60">
+                Cada documento anexado a uma petição precisa ser classificado num <strong>tipo</strong>
+                (ex.: PETIÇÃO, CÁLCULOS, ATESTADO MÉDICO). Este catálogo parece ser genérico — não
+                depende da classe judicial —, mas a importação ainda usa um processo de referência
+                (mesma tela do e-proc). Requer a janela do <strong>e-proc aberta e logada</strong>.
+            </p>
+            <div class="flex items-end gap-2 flex-wrap">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Processo de referência</span></label>
+                    <input type="text" class="input input-bordered input-sm w-64 font-mono"
+                           x-model="processoReferencia" placeholder="Ex: 5005326-13.2024.4.04.7000">
+                </div>
+                <button class="btn btn-sm btn-ghost" @click="importar()" :disabled="importando || !processoReferencia.trim()"
+                        title="Consulta o e-proc (tela Movimentar/Peticionar → Tipo → Listar todos) e atualiza a lista completa.">
+                    <span x-show="importando" class="loading loading-spinner loading-xs"></span>
+                    <span x-text="tiposTodos.length ? 'Reimportar do e-proc' : 'Importar do e-proc'"></span>
+                </button>
+            </div>
+            <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
+
+            <div class="pt-1">
+                <p class="font-medium mb-2">Tipos de documento
+                    <span class="text-base-content/50" x-text="'(' + tiposTodos.length + ')'"></span>
+                </p>
+                <div x-show="tiposTodos.length===0" class="text-sm text-base-content/40">
+                    Nenhum tipo importado. Informe um processo de referência e clique em <strong>Importar do e-proc</strong>.
+                </div>
+                <label class="flex items-center gap-2 mb-2 text-sm cursor-pointer" x-show="tiposTodos.length">
+                    <input type="radio" class="radio radio-sm" :checked="tipoPadrao===''" @change="tipoPadrao=''">
+                    <span>Padrão: <strong>nenhum</strong> (escolher na hora)</span>
+                </label>
+                <div class="cfg-pref-grid" x-show="tiposTodos.length">
+                    <div class="cfg-pref-head"><span>Tipo</span><span>Favorito</span><span>Frequente</span><span>Padrão</span></div>
+                    <template x-for="t in tiposTodos" :key="t">
+                        <label class="cfg-pref-row">
+                            <span x-text="t"></span>
+                            <input type="checkbox" class="checkbox checkbox-sm" :checked="tiposFav.includes(t)" @change="toggleIn('tiposFav', t)">
+                            <input type="checkbox" class="checkbox checkbox-sm" :checked="tiposFreq.includes(t)" @change="toggleIn('tiposFreq', t)">
+                            <input type="radio" class="radio radio-sm" :checked="tipoPadrao===t" @change="tipoPadrao=t">
+                        </label>
+                    </template>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-4 pt-2 border-t border-base-300">
+                <button class="btn btn-primary btn-sm" :disabled="salvando" @click="salvar()">
+                    <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
+                    Salvar curadoria
+                </button>
+                <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg2" x-show="msg2"></p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Níveis de Sigilo (por documento anexado) -->
+    <div class="card bg-base-200 shadow mt-4" x-data="eprocSigiloPrefs()" x-init="init()">
+        <div class="card-body gap-5">
+            <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
+                <h3 class="text-lg font-semibold text-base-content/80">Níveis de Sigilo (por anexo)</h3>
+            </div>
+            <p class="text-sm text-base-content/60">
+                Cada documento anexado a uma petição tem um nível de sigilo (Sem Sigilo / Segredo de
+                Justiça / Sigiloso). Lista curta e estável — sem favoritos/frequentes, só o
+                <strong>padrão</strong> usado em cada novo anexo.
+            </p>
+            <div class="flex items-end gap-2 flex-wrap">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Processo de referência</span></label>
+                    <input type="text" class="input input-bordered input-sm w-64 font-mono"
+                           x-model="processoReferencia" placeholder="Ex: 5005326-13.2024.4.04.7000">
+                </div>
+                <button class="btn btn-sm btn-ghost" @click="importar()" :disabled="importando || !processoReferencia.trim()"
+                        title="Consulta o e-proc (tela Movimentar/Peticionar → Sigilo) e atualiza a lista.">
+                    <span x-show="importando" class="loading loading-spinner loading-xs"></span>
+                    <span x-text="sigilosTodos.length ? 'Reimportar do e-proc' : 'Importar do e-proc'"></span>
+                </button>
+            </div>
+            <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
+
+            <div class="pt-1" x-show="sigilosTodos.length">
+                <p class="font-medium mb-2">Padrão para novos anexos</p>
+                <div class="flex flex-col gap-1.5">
+                    <template x-for="s in sigilosTodos" :key="s">
+                        <label class="flex items-center gap-2 text-sm cursor-pointer">
+                            <input type="radio" class="radio radio-sm" :checked="sigiloPadrao===s" @change="sigiloPadrao=s">
+                            <span x-text="s"></span>
+                        </label>
+                    </template>
+                </div>
+            </div>
+            <div x-show="!sigilosTodos.length" class="text-sm text-base-content/40">
+                Nenhum nível importado. Informe um processo de referência e clique em <strong>Importar do e-proc</strong>.
+            </div>
+
+            <div class="flex items-center gap-4 pt-2 border-t border-base-300">
+                <button class="btn btn-primary btn-sm" :disabled="salvando" @click="salvar()">
+                    <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
+                    Salvar padrão
+                </button>
+                <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg2" x-show="msg2"></p>
+            </div>
+        </div>
+    </div>
+    </div><!-- /cfg-panel eproc -->
+
     <p class="text-xs text-base-content/40 mt-4">
         As alterações têm efeito imediato. Configurações armazenadas em
         <code class="font-mono">painel_config.json</code> na raiz do projeto.
@@ -716,6 +890,167 @@ function sisdpuPrefs() {
                 });
                 const j = await r.json();
                 if (j.ok) { this.msg2 = 'Curadoria salva ✓'; setTimeout(() => this.msg2 = '', 2500); }
+                else { this.msgErro = true; this.msg2 = 'Falha ao salvar.'; }
+            } catch (e) { this.msgErro = true; this.msg2 = 'Erro ao salvar: ' + e; }
+            finally { this.salvando = false; }
+        },
+    };
+}
+
+// Aba e-proc — Eventos: importar do e-proc (processo de referência) + curadoria
+// de favoritos/frequentes, mesmo padrão de sisdpuPrefs().
+function eprocEventosPrefs() {
+    return {
+        eventosTodos: [], eventosFav: [], eventosFreq: [], eventoPadrao: '',
+        processoReferencia: '',
+        importando: false, salvando: false, msg: '', msg2: '', msgErro: false,
+        async init() {
+            try {
+                const j = await (await fetch('/api/config/eproc-eventos')).json();
+                this.aplicar(j);
+            } catch (e) {}
+        },
+        aplicar(j) {
+            this.eventosTodos = j.eventos_todos || [];
+            this.eventosFav = j.eventos_favoritos || [];
+            this.eventosFreq = j.eventos_frequentes || [];
+            this.eventoPadrao = j.evento_padrao || '';
+            if (!this.processoReferencia) this.processoReferencia = j.processo_referencia || '';
+        },
+        toggleIn(lista, item) {
+            const arr = this[lista];
+            const i = arr.indexOf(item);
+            if (i >= 0) arr.splice(i, 1); else arr.push(item);
+        },
+        async importar() {
+            if (!this.processoReferencia.trim()) return;
+            this.importando = true; this.msg = ''; this.msgErro = false;
+            try {
+                const r = await fetch('/api/config/eproc-eventos/importar', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ numero_processo: this.processoReferencia.trim() }),
+                });
+                const j = await r.json();
+                if (j.ok) { this.aplicar(j.prefs); this.msg = 'Importado: ' + j.n_eventos + ' eventos.'; }
+                else { this.msgErro = true; this.msg = j.erro || 'Falha ao importar.'; }
+            } catch (e) { this.msgErro = true; this.msg = 'Erro ao importar: ' + e; }
+            finally { this.importando = false; }
+        },
+        async salvar() {
+            this.salvando = true; this.msg2 = ''; this.msgErro = false;
+            try {
+                const r = await fetch('/api/config/eproc-eventos', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        eventos_favoritos: this.eventosFav, eventos_frequentes: this.eventosFreq,
+                        evento_padrao: this.eventoPadrao,
+                    }),
+                });
+                const j = await r.json();
+                if (j.ok) { this.msg2 = 'Curadoria salva ✓'; setTimeout(() => this.msg2 = '', 2500); }
+                else { this.msgErro = true; this.msg2 = 'Falha ao salvar.'; }
+            } catch (e) { this.msgErro = true; this.msg2 = 'Erro ao salvar: ' + e; }
+            finally { this.salvando = false; }
+        },
+    };
+}
+
+// Aba e-proc — Tipos de Documento: mesmo padrão, para classificar anexos.
+function eprocTiposDocPrefs() {
+    return {
+        tiposTodos: [], tiposFav: [], tiposFreq: [], tipoPadrao: '',
+        processoReferencia: '',
+        importando: false, salvando: false, msg: '', msg2: '', msgErro: false,
+        async init() {
+            try {
+                const j = await (await fetch('/api/config/eproc-tipos-documento')).json();
+                this.aplicar(j);
+            } catch (e) {}
+        },
+        aplicar(j) {
+            this.tiposTodos = j.tipos_todos || [];
+            this.tiposFav = j.tipos_favoritos || [];
+            this.tiposFreq = j.tipos_frequentes || [];
+            this.tipoPadrao = j.tipo_padrao || '';
+            if (!this.processoReferencia) this.processoReferencia = j.processo_referencia || '';
+        },
+        toggleIn(lista, item) {
+            const arr = this[lista];
+            const i = arr.indexOf(item);
+            if (i >= 0) arr.splice(i, 1); else arr.push(item);
+        },
+        async importar() {
+            if (!this.processoReferencia.trim()) return;
+            this.importando = true; this.msg = ''; this.msgErro = false;
+            try {
+                const r = await fetch('/api/config/eproc-tipos-documento/importar', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ numero_processo: this.processoReferencia.trim() }),
+                });
+                const j = await r.json();
+                if (j.ok) { this.aplicar(j.prefs); this.msg = 'Importado: ' + j.n_tipos + ' tipos.'; }
+                else { this.msgErro = true; this.msg = j.erro || 'Falha ao importar.'; }
+            } catch (e) { this.msgErro = true; this.msg = 'Erro ao importar: ' + e; }
+            finally { this.importando = false; }
+        },
+        async salvar() {
+            this.salvando = true; this.msg2 = ''; this.msgErro = false;
+            try {
+                const r = await fetch('/api/config/eproc-tipos-documento', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        tipos_favoritos: this.tiposFav, tipos_frequentes: this.tiposFreq,
+                        tipo_padrao: this.tipoPadrao,
+                    }),
+                });
+                const j = await r.json();
+                if (j.ok) { this.msg2 = 'Curadoria salva ✓'; setTimeout(() => this.msg2 = '', 2500); }
+                else { this.msgErro = true; this.msg2 = 'Falha ao salvar.'; }
+            } catch (e) { this.msgErro = true; this.msg2 = 'Erro ao salvar: ' + e; }
+            finally { this.salvando = false; }
+        },
+    };
+}
+
+// Aba e-proc — Níveis de Sigilo (por anexo): lista curta/estável, sem
+// favoritos/frequentes — só importação + padrão para novos anexos.
+function eprocSigiloPrefs() {
+    return {
+        sigilosTodos: [], sigiloPadrao: '', processoReferencia: '',
+        importando: false, salvando: false, msg: '', msg2: '', msgErro: false,
+        async init() {
+            try {
+                const j = await (await fetch('/api/config/eproc-sigilo')).json();
+                this.aplicar(j);
+            } catch (e) {}
+        },
+        aplicar(j) {
+            this.sigilosTodos = j.sigilos_todos || [];
+            this.sigiloPadrao = j.sigilo_padrao || '';
+        },
+        async importar() {
+            if (!this.processoReferencia.trim()) return;
+            this.importando = true; this.msg = ''; this.msgErro = false;
+            try {
+                const r = await fetch('/api/config/eproc-sigilo/importar', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ numero_processo: this.processoReferencia.trim() }),
+                });
+                const j = await r.json();
+                if (j.ok) { this.aplicar(j.prefs); this.msg = 'Importado: ' + j.n_sigilos + ' níveis.'; }
+                else { this.msgErro = true; this.msg = j.erro || 'Falha ao importar.'; }
+            } catch (e) { this.msgErro = true; this.msg = 'Erro ao importar: ' + e; }
+            finally { this.importando = false; }
+        },
+        async salvar() {
+            this.salvando = true; this.msg2 = ''; this.msgErro = false;
+            try {
+                const r = await fetch('/api/config/eproc-sigilo', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ sigilo_padrao: this.sigiloPadrao }),
+                });
+                const j = await r.json();
+                if (j.ok) { this.msg2 = 'Padrão salvo ✓'; setTimeout(() => this.msg2 = '', 2500); }
                 else { this.msgErro = true; this.msg2 = 'Falha ao salvar.'; }
             } catch (e) { this.msgErro = true; this.msg2 = 'Erro ao salvar: ' + e; }
             finally { this.salvando = false; }

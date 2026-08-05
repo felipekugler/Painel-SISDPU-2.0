@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import re
 import socket
 import subprocess
 import sys
@@ -328,6 +329,149 @@ async def peek() -> dict:
     finally:
         with contextlib.suppress(Exception):
             await browser.close()
+
+
+# Clica o link <a> cujo texto (normalizado) casa EXATO com o alvo — usado para
+# navegar por elementos REAIS da página (nunca montar as URLs com hash= por conta
+# própria: são assinadas e de uso único por sessão, ver nota em eproc_intimacoes.py).
+_JS_CLICAR_LINK_EXATO = r"""(alvo)=>{
+  const norm=s=>(s||'').replace(/\s+/g,' ').trim();
+  const el=[...document.querySelectorAll('a')].find(a=>norm(a.innerText)===alvo);
+  if(el){el.click(); return true;} return false;
+}"""
+
+# Extrai a lista de eventos do popup "Listar Todos" (ou do autocomplete) do campo
+# "Evento a ser lançado:" — pega o MAIOR <ul> visível da tela (o menu lateral e
+# outros widgets também são <ul>, mas nunca chegam a ter tantos itens quanto o
+# catálogo de eventos de uma classe judicial).
+_JS_EXTRAIR_EVENTOS = r"""()=>{
+  const uls=[...document.querySelectorAll('ul')].filter(u=>u.offsetParent && u.id!=='main-menu');
+  let melhor=[];
+  for(const u of uls){
+    const itens=[...u.children].map(li=>(li.innerText||'').trim()).filter(Boolean);
+    if(itens.length>melhor.length) melhor=itens;
+  }
+  return melhor;
+}"""
+
+
+async def _abrir_tela_peticionamento(page, numero: str) -> str:
+    """Navega, numa página JÁ conectada, até a tela "Movimentar/Peticionar" de UM
+    processo — busca rápida (real, gera hash assinado pelo servidor) → clica o link
+    real "Movimentar/Peticionar". Devolve "" em sucesso, ou uma mensagem de erro."""
+    await page.goto(EPROC_HOME, wait_until="domcontentloaded", timeout=30000)
+    await page.wait_for_timeout(800)
+    if not _status_dict(page.url)["logado"]:
+        return ("Sessão do e-proc não está logada — faça login na janela do e-proc "
+                "e tente de novo.")
+
+    campo = page.locator("#txtNumProcessoPesquisaRapida:visible")
+    await campo.click()
+    await campo.fill(numero)
+    await campo.press("Enter")
+    await page.wait_for_load_state("domcontentloaded", timeout=20000)
+    await page.wait_for_timeout(800)
+
+    if not await page.evaluate(_JS_CLICAR_LINK_EXATO, "Movimentar/Peticionar"):
+        return ("Processo não encontrado ou sem link 'Movimentar/Peticionar' "
+                "(permissão? já arquivado?).")
+    await page.wait_for_load_state("domcontentloaded", timeout=20000)
+    await page.wait_for_timeout(800)
+    return ""
+
+
+async def _listar_via_botao_listar_todos(numero_processo: str, seletor_botao: str,
+                                          rotulo_campo: str) -> dict:
+    """Base comum de `listar_eventos_movimentacao`/`listar_tipos_documento`: abre a
+    tela de peticionamento de `numero_processo` numa ABA NOVA (não mexe na aba que o
+    usuário estiver usando), clica o botão/label "Listar Todos" indicado por
+    `seletor_botao` e extrai a lista completa exibida. Fecha a aba ao final."""
+    numero = re.sub(r"\D", "", numero_processo or "")
+    if not numero:
+        return {"ok": False, "erro": "Número de processo vazio."}
+    browser, pagina_ref = await _connect()
+    ctx = pagina_ref.context
+    page = await ctx.new_page()
+    try:
+        erro = await _abrir_tela_peticionamento(page, numero)
+        if erro:
+            return {"ok": False, "erro": erro}
+
+        listar = page.locator(seletor_botao)
+        if await listar.count() == 0:
+            return {"ok": False, "erro": f"Campo '{rotulo_campo}' não encontrado nesta tela."}
+        await listar.click()
+        await page.wait_for_timeout(1200)
+
+        brutos = await page.evaluate(_JS_EXTRAIR_EVENTOS)
+        itens = sorted({e for e in brutos if e and e != "[Desmarcar Todos]"})
+        return {"ok": True, "itens": itens, "numero_processo": numero}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:300]}
+    finally:
+        with contextlib.suppress(Exception):
+            await page.close()
+        with contextlib.suppress(Exception):
+            await browser.close()
+
+
+async def listar_eventos_movimentacao(numero_processo: str) -> dict:
+    """Lista os EVENTOS disponíveis para peticionamento/movimentação de UM processo
+    — tela "Movimentar/Peticionar" → campo "Evento a ser lançado:" → link "Listar
+    Todos". A lista depende da CLASSE JUDICIAL do processo (processos de tipos
+    diferentes podem ter catálogos diferentes); por isso pede um processo de
+    REFERÊNCIA em vez de uma lista fixa."""
+    res = await _listar_via_botao_listar_todos(
+        numero_processo, "#lblListarEvento", "Evento a ser lançado")
+    if res.get("ok"):
+        res["eventos"] = res.pop("itens")
+    return res
+
+
+async def listar_niveis_sigilo(numero_processo: str) -> dict:
+    """Lista os NÍVEIS DE SIGILO disponíveis por documento — tela "Movimentar/
+    Peticionar" → select `#selIdSigilo_1` (sigilo do 1º documento do formulário).
+    Ao contrário de eventos/tipos, é um `<select>` estático (não popup "Listar
+    Todos") — mesma tela, só lê as opções diretamente. Ainda assim pede um processo
+    de referência para reaproveitar a navegação e por segurança (pode variar por
+    tribunal/vara)."""
+    numero = re.sub(r"\D", "", numero_processo or "")
+    if not numero:
+        return {"ok": False, "erro": "Número de processo vazio."}
+    browser, pagina_ref = await _connect()
+    ctx = pagina_ref.context
+    page = await ctx.new_page()
+    try:
+        erro = await _abrir_tela_peticionamento(page, numero)
+        if erro:
+            return {"ok": False, "erro": erro}
+
+        sel = page.locator("#selIdSigilo_1")
+        if await sel.count() == 0:
+            return {"ok": False, "erro": "Campo 'Sigilo' não encontrado nesta tela."}
+        opcoes = await sel.evaluate("(el) => [...el.options].map(o => o.text.trim())")
+        sigilos = [o for o in opcoes if o]
+        return {"ok": True, "sigilos": sigilos, "numero_processo": numero}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:300]}
+    finally:
+        with contextlib.suppress(Exception):
+            await page.close()
+        with contextlib.suppress(Exception):
+            await browser.close()
+
+
+async def listar_tipos_documento(numero_processo: str) -> dict:
+    """Lista os TIPOS DE DOCUMENTO disponíveis para classificar um documento anexado
+    numa petição — tela "Movimentar/Peticionar" → bloco de Documentos → "Tipo:" →
+    link "Listar todos" (`#lblListarTipo_1`, primeiro documento do formulário). Ao
+    contrário dos eventos, este catálogo parece ser GENÉRICO (não depende da classe
+    judicial), mas ainda assim pede um processo de referência — mesma tela."""
+    res = await _listar_via_botao_listar_todos(
+        numero_processo, "#lblListarTipo_1", "Tipo (documento)")
+    if res.get("ok"):
+        res["tipos"] = res.pop("itens")
+    return res
 
 
 async def abrir_processo(url: str) -> dict:

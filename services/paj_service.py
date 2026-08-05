@@ -424,6 +424,25 @@ def ler_paj(paj_norm: str) -> dict | None:
     sisdpu_raw = metadata.get("sisdpu_raw", {}) or {}
     narrativa = sisdpu_raw.get("narrativa", "")
 
+    # id_processo / id_tramite: extraidos da URL de detalhamento gravada pelo sync
+    # (sisdpu_client.movimentacoes_paj grava "url" em sisdpu_raw), no formato
+    # ".../detalhamentoProcesso.xhtml?idTramite=NNN&caixaEntrada=true&id=NNN&tp=D".
+    # Permite acionar o modulo "Ações no SISDPU" (movimentar/tramitar/concluir)
+    # sem precisar de uma busca ao vivo — mesmo padrao usado em sat_service.add_paj_manual.
+    url_detalhe = sisdpu_raw.get("url", "") or ""
+    m_id = re.search(r"[?&]id=(\d+)", url_detalhe)
+    m_tram = re.search(r"[?&]idTramite=(\d+)", url_detalhe)
+    id_processo = m_id.group(1) if m_id else ""
+    id_tramite = m_tram.group(1) if m_tram else ""
+
+    # Processos judiciais vinculados (para o módulo "Ações no e-proc") — mesma
+    # extração usada pela aba Retornos, reaproveitada em vez de duplicada.
+    try:
+        from services.retornos_service import _extrair_processos
+        processos_judiciais = _extrair_processos(metadata)
+    except Exception:  # noqa: BLE001
+        processos_judiciais = []
+
     return {
         "metadata": metadata,
         "narrativa": narrativa,
@@ -440,6 +459,9 @@ def ler_paj(paj_norm: str) -> dict | None:
         "ultima_mov_data": ultima_mov.get("data", ""),
         "n_anexos_sisdpu": len(anexos_sisdpu),
         "prazos_abertos": metadata.get("prazos_abertos", []),
+        "id_processo": id_processo,
+        "id_tramite": id_tramite,
+        "processos_judiciais": processos_judiciais,
         "pasta": str(pasta),
     }
 

@@ -22,7 +22,7 @@ import html as _html
 import json
 import re
 import unicodedata
-from datetime import date, datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any, AsyncIterator
 
@@ -30,6 +30,8 @@ import config
 from ingestao import sisdpu_client
 from ingestao import sisdpu_movtram as movtram
 from services import historico_painel, retornos_ia
+from services.acoes_sisdpu_service import com_auto_reconexao as _com_auto_reconexao
+from services.acoes_sisdpu_service import executar_stream as _acoes_sisdpu_executar_stream
 
 GRUPO_PADRAO = "01 - PREV_DIVPREV"
 
@@ -696,64 +698,14 @@ async def caixas_abertas(id_tramite: str) -> dict:
     return {"ok": True, "abertas": abertas}
 
 
-def _iso_to_br(s: str) -> str:
-    """'2026-08-15' -> '15/08/2026'. Aceita já-BR ou vazio (devolve intacto)."""
-    s = (s or "").strip()
-    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", s)
-    return f"{m.group(3)}/{m.group(2)}/{m.group(1)}" if m else s
-
-
-def _parece_problema_sessao(resultado, excecao: Exception | None) -> bool:
-    """True quando a falha indica SESSÃO indisponível (conflito, deslogado, cofre
-    bloqueado) — casos em que vale reconectar e tentar de novo, em vez de desistir.
-    Qualquer exceção aqui (timeout de navegação, RuntimeError de credenciais) é
-    candidata: o pior caso é reconectar à toa antes de reportar o erro original.
-    `resultado` pode não ser um dict (ex.: `_processar_paj` retorna tupla) — nesse
-    caso só a exceção é considerada, já que não há campo "ok"/"detalhe" pra checar."""
-    if excecao is not None:
-        return True
-    if isinstance(resultado, dict) and not resultado.get("ok"):
-        det = _norm(str(resultado.get("detalhe") or ""))
-        return any(t in det for t in ("conflito de sessao", "sessao", "login", "cofre bloqueado"))
-    return False
-
-
-async def _com_auto_reconexao(chamada):
-    """Executa `chamada()` (coroutine factory); se falhar por sessão indisponível,
-    RECONECTA automaticamente (login fresco no SISDPU — via `sisdpu_client.reconectar()`,
-    que usa as credenciais do cofre se já destrancado) e tenta a MESMA ação mais uma vez.
-    Retorna (resultado, excecao, eventos_sse) — eventos_sse já prontos para `yield`."""
-    eventos: list[dict] = []
-    try:
-        resultado = await chamada()
-        excecao = None
-    except Exception as e:  # noqa: BLE001
-        resultado, excecao = None, e
-
-    if _parece_problema_sessao(resultado, excecao):
-        eventos.append(_ev("muted", "Sessão do SISDPU indisponível — reconectando automaticamente…"))
-        try:
-            rec_conn = await sisdpu_client.reconectar()
-        except Exception as e:  # noqa: BLE001
-            rec_conn = {"ok": False, "detalhe": str(e)[:300]}
-        eventos.append(_ev("ok" if rec_conn.get("ok") else "erro",
-                           f"Reconexão automática: {rec_conn.get('detalhe', '')}"))
-        if rec_conn.get("ok"):
-            try:
-                resultado = await chamada()
-                excecao = None
-            except Exception as e:  # noqa: BLE001
-                resultado, excecao = None, e
-    return resultado, excecao, eventos
-
-
 async def executar_stream(id_tramite: str, fase: str, descricao: str,
                           grupo: str | None = None, prazo_dias: int = 0,
                           prazo_data: str = "", concluir: bool = True,
                           dry_run: bool = False) -> AsyncIterator[dict]:
-    """Executa o despacho de UM retorno: movimenta (fase + despacho como descrição),
-    tramita (se `grupo`), conclui (se `concluir`). Ao concluir com sucesso, registra no
-    histórico do painel e REMOVE o retorno da lista. Emite eventos SSE."""
+    """Wrapper da Retornos sobre o módulo genérico `acoes_sisdpu_service` ("Ações no
+    SISDPU"): resolve id_processo/despacho a partir do id_tramite no store, delega a
+    execução (mov→tram→conclui) e trata os efeitos EXCLUSIVOS da Retornos — registra no
+    histórico do painel e REMOVE o retorno da lista quando concluído. Emite eventos SSE."""
     store = _ler_store()
     rec = store.get(id_tramite)
     if not rec:
@@ -766,104 +718,33 @@ async def executar_stream(id_tramite: str, fase: str, descricao: str,
     id_proc = rec.get("id_processo", "")
     fase = (fase or "").strip()
     # despacho: usa o texto passado; se vazio, cai no salvo (edição manual ou IA).
-    descricao = (descricao or "").strip() or (
+    descricao_final = (descricao or "").strip() or (
         rec.get("sugestao_editada") or rec.get("sugestao_ia") or "").strip()
     if not id_proc:
         yield _ev("erro", "id_processo ausente — sincronize novamente.")
         yield {"done": True, "resultado": {"ok": False, "detalhe": "id_processo ausente."}}
         return
-    if not fase and not grupo and not concluir:
-        yield _ev("erro", "Selecione ao menos uma ação: movimentar, tramitar ou concluir.")
-        yield {"done": True, "resultado": {"ok": False, "detalhe": "Nenhuma ação selecionada."}}
-        return
-    if fase and not descricao:
-        yield _ev("erro", "O despacho (descrição da movimentação) está vazio.")
-        yield {"done": True, "resultado": {"ok": False, "detalhe": "Despacho vazio."}}
-        return
 
-    # prazo: data explícita (calendário) tem precedência sobre dias
-    prazo_data_final = None
-    if grupo:
-        if prazo_data:
-            prazo_data_final = _iso_to_br(prazo_data)
-        elif prazo_dias and int(prazo_dias) > 0:
-            prazo_data_final = (date.today() + timedelta(days=int(prazo_dias))).strftime("%d/%m/%Y")
-
-    pajs = [{"id": id_proc, "numero": paj}]
-    pref = "[dry-run] " if dry_run else ""
-    yield _ev("novo", f"{pref}Executando {paj}…")
-
-    # 1) MOVIMENTAR (opcional — carrega o despacho como descrição da movimentação)
-    mv: dict = {}
-    if fase:
-        yield _ev("info", f"Movimentando (fase: {fase})…")
-        mv, exc, eventos = await _com_auto_reconexao(
-            lambda: movtram.movimentar_paj(pajs, descricao, fase, [], "Documentos do Assistido", dry_run))
-        for ev in eventos:
-            yield ev
-        if exc is not None:
-            yield _ev("erro", f"Falha na movimentação ({type(exc).__name__}): {str(exc)[:200]}. "
-                              "Verifique a conexão do SISDPU (selo/Reconectar) e tente de novo.")
-            yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": str(exc)[:300]}}
-            return
-        yield _ev("ok" if mv.get("ok") else "erro", f"Movimentação: {mv.get('detalhe', '')}")
-        if not mv.get("ok"):
-            yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": mv.get("detalhe", "")}}
-            return
-
-    # 2) TRAMITAR (opcional)
-    tram_caixa = ""
-    if grupo:
-        prazo_txt = f"prazo até {prazo_data_final}" if prazo_data_final else "sem prazo"
-        yield _ev("info", f"Tramitando para {grupo} ({prazo_txt})…")
-        tr, exc, eventos = await _com_auto_reconexao(
-            lambda: movtram.tramitar_paj(pajs, grupo=grupo, descricao=descricao,
-                                         prazo_data=prazo_data_final, dry_run=dry_run))
-        for ev in eventos:
-            yield ev
-        if exc is not None:
-            yield _ev("erro", f"Falha na tramitação ({type(exc).__name__}): {str(exc)[:200]}. "
-                              "A movimentação já foi registrada; verifique o PAJ.")
-            yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": str(exc)[:300]}}
-            return
-        yield _ev("ok" if tr.get("ok") else "erro", f"Tramitação: {tr.get('detalhe', '')}")
-        if not tr.get("ok"):
-            yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": tr.get("detalhe", "")}}
-            return
-        tram_caixa = grupo
-
-    # 3) CONCLUIR (opcional) — é o que retira o retorno da caixa de entrada
-    concluido = False
-    ja_ausente = False
-    if concluir:
-        yield _ev("info", "Concluindo o trâmite de retorno…")
-        cc, exc, eventos = await _com_auto_reconexao(lambda: movtram.concluir_paj([id_tramite], dry_run))
-        for ev in eventos:
-            yield ev
-        if exc is not None:
-            yield _ev("erro", f"Falha na conclusão ({type(exc).__name__}): {str(exc)[:200]}. "
-                              "Mov./tramitação já podem ter sido registradas; verifique o PAJ.")
-            yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": str(exc)[:300]}}
-            return
-        if cc.get("status") == "ja_ausente":
-            # O trâmite já não estava na caixa/grupo ANTES desta execução — provável
-            # conclusão manual anterior (ou id desatualizado). NADA foi concluído agora;
-            # eventual movimentação/tramitação acima, se houve, já foi efetivada de
-            # verdade e permanece registrada abaixo.
-            yield _ev("muted", f"Conclusão: {cc.get('detalhe', '')}")
-            ja_ausente = True
+    resultado_final: dict = {"ok": False}
+    async for ev in _acoes_sisdpu_executar_stream(
+        id_processo=id_proc, paj=paj, fase=fase, descricao=descricao_final,
+        grupo=grupo, prazo_dias=prazo_dias, prazo_data=prazo_data,
+        id_tramite=id_tramite, concluir=concluir, dry_run=dry_run,
+    ):
+        if ev.get("done"):
+            resultado_final = ev.get("resultado") or {}
         else:
-            yield _ev("ok" if cc.get("ok") else "erro", f"Conclusão: {cc.get('detalhe', '')}")
-            if not cc.get("ok"):
-                yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": cc.get("detalhe", "")}}
-                return
-            concluido = not dry_run
+            yield ev
 
-    # registra no histórico do painel SÓ se algo foi de fato efetivado nesta execução
-    # (movimentação, tramitação ou conclusão real — não um "ja_ausente" isolado, que é
-    # um no-op). Remove da lista de Retornos quando concluído OU quando confirmamos que
-    # o trâmite já não está mais na caixa (espelho da caixa).
-    if not dry_run:
+    # efeitos EXCLUSIVOS da Retornos, só quando algo foi de fato efetivado (êxito real
+    # ou "já ausente" — nunca em falha dura, onde o genérico já retornou sem concluir
+    # nada): histórico do painel + remoção do retorno da lista (espelho da caixa).
+    status = resultado_final.get("status")
+    ok = bool(resultado_final.get("ok"))
+    ja_ausente = status == "ja_ausente"
+    if not dry_run and (ok or ja_ausente):
+        concluido = bool(resultado_final.get("concluido"))
+        tram_caixa = resultado_final.get("tramitado_para") or ""
         algo_efetivado = bool(concluido or tram_caixa or fase)
         if algo_efetivado:
             if concluido:
@@ -877,22 +758,11 @@ async def executar_stream(id_tramite: str, fase: str, descricao: str,
                 "assistido": rec.get("assistido", ""),
                 "origem": "retorno", "atividade": atividade,
                 "movimentacao": fase or "—", "tramitado_para": tram_caixa,
-                "concluido": concluido, "detalhe": descricao[:300],
+                "concluido": concluido, "detalhe": descricao_final[:300],
             })
         if concluido or ja_ausente:
             store = _ler_store()
             store.pop(id_tramite, None)
             _gravar_store(store)
 
-    if ja_ausente:
-        yield _ev("muted", f"{paj} — o trâmite de retorno já não estava na caixa antes desta "
-                           "execução (provável conclusão manual anterior). Removido da lista.")
-        yield {"done": True, "resultado": {"ok": False, "status": "ja_ausente", "concluido": False,
-                                           "tramitado_para": tram_caixa,
-                                           "detalhe": "Trâmite já estava ausente antes desta execução — "
-                                                     "nada foi concluído agora."}}
-        return
-
-    yield _ev("ok", f"{paj} — executado com sucesso.")
-    yield {"done": True, "resultado": {"ok": True, "concluido": concluido,
-                                       "tramitado_para": tram_caixa, "mov_seq": mv.get("mov_seq")}}
+    yield {"done": True, "resultado": resultado_final}

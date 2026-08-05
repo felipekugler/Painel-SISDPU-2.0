@@ -67,6 +67,97 @@ async def importar_config_sisdpu():
                          "n_fases": len(fases), "n_caixas": len(caixas)})
 
 
+# --- Preferências e-proc: eventos de peticionamento/movimentação ---
+@router.get("/api/config/eproc-eventos", response_class=JSONResponse)
+async def get_config_eproc_eventos():
+    """Lista importada + favoritos (dropdown) + frequentes (badges)."""
+    return JSONResponse(config_painel_service.get_eproc_eventos_prefs())
+
+
+@router.post("/api/config/eproc-eventos", response_class=JSONResponse)
+async def set_config_eproc_eventos(request: Request):
+    """Salva a curadoria (favoritos/frequentes/padrão de eventos)."""
+    body = await request.json()
+    return JSONResponse({"ok": True, "prefs": config_painel_service.set_eproc_eventos_prefs(body)})
+
+
+@router.post("/api/config/eproc-eventos/importar", response_class=JSONResponse)
+async def importar_config_eproc_eventos(request: Request):
+    """Importa do e-proc a lista COMPLETA de eventos disponíveis para peticionar,
+    usando um PROCESSO DE REFERÊNCIA informado pelo usuário (a lista depende da
+    classe judicial do processo). Requer a janela do e-proc aberta e logada."""
+    from services import acoes_eproc_service
+    body = await request.json()
+    numero = (body.get("numero_processo") or "").strip()
+    if not numero:
+        return JSONResponse({"ok": False, "erro": "Informe o número do processo de referência."},
+                            status_code=400)
+    res = await acoes_eproc_service.importar_eventos(numero)
+    status_code = 200 if res.get("ok") else 400
+    return JSONResponse(res, status_code=status_code)
+
+
+# --- Preferências e-proc: tipos de documento (classificação de anexos) ---
+@router.get("/api/config/eproc-tipos-documento", response_class=JSONResponse)
+async def get_config_eproc_tipos_documento():
+    """Lista importada + favoritos (dropdown) + frequentes (badges)."""
+    return JSONResponse(config_painel_service.get_eproc_tipos_doc_prefs())
+
+
+@router.post("/api/config/eproc-tipos-documento", response_class=JSONResponse)
+async def set_config_eproc_tipos_documento(request: Request):
+    """Salva a curadoria (favoritos/frequentes/padrão de tipos de documento)."""
+    body = await request.json()
+    return JSONResponse({"ok": True, "prefs": config_painel_service.set_eproc_tipos_doc_prefs(body)})
+
+
+@router.post("/api/config/eproc-tipos-documento/importar", response_class=JSONResponse)
+async def importar_config_eproc_tipos_documento(request: Request):
+    """Importa do e-proc a lista COMPLETA de tipos de documento (classificação de
+    anexos), usando um PROCESSO DE REFERÊNCIA informado pelo usuário. Requer a
+    janela do e-proc aberta e logada."""
+    from services import acoes_eproc_service
+    body = await request.json()
+    numero = (body.get("numero_processo") or "").strip()
+    if not numero:
+        return JSONResponse({"ok": False, "erro": "Informe o número do processo de referência."},
+                            status_code=400)
+    res = await acoes_eproc_service.importar_tipos_documento(numero)
+    status_code = 200 if res.get("ok") else 400
+    return JSONResponse(res, status_code=status_code)
+
+
+# --- Preferências e-proc: níveis de sigilo por documento ---
+@router.get("/api/config/eproc-sigilo", response_class=JSONResponse)
+async def get_config_eproc_sigilo():
+    """Lista importada + padrão (lista curta/estável — sem favoritos/frequentes)."""
+    return JSONResponse(config_painel_service.get_eproc_sigilo_prefs())
+
+
+@router.post("/api/config/eproc-sigilo", response_class=JSONResponse)
+async def set_config_eproc_sigilo(request: Request):
+    """Salva só o padrão (a lista em si só muda por importação)."""
+    body = await request.json()
+    prefs = config_painel_service.set_eproc_sigilo_padrao(body.get("sigilo_padrao", ""))
+    return JSONResponse({"ok": True, "prefs": prefs})
+
+
+@router.post("/api/config/eproc-sigilo/importar", response_class=JSONResponse)
+async def importar_config_eproc_sigilo(request: Request):
+    """Importa do e-proc os níveis de sigilo disponíveis por documento, usando um
+    PROCESSO DE REFERÊNCIA informado pelo usuário. Requer a janela do e-proc aberta
+    e logada."""
+    from services import acoes_eproc_service
+    body = await request.json()
+    numero = (body.get("numero_processo") or "").strip()
+    if not numero:
+        return JSONResponse({"ok": False, "erro": "Informe o número do processo de referência."},
+                            status_code=400)
+    res = await acoes_eproc_service.importar_sigilos(numero)
+    status_code = 200 if res.get("ok") else 400
+    return JSONResponse(res, status_code=status_code)
+
+
 # --- Tabela de Ofícios: nome completo -> sigla (padronização de exibição) ---
 @router.get("/api/config/oficios", response_class=JSONResponse)
 async def get_config_oficios():
