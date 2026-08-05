@@ -550,6 +550,23 @@
         .sys-recon svg { width: 13px; height: 13px; }
         .sys-recon.girando svg { animation: sys-spin 0.8s linear infinite; }
         @keyframes sys-spin { to { transform: rotate(360deg); } }
+
+        /* Coluna "Descricao" da tabela de movimentacoes (partials/movimentacoes_tabela.html,
+           compartilhada entre a pagina do PAJ e o modal da Retornos): a descricao de
+           algumas movimentacoes vem do SISDPU com uma TABELA HTML ANINHADA cujo width
+           inline em px (herdado da tela original do SISDPU, ex: width:856px) forcava a
+           tabela externa a crescer alem do conteiner. !important sobrescreve o inline
+           (unica forma de vencer um style="" sem !important). */
+        .mov-desc-cell table {
+            width: 100% !important;
+            max-width: 100% !important;
+            table-layout: fixed !important;
+        }
+        .mov-desc-cell table th,
+        .mov-desc-cell table td {
+            width: auto !important;
+            word-break: break-word;
+        }
     </style>
 
     {% block head %}{% endblock %}

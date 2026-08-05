@@ -19,10 +19,7 @@ async def pagina_configuracoes(request: Request):
 async def salvar_configuracoes(request: Request):
     body = await request.json()
     salvo = config_painel_service.salvar_config(body)
-    limpeza: dict = {}
-    if body.get("limpar_narrativa"):
-        limpeza["narrativa"] = config_painel_service.limpar_dados_narrativa()
-    return JSONResponse({"ok": True, "config": salvo, "limpeza": limpeza})
+    return JSONResponse({"ok": True, "config": salvo})
 
 
 # --- Valores padrão da aba "Arquivos SAT Central" ---

@@ -51,36 +51,45 @@
         </div>
     </div>
 
-    <!-- Tabela com scroll horizontal em mobile -->
+    <!-- Tabela com scroll horizontal em mobile. table-fixed + larguras explicitas nas
+         colunas "estreitas": a Descricao (sem largura fixa) absorve o espaco restante.
+         Necessario porque a descricao de algumas movimentacoes vem do SISDPU com uma
+         TABELA HTML ANINHADA com largura fixa em px (ex: width:856px, herdada da tela
+         original) — sem table-fixed, isso forcava a tabela inteira a crescer alem do
+         conteiner (barra de rolagem horizontal indesejada). Ver .mov-desc-cell no
+         base.html para o override das larguras inline dessa tabela aninhada. -->
     <div class="overflow-x-auto">
-        <table class="table table-sm">
+        <table class="table table-sm table-fixed w-full">
             <thead class="bg-base-300">
                 <tr>
-                    <th style="cursor: pointer;" @click="ordenarPor('seq')" class="hover:bg-base-400">
+                    <th style="cursor: pointer;" @click="ordenarPor('seq')" class="hover:bg-base-400 w-14">
                         Seq <span x-show="colunhaOrdenacao === 'seq'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
                     </th>
                     <th style="cursor: pointer; display: none;" @click="ordenarPor('anexo')" class="hover:bg-base-400">
                         Anexo <span x-show="colunhaOrdenacao === 'anexo'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
                     </th>
-                    <th style="cursor: pointer;" @click="ordenarPor('data')" class="hover:bg-base-400">
+                    <th style="cursor: pointer;" @click="ordenarPor('data')" class="hover:bg-base-400 w-[92px]">
                         Data/Hora <span x-show="colunhaOrdenacao === 'data'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
                     </th>
                     <th style="cursor: pointer; display: none;" @click="ordenarPor('movimentacao')" class="hover:bg-base-400">
                         Movimentação <span x-show="colunhaOrdenacao === 'movimentacao'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
                     </th>
-                    <th style="cursor: pointer;" @click="ordenarPor('fases')" class="hover:bg-base-400">
+                    <th style="cursor: pointer;" @click="ordenarPor('fases')" class="hover:bg-base-400 w-[140px]">
                         Fases <span x-show="colunhaOrdenacao === 'fases'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
                     </th>
                     <th style="cursor: pointer;" @click="ordenarPor('descricao')" class="hover:bg-base-400">
                         Descrição <span x-show="colunhaOrdenacao === 'descricao'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
                     </th>
-                    <th style="cursor: pointer;" @click="ordenarPor('usuario')" class="hover:bg-base-400">
+                    <!-- Usuario: -10% da largura auto original (~151px -> 136px); o
+                         excedente liberado e' absorvido pela Descricao (unica coluna
+                         sem largura fixa). -->
+                    <th style="cursor: pointer;" @click="ordenarPor('usuario')" class="hover:bg-base-400 w-[136px]">
                         Usuário <span x-show="colunhaOrdenacao === 'usuario'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
                     </th>
                     <th style="cursor: pointer; display: none;" @click="ordenarPor('links_decisao')" class="hover:bg-base-400">
                         Links <span x-show="colunhaOrdenacao === 'links_decisao'" x-text="direcaoOrdenacao === 'asc' ? '↑' : '↓'"></span>
                     </th>
-                    <th>Documentos</th>
+                    <th class="w-[220px]">Documentos</th>
                 </tr>
             </thead>
             <tbody>
@@ -93,7 +102,7 @@
                         <td class="text-xs" x-text="mov.data_original || mov.data || '?'"></td>
                         <td style="display: none;" class="text-sm font-medium" x-text="mov.movimentacao || '-'"></td>
                         <td class="text-sm" x-text="(mov.fases || '-').replace('°', '')"></td>
-                        <td class="text-sm whitespace-normal break-words" x-html="(mov.fases && mov.fases.includes('Atendimento de retorno') && mov.descricao_retorno) ? mov.descricao_retorno : (mov.descricao || '-')"></td>
+                        <td class="text-sm whitespace-normal break-words mov-desc-cell" x-html="(mov.fases && mov.fases.includes('Atendimento de retorno') && mov.descricao_retorno) ? mov.descricao_retorno : (mov.descricao || '-')"></td>
                         <td class="text-sm" x-text="mov.usuario || '-'"></td>
                         <td style="display: none;">
                             <template x-if="mov.links_decisao && mov.links_decisao.length > 0">

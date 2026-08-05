@@ -80,6 +80,32 @@ def atualizar(rec_id: str, campos: dict[str, Any]) -> dict | None:
     return alvo
 
 
+def remover_por_paj(paj_norm: str) -> int:
+    """Remove TODOS os registros de um paj_norm do histórico (reescreve o JSONL). Usado pela
+    limpeza de arquivos do SAT — o PAJ some completamente da tabela "PAJs Concluídos".
+    Retorna a quantidade de registros removidos."""
+    if not _ARQ.exists():
+        return 0
+    linhas = _ARQ.read_text(encoding="utf-8").splitlines()
+    novo: list[str] = []
+    removidos = 0
+    for linha in linhas:
+        linha = linha.strip()
+        if not linha:
+            continue
+        try:
+            r = json.loads(linha)
+        except Exception:  # noqa: BLE001
+            novo.append(linha)
+            continue
+        if r.get("paj_norm") == paj_norm:
+            removidos += 1
+            continue
+        novo.append(json.dumps(r, ensure_ascii=False))
+    _ARQ.write_text("\n".join(novo) + ("\n" if novo else ""), encoding="utf-8")
+    return removidos
+
+
 def por_id_tramite(id_tramite: str) -> dict | None:
     """Último registro (mais recente) para um id_tramite — usado p/ marcar 'já tratado'."""
     for r in listar():
