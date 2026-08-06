@@ -24,6 +24,13 @@
                 </template>
                 <span x-show="!fasesDropdown().length" class="text-[11px] text-base-content/50">configure em Configurações › SISDPU</span>
             </div>
+            <!-- Descrição da movimentação: só desenhada quando o chamador não injeta
+                 uma fonte própria (ex.: Retornos usa a Sugestão IA via getDescricaoMov). -->
+            <template x-if="!getDescricaoMov">
+                <textarea class="textarea textarea-bordered textarea-sm w-full mt-2 text-[12.5px]"
+                          rows="2" x-model="descMov"
+                          placeholder="Descrição da movimentação (opcional)"></textarea>
+            </template>
         </div>
         <!-- Tramitar -->
         <div class="ret-acao-bloco">
@@ -47,6 +54,17 @@
                        :class="prazoData ? 'border-primary' : ''"
                        x-model="prazoData" @change="if (prazoData) prazo = -1">
             </div>
+            <!-- Descrição da tramitação: independente da movimentação; só desenhada
+                 quando o chamador não injeta uma fonte própria (getDescricaoTram). -->
+            <template x-if="!getDescricaoTram">
+                <div class="mt-2">
+                    <textarea class="textarea textarea-bordered textarea-sm w-full text-[12.5px]"
+                              rows="2" x-model="descTram"
+                              placeholder="Descrição da tramitação (opcional)"></textarea>
+                    <button type="button" class="btn btn-xs btn-ghost text-[11px] mt-1"
+                            @click="copiarMovParaTram()">Copiar da movimentação</button>
+                </div>
+            </template>
         </div>
         <!-- Concluir + Executar -->
         <div class="flex items-center gap-2 flex-wrap pt-2 border-t border-base-300">

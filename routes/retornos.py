@@ -7,6 +7,9 @@
 - POST /api/retornos/{id_tramite}/sugestao — salva a edição manual da sugestão.
 - GET  /api/retornos/{id_tramite}/ressincronizar-paj — refaz a leitura de UM PAJ
                                           no SISDPU (modo rápido) e atualiza o metadata.
+- POST /api/retornos/{id_tramite}/pos-execucao — pós-processo da Retornos após o
+                                          console genérico "Ações no SISDPU" executar
+                                          (histórico do painel + remoção da lista).
 """
 
 from __future__ import annotations
@@ -71,30 +74,24 @@ async def api_reanalisar(id_tramite: str, request: Request):
     return JSONResponse(await retornos_service.reanalisar(id_tramite, body.get("prompt", "")))
 
 
-@router.get("/api/retornos/preferencias", response_class=JSONResponse)
-async def api_preferencias():
-    """Favoritas (dropdown) + frequentes (badges) de fases/caixas — do cache local
-    (instantâneo, sem navegar no SISDPU). Alimenta a console de despacho no init."""
-    from services import config_painel_service
-    return JSONResponse(config_painel_service.get_sisdpu_prefs())
-
-
-@router.get("/api/retornos/fases", response_class=JSONResponse)
-async def api_fases():
-    """Fases de movimentação (dropdown Movimentar) — consulta AO VIVO (fallback)."""
-    return JSONResponse(await retornos_service.listar_fases())
-
-
-@router.get("/api/retornos/grupos", response_class=JSONResponse)
-async def api_grupos():
-    """Caixas de grupo + favoritas (dropdown/badges Tramitar)."""
-    return JSONResponse(await retornos_service.listar_grupos())
-
-
 @router.get("/api/retornos/{id_tramite}/caixas-abertas", response_class=JSONResponse)
 async def api_caixas_abertas(id_tramite: str):
     """Caixas/usuários onde o PAJ está aberto agora (badge acima dos cards)."""
     return JSONResponse(await retornos_service.caixas_abertas(id_tramite))
+
+
+@router.post("/api/retornos/{id_tramite}/pos-execucao", response_class=JSONResponse)
+async def api_pos_execucao(id_tramite: str, request: Request):
+    """Chamado pelo frontend logo após o console genérico "Ações no SISDPU" concluir
+    a execução (SSE de /api/acoes-sisdpu/executar): registra no Histórico do painel e
+    remove o retorno da lista quando o trâmite foi concluído (efeitos EXCLUSIVOS da
+    Retornos). Body: {"resultado": {...payload do onExecutado...}}."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — corpo vazio/malformado: trata como "nada a registrar"
+        body = {}
+    resultado = body.get("resultado") or {}
+    return JSONResponse(await retornos_service.registrar_pos_execucao(id_tramite, resultado))
 
 
 async def _stream_ressincronizar_paj(id_tramite: str):
@@ -113,24 +110,3 @@ async def ressincronizar_paj(id_tramite: str):
     return EventSourceResponse(_stream_ressincronizar_paj(id_tramite))
 
 
-async def _stream_executar(id_tramite: str, fase: str, descricao: str, grupo: str,
-                           prazo: int, prazo_data: str, concluir: bool, dry: bool):
-    async for ev in retornos_service.executar_stream(
-        id_tramite, fase, descricao, grupo=grupo or None,
-        prazo_dias=prazo, prazo_data=prazo_data, concluir=concluir, dry_run=dry,
-    ):
-        if ev.get("done"):
-            yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
-        else:
-            yield {"event": "log", "data": json.dumps(ev, ensure_ascii=False)}
-
-
-@router.get("/api/retornos/{id_tramite}/executar")
-async def executar(id_tramite: str, fase: str = "", descricao: str = "", grupo: str = "",
-                   prazo: int = 0, prazo_data: str = "", concluir: int = 1, dry: int = 0):
-    """SSE: movimenta (fase + despacho) → tramita (se grupo) → conclui (se concluir=1).
-    `descricao` vazio usa o despacho salvo no store. `prazo_data` (ISO YYYY-MM-DD)
-    tem precedência sobre `prazo` (dias). `dry=1` simula."""
-    return EventSourceResponse(_stream_executar(
-        id_tramite, fase, descricao, grupo, int(prazo), prazo_data,
-        bool(int(concluir)), bool(int(dry))))

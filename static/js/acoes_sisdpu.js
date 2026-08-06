@@ -2,33 +2,45 @@
 // Autocontido — não depende de variáveis do escopo pai (padrão do tabelaMovimentacoes()
 // em movimentacoes.js). Uso:
 //   <div x-data="acoesSisdpuBlock({ idProcesso: r.id_processo, paj: r.paj,
-//                                   idTramite: r.id_tramite, getDescricao: () => r._sug })">
+//                                   idTramite: r.id_tramite, getDescricaoMov: () => r._sug })">
 //     {% include "partials/acoes_sisdpu.html" %}
 //   </div>
 //
 // cfg:
-//   idProcesso   (obrigatório) — id do processo no SISDPU.
-//   paj          (opcional) — rótulo do PAJ para mensagens/confirmação.
-//   idTramite    (opcional) — id do trâmite da caixa de entrada a concluir; sem ele,
-//                o bloco "Concluir trâmite" não aparece (nada a concluir).
-//   getDescricao (opcional) — função síncrona que devolve o texto do despacho no
-//                momento de Executar (default: string vazia).
+//   idProcesso      (obrigatório) — id do processo no SISDPU.
+//   paj             (opcional) — rótulo do PAJ para mensagens/confirmação.
+//   idTramite       (opcional) — id do trâmite da caixa de entrada a concluir; sem ele,
+//                   o bloco "Concluir trâmite" não aparece (nada a concluir).
+//   getDescricaoMov (opcional) — função síncrona que devolve o texto do despacho da
+//                   MOVIMENTAÇÃO no momento de Executar (ex.: a textarea de Sugestão IA
+//                   da Retornos). Quando informado, o módulo NÃO desenha textarea própria
+//                   para a movimentação — evita duplicar campo com a fonte do chamador.
+//                   Sem ele, o módulo mostra sua própria textarea simples (estado interno
+//                   `descMov`). Aceita também `getDescricao` (nome legado) como alias.
+//   getDescricaoTram (opcional) — mesma ideia, para o despacho da TRAMITAÇÃO. Nenhuma
+//                   página tem hoje uma fonte de sugestão para tramitação, então na
+//                   prática o módulo sempre desenha sua textarea própria (`descTram`).
 //   faseInicial / grupoInicial (opcional) — pré-seleção antes de carregar as prefs.
-//   aberto       (opcional) — estado inicial da seção retrátil (default: false).
-//   onExecutado  (opcional) — callback(resultado) chamado após a execução (SSE "done").
+//   aberto          (opcional) — estado inicial da seção retrátil (default: false).
+//   onExecutado     (opcional) — callback(resultado) chamado após a execução (SSE "done").
 function acoesSisdpuBlock(cfg) {
     cfg = cfg || {};
+    const getDescricaoMovFn = typeof cfg.getDescricaoMov === 'function' ? cfg.getDescricaoMov
+                             : (typeof cfg.getDescricao === 'function' ? cfg.getDescricao : null);
+    const getDescricaoTramFn = typeof cfg.getDescricaoTram === 'function' ? cfg.getDescricaoTram : null;
     return {
         aberto: !!cfg.aberto,
         idProcesso: cfg.idProcesso || '',
         paj: cfg.paj || '',
         idTramite: cfg.idTramite || '',
-        getDescricao: typeof cfg.getDescricao === 'function' ? cfg.getDescricao : () => '',
+        getDescricaoMov: getDescricaoMovFn,
+        getDescricaoTram: getDescricaoTramFn,
         onExecutado: typeof cfg.onExecutado === 'function' ? cfg.onExecutado : () => {},
 
         fasesFav: [], fasesFreq: [], fasesTodas: [],
         caixasFav: [], caixasFreq: [], caixasTodas: [],
         fase: cfg.faseInicial || '', grupo: cfg.grupoInicial || '',
+        descMov: '', descTram: '',
         prazo: 0, prazoData: '', concluir: true, exec: false,
 
         sseAberto: false, sseLog: [], sseStatus: '', sseTitulo: '',
@@ -48,6 +60,11 @@ function acoesSisdpuBlock(cfg) {
         },
         fasesDropdown() { return this.fasesFav.length ? this.fasesFav : this.fasesTodas; },
         caixasDropdown() { return this.caixasFav.length ? this.caixasFav : this.caixasTodas; },
+        // Texto efetivo de cada despacho: prioriza a fonte injetada pelo chamador
+        // (Sugestão IA etc.); sem ela, usa a textarea própria do módulo.
+        descMovEfetiva() { return this.getDescricaoMov ? (this.getDescricaoMov() || '') : this.descMov; },
+        descTramEfetiva() { return this.getDescricaoTram ? (this.getDescricaoTram() || '') : this.descTram; },
+        copiarMovParaTram() { this.descTram = this.descMovEfetiva(); },
         async executar() {
             const concluirEfetivo = !!(this.idTramite && this.concluir);
             if (this.exec || (!this.fase && !this.grupo && !concluirEfetivo)) return;
@@ -63,8 +80,9 @@ function acoesSisdpuBlock(cfg) {
             this.sseLog = []; this.sseStatus = ''; this.sseAberto = true;
             const qs = new URLSearchParams({
                 id_processo: this.idProcesso, paj: this.paj || '',
-                fase: this.fase, descricao: this.getDescricao() || '',
-                grupo: this.grupo || '', prazo: String(this.prazo > 0 ? this.prazo : 0),
+                fase: this.fase, descricao_mov: this.descMovEfetiva(),
+                grupo: this.grupo || '', descricao_tram: this.descTramEfetiva(),
+                prazo: String(this.prazo > 0 ? this.prazo : 0),
                 prazo_data: this.prazoData || '', id_tramite: this.idTramite || '',
                 concluir: this.concluir ? '1' : '0',
             });
@@ -78,7 +96,11 @@ function acoesSisdpuBlock(cfg) {
                 this.sseStatus = res.status === 'ja_ausente' ? '— já estava concluído (nada foi feito agora)'
                                 : (res.ok ? '— executado ✓' : '— com aviso');
                 this.exec = false; es.close();
-                this.onExecutado(res);
+                // Enriquece o resultado com o que FOI de fato executado (fase/grupo/despachos) —
+                // o chamador (onExecutado) não tem acesso ao estado interno deste bloco, e páginas
+                // como a Retornos precisam disso para registrar no Histórico do painel.
+                this.onExecutado({...res, fase: this.fase, grupo: this.grupo,
+                                   descricao_mov: this.descMovEfetiva(), descricao_tram: this.descTramEfetiva()});
             });
             es.onerror = () => { this.sseStatus = '— erro de conexão'; this.exec = false; es.close(); };
         },

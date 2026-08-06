@@ -31,9 +31,6 @@ from ingestao import sisdpu_client
 from ingestao import sisdpu_movtram as movtram
 from services import historico_painel, retornos_ia
 from services.acoes_sisdpu_service import com_auto_reconexao as _com_auto_reconexao
-from services.acoes_sisdpu_service import executar_stream as _acoes_sisdpu_executar_stream
-
-GRUPO_PADRAO = "01 - PREV_DIVPREV"
 
 
 def _log_noop(_msg: str) -> None:
@@ -652,7 +649,7 @@ async def ressincronizar_paj_stream(id_tramite: str) -> AsyncIterator[dict]:
 
 
 # ---------------------------------------------------------------------------
-# Ações (coluna Ações): fases, grupos e execução mov→tram→concluir
+# Ações (coluna Ações): id_processo auxiliar e pós-processo do console genérico
 # ---------------------------------------------------------------------------
 def _um_id_processo() -> str:
     """Um id_processo qualquer do store (para abrir as telas de fase/grupo)."""
@@ -678,22 +675,6 @@ async def algum_id_processo() -> str:
     return ""
 
 
-async def listar_fases() -> dict:
-    """Fases de movimentação disponíveis no SISDPU (para o dropdown Movimentar)."""
-    idp = _um_id_processo()
-    fases = await movtram.listar_fases_movimentacao(idp) if idp else []
-    return {"ok": bool(fases), "fases": fases,
-            "detalhe": "" if fases else "Não foi possível ler as fases (há retornos sincronizados?)."}
-
-
-async def listar_grupos() -> dict:
-    """Caixas de grupo da unidade para o dropdown de Tramitar. As caixas favoritas
-    (dropdown) e frequentes (badges) vêm de /api/config/sisdpu, não daqui."""
-    idp = _um_id_processo()
-    grupos = await movtram.listar_grupos_unidade(idp) if idp else []
-    return {"ok": True, "grupos": grupos, "padrao": GRUPO_PADRAO}
-
-
 async def caixas_abertas(id_tramite: str) -> dict:
     """Onde o PAJ do retorno está aberto agora (tramitações sem conclusão)."""
     rec = _ler_store().get(id_tramite)
@@ -704,71 +685,53 @@ async def caixas_abertas(id_tramite: str) -> dict:
     return {"ok": True, "abertas": abertas}
 
 
-async def executar_stream(id_tramite: str, fase: str, descricao: str,
-                          grupo: str | None = None, prazo_dias: int = 0,
-                          prazo_data: str = "", concluir: bool = True,
-                          dry_run: bool = False) -> AsyncIterator[dict]:
-    """Wrapper da Retornos sobre o módulo genérico `acoes_sisdpu_service` ("Ações no
-    SISDPU"): resolve id_processo/despacho a partir do id_tramite no store, delega a
-    execução (mov→tram→conclui) e trata os efeitos EXCLUSIVOS da Retornos — registra no
-    histórico do painel e REMOVE o retorno da lista quando concluído. Emite eventos SSE."""
-    store = _ler_store()
-    rec = store.get(id_tramite)
+async def registrar_pos_execucao(id_tramite: str, resultado: dict) -> dict:
+    """Efeitos EXCLUSIVOS da Retornos após uma execução do console genérico "Ações no
+    SISDPU" (acoes_sisdpu.js): registra no Histórico do painel e REMOVE o retorno da
+    lista quando o trâmite foi concluído (ou já estava ausente da caixa).
+
+    Chamado pelo FRONTEND (não mais encadeado no backend) logo após o SSE de
+    `/api/acoes-sisdpu/executar` terminar — `resultado` é o payload enriquecido que o
+    módulo genérico devolve no `onExecutado` (inclui fase/grupo/descrições usadas,
+    além de ok/status/concluido/tramitado_para). Sem efeito (idempotente) se o
+    id_tramite já não estiver mais no store."""
+    rec = _ler_store().get(id_tramite)
     if not rec:
-        yield _ev("erro", "Retorno não encontrado (sincronize novamente).")
-        yield {"done": True, "resultado": {"ok": False, "detalhe": "Retorno não encontrado."}}
-        return
+        return {"ok": False, "detalhe": "Retorno não encontrado no store (já removido ou nunca sincronizado)."}
 
-    paj = rec.get("paj", "")
-    paj_norm = rec.get("paj_norm", "")
-    id_proc = rec.get("id_processo", "")
-    fase = (fase or "").strip()
-    # despacho: usa o texto passado; se vazio, cai no salvo (edição manual ou IA).
-    descricao_final = (descricao or "").strip() or (
-        rec.get("sugestao_editada") or rec.get("sugestao_ia") or "").strip()
-    if not id_proc:
-        yield _ev("erro", "id_processo ausente — sincronize novamente.")
-        yield {"done": True, "resultado": {"ok": False, "detalhe": "id_processo ausente."}}
-        return
-
-    resultado_final: dict = {"ok": False}
-    async for ev in _acoes_sisdpu_executar_stream(
-        id_processo=id_proc, paj=paj, fase=fase, descricao=descricao_final,
-        grupo=grupo, prazo_dias=prazo_dias, prazo_data=prazo_data,
-        id_tramite=id_tramite, concluir=concluir, dry_run=dry_run,
-    ):
-        if ev.get("done"):
-            resultado_final = ev.get("resultado") or {}
-        else:
-            yield ev
-
-    # efeitos EXCLUSIVOS da Retornos, só quando algo foi de fato efetivado (êxito real
-    # ou "já ausente" — nunca em falha dura, onde o genérico já retornou sem concluir
-    # nada): histórico do painel + remoção do retorno da lista (espelho da caixa).
-    status = resultado_final.get("status")
-    ok = bool(resultado_final.get("ok"))
+    status = (resultado or {}).get("status")
+    ok = bool((resultado or {}).get("ok"))
     ja_ausente = status == "ja_ausente"
-    if not dry_run and (ok or ja_ausente):
-        concluido = bool(resultado_final.get("concluido"))
-        tram_caixa = resultado_final.get("tramitado_para") or ""
-        algo_efetivado = bool(concluido or tram_caixa or fase)
-        if algo_efetivado:
-            if concluido:
-                atividade = "Conclusão de atendimento de retorno"
-            elif tram_caixa:
-                atividade = "Tramitação de atendimento de retorno"
-            else:
-                atividade = "Movimentação de atendimento de retorno"
-            historico_painel.registrar({
-                "paj": paj, "paj_norm": paj_norm, "url_detalhe": rec.get("url_detalhe", ""),
-                "assistido": rec.get("assistido", ""),
-                "origem": "retorno", "atividade": atividade,
-                "movimentacao": fase or "—", "tramitado_para": tram_caixa,
-                "concluido": concluido, "detalhe": descricao_final[:300],
-            })
-        if concluido or ja_ausente:
-            store = _ler_store()
-            store.pop(id_tramite, None)
-            _gravar_store(store)
+    if not (ok or ja_ausente):
+        return {"ok": False, "detalhe": "Execução sem êxito — nada a registrar."}
 
-    yield {"done": True, "resultado": resultado_final}
+    fase = ((resultado or {}).get("fase") or "").strip()
+    concluido = bool((resultado or {}).get("concluido"))
+    tram_caixa = (resultado or {}).get("tramitado_para") or ""
+    descricao_final = ((resultado or {}).get("descricao_mov") or (resultado or {}).get("descricao_tram") or "").strip() or (
+        rec.get("sugestao_editada") or rec.get("sugestao_ia") or "").strip()
+
+    algo_efetivado = bool(concluido or tram_caixa or fase)
+    if algo_efetivado:
+        if concluido:
+            atividade = "Conclusão de atendimento de retorno"
+        elif tram_caixa:
+            atividade = "Tramitação de atendimento de retorno"
+        else:
+            atividade = "Movimentação de atendimento de retorno"
+        historico_painel.registrar({
+            "paj": rec.get("paj", ""), "paj_norm": rec.get("paj_norm", ""),
+            "url_detalhe": rec.get("url_detalhe", ""), "assistido": rec.get("assistido", ""),
+            "origem": "retorno", "atividade": atividade,
+            "movimentacao": fase or "—", "tramitado_para": tram_caixa,
+            "concluido": concluido, "detalhe": descricao_final[:300],
+        })
+
+    if concluido or ja_ausente:
+        store = _ler_store()
+        store.pop(id_tramite, None)
+        _gravar_store(store)
+
+    return {"ok": True}
+
+

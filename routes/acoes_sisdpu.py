@@ -25,13 +25,13 @@ async def api_preferencias():
     return JSONResponse(config_painel_service.get_sisdpu_prefs())
 
 
-async def _stream_executar(id_processo: str, paj: str, fase: str, descricao: str,
-                           grupo: str, prazo: int, prazo_data: str, id_tramite: str,
-                           concluir: bool, dry: bool):
+async def _stream_executar(id_processo: str, paj: str, fase: str, descricao_mov: str,
+                           grupo: str, descricao_tram: str, prazo: int, prazo_data: str,
+                           id_tramite: str, concluir: bool, dry: bool):
     async for ev in acoes_sisdpu_service.executar_stream(
-        id_processo, paj=paj, fase=fase, descricao=descricao, grupo=grupo or None,
-        prazo_dias=prazo, prazo_data=prazo_data, id_tramite=id_tramite or None,
-        concluir=concluir, dry_run=dry,
+        id_processo, paj=paj, fase=fase, descricao_mov=descricao_mov, grupo=grupo or None,
+        descricao_tram=descricao_tram, prazo_dias=prazo, prazo_data=prazo_data,
+        id_tramite=id_tramite or None, concluir=concluir, dry_run=dry,
     ):
         if ev.get("done"):
             yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
@@ -40,11 +40,13 @@ async def _stream_executar(id_processo: str, paj: str, fase: str, descricao: str
 
 
 @router.get("/api/acoes-sisdpu/executar")
-async def executar(id_processo: str, paj: str = "", fase: str = "", descricao: str = "",
-                   grupo: str = "", prazo: int = 0, prazo_data: str = "",
+async def executar(id_processo: str, paj: str = "", fase: str = "", descricao_mov: str = "",
+                   grupo: str = "", descricao_tram: str = "", prazo: int = 0, prazo_data: str = "",
                    id_tramite: str = "", concluir: int = 0, dry: int = 0):
-    """SSE: movimenta (fase + despacho) → tramita (se grupo) → conclui (se concluir=1 E
-    id_tramite informado — sem id_tramite não há trâmite específico a concluir)."""
+    """SSE: movimenta (fase + despacho da movimentação) → tramita (se grupo, com despacho
+    próprio da tramitação) → conclui (se concluir=1 E id_tramite informado — sem
+    id_tramite não há trâmite específico a concluir). Os dois despachos são
+    independentes e podem ficar em branco — o SISDPU aceita ambos vazios."""
     return EventSourceResponse(_stream_executar(
-        id_processo, paj, fase, descricao, grupo, int(prazo), prazo_data,
+        id_processo, paj, fase, descricao_mov, grupo, descricao_tram, int(prazo), prazo_data,
         id_tramite, bool(int(concluir)), bool(int(dry))))

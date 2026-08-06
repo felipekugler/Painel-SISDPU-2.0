@@ -210,8 +210,8 @@
                                     <div class="mx-2 mb-2"
                                          x-data="acoesSisdpuBlock({
                                              idProcesso: r.id_processo, paj: r.paj, idTramite: r.id_tramite,
-                                             getDescricao: () => r._sug,
-                                             onExecutado: () => carregarLista(),
+                                             getDescricaoMov: () => r._sug,
+                                             onExecutado: (res) => posExecucaoRetorno(r, res),
                                          })" x-init="init()">
                                         {% include "partials/acoes_sisdpu.html" %}
                                     </div>
@@ -359,6 +359,19 @@ function retornosPage() {
                 }));
             } catch (e) { this.itens = []; }
             finally { this.carregando = false; }
+        },
+        // Chamado após o console "Ações no SISDPU" (acoes_sisdpu.js) terminar de
+        // executar num item da Retornos: registra a atividade no Histórico do painel
+        // e remove o retorno da lista quando o trâmite foi concluído (efeitos
+        // exclusivos da Retornos — o módulo genérico não sabe nada disso).
+        async posExecucaoRetorno(r, resultado) {
+            try {
+                await fetch(`/api/retornos/${encodeURIComponent(r.id_tramite)}/pos-execucao`, {
+                    method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({resultado}),
+                });
+            } catch (e) {}
+            await this.carregarLista();
         },
         toggle(r) {
             const id = (typeof r === 'object' && r) ? r.id_tramite : r;

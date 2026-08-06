@@ -81,8 +81,9 @@ async def executar_stream(
     id_processo: str,
     paj: str = "",
     fase: str = "",
-    descricao: str = "",
+    descricao_mov: str = "",
     grupo: str | None = None,
+    descricao_tram: str = "",
     prazo_dias: int = 0,
     prazo_data: str = "",
     id_tramite: str | None = None,
@@ -92,9 +93,12 @@ async def executar_stream(
     """Executa mov→tram→conclui (cada etapa opcional) em UM PAJ do SISDPU identificado
     por `id_processo`. Emite eventos SSE-like: {level,msg} de log; evento final
     {done: True, resultado: {...}}. `concluir` só tem efeito quando `id_tramite`
-    também for informado (é o trâmite específico que sai da caixa de entrada)."""
+    também for informado (é o trâmite específico que sai da caixa de entrada).
+    `descricao_mov` e `descricao_tram` são independentes — o SISDPU aceita ambas
+    (ou qualquer uma delas) em branco, então não há validação de obrigatoriedade aqui."""
     fase = (fase or "").strip()
-    descricao = (descricao or "").strip()
+    descricao_mov = (descricao_mov or "").strip()
+    descricao_tram = (descricao_tram or "").strip()
     if not id_processo:
         yield _ev("erro", "id_processo ausente.")
         yield {"done": True, "resultado": {"ok": False, "detalhe": "id_processo ausente."}}
@@ -104,10 +108,6 @@ async def executar_stream(
     if not fase and not grupo and not concluir_efetivo:
         yield _ev("erro", "Selecione ao menos uma ação: movimentar, tramitar ou concluir.")
         yield {"done": True, "resultado": {"ok": False, "detalhe": "Nenhuma ação selecionada."}}
-        return
-    if fase and not descricao:
-        yield _ev("erro", "O despacho (descrição da movimentação) está vazio.")
-        yield {"done": True, "resultado": {"ok": False, "detalhe": "Despacho vazio."}}
         return
 
     # prazo: data explícita (calendário) tem precedência sobre dias
@@ -128,7 +128,7 @@ async def executar_stream(
     if fase:
         yield _ev("info", f"Movimentando (fase: {fase})…")
         mv, exc, eventos = await com_auto_reconexao(
-            lambda: movtram.movimentar_paj(pajs, descricao, fase, [], "Documentos do Assistido", dry_run))
+            lambda: movtram.movimentar_paj(pajs, descricao_mov, fase, [], "Documentos do Assistido", dry_run))
         for ev in eventos:
             yield ev
         if exc is not None:
@@ -147,7 +147,7 @@ async def executar_stream(
         prazo_txt = f"prazo até {prazo_data_final}" if prazo_data_final else "sem prazo"
         yield _ev("info", f"Tramitando para {grupo} ({prazo_txt})…")
         tr, exc, eventos = await com_auto_reconexao(
-            lambda: movtram.tramitar_paj(pajs, grupo=grupo, descricao=descricao,
+            lambda: movtram.tramitar_paj(pajs, grupo=grupo, descricao=descricao_tram,
                                          prazo_data=prazo_data_final, dry_run=dry_run))
         for ev in eventos:
             yield ev
