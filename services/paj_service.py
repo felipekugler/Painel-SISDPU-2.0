@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import contextlib
 import json
+import os
 import re
 import time
 import unicodedata
@@ -535,8 +536,29 @@ def ler_arquivo(paj_norm: str, caminho_relativo: str) -> tuple[Path | None, str]
         ".json": "application/json; charset=utf-8",
         ".md": "text/plain; charset=utf-8",
         ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+        ".jpg": "image/jpeg",
+        ".jpeg": "image/jpeg",
+        ".png": "image/png",
     }
     return arquivo, content_types.get(ext, "application/octet-stream")
+
+
+def abrir_pasta_paj(paj_norm: str) -> dict:
+    """Abre a pasta do PAJ no Explorer da maquina onde o painel esta rodando.
+
+    So funciona porque o painel roda localmente, na mesma maquina do usuario
+    (nao teria sentido num deploy remoto) — mesmo principio de um app desktop
+    com botao 'mostrar no Explorer'.
+    """
+    pasta = PAJS_DIR / paj_norm
+    if not pasta.exists() or not _e_pasta_paj(pasta):
+        return {"ok": False, "erro": "Pasta do PAJ não encontrada"}
+
+    try:
+        os.startfile(str(pasta))  # noqa: S606 — Windows-only, uso local/desktop intencional
+    except Exception as e:
+        return {"ok": False, "erro": f"{type(e).__name__}: {e}"}
+    return {"ok": True}
 
 
 def limpar_anexos_paj(

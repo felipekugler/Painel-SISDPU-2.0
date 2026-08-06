@@ -14,6 +14,7 @@ ficariam redundantes para PAJs de 1a instancia DPU-AP.
 from __future__ import annotations
 
 import asyncio
+import base64
 import json
 import re
 from pathlib import Path
@@ -791,6 +792,24 @@ async def _processar_paj_pos_detalhamento(
     # para os consumidores antigos (compat), representando o ÚLTIMO da lista.
     if det.get("processos_judiciais"):
         metadata["processos_judiciais"] = det["processos_judiciais"]
+
+    # Foto do assistido — vem do `det` como data URI (extraida do <img> do
+    # SISDPU). Roda em toda sincronizacao (rapida ou completa), ja que so'
+    # requer o `det` do detalhamento, sem passo extra. Nem todo PAJ tem foto
+    # cadastrada; quando o SISDPU nao devolve nesta sync, preserva o arquivo
+    # de uma sincronizacao anterior em vez de apagar por uma falha pontual.
+    foto_src = det.get("foto_assistido_src") or ""
+    foto_path = pasta / "foto_assistido.jpg"
+    if foto_src.startswith("data:image") and "," in foto_src:
+        try:
+            foto_path.write_bytes(base64.b64decode(foto_src.split(",", 1)[1]))
+            metadata["foto_assistido"] = "foto_assistido.jpg"
+        except Exception as e:
+            log(f"  [aviso] falha ao salvar foto do assistido: {type(e).__name__}: {e}")
+            if foto_path.exists():
+                metadata["foto_assistido"] = "foto_assistido.jpg"
+    elif foto_path.exists():
+        metadata["foto_assistido"] = "foto_assistido.jpg"
 
     # Preenchido abaixo (se houver movimentacoes) e usado no bloco de anexos,
     # mais adiante, pra nomear os arquivos baixados com a seq real.
@@ -2037,6 +2056,20 @@ async def buscar_resumo_via_busca(
         if "detalhes_sisdpu" not in metadata:
             metadata["detalhes_sisdpu"] = {}
         metadata["detalhes_sisdpu"]["movimentacoes"] = mov_estruturadas
+
+    # Foto do assistido (mesma logica de `_processar_paj_pos_detalhamento`).
+    foto_src = det.get("foto_assistido_src") or ""
+    foto_path = pasta / "foto_assistido.jpg"
+    if foto_src.startswith("data:image") and "," in foto_src:
+        try:
+            foto_path.write_bytes(base64.b64decode(foto_src.split(",", 1)[1]))
+            metadata["foto_assistido"] = "foto_assistido.jpg"
+        except Exception as e:
+            log(f"[busca-paj] aviso: falha ao salvar foto do assistido: {type(e).__name__}: {e}")
+            if foto_path.exists():
+                metadata["foto_assistido"] = "foto_assistido.jpg"
+    elif foto_path.exists():
+        metadata["foto_assistido"] = "foto_assistido.jpg"
 
     # Marca origem: PAJ nao veio da caixa atual, foi puxado por busca explicita
     # do defensor (via watchlist). Dashboard usa essa flag para esconder.

@@ -34,6 +34,14 @@ async def api_lista():
     return JSONResponse(retornos_service.listar())
 
 
+@router.get("/api/retornos/count", response_class=JSONResponse)
+async def api_retornos_count():
+    """Contagem pro badge do submenu — mesmo total exibido no cabeçalho da própria
+    página Retornos (itens.length lá), sem re-sincronizar nada."""
+    dados = retornos_service.listar()
+    return {"count": len(dados.get("itens", []) or [])}
+
+
 async def _stream_sincronizar():
     async for ev in retornos_service.sincronizar_stream():
         if ev.get("done"):

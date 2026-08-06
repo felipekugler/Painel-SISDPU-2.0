@@ -395,6 +395,14 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
                 }
             }
 
+            // Foto do assistido — o SISDPU embute a imagem direto como data URI
+            // base64 num <img id="detalhamentoForm:fotoAssistido">. Nem todo PAJ
+            // tem foto cadastrada (o elemento so existe quando ha uma).
+            const fotoImg = document.querySelector('#detalhamentoForm\\\\:fotoAssistido');
+            if (fotoImg && fotoImg.src && fotoImg.src.startsWith('data:image')) {
+                r.foto_assistido_src = fotoImg.src;
+            }
+
             const pajMatch = body.match(/(\\d{4}\\/\\d{3}-\\d+)\\s*-\\s*PAJ\\s+([^\\n]+)/);
             if (pajMatch) {
                 r.paj = pajMatch[1];
@@ -1319,6 +1327,14 @@ async def buscar_paj_global(
                 if (cpfText && /\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}/.test(cpfText)) {
                     r.cpf_assistido = cpfText;
                 }
+            }
+
+            // Foto do assistido — o SISDPU embute a imagem direto como data URI
+            // base64 num <img id="detalhamentoForm:fotoAssistido">. Nem todo PAJ
+            // tem foto cadastrada (o elemento so existe quando ha uma).
+            const fotoImg = document.querySelector('#detalhamentoForm\\\\:fotoAssistido');
+            if (fotoImg && fotoImg.src && fotoImg.src.startsWith('data:image')) {
+                r.foto_assistido_src = fotoImg.src;
             }
 
             r.pretensao = valorParaLabel(['Pretensão', 'Pretensao']);

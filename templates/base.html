@@ -715,12 +715,15 @@
                 </span>
             </a>
 
-            <!-- Retornos (submenu) -->
-            <a href="/retornos" class="nav-item nav-sub {% if request.url.path == '/retornos' %}active{% endif %}">
+            <!-- Retornos (submenu) com contador -->
+            <a href="/retornos" class="nav-item nav-sub {% if request.url.path == '/retornos' %}active{% endif %}" x-data="retornosCounter()" x-init="loadCount()">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M9 15 3 9m0 0 6-6M3 9h12a6 6 0 0 1 0 12h-3" />
                 </svg>
                 <span>Retornos</span>
+                <span class="text-xs" style="color: var(--text-tertiary); margin-left: auto;">
+                    <span x-text="count > 0 ? `(${count})` : ''"></span>
+                </span>
             </a>
 
             <!-- Arquivos SAT (submenu) -->
@@ -985,6 +988,21 @@
                 async loadCount() {
                     try {
                         const r = await fetch('/api/pajs/count');
+                        const data = await r.json();
+                        this.count = data.count || 0;
+                    } catch (e) {
+                        this.count = 0;
+                    }
+                }
+            };
+        }
+
+        function retornosCounter() {
+            return {
+                count: 0,
+                async loadCount() {
+                    try {
+                        const r = await fetch('/api/retornos/count');
                         const data = await r.json();
                         this.count = data.count || 0;
                     } catch (e) {

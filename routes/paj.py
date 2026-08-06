@@ -6,6 +6,7 @@ from fastapi.responses import HTMLResponse, JSONResponse
 from services.download_completo_service import gerar_pdf_consolidado, verificar_sincronizacao_completa
 from services.paj_service import (
     PajNorm,
+    abrir_pasta_paj,
     ler_paj,
     ler_notas,
     limpar_anexos_paj,
@@ -109,6 +110,15 @@ def api_melhorar_ocr(paj_norm: PajNorm):
     from services.ocr_llm_service import melhorar_ocr_paj
 
     return melhorar_ocr_paj(paj_norm)
+
+
+@router.post("/api/paj/{paj_norm}/abrir-pasta", response_class=JSONResponse)
+async def api_abrir_pasta(paj_norm: PajNorm):
+    """Abre a pasta do PAJ no Explorer da maquina onde o painel roda (uso local)."""
+    resultado = abrir_pasta_paj(paj_norm)
+    if not resultado.get("ok"):
+        return JSONResponse(resultado, status_code=404)
+    return resultado
 
 
 @router.get("/api/paj/{paj_norm}/notas", response_class=JSONResponse)

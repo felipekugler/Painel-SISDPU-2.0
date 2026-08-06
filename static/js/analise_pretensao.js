@@ -77,6 +77,19 @@ function analiseIaApp(pajNorm, tipoPadrao) {
                 });
                 const d = await r.json();
                 if (!d.ok) {
+                    // Se o backend recusou porque JÁ HÁ uma análise rodando
+                    // (corrida entre abas/reloads — este cliente achava que
+                    // estava idle), não é erro real: sincroniza com o status
+                    // verdadeiro do servidor e volta a acompanhar em vez de
+                    // mascarar uma análise legítima como "erro".
+                    if ((d.erro || '').toLowerCase().includes('em andamento')) {
+                        await this.fetchStatus();
+                        if (this.status === 'running') {
+                            showToast('Já havia uma análise em andamento — acompanhando…', 'info');
+                            this.startPolling();
+                            return;
+                        }
+                    }
                     this.status = 'error';
                     this.error = d.erro || 'Falha ao iniciar.';
                     showToast(this.error, 'error');

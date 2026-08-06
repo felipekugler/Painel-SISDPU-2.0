@@ -393,22 +393,23 @@
 
   <!-- Filter Bar -->
   <section class="px-8 pb-4">
-    <div class="bg-base-300 rounded-xl border border-base-content/5 p-2 flex items-center gap-2 overflow-x-auto">
+    <div class="bg-base-300 rounded-xl border border-base-content/5 p-2 flex flex-nowrap items-center gap-1.5">
 
-      <!-- Busca (expande) -->
-      <label class="flex-1 min-w-[200px] flex items-center gap-2 px-3 h-10 chip-input rounded-lg">
+      <!-- Busca (largura = colunas PAJ + Assistido da tabela, 160px + 280px) -->
+      <label class="w-[440px] shrink-0 flex items-center gap-2 px-3 h-10 chip-input rounded-lg">
         <svg class="w-4 h-4 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.3-4.3m1.8-5.7a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"></path></svg>
         <input type="text" x-model="busca" @input.debounce.300ms="aplicarFiltros()"
-               placeholder="Buscar assistido, PAJ ou processo…"
+               placeholder="Buscar assistido, PAJ, processo, ofício, pretensão, descrição, data ou análise…"
+               title="Busca em: PAJ, assistido, processo judicial, ofício, pretensão, descrição, data e análise IA (sim/não)"
                class="bg-transparent w-full text-sm placeholder:text-base-content/40 focus:outline-none">
       </label>
 
       <div class="w-px h-6 bg-base-content/5 hidden sm:block"></div>
 
       <!-- Ofício -->
-      <label class="flex items-center gap-2 px-3 h-10 chip-input rounded-lg cursor-pointer">
+      <label class="flex items-center gap-1.5 px-2.5 h-10 chip-input rounded-lg cursor-pointer shrink-0">
         <svg class="w-4 h-4 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18M18.75 3v18M9 9h1.5m3 0H15M9 12h1.5m3 0H15M9 15h6"></path></svg>
-        <select x-model="filtroOficio" @change="aplicarFiltros()" class="bg-transparent text-sm focus:outline-none cursor-pointer appearance-none pr-1">
+        <select x-model="filtroOficio" @change="aplicarFiltros()" class="bg-transparent text-sm focus:outline-none cursor-pointer appearance-none pr-1 w-20 truncate">
           <option value="">Todos os ofícios</option>
           <template x-for="o in oficiosUnicos" :key="o">
             <option :value="o" x-text="o"></option>
@@ -417,34 +418,57 @@
         <svg class="w-3.5 h-3.5 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path></svg>
       </label>
 
-      <!-- Área -->
-      <label class="flex items-center gap-2 px-3 h-10 chip-input rounded-lg cursor-pointer">
-        <svg class="w-4 h-4 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 6A2.25 2.25 0 0 1 6 3.75h3.879c.597 0 1.17.237 1.591.659l1.621 1.62c.422.422.995.659 1.592.659H18A2.25 2.25 0 0 1 20.25 9v9A2.25 2.25 0 0 1 18 20.25H6A2.25 2.25 0 0 1 3.75 18V6Z"></path></svg>
-        <select x-model="filtroForo" @change="aplicarFiltros()" class="bg-transparent text-sm focus:outline-none cursor-pointer appearance-none pr-1">
-          <option value="">Todas as áreas</option>
-          <template x-for="a in areasUnicas" :key="a">
-            <option :value="a" x-text="formatarArea(a)"></option>
-          </template>
-        </select>
-        <svg class="w-3.5 h-3.5 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path></svg>
-      </label>
-
       <!-- Pretensão -->
-      <label class="flex items-center gap-2 px-3 h-10 chip-input rounded-lg cursor-pointer">
+      <label class="flex items-center gap-1.5 px-2.5 h-10 chip-input rounded-lg cursor-pointer shrink-0">
         <svg class="w-4 h-4 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 6h18M6 12h12M10 18h4"></path></svg>
-        <select x-model="filtroClassif" @change="aplicarFiltros()" class="bg-transparent text-sm focus:outline-none cursor-pointer appearance-none pr-1 min-w-[160px]">
+        <select x-model="filtroPretensao" @change="aplicarFiltros()" class="bg-transparent text-sm focus:outline-none cursor-pointer appearance-none pr-1 w-28 truncate" title="Pretensão">
           <option value="">Todas as pretensões</option>
-          <template x-for="c in classificacoesUnicas" :key="c">
+          <template x-for="c in pretensoesUnicas" :key="c">
             <option :value="c" x-text="c"></option>
           </template>
         </select>
         <svg class="w-3.5 h-3.5 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path></svg>
       </label>
 
+      <!-- Descrição -->
+      <label class="flex items-center gap-1.5 px-2.5 h-10 chip-input rounded-lg cursor-pointer shrink-0">
+        <svg class="w-4 h-4 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"></path></svg>
+        <select x-model="filtroDescricao" @change="aplicarFiltros()" class="bg-transparent text-sm focus:outline-none cursor-pointer appearance-none pr-1 w-28 truncate" title="Descrição">
+          <option value="">Todas as descrições</option>
+          <template x-for="d in descricoesUnicas" :key="d">
+            <option :value="d" x-text="d"></option>
+          </template>
+        </select>
+        <svg class="w-3.5 h-3.5 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path></svg>
+      </label>
+
+      <!-- Data -->
+      <label class="flex items-center gap-1.5 px-2.5 h-10 chip-input rounded-lg cursor-pointer shrink-0">
+        <svg class="w-4 h-4 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0V11.25a2.25 2.25 0 0 1 2.25-2.25h13.5a2.25 2.25 0 0 1 2.25 2.25v7.5"></path></svg>
+        <select x-model="filtroData" @change="aplicarFiltros()" class="bg-transparent text-sm focus:outline-none cursor-pointer appearance-none pr-1 w-20 truncate">
+          <option value="">Todas as datas</option>
+          <template x-for="d in datasUnicas" :key="d">
+            <option :value="d" x-text="formatarData(d)"></option>
+          </template>
+        </select>
+        <svg class="w-3.5 h-3.5 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path></svg>
+      </label>
+
+      <!-- Análise IA -->
+      <label class="flex items-center gap-1.5 px-2.5 h-10 chip-input rounded-lg cursor-pointer shrink-0">
+        <svg class="w-4 h-4 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"></path></svg>
+        <select x-model="filtroAnalise" @change="aplicarFiltros()" class="bg-transparent text-sm focus:outline-none cursor-pointer appearance-none pr-1 w-20 truncate">
+          <option value="">Análise: todas</option>
+          <option value="sim">Com análise</option>
+          <option value="nao">Sem análise</option>
+        </select>
+        <svg class="w-3.5 h-3.5 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path></svg>
+      </label>
+
       <!-- Limpar -->
       <button type="button"
-              class="btn btn-ghost btn-sm normal-case text-base-content/60 hover:text-base-content gap-1.5"
-              x-show="filtroOficio || filtroForo || filtroClassif || busca"
+              class="btn btn-ghost btn-sm normal-case text-base-content/60 hover:text-base-content gap-1.5 shrink-0"
+              x-show="filtroOficio || filtroPretensao || filtroDescricao || filtroData || filtroAnalise || busca"
               @click="limparFiltros()" x-transition.opacity>
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"></path></svg>
         Limpar
@@ -453,19 +477,37 @@
 
     <!-- Chips de filtros ativos -->
     <div class="flex items-center gap-2 mt-2.5 text-xs text-base-content/50 min-h-[20px] flex-wrap"
-         x-show="filtroOficio || filtroForo || filtroClassif || busca"
+         x-show="filtroOficio || filtroPretensao || filtroDescricao || filtroData || filtroAnalise || busca"
          x-transition.opacity>
       <span>Filtrando por:</span>
-      <template x-if="filtroForo">
-        <span class="badge badge-sm badge-ghost gap-1">
-          <span x-text="filtroForo"></span>
-          <button @click.stop="filtroForo = ''; aplicarFiltros()" class="ml-1 opacity-60 hover:opacity-100">×</button>
-        </span>
-      </template>
       <template x-if="filtroOficio">
         <span class="badge badge-sm badge-ghost gap-1">
           <span x-text="filtroOficio"></span>
           <button @click.stop="filtroOficio = ''; aplicarFiltros()" class="ml-1 opacity-60 hover:opacity-100">×</button>
+        </span>
+      </template>
+      <template x-if="filtroPretensao">
+        <span class="badge badge-sm badge-ghost gap-1">
+          <span x-text="filtroPretensao"></span>
+          <button @click.stop="filtroPretensao = ''; aplicarFiltros()" class="ml-1 opacity-60 hover:opacity-100">×</button>
+        </span>
+      </template>
+      <template x-if="filtroDescricao">
+        <span class="badge badge-sm badge-ghost gap-1">
+          <span x-text="filtroDescricao"></span>
+          <button @click.stop="filtroDescricao = ''; aplicarFiltros()" class="ml-1 opacity-60 hover:opacity-100">×</button>
+        </span>
+      </template>
+      <template x-if="filtroData">
+        <span class="badge badge-sm badge-ghost gap-1">
+          <span x-text="formatarData(filtroData)"></span>
+          <button @click.stop="filtroData = ''; aplicarFiltros()" class="ml-1 opacity-60 hover:opacity-100">×</button>
+        </span>
+      </template>
+      <template x-if="filtroAnalise">
+        <span class="badge badge-sm badge-ghost gap-1">
+          <span x-text="filtroAnalise === 'sim' ? 'Com análise' : 'Sem análise'"></span>
+          <button @click.stop="filtroAnalise = ''; aplicarFiltros()" class="ml-1 opacity-60 hover:opacity-100">×</button>
         </span>
       </template>
       <template x-if="busca">
@@ -574,7 +616,12 @@
 
               <!-- Análise IA -->
               <td class="px-4 py-3 align-top">
-                <span class="badge badge-sm font-semibold"
+                <span class="inline-flex items-center gap-1.5 text-xs text-warning font-medium"
+                      x-show="analiseEmAndamento(paj.paj_norm)" title="Diagnóstico por IA em andamento">
+                  <span class="loading loading-spinner loading-xs"></span>
+                  analisando…
+                </span>
+                <span class="badge badge-sm font-semibold" x-show="!analiseEmAndamento(paj.paj_norm)"
                       :class="paj.tem_analise_ia ? 'badge-success' : 'badge-ghost text-base-content/40'"
                       x-text="paj.tem_analise_ia ? 'SIM' : 'NÃO'"></span>
               </td>
@@ -621,12 +668,15 @@ function dashboardApp() {
         totalConcluidos: 0,
         mostrarConcluidos: false,
         filtroOficio: '',
-        filtroForo: '',
-        filtroClassif: '',
+        filtroPretensao: '',
+        filtroDescricao: '',
+        filtroData: '',
+        filtroAnalise: '',
         busca: '',
         ordemCampo: 'data_caixa',
         ordemAsc: false,
         statusMap: {},
+        analiseStatusMap: {},
         stats: {running: 0, queued: 0, max_parallel: 5},
         cota: {ativo: false, n_pendentes: 0, redisparo_em: '', pausado: false, ciclo: 0, max_ciclos: 12, ultimo_log: ''},
 
@@ -657,22 +707,26 @@ function dashboardApp() {
 
         limparFiltros() {
             this.filtroOficio = '';
-            this.filtroForo = '';
-            this.filtroClassif = '';
+            this.filtroPretensao = '';
+            this.filtroDescricao = '';
+            this.filtroData = '';
+            this.filtroAnalise = '';
             this.busca = '';
             this.aplicarFiltros();
         },
 
         async atualizarStatus() {
             try {
-                const [rStatus, rStats, rCota] = await Promise.all([
+                const [rStatus, rStats, rCota, rAnalise] = await Promise.all([
                     fetch('/api/elaborar/status'),
                     fetch('/api/elaborar/stats'),
                     fetch('/api/cota/status'),
+                    fetch('/api/analise-pretensao/status-todos'),
                 ]);
                 this.statusMap = await rStatus.json();
                 this.stats = await rStats.json();
                 this.cota = await rCota.json();
+                this.analiseStatusMap = await rAnalise.json();
             } catch (e) {}
         },
 
@@ -703,10 +757,15 @@ function dashboardApp() {
             return this.statusMap[pajNorm] || {};
         },
 
+        analiseEmAndamento(pajNorm) {
+            return (this.analiseStatusMap[pajNorm] || {}).status === 'running';
+        },
+
         // ----- Elaborar todos (lote) -----
 
         temFiltrosAtivos() {
-            return !!(this.filtroOficio || this.filtroForo || this.filtroClassif || this.busca);
+            return !!(this.filtroOficio || this.filtroPretensao ||
+                      this.filtroDescricao || this.filtroData || this.filtroAnalise || this.busca);
         },
 
         fmtPaj(pajNorm) {
@@ -879,35 +938,23 @@ function dashboardApp() {
             return `há ${dias} dias`;
         },
 
-        get areasUnicas() {
-            return [...new Set(this.pajs.map(p => p.foro).filter(Boolean))].sort();
+        get pretensoesUnicas() {
+            return [...new Set(this.pajs.map(p => p.pretensaopura).filter(Boolean))].sort();
         },
 
-        get classificacoesUnicas() {
-            return [...new Set(this.pajs.map(p => p.classificacao).filter(Boolean))].sort();
+        get descricoesUnicas() {
+            return [...new Set(this.pajs.map(p => p.desc_caixa).filter(Boolean))].sort();
+        },
+
+        get datasUnicas() {
+            // Mais recente primeiro — string ISO "AAAA-MM-DD" ordena corretamente.
+            return [...new Set(this.pajs.map(p => p.data_caixa).filter(Boolean))].sort().reverse();
         },
 
         get oficiosUnicos() {
             return [...new Set(
                 this.pajs.map(p => p.oficio_sigla).filter(Boolean)
             )].sort();
-        },
-
-        // Mapeia o valor cru de `paj.foro` (sem acentos, vindo do parser do
-        // SISDPU) para o rótulo de exibição com ortografia portuguesa correta.
-        // Mantém o valor original quando não houver mapeamento conhecido.
-        formatarArea(area) {
-            if (!area) return '';
-            const mapa = {
-                'civel': 'Cível',
-                'previdenciario': 'Previdenciário',
-                'saude': 'Saúde',
-                'execucao': 'Execução',
-                'criminal': 'Criminal',
-                'familia': 'Família',
-                'tributario': 'Tributário',
-            };
-            return mapa[String(area).toLowerCase()] || area;
         },
 
         normalizarOficio(bruto) {
@@ -968,18 +1015,33 @@ function dashboardApp() {
             if (this.filtroOficio) {
                 lista = lista.filter(p => p.oficio_sigla === this.filtroOficio);
             }
-            if (this.filtroForo) {
-                lista = lista.filter(p => p.foro === this.filtroForo);
+            if (this.filtroPretensao) {
+                lista = lista.filter(p => p.pretensaopura === this.filtroPretensao);
             }
-            if (this.filtroClassif) {
-                lista = lista.filter(p => p.classificacao === this.filtroClassif);
+            if (this.filtroDescricao) {
+                lista = lista.filter(p => p.desc_caixa === this.filtroDescricao);
+            }
+            if (this.filtroData) {
+                lista = lista.filter(p => p.data_caixa === this.filtroData);
+            }
+            if (this.filtroAnalise) {
+                const querAnalise = this.filtroAnalise === 'sim';
+                lista = lista.filter(p => !!p.tem_analise_ia === querAnalise);
             }
             if (this.busca) {
                 const q = this.busca.toLowerCase();
                 lista = lista.filter(p =>
                     (p.paj || '').toLowerCase().includes(q) ||
                     (p.assistido || '').toLowerCase().includes(q) ||
-                    (p.processo_judicial || '').toLowerCase().includes(q)
+                    (p.processo_judicial || '').toLowerCase().includes(q) ||
+                    (p.oficio || '').toLowerCase().includes(q) ||
+                    (p.oficio_sigla || '').toLowerCase().includes(q) ||
+                    (p.pretensaopura || '').toLowerCase().includes(q) ||
+                    (p.classificacao || '').toLowerCase().includes(q) ||
+                    (p.desc_caixa || '').toLowerCase().includes(q) ||
+                    (p.data_caixa || '').toLowerCase().includes(q) ||
+                    this.formatarData(p.data_caixa).toLowerCase().includes(q) ||
+                    (p.tem_analise_ia ? 'sim' : 'não').includes(q)
                 );
             }
             lista = [...lista].sort((a, b) => {

@@ -5,9 +5,10 @@ Quando o `.txt` companion de um anexo esta vazio/ilegivel/curto, um modelo BARAT
 cacheado (com marcador de procedencia) e e' reusado pelo Opus na elaboracao —
 sem precisar o Opus xhigh ler o PDF com visao toda vez (caro e repetido).
 
-Acionado ANTES da elaboracao (chat_service.start -> melhorar_ocr_paj) e tambem
-sob demanda (endpoint /api/paj/{paj}/melhorar-ocr). Idempotente: nao retranscreve
-um `.txt` que ja traz o marcador `[OCR-LLM:`.
+Acionado ANTES da elaboracao (chat_service.start -> melhorar_ocr_paj), ANTES do
+diagnostico por pretensao (analise_pretensao_service.iniciar -> melhorar_ocr_paj)
+e tambem sob demanda (endpoint /api/paj/{paj}/melhorar-ocr). Idempotente: nao
+retranscreve um `.txt` que ja traz o marcador `[OCR-LLM:`.
 
 Best-effort: qualquer falha (inclusive cota) e' registrada e nao interrompe a
 elaboracao — o Opus ainda pode ler o PDF com visao como ultimo recurso.

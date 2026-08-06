@@ -37,6 +37,7 @@ from routes.retornos import router as retornos_router
 from routes.sat import router as sat_router
 from routes.seguranca import router as seguranca_router
 from routes.sync import router as sync_router
+from routes.valor_causa import router as valor_causa_router
 from routes.watchlist import router as watchlist_router
 from services.ambiente_service import verificar_ambiente
 
@@ -71,7 +72,7 @@ _configurar_logging()
 # Versao do painel — fonte unica. Usada pelo FastAPI (OpenAPI/docs) e tambem
 # exposta a todos os templates via Jinja globals (renderizada no rodape da
 # sidebar). Para incrementar: mude aqui e so aqui.
-APP_VERSION = "0.3.39"
+APP_VERSION = "0.4.2"
 
 app = FastAPI(title="oficio-geral-ui", version=APP_VERSION)
 app.state.jinja = jinja2.Environment(
@@ -182,6 +183,7 @@ app.include_router(configuracoes_router)
 app.include_router(cofre_router)
 app.include_router(docgen_router)
 app.include_router(sync_router)
+app.include_router(valor_causa_router)
 app.include_router(busca_router)
 app.include_router(prazos_router)
 app.include_router(watchlist_router)

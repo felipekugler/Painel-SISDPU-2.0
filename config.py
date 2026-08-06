@@ -111,6 +111,28 @@ COTA_TICK_SEG = int(os.getenv("COTA_TICK_SEG", "60"))
 # Default: <OFICIO_GERAL>/Peças Feitas
 DOCGEN_OUT_DIR = Path(os.getenv("DOCGEN_OUT_DIR", str(OFICIO_GERAL / "Peças Feitas")))
 
+# --- Cálculo automático do valor da causa (sub-passo da geração da PI) ---
+# Reusa os módulos permanentes do workspace de petições:
+#   calc_valor_causa.py  -> gera o PDF da tabela de prestações devidas
+#   indices_cm.py        -> tabelas INPC / IPCA-E (atualização mensal manual)
+#   peticao_base.py      -> formatação DPU (na pasta-mãe Modelos/)
+# VALOR_CAUSA_DIR aponta para essa pasta; o serviço insere no sys.path e importa.
+# REQUISITO: Microsoft Word instalado (calc_valor_causa converte docx->PDF via
+# win32com). Em máquina sem Word, o cálculo dos totais funciona mas o PDF falha.
+VALOR_CAUSA_DIR = Path(
+    os.getenv("VALOR_CAUSA_DIR", r"C:\Claude\DPU\Modelos\Peticoes")
+)
+# Salário mínimo vigente — valor mensal presumido em BPC/assistencial e em
+# benefícios previdenciários que o segurado nunca chegou a receber. Atualizar
+# anualmente (ou via .env) quando o mínimo mudar.
+SALARIO_MINIMO = float(os.getenv("SALARIO_MINIMO", "1518.00"))
+# Interpretador Python que roda o calc_valor_causa (precisa de python-docx +
+# pywin32/Word). O venv do painel NÃO tem essas libs de propósito (a geração de
+# docx é delegada a subprocess), então o cálculo roda no Python do sistema.
+# Vazio = o serviço detecta automaticamente um `python`/`py` do PATH que tenha
+# as libs. Defina no .env se precisar fixar (ex.: caminho de um python 3.x).
+VALOR_CAUSA_PYTHON = os.getenv("VALOR_CAUSA_PYTHON", "")
+
 
 def validar_paths() -> list[str]:
     """Verifica que OFICIO_GERAL/PAJS_DIR existem. Retorna lista de avisos

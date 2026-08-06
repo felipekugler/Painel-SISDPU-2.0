@@ -140,7 +140,7 @@
                             <th>PAJ</th><th>Assistido</th><th>CPF</th><th>Pretensão</th><th>Documentos</th><th>Log</th><th class="text-right">Ação</th>
                         </tr>
                     </thead>
-                    <template x-for="p in pendentes" :key="p.id_tramite">
+                    <template x-for="p in pendentes" :key="p.paj_norm">
                         <tbody>
                             <tr class="hover">
                                 <td class="font-mono whitespace-nowrap">
@@ -658,7 +658,7 @@
             </p>
             <p class="text-sm text-base-content/70 mt-2">Peça ao assistente (comando copiado):</p>
             <div class="bg-base-300 rounded p-3 text-sm mt-1 space-y-0.5">
-                <template x-for="p in baixarLista" :key="p.id_tramite">
+                <template x-for="p in baixarLista" :key="p.paj_norm">
                     <div class="font-mono" x-text="p.paj + ' — ' + p.assistido + ' (CPF ' + p.cpf + ')'"></div>
                 </template>
             </div>

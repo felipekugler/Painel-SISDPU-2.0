@@ -1166,6 +1166,25 @@ async function melhorarOcr(pajNorm, btn) {
     }
 }
 
+/* Abre a pasta do PAJ no Explorer — so' funciona na maquina onde o painel roda. */
+async function abrirPastaPaj(pajNorm, btn) {
+    const original = btn ? btn.innerHTML : '';
+    if (btn) { btn.disabled = true; }
+    try {
+        const r = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/abrir-pasta', { method: 'POST' });
+        const d = await r.json();
+        if (!r.ok || !d.ok) {
+            showToast(d.erro || 'Erro ao abrir a pasta.', 'error');
+            return;
+        }
+        showToast('Pasta aberta no Explorer.', 'success');
+    } catch (e) {
+        showToast('Erro ao abrir a pasta: ' + e.message, 'error');
+    } finally {
+        if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
+}
+
 /* =========================================================
    Busca global (Ctrl+K / Cmd+K)
    ========================================================= */

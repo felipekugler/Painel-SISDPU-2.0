@@ -21,6 +21,14 @@ async def analise_pretensao_status(paj_norm: PajNorm):
     return analise_pretensao_service.get_status(paj_norm)
 
 
+@router.get("/api/analise-pretensao/status-todos")
+async def analise_pretensao_status_todos():
+    """Status (em memoria) de todas as analises por pretensao em andamento —
+    consumido pelo dashboard (polling) pra exibir o spinner na coluna
+    'Análise IA' enquanto o diagnostico roda em background."""
+    return analise_pretensao_service.get_status_todos()
+
+
 @router.post("/api/analise-pretensao/reenviar/{paj_norm}")
 async def analise_pretensao_reenviar(paj_norm: PajNorm, payload: dict = Body(...)):
     mensagem = (payload.get("mensagem") or "").strip()
