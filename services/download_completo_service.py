@@ -491,12 +491,70 @@ def _pagina_separadora(
     return cor_escura
 
 
+_A4_TOLERANCIA = 3  # pontos — margem pra considerar uma pagina "ja e' A4 retrato"
+
+
+def _normalizar_pagina_pdf(doc: fitz.Document, src: fitz.Document, indice: int) -> None:
+    """Insere a pagina `indice` de `src` em `doc` ja padronizada em A4 retrato.
+
+    A maioria dos anexos ja vem em A4 retrato — nesse caso a pagina e' so'
+    copiada (`insert_pdf`), sem custo extra e preservando texto
+    pesquisavel/vetores tal como sempre foi feito aqui.
+
+    Quando a pagina de origem vem em paisagem, ou em qualquer tamanho
+    diferente de A4 (Oficio, Letter, Legal, digitalizacoes fora de padrao
+    etc.), cria-se uma pagina A4 retrato nova e o conteudo original e'
+    desenhado dentro dela via `show_pdf_page` — que embute o proprio
+    conteudo da pagina (nao rasteriza, mantendo texto/qualidade), girado
+    90° quando a origem for paisagem e sempre escalado mantendo a
+    proporcao original (sem distorcer), centralizado na folha. E' o mesmo
+    principio ja usado em `_anexar_imagem` pra imagens soltas, agora
+    tambem pros PDFs anexados — que sao a maioria dos documentos reais do
+    processo e, ate' aqui, entravam no consolidado exatamente como
+    estivessem no arquivo de origem (paisagem, tamanho diferente etc.)."""
+    pagina_src = src[indice]
+    rect = pagina_src.rect  # ja reflete o /Rotate proprio da pagina de origem
+    largura, altura = rect.width, rect.height
+
+    ja_e_a4_retrato = (
+        largura > 0
+        and altura > 0
+        and altura >= largura
+        and abs(largura - A4.width) <= _A4_TOLERANCIA
+        and abs(altura - A4.height) <= _A4_TOLERANCIA
+    )
+    if ja_e_a4_retrato:
+        doc.insert_pdf(src, from_page=indice, to_page=indice)
+        return
+
+    if largura <= 0 or altura <= 0:
+        # Dimensoes invalidas (pagina corrompida) — melhor manter o
+        # comportamento antigo (copia crua) do que dividir por zero.
+        doc.insert_pdf(src, from_page=indice, to_page=indice)
+        return
+
+    paisagem = largura > altura
+    rotacao = 90 if paisagem else 0
+    largura_efetiva, altura_efetiva = (altura, largura) if paisagem else (largura, altura)
+
+    escala = min(A4.width / largura_efetiva, A4.height / altura_efetiva)
+    w_dest = largura_efetiva * escala
+    h_dest = altura_efetiva * escala
+    x0 = (A4.width - w_dest) / 2
+    y0 = (A4.height - h_dest) / 2
+    destino = fitz.Rect(x0, y0, x0 + w_dest, y0 + h_dest)
+
+    pagina = _nova_pagina(doc)
+    pagina.show_pdf_page(destino, src, indice, rotate=rotacao)
+
+
 def _anexar_pdf(doc: fitz.Document, paj_norm: str, rotulo_seq: str, nome_doc: str, caminho: Path, cor_tarja) -> None:
     nome_tarja = _truncar(nome_doc, 70)
     with fitz.open(caminho) as src:
         n = src.page_count
         idx_inicial = doc.page_count
-        doc.insert_pdf(src)
+        for i in range(n):
+            _normalizar_pagina_pdf(doc, src, i)
     for i in range(n):
         pagina = doc[idx_inicial + i]
         _tarja(pagina, f"{paj_norm}  |  Seq. {rotulo_seq}  |  {nome_tarja}  |  Página {i + 1} de {n}", cor_tarja)

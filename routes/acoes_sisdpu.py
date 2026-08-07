@@ -25,13 +25,13 @@ async def api_preferencias():
     return JSONResponse(config_painel_service.get_sisdpu_prefs())
 
 
-async def _stream_executar(id_processo: str, paj: str, fase: str, descricao_mov: str,
+async def _stream_executar(id_processo: str, paj: str, paj_norm: str, fase: str, descricao_mov: str,
                            grupo: str, descricao_tram: str, prazo: int, prazo_data: str,
-                           id_tramite: str, concluir: bool, dry: bool):
+                           id_tramite: str, concluir: bool, dry: bool, anexos: list):
     async for ev in acoes_sisdpu_service.executar_stream(
-        id_processo, paj=paj, fase=fase, descricao_mov=descricao_mov, grupo=grupo or None,
+        id_processo, paj=paj, paj_norm=paj_norm, fase=fase, descricao_mov=descricao_mov, grupo=grupo or None,
         descricao_tram=descricao_tram, prazo_dias=prazo, prazo_data=prazo_data,
-        id_tramite=id_tramite or None, concluir=concluir, dry_run=dry,
+        id_tramite=id_tramite or None, concluir=concluir, dry_run=dry, anexos=anexos,
     ):
         if ev.get("done"):
             yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
@@ -40,13 +40,20 @@ async def _stream_executar(id_processo: str, paj: str, fase: str, descricao_mov:
 
 
 @router.get("/api/acoes-sisdpu/executar")
-async def executar(id_processo: str, paj: str = "", fase: str = "", descricao_mov: str = "",
+async def executar(id_processo: str, paj: str = "", paj_norm: str = "", fase: str = "", descricao_mov: str = "",
                    grupo: str = "", descricao_tram: str = "", prazo: int = 0, prazo_data: str = "",
-                   id_tramite: str = "", concluir: int = 0, dry: int = 0):
-    """SSE: movimenta (fase + despacho da movimentação) → tramita (se grupo, com despacho
-    próprio da tramitação) → conclui (se concluir=1 E id_tramite informado — sem
-    id_tramite não há trâmite específico a concluir). Os dois despachos são
-    independentes e podem ficar em branco — o SISDPU aceita ambos vazios."""
+                   id_tramite: str = "", concluir: int = 0, dry: int = 0, anexos: str = ""):
+    """SSE: movimenta (fase + despacho da movimentação, opcionalmente com documentos do
+    PAJ anexados — `anexos`, JSON de caminhos relativos, requer `paj_norm`) → tramita (se
+    grupo, com despacho próprio da tramitação) → conclui (se concluir=1 E id_tramite
+    informado — sem id_tramite não há trâmite específico a concluir). Os dois despachos
+    são independentes e podem ficar em branco — o SISDPU aceita ambos vazios."""
+    try:
+        anexos_list = json.loads(anexos) if anexos else []
+        if not isinstance(anexos_list, list):
+            anexos_list = []
+    except Exception:  # noqa: BLE001 — JSON malformado: trata como "nenhum anexo"
+        anexos_list = []
     return EventSourceResponse(_stream_executar(
-        id_processo, paj, fase, descricao_mov, grupo, descricao_tram, int(prazo), prazo_data,
-        id_tramite, bool(int(concluir)), bool(int(dry))))
+        id_processo, paj, paj_norm, fase, descricao_mov, grupo, descricao_tram, int(prazo), prazo_data,
+        id_tramite, bool(int(concluir)), bool(int(dry)), anexos_list))

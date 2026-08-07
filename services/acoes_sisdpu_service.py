@@ -19,6 +19,7 @@ from typing import AsyncIterator
 
 from ingestao import sisdpu_client
 from ingestao import sisdpu_movtram as movtram
+from services import paj_service
 
 
 def _ev(level: str, msg: str) -> dict:
@@ -80,6 +81,7 @@ async def com_auto_reconexao(chamada):
 async def executar_stream(
     id_processo: str,
     paj: str = "",
+    paj_norm: str = "",
     fase: str = "",
     descricao_mov: str = "",
     grupo: str | None = None,
@@ -89,13 +91,17 @@ async def executar_stream(
     id_tramite: str | None = None,
     concluir: bool = False,
     dry_run: bool = False,
+    anexos: list[str] | None = None,
 ) -> AsyncIterator[dict]:
     """Executa mov→tram→conclui (cada etapa opcional) em UM PAJ do SISDPU identificado
     por `id_processo`. Emite eventos SSE-like: {level,msg} de log; evento final
     {done: True, resultado: {...}}. `concluir` só tem efeito quando `id_tramite`
     também for informado (é o trâmite específico que sai da caixa de entrada).
     `descricao_mov` e `descricao_tram` são independentes — o SISDPU aceita ambas
-    (ou qualquer uma delas) em branco, então não há validação de obrigatoriedade aqui."""
+    (ou qualquer uma delas) em branco, então não há validação de obrigatoriedade aqui.
+    `anexos`: caminhos RELATIVOS (dentro da pasta do PAJ) dos documentos já baixados
+    ("Anexos SISDPU") a incluir na MOVIMENTAÇÃO — requer `paj_norm` para resolver;
+    ignorado se `fase` estiver vazio (nada a anexar sem movimentação)."""
     fase = (fase or "").strip()
     descricao_mov = (descricao_mov or "").strip()
     descricao_tram = (descricao_tram or "").strip()
@@ -126,9 +132,24 @@ async def executar_stream(
     # 1) MOVIMENTAR (opcional — carrega o despacho como descrição da movimentação)
     mv: dict = {}
     if fase:
+        # Resolve os anexos selecionados (caminhos relativos à pasta do PAJ) para
+        # caminhos ABSOLUTOS via o mesmo helper seguro usado pelo download de arquivos
+        # (paj_service.ler_arquivo — barra path traversal). Ignora silenciosamente
+        # qualquer caminho que não resolva (arquivo removido/renomeado entre a listagem
+        # e a execução).
+        anexos_ctx: list[dict] = []
+        if anexos and paj_norm:
+            for rel in anexos:
+                arq, _ct = paj_service.ler_arquivo(paj_norm, rel)
+                if arq:
+                    anexos_ctx.append({"nome": arq.name, "caminho": str(arq),
+                                        "tipo": arq.suffix.lstrip(".").lower()})
+            if anexos_ctx:
+                yield _ev("info", f"Anexando {len(anexos_ctx)} documento(s) à movimentação…")
+
         yield _ev("info", f"Movimentando (fase: {fase})…")
         mv, exc, eventos = await com_auto_reconexao(
-            lambda: movtram.movimentar_paj(pajs, descricao_mov, fase, [], "Documentos do Assistido", dry_run))
+            lambda: movtram.movimentar_paj(pajs, descricao_mov, fase, anexos_ctx, "Documentos do Assistido", dry_run))
         for ev in eventos:
             yield ev
         if exc is not None:

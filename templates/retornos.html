@@ -209,7 +209,7 @@
                                     <!-- Ações no SISDPU (módulo reutilizável — static/js/acoes_sisdpu.js) -->
                                     <div class="mx-2 mb-2"
                                          x-data="acoesSisdpuBlock({
-                                             idProcesso: r.id_processo, paj: r.paj, idTramite: r.id_tramite,
+                                             idProcesso: r.id_processo, paj: r.paj, pajNorm: r.paj_norm, idTramite: r.id_tramite,
                                              getDescricaoMov: () => r._sug,
                                              onExecutado: (res) => posExecucaoRetorno(r, res),
                                          })" x-init="init()">
