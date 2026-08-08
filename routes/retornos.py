@@ -94,8 +94,8 @@ async def api_pos_execucao(id_tramite: str, request: Request):
     return JSONResponse(await retornos_service.registrar_pos_execucao(id_tramite, resultado))
 
 
-async def _stream_ressincronizar_paj(id_tramite: str):
-    async for ev in retornos_service.ressincronizar_paj_stream(id_tramite):
+async def _stream_ressincronizar_paj(id_tramite: str, completo: bool, ia: bool):
+    async for ev in retornos_service.ressincronizar_paj_stream(id_tramite, completo=completo, ia=ia):
         if ev.get("done"):
             yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
         else:
@@ -103,10 +103,24 @@ async def _stream_ressincronizar_paj(id_tramite: str):
 
 
 @router.get("/api/retornos/{id_tramite}/ressincronizar-paj")
-async def ressincronizar_paj(id_tramite: str):
-    """Ressincroniza SÓ este PAJ pelo MESMO caminho leve da sincronização em lote da
-    aba Retornos (sem anexos/OCR, esperas curtas) — NUNCA a sincronização pesada da
-    aba PAJs. Atualiza o núcleo do metadata (ofício, assistido, pretensão etc.)."""
-    return EventSourceResponse(_stream_ressincronizar_paj(id_tramite))
+async def ressincronizar_paj(id_tramite: str, completo: int = 0, ia: int = 0):
+    """Ressincroniza SÓ este PAJ — modo e IA escolhidos INDEPENDENTEMENTE no minimenu
+    do botão "Sincronizar" de cada linha:
+
+    `completo=0` (padrão, **leve**): sem baixar anexos/OCR nem indexar documentos,
+    esperas curtas — só o núcleo do metadata (ofício, assistido, pretensão,
+    movimentações). Serve pra conferir rapidamente se uma movimentação/tramitação/
+    conclusão foi mesmo efetivada no SISDPU (ex.: após um "erro de conexão" no
+    console Ações no SISDPU), sem pagar o custo da extração de documentos.
+
+    `completo=1`: baixa e indexa os documentos das movimentações (igual à aba PAJs
+    em "Sincronizar com anexos").
+
+    `ia=1` (independente do modo): reanalisa com a IA (resumo/sugestão) ao final —
+    o usuário liga isso só quando precisar de uma análise nova, evitando o custo em
+    toda ressincronização leve de conferência.
+
+    Em qualquer combinação, NUNCA é a sincronização pesada da aba PAJs propriamente dita."""
+    return EventSourceResponse(_stream_ressincronizar_paj(id_tramite, completo=bool(completo), ia=bool(ia)))
 
 

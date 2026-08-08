@@ -118,16 +118,22 @@ def _parse_nbs(nbs: str) -> list[str]:
 
 
 async def _stream_baixar(paj_norm: str, cpf: str, nome: str, delay: float,
-                         bloqueio: float, pretensao: str, nbs: str = ""):
+                         bloqueio: float, pretensao: str, nbs: str = "", protocolos: str = "",
+                         somente_pat: bool = False):
     from ingestao import sat_client
     pasta = str(sat_service.pasta_arquivos_sat(paj_norm))
-    # resolve os tipos de documentos a baixar pela PRETENSÃO do PAJ (config por pretensão);
-    # sem config → todos os tipos (comportamento padrão).
-    tipos = None
-    try:
-        tipos = _cfg.resolver_sat_tipos(pretensao, sat_client.TIPOS_KEYS)  # type: ignore[name-defined]
-    except Exception:  # noqa: BLE001
+    if somente_pat:
+        # Pedido explícito de baixar SÓ o(s) processo(s) administrativo(s) (PAT) — pula
+        # Grupo 1 e Grupo 2 por completo, ignorando a config de tipos por pretensão.
+        tipos = ["pat"]
+    else:
+        # resolve os tipos de documentos a baixar pela PRETENSÃO do PAJ (config por pretensão);
+        # sem config → todos os tipos (comportamento padrão).
         tipos = None
+        try:
+            tipos = _cfg.resolver_sat_tipos(pretensao, sat_client.TIPOS_KEYS)  # type: ignore[name-defined]
+        except Exception:  # noqa: BLE001
+            tipos = None
     # compilação por tipo (config "Arquivos SAT Central"); default ligado, limiar 3.
     compilar, compilar_limiar = True, 3
     try:
@@ -145,6 +151,7 @@ async def _stream_baixar(paj_norm: str, cpf: str, nome: str, delay: float,
         async for ev in sat_client.baixar_cidadao_stream(
                 cpf, nome, pasta, delay_s=delay, bloqueio_s=bloqueio,
                 tipos=tipos, pretensao=pretensao, nbs=_parse_nbs(nbs),
+                protocolos=_parse_nbs(protocolos),
                 compilar=compilar, compilar_limiar=compilar_limiar,
                 pat_ignorar=pat_ignorar):
             if ev.get("done"):
@@ -234,13 +241,20 @@ async def log_download(paj_norm: str):
 
 @router.get("/api/sat/{paj_norm}/baixar")
 async def baixar(paj_norm: str, cpf: str, nome: str = "", delay: float = 5.0,
-                 bloqueio: float = 45.0, pretensao: str = "", nbs: str = ""):
+                 bloqueio: float = 45.0, pretensao: str = "", nbs: str = "", protocolos: str = "",
+                 somente_pat: int = 0):
     """SSE do DOWNLOAD dos documentos do SAT (consulta + Grupos 1 e 2 + PAT). O usuário
     resolve o CAPTCHA na janela do SAT. Salva na pasta do PAJ. `delay` = tempo (s) entre
     consultas (padrão 5s); `bloqueio` = espera (s) ao detectar antirobô (padrão 45s);
     `pretensao` = define quais tipos de documentos baixar (config por pretensão);
-    `nbs` = filtro inicial por NB (Grupo 2 + PAT), separados por vírgula/espaço."""
-    return EventSourceResponse(_stream_baixar(paj_norm, cpf, nome, delay, bloqueio, pretensao, nbs))
+    `nbs` = filtro inicial por NB (Grupo 2 + PAT), separados por vírgula/espaço;
+    `protocolos` = filtro inicial por protocolo (só PAT), separados por vírgula/espaço;
+    `somente_pat` = 1 pula Grupo 1 e Grupo 2 por completo (baixa só o PAT, opcionalmente
+    restrito pelos `protocolos` acima) — vale para QUALQUER consulta, com ou sem protocolo
+    indicado."""
+    return EventSourceResponse(
+        _stream_baixar(paj_norm, cpf, nome, delay, bloqueio, pretensao, nbs, protocolos,
+                        bool(somente_pat)))
 
 
 async def _stream_baixar_instituidor(paj_norm: str, cpf: str, nome: str,

@@ -493,10 +493,31 @@ function baixarDocumentosPaj(pajNorm, ids) {
     });
 }
 
+/* Troca o icone de um botao por um spinner amarelo (padrao "loading
+   loading-spinner ... text-warning" ja usado no badge de Analise IA desta
+   mesma pagina) enquanto uma tarefa roda, e devolve uma funcao pra restaurar
+   o icone original — usar em finally, pra restaurar mesmo se a tarefa falhar. */
+function trocarIconePorSpinner(btn) {
+    if (!btn) return () => {};
+    const alvo = btn.querySelector('.btn-icone') || btn;
+    const original = alvo.innerHTML;
+    alvo.innerHTML = '<span class="loading loading-spinner loading-xs text-warning"></span>';
+    btn.disabled = true;
+    return () => {
+        alvo.innerHTML = original;
+        btn.disabled = false;
+    };
+}
+
 /* Baixar PAJ Completo — antes de gerar o PDF, confirma que a sincronizacao
    completa (com download de anexos) ja rodou com sucesso. Sem isso o PDF
-   sairia "completo" faltando os documentos que nunca foram baixados. */
-async function baixarPajCompleto(pajNorm) {
+   sairia "completo" faltando os documentos que nunca foram baixados.
+
+   Usa fetch+blob (em vez de so' trocar window.location.href) especificamente
+   pra ter um sinal real de "terminou" — e' o que permite o spinner do botao
+   ficar ligado durante toda a geracao (que pode levar alguns segundos num PAJ
+   com muitos anexos) e apagar exatamente quando o PDF estiver pronto. */
+async function baixarPajCompleto(pajNorm, btn) {
     let status;
     try {
         const resp = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/sincronizacao-completa');
@@ -518,7 +539,24 @@ async function baixarPajCompleto(pajNorm) {
         return;
     }
 
-    window.location.href = '/api/paj/' + encodeURIComponent(pajNorm) + '/download-completo';
+    const restaurarIcone = trocarIconePorSpinner(btn);
+    try {
+        const resp = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/download-completo');
+        if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = pajNorm + ' - Download Completo.pdf';
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+    } catch (e) {
+        showToast('Não foi possível gerar o PDF completo do PAJ', 'error');
+    } finally {
+        restaurarIcone();
+    }
 }
 
 /* Baixar anexos antigos a partir de uma data — completa overflow do sync padrao.
@@ -1182,6 +1220,48 @@ async function abrirPastaPaj(pajNorm, btn) {
         showToast('Erro ao abrir a pasta: ' + e.message, 'error');
     } finally {
         if (btn) { btn.disabled = false; btn.innerHTML = original; }
+    }
+}
+
+/* Pretensões cujo nome cadastrado no SISDPU vem como "Nome antigo (Nome atual)"
+   (ex.: "AUXÍLIO-DOENÇA (BENEFÍCIO POR INCAPACIDADE TEMPORÁRIA)") ocupam espaço
+   demais em colunas/badges. Exibe só o parêntese final (o nome vigente pós-Lei
+   13.846/2019) — a comparação/filtro em qualquer tela continua usando o valor
+   CRU (paj.pretensaopura original); só o RENDER passa por esta função. Mesma
+   regra replicada em Python: app.py `_formatar_pretensao` (paj_detail.html usa
+   Jinja, não Alpine, pra exibir). */
+function formatarPretensao(txt) {
+    if (!txt) return txt;
+    const m = txt.match(/\(([^()]+)\)\s*$/);
+    return m ? m[1].trim() : txt;
+}
+
+/* Minimenu "Consultar processo" (número do processo clicável) — mesmo padrão da
+   tabela de intimações (Prazos e-proc): "Consultar processo (MCP)" abre a página
+   de íntegra estruturada (sem navegador); "Abrir no navegador" abre a Consulta
+   Processual na janela persistente do e-proc. */
+function consultarProcessoMcp(numero) {
+    if (!numero) return;
+    const qs = new URLSearchParams({ numero: numero, instancia: 1 });
+    window.location.href = '/eproc/consultar?' + qs.toString();
+}
+
+async function abrirProcessoNavegador(numero, link) {
+    if (!numero) return;
+    if (link) { link.style.opacity = '0.5'; link.style.pointerEvents = 'none'; }
+    showToast('Abrindo processo na janela do e-proc…', 'info');
+    try {
+        const r = await fetch('/api/prazos/abrir-processo-numero?numero=' + encodeURIComponent(numero));
+        const d = await r.json();
+        if (!r.ok || !d.ok) {
+            showToast(d.erro || 'Erro ao abrir o processo no e-proc.', 'error');
+            return;
+        }
+        showToast('Processo aberto na janela do e-proc.', 'success');
+    } catch (e) {
+        showToast('Erro ao abrir o processo: ' + e.message, 'error');
+    } finally {
+        if (link) { link.style.opacity = ''; link.style.pointerEvents = ''; }
     }
 }
 

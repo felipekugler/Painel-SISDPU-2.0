@@ -11,3 +11,11 @@ pymupdf>=1.23
 pytesseract>=0.3.10
 Pillow>=10.0
 pypdf>=4.0
+
+# MCP eproc-trf4 (C:\Claude\MCP\eproc-trf4) importado como biblioteca — leitura
+# headless (sem navegador) via ingestao/eproc_mcp_client.py. Ver esse arquivo.
+curl_cffi>=0.15,<1.0
+beautifulsoup4>=4.12,<5.0
+mcp>=1.2,<2.0
+keyring>=25.0,<26.0
+pyotp>=2.9,<3.0

@@ -1,0 +1,168 @@
+{# Módulo reutilizável "Processo Judicial" — dados do(s) processo(s) vinculado(s)
+   ao PAJ + intimações PENDENTES de cada um (via MCP e-proc, ao vivo) + acesso ao(s)
+   documento(s) do evento referenciado por cada intimação, sem saída da página do
+   PAJ. Inclua dentro de x-data="processoJudicialBlock({ processos: [...] })" (ver
+   static/js/processo_judicial.js) — autocontido, não depende do escopo pai. #}
+<div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg">
+    <input type="checkbox" checked aria-label="Expandir/recolher Processo Judicial" />
+    <div class="collapse-title text-lg font-semibold flex items-center gap-2">
+        <span x-text="processos.length > 1 ? 'Processos Judiciais' : 'Processo Judicial'"></span>
+        <span class="badge badge-ghost badge-sm" x-text="processos.length" x-show="processos.length > 1"></span>
+        <span class="badge badge-warning badge-sm" x-show="totalIntimacoesAtivas() > 0"
+              x-text="totalIntimacoesAtivas() + ' intimação(ões) pendente(s)'"></span>
+    </div>
+    <div class="collapse-content flex flex-col gap-3">
+        <template x-for="(p, idx) in processos" :key="p.processo_judicial">
+            <div class="bg-base-100 rounded-lg border border-base-300 p-3">
+                <!-- Dados do processo -->
+                <div class="flex items-center gap-4 gap-y-2 text-sm flex-wrap" x-data="{ copied_proc: false, copied_obs: false }">
+                    <!-- Número -->
+                    <div class="flex items-center gap-1 flex-1 min-w-[12rem]">
+                        <span class="text-xs text-base-content/50">Processo:</span>
+                        <div class="dropdown">
+                            <div tabindex="0" role="button" class="link font-mono font-semibold text-sm"
+                                 title="Escolher onde consultar o processo" x-text="p.processo_judicial"></div>
+                            <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-52 p-1 shadow border border-base-300">
+                                <li><a @click="consultarProcessoMcp(p.processo_judicial)">Consultar processo (MCP)</a></li>
+                                <li><a @click="abrirProcessoNavegador(p.processo_judicial, $event.target)">Abrir no navegador</a></li>
+                            </ul>
+                        </div>
+                        <button class="btn btn-ghost btn-xs p-1 h-auto hover:bg-base-200"
+                                @click="navigator.clipboard.writeText(p.processo_judicial); copied_proc = true; setTimeout(() => copied_proc = false, 2000)"
+                                :title="copied_proc ? 'Copiado!' : 'Copiar número do processo'"
+                                type="button">
+                            <svg class="w-3 h-3" :class="copied_proc ? 'hidden' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                            </svg>
+                            <span x-show="copied_proc" class="text-xs">✓</span>
+                        </button>
+                    </div>
+
+                    <!-- Juízo -->
+                    <div class="flex items-center gap-1 border-l border-base-300 pl-4 flex-1 min-w-[10rem]">
+                        <span class="text-xs text-base-content/50">Juízo:</span>
+                        <span class="font-semibold truncate" x-text="p.juizo || '—'"></span>
+                    </div>
+
+                    <!-- Observações -->
+                    <div class="flex items-center gap-1 border-l border-base-300 pl-4" x-show="p.observacoes_processo">
+                        <span class="text-xs text-base-content/50">Obs:</span>
+                        <span class="font-semibold" x-text="p.observacoes_processo"></span>
+                        <button class="btn btn-ghost btn-xs p-1 h-auto hover:bg-base-200"
+                                @click="navigator.clipboard.writeText(p.observacoes_processo || ''); copied_obs = true; setTimeout(() => copied_obs = false, 2000)"
+                                :title="copied_obs ? 'Copiado!' : 'Copiar observações'"
+                                type="button">
+                            <svg class="w-3 h-3" :class="copied_obs ? 'hidden' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                            </svg>
+                            <span x-show="copied_obs" class="text-xs">✓</span>
+                        </button>
+                    </div>
+
+                    <!-- Data de Inclusão -->
+                    <div class="flex items-center gap-1 border-l border-base-300 pl-4">
+                        <span class="text-xs text-base-content/50">Data:</span>
+                        <span class="font-semibold" x-text="p.data_inclusao || '—'"></span>
+                    </div>
+
+                    <!-- Status de Validação -->
+                    <div class="ml-auto border-l border-base-300 pl-4">
+                        <template x-if="p.validacao && p.validacao.sucesso">
+                            <span class="badge badge-success badge-sm gap-1">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-2.5 w-2.5" fill="currentColor" viewBox="0 0 20 20">
+                                    <path fill-rule="evenodd" d="M16.707 5.293a1 1 0 010 1.414l-8 8a1 1 0 01-1.414 0l-4-4a1 1 0 011.414-1.414L8 12.586l7.293-7.293a1 1 0 011.414 0z" clip-rule="evenodd" />
+                                </svg>
+                                OK
+                            </span>
+                        </template>
+                        <template x-if="!(p.validacao && p.validacao.sucesso) && p.validacao && p.validacao.motivo">
+                            <span class="badge badge-warning badge-sm" x-text="p.validacao.motivo"></span>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- Intimações pendentes deste processo (via MCP e-proc, ao vivo) -->
+                <div class="mt-3 pt-3 border-t border-base-300" x-show="carregando[idx]">
+                    <span class="loading loading-spinner loading-xs"></span>
+                    <span class="text-xs text-base-content/50">Consultando intimações no e-proc…</span>
+                </div>
+                <div class="mt-3 pt-3 border-t border-base-300" x-show="!carregando[idx] && erro[idx]">
+                    <span class="text-xs text-error" x-text="erro[idx]"></span>
+                    <button type="button" class="btn btn-ghost btn-xs ml-2" @click="carregarIntimacoes(idx)">Tentar de novo</button>
+                </div>
+                <div class="mt-3 pt-3 border-t border-base-300" x-show="!carregando[idx] && !erro[idx] && intimacoesAtivas(idx).length">
+                    <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-2">
+                        Intimações pendentes
+                    </div>
+                    <div class="overflow-x-auto">
+                        <table class="table table-sm">
+                            <thead>
+                                <tr class="text-xs font-bold">
+                                    <th>Parte</th>
+                                    <th>Prazo</th>
+                                    <th>Status</th>
+                                    <th class="whitespace-nowrap">Enviado / Datas</th>
+                                    <th>Ato referenciado</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <template x-for="(it, i) in intimacoesAtivas(idx)" :key="i">
+                                    <tr class="linha-intim" :style="corIntimacao(it) ? ('background-color:' + corIntimacao(it)) : ''">
+                                        <td class="text-xs" x-text="it.parte_intimada"></td>
+                                        <td class="text-xs tnum" x-text="(it.prazo_dias ? it.prazo_dias + ' dias' : '—')"></td>
+                                        <td class="text-xs">
+                                            <span class="badge badge-sm" :class="it.prazo_aberto ? 'badge-warning' : 'badge-info'"
+                                                  x-text="it.status || 'aberta'"></span>
+                                            <div class="text-[10px] text-base-content/40 mt-0.5" x-show="it.dias_restantes !== null && it.dias_restantes !== undefined"
+                                                 x-text="it.dias_restantes + ' dia(s) restante(s)'"></div>
+                                        </td>
+                                        <td class="text-xs tnum whitespace-nowrap">
+                                            <div x-show="it.enviado_em" x-text="'Enviado: ' + it.enviado_em"></div>
+                                            <div x-show="it.data_inicial_prazo" x-text="'Início: ' + it.data_inicial_prazo"></div>
+                                            <div x-show="it.data_final_prazo" x-text="'Final: ' + it.data_final_prazo"></div>
+                                            <div class="text-[10px] text-base-content/40" x-show="it.previsao && it.previsao_ciencia_ficta"
+                                                 :title="it.nota_previsao" x-text="'Previsão (ciência ficta): ' + it.previsao_ciencia_ficta"></div>
+                                        </td>
+                                        <td class="text-xs">
+                                            <template x-if="it.evento_referenciado && !it.evento_referenciado.fora_da_janela">
+                                                <div class="flex flex-col gap-1">
+                                                    <span x-text="'Evento ' + it.evento_referenciado.numero"></span>
+                                                    <template x-if="docsDisponiveis(idx, it).length">
+                                                        <div class="flex flex-wrap items-center gap-1">
+                                                            <template x-for="arq in docsDisponiveis(idx, it)" :key="arq.arquivo">
+                                                                <a :href="linkArquivo(idx, arq)" target="_blank"
+                                                                   class="badge badge-sm gap-1 border border-black/15"
+                                                                   :class="corBadgeDocumento(arq.nome_arquivo)"
+                                                                   :title="'Ler ' + arq.nome_arquivo">
+                                                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                                                    <span x-text="nomeDocumento(arq.nome_arquivo)"></span>
+                                                                </a>
+                                                            </template>
+                                                        </div>
+                                                    </template>
+                                                    <template x-if="temDocPendente(idx, it)">
+                                                        <button type="button" class="btn btn-ghost btn-xs gap-1 self-start"
+                                                                @click="baixarDocIntimacao(idx, it)"
+                                                                :disabled="baixando[idx + ':' + it.evento_referenciado.numero]">
+                                                            <span x-show="baixando[idx + ':' + it.evento_referenciado.numero]" class="loading loading-spinner loading-xs"></span>
+                                                            <span x-show="!baixando[idx + ':' + it.evento_referenciado.numero]">Ler intimação</span>
+                                                        </button>
+                                                    </template>
+                                                </div>
+                                            </template>
+                                            <template x-if="it.evento_referenciado && it.evento_referenciado.fora_da_janela">
+                                                <span class="text-base-content/40" :title="it.evento_referenciado.dica"
+                                                      x-text="'Evento ' + it.evento_referenciado.numero + ' (fora da janela)'"></span>
+                                            </template>
+                                            <span x-show="!it.evento_referenciado" class="text-base-content/30">—</span>
+                                        </td>
+                                    </tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+            </div>
+        </template>
+    </div>
+</div>

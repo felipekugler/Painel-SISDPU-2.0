@@ -154,7 +154,44 @@ function acoesSisdpuBlock(cfg) {
                 this.onExecutado({...res, fase: this.fase, grupo: this.grupo,
                                    descricao_mov: this.descMovEfetiva(), descricao_tram: this.descTramEfetiva()});
             });
-            es.onerror = () => { this.sseStatus = '— erro de conexão'; this.exec = false; es.close(); };
+            es.onerror = () => {
+                this.exec = false; es.close();
+                this.sseStatus = '— conexão perdida (verifique o PAJ)';
+                this.sseLog.push({ level: 'erro', msg: this._avisoConexaoPerdida() });
+                this.$nextTick(() => { const b = this.$refs.acoesSisdpuSseBox; if (b) b.scrollTop = b.scrollHeight; });
+            };
+        },
+
+        // A conexão SSE caiu antes do fluxo mov→tram→conclui terminar (rede instável —
+        // não é uma falha do SISDPU nem da aplicação: o servidor cancela a execução
+        // assim que percebe o cliente desconectado). O risco real: a etapa que estava
+        // "em andamento" no momento da queda PODE já ter sido efetivada no SISDPU
+        // mesmo sem a confirmação ("ok") ter chegado até aqui — foi exatamente o que
+        // aconteceu no PAJ 2026/029-02567 em 2026-08-07 (Movimentação executada, log
+        // cortado antes da confirmação, Tramitação/Conclusão nunca rodaram). Por isso
+        // o aviso é conservador: some etapa com "ok" confirmado no log vira certeza;
+        // a última etapa "em andamento" (sem "ok" nem "erro" registrado depois dela)
+        // vira alerta de possível duplicação — sobretudo a Movimentação, que cria um
+        // novo registro a cada chamada (não é idempotente).
+        _avisoConexaoPerdida() {
+            const okRe = { 'Movimentação': /^Movimenta[çc][aã]o:/, 'Tramitação': /^Tramita[çc][aã]o:/, 'Conclusão': /^Conclus[aã]o:/ };
+            const emCursoRe = { 'Movimentação': /^Movimentando/, 'Tramitação': /^Tramitando/, 'Conclusão': /^Concluindo/ };
+            const confirmadas = Object.keys(okRe).filter(k =>
+                this.sseLog.some(l => l.level === 'ok' && okRe[k].test(l.msg || '')));
+            let emAndamento = '';
+            for (let i = this.sseLog.length - 1; i >= 0; i--) {
+                const m = this.sseLog[i].msg || '';
+                if (Object.values(okRe).some(re => re.test(m))) break;  // já tinha resultado (ok ou erro) — não ficou em aberto
+                const etapa = Object.keys(emCursoRe).find(k => emCursoRe[k].test(m));
+                if (etapa) { emAndamento = etapa; break; }
+            }
+            let msg = 'Conexão com o painel perdida durante a execução (provável instabilidade de rede — o SISDPU não foi consultado sobre isso).';
+            if (confirmadas.length) msg += ' Já confirmado nesta execução: ' + confirmadas.join(', ') + '.';
+            if (emAndamento && !confirmadas.includes(emAndamento)) {
+                msg += ' A etapa "' + emAndamento + '" estava em andamento no momento da queda — ela PODE já ter sido efetivada no SISDPU mesmo sem a confirmação aparecer aqui.';
+            }
+            msg += ' Verifique o PAJ no SISDPU antes de executar de novo, e desmarque no console (deixe "Sem movimentação"/"Sem tramitação") o que já foi feito — a Movimentação em especial cria um novo registro a cada execução.';
+            return msg;
         },
     };
 }

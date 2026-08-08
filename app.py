@@ -31,6 +31,8 @@ from routes.docgen import router as docgen_router
 from routes.files import router as files_router
 from routes.historico import router as historico_router
 from routes.paj import router as paj_router
+from routes.eproc_consulta import router as eproc_consulta_router
+from routes.eproc_mcp import router as eproc_mcp_router
 from routes.pipeline_monitor import router as pipeline_monitor_router
 from routes.prazos import router as prazos_router
 from routes.retornos import router as retornos_router
@@ -72,7 +74,7 @@ _configurar_logging()
 # Versao do painel — fonte unica. Usada pelo FastAPI (OpenAPI/docs) e tambem
 # exposta a todos os templates via Jinja globals (renderizada no rodape da
 # sidebar). Para incrementar: mude aqui e so aqui.
-APP_VERSION = "0.4.5"
+APP_VERSION = "0.4.12"
 
 app = FastAPI(title="oficio-geral-ui", version=APP_VERSION)
 app.state.jinja = jinja2.Environment(
@@ -104,6 +106,23 @@ def _formatar_area(valor: str | None) -> str:
     if not valor:
         return ""
     return _AREA_DISPLAY.get(str(valor).lower(), valor)
+
+
+# Pretensões cujo nome cadastrado no SISDPU vem como "Nome antigo (Nome atual)"
+# (ex.: "AUXÍLIO-DOENÇA (BENEFÍCIO POR INCAPACIDADE TEMPORÁRIA)") ocupam espaço
+# demais em colunas/badges. Exibe só o parêntese final (o nome vigente pós-Lei
+# 13.846/2019); a comparação/filtro em qualquer tela continua usando o valor
+# CRU (ex.: dashboard filtra por `paj.pretensaopura` original) — só o RENDER
+# passa por este filtro. Mesma regra replicada em JS: static/js/app.js
+# `formatarPretensao()` (dashboard usa Alpine, não Jinja, pra exibir).
+_RE_PRETENSAO_PARENS = re.compile(r"\(([^()]+)\)\s*$")
+
+
+def _formatar_pretensao(valor: str | None) -> str:
+    if not valor:
+        return valor or ""
+    m = _RE_PRETENSAO_PARENS.search(str(valor))
+    return m.group(1).strip() if m else valor
 
 
 # Formatadores de data — todas as datas exibidas ao usuario devem sair no
@@ -166,6 +185,7 @@ def _tipo_analise_pretensao(valor) -> str:
 
 
 app.state.jinja.filters["formatar_area"] = _formatar_area
+app.state.jinja.filters["formatar_pretensao"] = _formatar_pretensao
 app.state.jinja.filters["data_br"] = _data_br
 app.state.jinja.filters["data_hora_br"] = _data_hora_br
 app.state.jinja.filters["oficio_sigla"] = _oficio_sigla
@@ -186,6 +206,8 @@ app.include_router(sync_router)
 app.include_router(valor_causa_router)
 app.include_router(busca_router)
 app.include_router(prazos_router)
+app.include_router(eproc_mcp_router)
+app.include_router(eproc_consulta_router)
 app.include_router(watchlist_router)
 app.include_router(pipeline_monitor_router)
 app.include_router(seguranca_router)
@@ -209,6 +231,24 @@ async def _startup_cota() -> None:
         from services import cota_service
 
         cota_service.carregar_e_rearmar()
+
+
+@app.on_event("startup")
+async def _startup_limpeza_docs_eproc() -> None:
+    """Limpeza automática do cache de documentos baixados na página "Consultar
+    processo" (dados/eproc_docs/) — mesmo espírito da rotação de logs
+    (TimedRotatingFileHandler), mas para esse cache. Apaga o que não é
+    acessado há mais dias que a retenção configurada (Configurações › e-proc,
+    padrão 30). Tudo ali é re-baixável do e-proc a qualquer momento, então
+    roda sem confirmação. Silenciosa em qualquer falha — nunca impede o
+    painel de subir."""
+    with contextlib.suppress(Exception):
+        from ingestao import eproc_mcp_client
+
+        res = eproc_mcp_client.limpar_documentos_antigos()
+        if res.get("removidos"):
+            print(f"[eproc-docs] limpeza automática: {res['removidos']} arquivo(s) "
+                  f"removido(s), {res['bytes_liberados']} bytes liberados")
 
 
 @app.on_event("shutdown")

@@ -90,6 +90,16 @@ async def api_prazos_abrir_processo(url: str):
     return JSONResponse(await eproc_client.abrir_processo(url))
 
 
+@router.get("/api/prazos/abrir-processo-numero", response_class=JSONResponse)
+async def api_prazos_abrir_processo_numero(numero: str):
+    """Abre o processo (Consulta Processual) em uma aba nova da janela do e-proc,
+    pesquisando DIRETO pelo número — não depende de um link capturado numa
+    sincronização anterior. Usado pelo minimenu "Abrir no navegador" em qualquer
+    tela que mostre um número de processo (ex.: página do PAJ)."""
+    from ingestao import eproc_client
+    return JSONResponse(await eproc_client.abrir_processo_por_numero(numero))
+
+
 # --- Link do PAJ: abre o detalhamento no SISDPU (nova aba do navegador) ------
 @router.get("/api/prazos/abrir-paj")
 async def api_prazos_abrir_paj(paj: str):

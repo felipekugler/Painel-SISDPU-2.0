@@ -15,7 +15,6 @@
 
     <!-- HTMX + Alpine.js -->
     <script src="https://unpkg.com/htmx.org@2.0.4"></script>
-    <script src="https://unpkg.com/htmx-ext-sse@2.2.2/sse.js"></script>
     <script defer src="https://cdn.jsdelivr.net/npm/alpinejs@3.14.8/dist/cdn.min.js"></script>
 
     <!-- Markdown -> HTML (respostas da IA vêm em markdown: PROMPT_MAX, resumo
@@ -65,6 +64,15 @@
             --cor-retorno-bg: rgba(29, 158, 117, 0.15);
             --cor-defensor: rgb(216, 90, 48);
             --cor-defensor-bg: rgba(216, 90, 48, 0.15);
+
+            /* Cores de status de intimação (e-proc): mesmo padrão usado na
+               tabela de Citações/Intimações (Prazos) e na página Consultar
+               processo (seção Intimações + linha do evento correspondente). */
+            --cor-intim-aberta: #fff3b0;      /* amarelo claro — prazo aberto */
+            --cor-intim-aguardando: #f9d7d7;  /* vermelho claro — aguardando abertura */
+            --cor-intim-urgente: #ef4444;     /* vermelho VIVO — urgente (sempre vence) */
+            --cor-intim-texto: #1f2937;       /* texto escuro p/ contraste sobre aberta/aguardando */
+            --cor-intim-urgente-texto: #ffffff; /* texto claro p/ contraste sobre o vermelho vivo */
 
             /* DaisyUI overrides - Modo claro */
             --p: #005FB8 !important;
@@ -119,6 +127,14 @@
             --cor-defensor: rgb(255, 153, 102);
             --cor-defensor-bg: rgba(255, 153, 102, 0.18);
 
+            /* Cores de status de intimação (mesmos tons, sobre fundo escuro
+               ficam como um "tingimento" translúcido em vez de pastel sólido). */
+            --cor-intim-aberta: rgba(255, 214, 51, 0.28);
+            --cor-intim-aguardando: rgba(255, 99, 99, 0.20);
+            --cor-intim-urgente: #ef4444;
+            --cor-intim-texto: #f5f5f5;
+            --cor-intim-urgente-texto: #ffffff;
+
             /* DaisyUI overrides - Modo escuro */
             --p: #4cc2ff !important;
             --pf: #003354 !important;
@@ -172,6 +188,13 @@
                 --cor-retorno-bg: rgba(79, 229, 157, 0.18);
                 --cor-defensor: rgb(255, 153, 102);
                 --cor-defensor-bg: rgba(255, 153, 102, 0.18);
+
+                /* Cores de status de intimação */
+                --cor-intim-aberta: rgba(255, 214, 51, 0.28);
+                --cor-intim-aguardando: rgba(255, 99, 99, 0.20);
+                --cor-intim-urgente: #ef4444;
+                --cor-intim-texto: #f5f5f5;
+                --cor-intim-urgente-texto: #ffffff;
 
                 /* DaisyUI overrides - Modo escuro automático */
                 --p: #4cc2ff !important;
@@ -546,6 +569,20 @@
         .sys-selo.sys-warn .dot { background: #d9a441; }
         :root[data-theme="dark"] .sys-selo.sys-on   { color: #4ade80; }
         :root[data-theme="dark"] .sys-selo.sys-warn { color: #e8b75a; }
+        /* Selo secundário "MCP" dentro do selo do sistema — indica se existe uma
+           conexão MCP (headless, sem navegador) ativa para aquele sistema.
+           Independente do selo principal (que reflete a sessão do NAVEGADOR).
+           mcp-none = sistema ainda sem MCP configurado (hoje: SISDPU e SAT). */
+        .mcp-pill {
+            display: inline-flex; align-items: center; gap: 2px;
+            font-size: 9.5px; font-weight: 700; letter-spacing: 0.01em;
+            padding: 0px 5px; border-radius: 999px; line-height: 1.5;
+        }
+        .mcp-pill.mcp-on   { color: #1a7f4b; background: rgba(31,157,85,0.16); }
+        .mcp-pill.mcp-off  { color: #b91c1c; background: rgba(220,38,38,0.14); }
+        .mcp-pill.mcp-none { color: var(--text-tertiary, #9ca3af); background: rgba(120,120,120,0.10); }
+        :root[data-theme="dark"] .mcp-pill.mcp-on  { color: #4ade80; }
+        :root[data-theme="dark"] .mcp-pill.mcp-off { color: #f87171; }
         /* Botão-ícone de reconexão/abertura embutido no selo */
         .sys-recon {
             display: inline-flex; align-items: center; justify-content: center;
@@ -734,12 +771,28 @@
                 <span>Arquivos SAT</span>
             </a>
 
-            <!-- Prazos e-proc -->
-            <a href="/prazos" class="nav-item {% if request.url.path == '/prazos' %}active{% endif %}">
+            <!-- E-proc (grupo) -->
+            <a href="/eproc/consultar" class="nav-item {% if request.url.path in ['/eproc/consultar', '/prazos'] %}active{% endif %}">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
                 </svg>
-                <span>Prazos e-proc</span>
+                <span>E-proc</span>
+            </a>
+
+            <!-- Consultar processo (submenu) -->
+            <a href="/eproc/consultar" class="nav-item nav-sub {% if request.url.path == '/eproc/consultar' %}active{% endif %}">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+                </svg>
+                <span>Consultar processo</span>
+            </a>
+
+            <!-- Prazos (submenu) -->
+            <a href="/prazos" class="nav-item nav-sub {% if request.url.path == '/prazos' %}active{% endif %}">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
+                </svg>
+                <span>Prazos</span>
             </a>
         </nav>
 
@@ -808,6 +861,8 @@
                 <span class="sys-selo sys-off" id="selo-sisdpu" data-sys="sisdpu"
                       title="Verificando conexão com o SISDPU…">
                     <span class="dot"></span><span class="txt">SISDPU</span>
+                    <!-- Selo "MCP" omitido: ainda não há MCP configurado para o SISDPU.
+                         Quando houver, adicionar aqui o mesmo <span class="mcp-pill"> do e-proc. -->
                     <button type="button" class="sys-recon" onclick="reconectarSistema('sisdpu', event)"
                             title="Reconectar a sessão do SISDPU (recupera de conflito / sessão derrubada por outro login).">
                         {{ _recon_svg }}
@@ -818,6 +873,8 @@
                 <span class="sys-selo sys-off" id="selo-eproc" data-sys="eproc"
                       title="Verificando sessão do e-proc…">
                     <span class="dot"></span><span class="txt">e-proc</span>
+                    <span class="mcp-pill mcp-none" id="mcp-eproc"
+                          title="Verificando conexão MCP (headless, sem navegador) com o e-proc…">✗ MCP</span>
                     <button type="button" class="sys-recon" onclick="reconectarSistema('eproc', event)"
                             title="Abrir a janela do e-proc / login (preenche sozinho se o cofre estiver desbloqueado).">
                         {{ _recon_svg }}
@@ -828,6 +885,8 @@
                 <span class="sys-selo sys-off" id="selo-sat" data-sys="sat"
                       title="Verificando sessão do SAT…">
                     <span class="dot"></span><span class="txt">SAT</span>
+                    <!-- Selo "MCP" omitido: ainda não há MCP configurado para o SAT.
+                         Quando houver, adicionar aqui o mesmo <span class="mcp-pill"> do e-proc. -->
                     <button type="button" class="sys-recon" onclick="reconectarSistema('sat', event)"
                             title="Abrir a janela do SAT (login/CAPTCHA/2FA são feitos por você na janela).">
                         {{ _recon_svg }}
@@ -963,7 +1022,9 @@
     <script src="/static/js/movimentacoes.js?v={{ app_version }}"></script>
     <script src="/static/js/acoes_sisdpu.js?v={{ app_version }}"></script>
     <script src="/static/js/acoes_eproc.js?v={{ app_version }}"></script>
+    <script src="/static/js/processo_judicial.js?v={{ app_version }}"></script>
     <script src="/static/js/analise_pretensao.js?v={{ app_version }}"></script>
+    <script src="/static/js/lembretes.js?v={{ app_version }}"></script>
     {% block scripts %}{% endblock %}
 
     <script>
@@ -1101,11 +1162,39 @@
             }
         }
 
+        // Selo secundário "MCP" (conexão headless, sem navegador) dentro do selo do
+        // sistema — independente do selo principal (sessão do NAVEGADOR). Só existe
+        // no HTML pros sistemas que JÁ têm um MCP configurado (hoje: e-proc) — pra
+        // SISDPU/SAT o <span id="mcp-..."> nem é renderizado (omitido de propósito,
+        // pra não sugerir uma capacidade que ainda não existe). Ao configurar um MCP
+        // novo, basta acrescentar o <span class="mcp-pill"> (ver comentário no HTML)
+        // e chamar esta função com a URL de status correspondente.
+        async function _atualizarMcpPill(sys, url) {
+            var el = document.getElementById('mcp-' + sys); if (!el) return;
+            try {
+                var st = await (await fetch(url)).json();
+                if (st && st.ok) {
+                    el.className = 'mcp-pill mcp-on';
+                    el.textContent = '✓ MCP';
+                    el.title = 'Conexão MCP (headless, sem navegador) ativa.';
+                } else {
+                    el.className = 'mcp-pill mcp-off';
+                    el.textContent = '✗ MCP';
+                    el.title = (st && st.erro) || 'Conexão MCP indisponível.';
+                }
+            } catch (e) {
+                el.className = 'mcp-pill mcp-off';
+                el.textContent = '✗ MCP';
+                el.title = 'Não foi possível verificar a conexão MCP.';
+            }
+        }
+
         window.atualizarSelos = async function() {
             await _lerCofre();
             _atualizarSeloSisdpu();
             _atualizarSeloSessao('eproc', '/api/prazos/sessao-leve', 'e-proc');
             _atualizarSeloSessao('sat', '/api/sat/sessao-leve', 'SAT');
+            _atualizarMcpPill('eproc', '/api/eproc-mcp/status?instancia=1');
         };
 
         // Garante o cofre desbloqueado: se está configurado e trancado, abre o

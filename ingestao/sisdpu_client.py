@@ -548,16 +548,28 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
             // Validação cruzada contra movimentações — UMA por processo (casa pelo
             // NÚMERO na descrição, não só a primeira "Cadastramento" encontrada —
             // necessário quando há mais de um processo/cadastramento no PAJ).
+            //
+            // "Cadastramento de processo judicial" e' uma FASE da movimentacao, nao
+            // o tipo dela — a movimentacao em si costuma ser "Remessa ao Gabinete"
+            // (ou outra). Checar so' `mov.movimentacao` NUNCA batia (bug: 0/17
+            // validacoes bem-sucedidas nos PAJs existentes, sempre cai no motivo
+            // "Movimentacao de cadastramento nao encontrada", mesmo quando a
+            // movimentacao existe). Checa os dois campos por robustez.
             for (const p of processosJudiciais) {
               if (p.processo_judicial && p.data_inclusao) {
                 const movCadastro = movs.find(mov =>
-                  mov.movimentacao?.includes('Cadastramento de processo judicial') &&
+                  (mov.fases?.includes('Cadastramento de processo judicial') ||
+                   mov.movimentacao?.includes('Cadastramento de processo judicial')) &&
                   (mov.descricao || '').includes(p.processo_judicial)
                 );
 
                 if (movCadastro) {
                   const descricao = movCadastro.descricao || '';
-                  const numeroMatch = descricao.match(/Número do Processo Judicial[:\\s]+([\\S]+)/i);
+                  // `descricao` e' innerHTML cru (ex.: "...: 50687...(fecha tag)") —
+                  // [\\S]+ pegava a tag de fechamento colada no numero (sem espaco
+                  // entre eles) e nunca batia com `p.processo_judicial` (que e' so'
+                  // digitos). \\d+ isola so' o numero.
+                  const numeroMatch = descricao.match(/Número do Processo Judicial[:\\s]+(\\d+)/i);
                   const numeroNaMov = numeroMatch ? numeroMatch[1] : '';
                   const dataMov = movCadastro.data.substring(0, 10); // DD/MM/YYYY
 

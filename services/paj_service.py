@@ -21,6 +21,7 @@ from typing import Annotated
 from fastapi import Path as FastApiPath
 
 from config import PAJS_DIR, PECAS_FEITAS_DIR
+from services import lembretes_service
 
 
 # Type alias para parametros de rota — FastAPI valida o pattern e retorna 422
@@ -263,6 +264,11 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
                 continue
             n_pecas_geradas += 1
 
+        # Lembretes pessoais deste PAJ (LEMBRETES.json) — alimenta o icone com
+        # tooltip na coluna PAJ do dashboard, no mesmo padrao do icone de
+        # lembrete do e-proc usado em templates/prazos.html.
+        lembretes_paj = lembretes_service.ler_lembretes_pasta(pasta)
+
         # Contagem de ANEXOS SISDPU (baixados pelo sync em Arquivos/, excluindo
         # os .txt de OCR — contamos so o arquivo-fonte, nao o OCR companion).
         pasta_pecas = pasta / "Arquivos"
@@ -320,6 +326,12 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
             # ultima visita (snapshot guardado em localStorage). Vide
             # static/js/app.js -> calcularNovidades().
             "max_seq_mov": max_seq_mov,
+            # Lembretes — icone com tooltip na coluna PAJ (vide dashboard.html).
+            "n_lembretes": len(lembretes_paj),
+            "lembrete_itens": [
+                {"texto": l.get("descricao", ""), "cor": l.get("cor", "amarelo")}
+                for l in lembretes_paj
+            ],
         }
         if esta_concluido:
             concluidos.append(item)
@@ -512,6 +524,7 @@ def ler_paj(paj_norm: str) -> dict | None:
         "processos_judiciais": processos_judiciais,
         "tem_peticao_inicial": _tem_peticao,
         "tem_pasta_ajuizamento": _tem_ajuizamento,
+        "lembretes": lembretes_service.ler_lembretes_pasta(pasta),
         "pasta": str(pasta),
     }
 

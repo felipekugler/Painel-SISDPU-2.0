@@ -198,16 +198,34 @@ def _tarja(page: fitz.Page, texto: str, cor_fundo: tuple[float, float, float] = 
     caixa calculada fica um pouco curta — o mesmo nome de arquivo as vezes
     sumia so' porque tinha acentuacao. `insert_text` nunca descarta: na pior
     hipotese o texto ultrapassa visualmente a caixinha colorida por
-    milimetros, o que e' inofensivo."""
+    milimetros, o que e' inofensivo.
+
+    Rotation-aware: `draw_rect`/`insert_text` desenham sempre no sistema de
+    coordenadas BRUTO da pagina (o do MediaBox), que NAO acompanha o
+    /Rotate — so' o tamanho relatado por `page.rect` acompanha. Numa pagina
+    sem rotacao os dois sistemas coincidem e nada muda aqui. Numa pagina
+    rotacionada (as que `_normalizar_pagina_pdf` vira pra encaixar anexo em
+    paisagem dentro de A4 retrato), sem essa conversao a tarja acaba
+    desenhada fora do canto visivel. `page.derotation_matrix` converte um
+    ponto/retangulo do sistema visual (o que a gente ve na tela) pro
+    sistema bruto de desenho; `rotate=page.rotation` no `insert_text` gira
+    de volta os proprios caracteres pra saírem na horizontal."""
     largura_texto = min(
         fitz.get_text_length(texto, fontname=FONTE, fontsize=_TARJA_FONTSIZE) * 1.06 + 6,
         page.rect.width - 4 - 2 * _TARJA_PAD_X,
     )
     altura_texto = _TARJA_FONTSIZE * 1.3
-    faixa = fitz.Rect(2, 2, 2 + largura_texto + 2 * _TARJA_PAD_X, 2 + altura_texto + 2 * _TARJA_PAD_Y)
+    faixa_visual = fitz.Rect(2, 2, 2 + largura_texto + 2 * _TARJA_PAD_X, 2 + altura_texto + 2 * _TARJA_PAD_Y)
+    origem_visual = fitz.Point(faixa_visual.x0 + _TARJA_PAD_X, faixa_visual.y1 - _TARJA_PAD_Y - 1)
+    if page.rotation:
+        drm = page.derotation_matrix
+        faixa = faixa_visual * drm
+        origem = origem_visual * drm
+    else:
+        faixa = faixa_visual
+        origem = origem_visual
     page.draw_rect(faixa, color=(0, 0, 0), fill=cor_fundo, width=0.5, fill_opacity=0.7)
-    origem = (faixa.x0 + _TARJA_PAD_X, faixa.y1 - _TARJA_PAD_Y - 1)
-    page.insert_text(origem, texto, fontsize=_TARJA_FONTSIZE, fontname=FONTE, color=(0, 0, 0))
+    page.insert_text(origem, texto, fontsize=_TARJA_FONTSIZE, fontname=FONTE, color=(0, 0, 0), rotate=page.rotation)
 
 
 def _campo(page: fitz.Page, y: float, rotulo: str, valor: str) -> None:
@@ -503,15 +521,33 @@ def _normalizar_pagina_pdf(doc: fitz.Document, src: fitz.Document, indice: int) 
 
     Quando a pagina de origem vem em paisagem, ou em qualquer tamanho
     diferente de A4 (Oficio, Letter, Legal, digitalizacoes fora de padrao
-    etc.), cria-se uma pagina A4 retrato nova e o conteudo original e'
-    desenhado dentro dela via `show_pdf_page` — que embute o proprio
-    conteudo da pagina (nao rasteriza, mantendo texto/qualidade), girado
-    90° quando a origem for paisagem e sempre escalado mantendo a
-    proporcao original (sem distorcer), centralizado na folha. E' o mesmo
-    principio ja usado em `_anexar_imagem` pra imagens soltas, agora
-    tambem pros PDFs anexados — que sao a maioria dos documentos reais do
-    processo e, ate' aqui, entravam no consolidado exatamente como
-    estivessem no arquivo de origem (paisagem, tamanho diferente etc.)."""
+    etc.), cria-se uma pagina nova e o conteudo original e' desenhado
+    dentro dela via `show_pdf_page` — que embute o proprio conteudo da
+    pagina (nao rasteriza, mantendo texto/qualidade), sempre escalado
+    mantendo a proporcao original (sem distorcer), centralizado na folha.
+    E' o mesmo principio ja usado em `_anexar_imagem` pra imagens soltas,
+    agora tambem pros PDFs anexados — que sao a maioria dos documentos
+    reais do processo e, ate' aqui, entravam no consolidado exatamente
+    como estivessem no arquivo de origem (paisagem, tamanho diferente
+    etc.).
+
+    IMPORTANTE — paginas com /Rotate proprio (rotation != 0): muitas
+    certidoes/digitalizacoes guardam a orientacao exibida via atributo
+    /Rotate da propria pagina (o MediaBox fisico e' uma coisa, a
+    orientacao exibida e' outra). Testamos exaustivamente TODAS as
+    combinacoes razoaveis de `rotate=`/`clip=` do `show_pdf_page` pra
+    embutir esse tipo de pagina e todas cortam parte do conteudo (bug/
+    limitacao da biblioteca ao combinar rotacao da pagina de origem com
+    a insercao) — o corte relatado pelo usuario em certidoes rotacionadas
+    veio exatamente disso. Pra essas paginas (rotation != 0) usamos por
+    isso um caminho DIFERENTE, testado e confirmado sem cortes: rasteriza
+    a pagina via `get_pixmap` (que respeita corretamente o /Rotate,
+    diferente do `show_pdf_page`) e insere o resultado como imagem numa
+    pagina A4 retrato nova, exatamente como `_anexar_imagem` ja faz pra
+    imagens soltas. Perde-se o texto pesquisavel SO' dessa pagina
+    especifica — na pratica irrelevante, porque uma pagina com /Rotate
+    proprio quase sempre e' uma digitalizacao (imagem escaneada) sem
+    texto selecionavel mesmo."""
     pagina_src = src[indice]
     rect = pagina_src.rect  # ja reflete o /Rotate proprio da pagina de origem
     largura, altura = rect.width, rect.height
@@ -533,19 +569,98 @@ def _normalizar_pagina_pdf(doc: fitz.Document, src: fitz.Document, indice: int) 
         doc.insert_pdf(src, from_page=indice, to_page=indice)
         return
 
-    paisagem = largura > altura
-    rotacao = 90 if paisagem else 0
-    largura_efetiva, altura_efetiva = (altura, largura) if paisagem else (largura, altura)
+    if pagina_src.rotation:
+        _normalizar_pagina_pdf_via_raster(doc, pagina_src)
+        return
 
-    escala = min(A4.width / largura_efetiva, A4.height / altura_efetiva)
-    w_dest = largura_efetiva * escala
-    h_dest = altura_efetiva * escala
-    x0 = (A4.width - w_dest) / 2
-    y0 = (A4.height - h_dest) / 2
+    paisagem = largura > altura
+    # Pagina nova no MESMO formato fisico da origem (paisagem ou retrato),
+    # sempre do tamanho de uma folha A4 — so' que com largura/altura
+    # trocadas quando a origem for paisagem. Escala e' calculada nesse
+    # mesmo sistema de coordenadas (sem trocar largura/altura), entao o
+    # `show_pdf_page` nunca precisa girar nada. So' chegamos aqui quando a
+    # pagina de origem NAO tem /Rotate proprio (ver bloco acima) — e' o
+    # unico caso em que confirmamos que `show_pdf_page` embute o conteudo
+    # inteiro sem cortar.
+    largura_pagina, altura_pagina = (A4.height, A4.width) if paisagem else (A4.width, A4.height)
+
+    escala = min(largura_pagina / largura, altura_pagina / altura)
+    w_dest = largura * escala
+    h_dest = altura * escala
+    x0 = (largura_pagina - w_dest) / 2
+    y0 = (altura_pagina - h_dest) / 2
     destino = fitz.Rect(x0, y0, x0 + w_dest, y0 + h_dest)
 
+    pagina = doc.new_page(width=largura_pagina, height=altura_pagina)
+    pagina.show_pdf_page(destino, src, indice)
+    if paisagem:
+        # So' agora, sobre a pagina nova (sem rotacao previa nenhuma),
+        # aplicamos o giro — troca largura/altura exibidas de volta pra
+        # A4 retrato, com o conteudo ja centralizado corretamente.
+        pagina.set_rotation(90)
+
+
+_RASTER_ZOOM = 2.5  # ~180dpi equivalente (72dpi base * 2.5) — de sobra pra digitalizacao
+
+
+_RASTER_MAX_PIXELS = 2200  # limite pra maior dimensao do pixmap, em pixels
+
+
+_RASTER_JPEG_QUALIDADE = 85
+
+
+def _raster_zoom_adaptativo(largura_pts: float, altura_pts: float) -> float:
+    """Escolhe o maior zoom que nao deixe a maior dimensao do pixmap
+    resultante passar de `_RASTER_MAX_PIXELS`, mas sem nunca superar
+    `_RASTER_ZOOM` (pra paginas em tamanho normal — A4-ish — o
+    comportamento continua exatamente igual, zoom fixo 2.5x/~180dpi).
+
+    Existe pra proteger contra paginas de origem com /MediaBox anomalo
+    (ex: um scanner/software que grava o MediaBox em unidades erradas,
+    relatando algo como 3000x4000 PONTOS em vez dos ~595x842 pontos
+    normais de A4). Nesses casos o zoom fixo de 2.5x, aplicado cegamente
+    sobre as dimensoes em pontos da pagina de origem, gera um pixmap
+    proporcionalmente gigante (ex: 7500x10000px) — e uma imagem desse
+    tamanho ainda pesa varios MB mesmo depois de comprimida em JPEG
+    qualidade 85, so' pela quantidade de pixels. Ja aconteceu de 2 paginas
+    assim, num unico PDF consolidado, contribuirem sozinhas com dezenas
+    de MB."""
+    maior_dimensao = max(largura_pts, altura_pts)
+    if maior_dimensao <= 0:
+        return _RASTER_ZOOM
+    return min(_RASTER_ZOOM, _RASTER_MAX_PIXELS / maior_dimensao)
+
+
+def _normalizar_pagina_pdf_via_raster(doc: fitz.Document, pagina_src: fitz.Page) -> None:
+    """Fallback pra paginas com /Rotate proprio (ver docstring de
+    `_normalizar_pagina_pdf`). `get_pixmap` sem nenhum parametro de
+    rotacao extra ja respeita corretamente o /Rotate da pagina (a mesma
+    forma como qualquer leitor de PDF exibe), entao o pixmap resultante
+    sai sempre correto e completo — so' inserimos ele numa pagina A4
+    retrato nova, do mesmo jeito que `_anexar_imagem` faz pra imagens.
+
+    IMPORTANTE — `insert_image(rect, pixmap=pix, ...)` (passando o objeto
+    `fitz.Pixmap` direto) faz o PyMuPDF embutir os pixels BRUTOS na pagina,
+    sem nenhuma compressao JPEG (confirmado inspecionando o `/Filter` do
+    XObject resultante). Pra uma digitalizacao tipica em ~180dpi isso da'
+    varios MB por pagina — e page/certidoes maiores (scans em alta
+    resolucao nativa) chegam a 200+ MB SO' naquela pagina. Foi essa a causa
+    de um PDF consolidado de 202 paginas (13 delas rasterizadas) ter saido
+    com 594 MB. Por isso convertemos o pixmap pra bytes JPEG explicitamente
+    (`pix.tobytes('jpeg', ...)`) ANTES de inserir, usando `stream=` em vez
+    de `pixmap=` — o restante da normalizacao (tamanho/posicao/proporcao
+    dentro da pagina A4) fica exatamente igual.
+
+    O ZOOM em si e' ADAPTATIVO (ver `_raster_zoom_adaptativo`) — protege
+    contra paginas de origem com /MediaBox anomalo/gigante, onde o zoom
+    fixo geraria um pixmap gigante independente da compressao JPEG
+    (ver docstring daquela funcao)."""
+    zoom = _raster_zoom_adaptativo(pagina_src.rect.width, pagina_src.rect.height)
+    pix = pagina_src.get_pixmap(matrix=fitz.Matrix(zoom, zoom))
+    jpeg_bytes = pix.tobytes("jpeg", jpg_quality=_RASTER_JPEG_QUALIDADE)
     pagina = _nova_pagina(doc)
-    pagina.show_pdf_page(destino, src, indice, rotate=rotacao)
+    rect_destino = fitz.Rect(MARGEM, 30, A4.width - MARGEM, A4.height - MARGEM)
+    pagina.insert_image(rect_destino, stream=jpeg_bytes, keep_proportion=True)
 
 
 def _anexar_pdf(doc: fitz.Document, paj_norm: str, rotulo_seq: str, nome_doc: str, caminho: Path, cor_tarja) -> None:
@@ -832,7 +947,16 @@ def gerar_pdf_consolidado(paj_norm: str) -> bytes | None:
     }
     _escrever_resumo(doc[0], stats)
 
-    pdf_bytes = doc.tobytes()
+    # garbage=4: funde objetos duplicados (fontes/imagens byte-a-byte
+    # identicas embutidas separadamente por cada sub-PDF anexado — comum
+    # quando o consolidado tem centenas de anexos, cada um carregando sua
+    # propria copia de fontes como Arial/Calibri) e remove objetos nao
+    # referenciados. deflate=True comprime os content streams das paginas.
+    # Nenhum dos dois altera o conteudo visual — so' reduz redundancia
+    # estrutural do PDF. Confirmado empiricamente: sozinho, ja reduziu um
+    # consolidado de 247 MB pra 165 MB (antes de qualquer recompressao de
+    # imagem) num PAJ com 307 anexos / 1438 paginas.
+    pdf_bytes = doc.tobytes(garbage=4, deflate=True)
     doc.close()
 
     tamanho_antes = len(pdf_bytes)

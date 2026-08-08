@@ -1,0 +1,534 @@
+{% extends "base.html" %}
+{% block title %}Consultar processo{% endblock %}
+
+{% block content_class %}flex flex-col flex-1 p-0{% endblock %}
+
+{% block head %}
+<style>
+  .tnum { font-variant-numeric: tabular-nums; }
+  .ev-desc { white-space: pre-line; }
+  .th-min { white-space: nowrap; }
+  /* Zebra na tabela de Eventos. Usa :nth-of-type (não :nth-child) porque o
+     <template x-for> do Alpine fica como irmão no DOM e desloca a contagem
+     de :nth-child; :nth-of-type conta só os <tr> de fato e não é afetado. */
+  .eventos-table tbody tr:nth-of-type(even):not(.linha-intim) > td { background-color: var(--layer-alt); }
+  /* Destaque de status de intimação (mesma paleta em toda a página — ver
+     também prazos.html): amarelo=aberta, vermelho claro=aguardando abertura,
+     vermelho=urgente. Cor de texto forçada porque os 3 tons são claros mesmo
+     no tema escuro (tingimento translúcido sobre fundo escuro ainda pede
+     texto claro; o `--cor-intim-texto` já resolve os dois casos). */
+  tr.linha-intim > td { color: var(--cor-intim-texto) !important; }
+  tr.linha-intim .text-base-content\/50,
+  tr.linha-intim .text-base-content\/40,
+  tr.linha-intim .text-base-content\/30 { color: var(--cor-intim-texto) !important; opacity: .75; }
+  /* `overflow-x-auto` sozinho faz o navegador acoplar overflow-y ao mesmo
+     comportamento "auto" (regra do CSS 2.1 §11.1.1: um eixo só pode ficar
+     "visible" se o outro também for) — mesmo declarando overflow-y:visible
+     explicitamente, o valor USADO continua "auto", abrindo uma barra vertical
+     indevida. `hidden` é não-"visible" (evita o acoplamento) e nunca desenha
+     barra — a tabela cresce junto com a página, sem caixa de rolagem própria. */
+  .table-scroll-fix { overflow-y: hidden; }
+  /* Lembretes — mesmo cartão post-it da seção "Lembretes" da página do PAJ
+     (que por sua vez copiou a paleta da própria ferramenta "Lembretes" do
+     e-proc). Aqui os dados VÊM do e-proc (lidos do cache da aba Prazos), então
+     não há cor por item — usa o amarelo padrão do post-it. */
+  .lembrete-card {
+    min-width: 230px; max-width: 260px; flex-shrink: 0; border-radius: 4px;
+    padding: 10px 12px 8px; box-shadow: 0 4px 10px rgba(0,0,0,.15), 0 1px 3px rgba(0,0,0,.10);
+    font-family: Roboto, 'Segoe UI', sans-serif; color: #1a1a1a;
+    background-color: #efef8f;
+    display: flex; flex-direction: column; gap: 6px;
+  }
+  .lembrete-card .lembrete-texto {
+    font-size: 12.5px; line-height: 1.4; white-space: pre-wrap; word-break: break-word;
+    max-height: 6.5rem; overflow-y: auto;
+  }
+  /* Menu "Ver no Painel/Ver no navegador" no nº do processo — mesma correção
+     de contraste da aba Prazos (evita herdar cor de texto/fundo incorreta). */
+  .doc-dropdown .dropdown-content { background: var(--card) !important; border-color: var(--stroke-strong) !important; }
+  .doc-dropdown .dropdown-content li > a { color: var(--text) !important; }
+  .doc-dropdown .dropdown-content li > a:hover { background: var(--card-hover) !important; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div x-data="eprocConsultarApp()" x-init="init()" x-cloak class="flex flex-col flex-1">
+
+  <!-- Top bar -->
+  <div class="px-8 pt-6 pb-2">
+    <h1 class="text-3xl font-semibold tracking-tight">Consultar processo</h1>
+    <div class="text-xs text-base-content/50 mt-1">
+      Íntegra do processo (cabeçalho, timeline e intimações) via MCP e-proc — sem abrir navegador.
+    </div>
+  </div>
+
+  <!-- Busca -->
+  <div class="px-8 py-3">
+    <div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3">
+      <form @submit.prevent="buscar()" class="flex items-center gap-3 flex-wrap">
+        <input type="text" x-model="numero" placeholder="Número dos autos (ex: 5001234-56.2024.4.04.7000)"
+               class="input input-sm input-bordered w-96 font-mono" />
+        <select x-model.number="instancia" class="select select-sm select-bordered">
+          <option :value="1">1ª instância (JFPR)</option>
+          <option :value="2">2ª instância (TRF4)</option>
+        </select>
+        <label class="label cursor-pointer gap-2 py-0">
+          <input type="checkbox" x-model="todosEventos" class="checkbox checkbox-sm" />
+          <span class="text-xs">Todos os eventos</span>
+        </label>
+        <button type="submit" class="btn btn-sm btn-primary" :disabled="carregando">
+          <span x-show="carregando" class="loading loading-spinner loading-xs"></span>
+          Consultar
+        </button>
+        <span class="text-xs text-error" x-text="erro" x-show="erro"></span>
+      </form>
+    </div>
+  </div>
+
+  <div class="px-8 pb-8 flex-1 flex flex-col gap-6">
+
+    <template x-if="!resultado && !carregando && !erro">
+      <div class="bg-base-200 rounded-lg border border-base-300 p-10 text-center text-base-content/50">
+        Informe o número do processo e clique em <strong>Consultar</strong>.
+      </div>
+    </template>
+
+    <template x-if="carregando">
+      <div class="bg-base-200 rounded-lg border border-base-300 p-10 text-center text-base-content/50">
+        <span class="loading loading-spinner loading-sm mr-2"></span> Consultando o e-proc (MCP)…
+      </div>
+    </template>
+
+    <template x-if="resultado">
+      <div class="flex flex-col gap-6">
+
+        <!-- Aviso de acesso integral -->
+        <template x-if="resultado.acesso_integral_erro">
+          <div class="alert alert-warning text-xs">
+            <span>Acesso integral pendente e não foi possível liberar automaticamente: <span x-text="resultado.acesso_integral_erro"></span></span>
+          </div>
+        </template>
+        <template x-if="resultado.acesso_integral_resolvido_automaticamente">
+          <div class="alert alert-success text-xs">
+            <span>Acesso integral do processo foi liberado automaticamente (código do autenticador) — íntegra completa.</span>
+          </div>
+        </template>
+
+        <!-- Cabeçalho -->
+        <div class="bg-base-200 rounded-lg border border-base-300 overflow-hidden">
+          <div class="px-4 py-2 border-b border-base-300 flex items-center gap-2 flex-wrap">
+            <div class="dropdown doc-dropdown">
+              <div tabindex="0" role="button" class="text-sm font-semibold font-mono link"
+                   title="Escolher onde ver o processo" x-text="resultado.numero"></div>
+              <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-44 p-1 shadow border border-base-300">
+                <li><a @click="buscar()">Ver no Painel</a></li>
+                <li><a @click="abrirNoNavegador()">Ver no navegador</a></li>
+              </ul>
+            </div>
+            <span class="badge badge-ghost badge-sm" x-text="'instância ' + resultado.instancia"></span>
+            <span class="badge badge-ghost badge-sm" x-text="cab().situacao || '—'"></span>
+          </div>
+          <div class="p-4 grid grid-cols-2 md:grid-cols-3 gap-x-6 gap-y-2 text-xs">
+            <div><span class="text-base-content/50">Classe:</span> <span x-text="cab().classe || '—'"></span></div>
+            <div><span class="text-base-content/50">Competência:</span> <span x-text="cab().competencia || '—'"></span></div>
+            <div><span class="text-base-content/50">Autuação:</span> <span x-text="cab().autuacao || '—'"></span></div>
+            <div><span class="text-base-content/50">Órgão julgador:</span> <span x-text="cab().orgao_julgador || '—'"></span></div>
+            <div x-show="cab().orgao_colegiado"><span class="text-base-content/50">Órgão colegiado:</span> <span x-text="cab().orgao_colegiado"></span></div>
+            <div x-show="cab().juiz"><span class="text-base-content/50">Juiz(a):</span> <span x-text="cab().juiz"></span></div>
+            <div x-show="cab().relator"><span class="text-base-content/50">Relator(a):</span> <span x-text="cab().relator"></span></div>
+            <div x-show="cab().valor"><span class="text-base-content/50">Valor da causa:</span> <span x-text="cab().valor"></span></div>
+          </div>
+          <template x-if="(cab().partes || []).length">
+            <div class="px-4 pb-4">
+              <div class="text-xs text-base-content/50 mb-1">Partes</div>
+              <table class="table table-sm">
+                <tbody>
+                  <template x-for="(p, i) in cab().partes" :key="i">
+                    <tr>
+                      <td class="font-semibold text-xs whitespace-nowrap" x-text="p.tipo"></td>
+                      <td class="text-xs" x-text="p.nome"></td>
+                      <td class="text-xs text-base-content/50 whitespace-nowrap" x-text="p.documento"></td>
+                    </tr>
+                  </template>
+                </tbody>
+              </table>
+            </div>
+          </template>
+        </div>
+
+        <!-- Lembretes (nativos do e-proc — post-it da listagem de citações/
+             intimações, lidos do cache já sincronizado pela aba Prazos). Só
+             leitura: "+ Novo" fica desabilitado — ainda não há como criar um
+             lembrete NO e-proc a partir do painel. -->
+        <div class="bg-base-200 border border-base-300 rounded-lg">
+          <div class="flex items-center gap-2 px-4 py-3">
+            <span class="text-lg font-semibold flex-1">Lembretes</span>
+            <button type="button" class="btn btn-ghost btn-sm gap-1 btn-disabled" disabled
+                    title="Ainda não é possível criar um lembrete no e-proc a partir do painel.">
+              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+              </svg>
+              Novo
+            </button>
+          </div>
+          <div class="px-4 pb-4">
+            <template x-if="carregandoLembretes">
+              <p class="text-sm text-base-content/50">Carregando...</p>
+            </template>
+            <template x-if="!carregandoLembretes && !lembretes.length">
+              <p class="text-sm text-base-content/50 italic">
+                Nenhum lembrete sincronizado para este processo — só aparece aqui depois que ele passar pela
+                <a href="/prazos" class="link">sincronização de intimações</a> da aba Prazos.
+              </p>
+            </template>
+            <div class="flex gap-3 overflow-x-auto pb-1" x-show="!carregandoLembretes && lembretes.length">
+              <template x-for="(l, i) in lembretes" :key="i">
+                <div class="lembrete-card">
+                  <div class="lembrete-texto" x-text="l.texto"></div>
+                </div>
+              </template>
+            </div>
+          </div>
+        </div>
+
+        <!-- Intimações -->
+        <div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg" x-show="(resultado.intimacoes || []).length">
+          <input type="checkbox" checked aria-label="Expandir/recolher Intimações" />
+          <div class="collapse-title text-sm font-semibold flex items-center gap-2">
+            Intimações
+            <span class="badge badge-warning badge-sm" x-text="resultado.qtd_intimacoes_ativas + ' ativa(s)'" x-show="resultado.qtd_intimacoes_ativas"></span>
+            <span class="badge badge-ghost badge-sm" x-text="(resultado.intimacoes || []).length + ' no total'"></span>
+          </div>
+          <div class="collapse-content">
+            <div class="overflow-x-auto table-scroll-fix">
+              <table class="table table-sm">
+                <thead>
+                  <tr class="text-xs font-bold">
+                    <th>Parte</th>
+                    <th>Prazo</th>
+                    <th>Status</th>
+                    <th class="th-min">Enviado / Datas</th>
+                    <th>Ato referenciado</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="(it, i) in resultado.intimacoes" :key="i">
+                    <tr x-show="it.ativa || verInativas" :class="[it.ativa ? '' : 'opacity-50', corIntimacao(it) ? 'linha-intim' : '']"
+                        :style="corIntimacao(it) ? ('background-color:' + corIntimacao(it)) : ''">
+                      <td class="text-xs" x-text="it.parte_intimada"></td>
+                      <td class="text-xs tnum" x-text="(it.prazo_dias ? it.prazo_dias + ' dias' : '—')"></td>
+                      <td class="text-xs">
+                        <span class="badge badge-sm" :class="it.ativa ? (it.prazo_aberto ? 'badge-warning' : 'badge-info') : 'badge-ghost'"
+                              x-text="it.status || (it.ativa ? 'aberta' : 'fechada')"></span>
+                        <div class="text-[10px] text-base-content/40 mt-0.5" x-show="it.dias_restantes !== null && it.dias_restantes !== undefined"
+                             x-text="it.dias_restantes + ' dia(s) restante(s)'"></div>
+                      </td>
+                      <td class="text-xs tnum whitespace-nowrap">
+                        <div x-show="it.enviado_em" x-text="'Enviado: ' + it.enviado_em"></div>
+                        <div x-show="it.data_inicial_prazo" x-text="'Início: ' + it.data_inicial_prazo"></div>
+                        <div x-show="it.data_final_prazo" x-text="'Final: ' + it.data_final_prazo"></div>
+                        <div class="text-[10px] text-base-content/40" x-show="it.previsao && it.previsao_ciencia_ficta"
+                             :title="it.nota_previsao" x-text="'Previsão (ciência ficta): ' + it.previsao_ciencia_ficta"></div>
+                      </td>
+                      <td class="text-xs">
+                        <template x-if="it.evento_referenciado && !it.evento_referenciado.fora_da_janela">
+                          <a href="#" @click.prevent="irParaEvento(it.evento_referenciado.numero)" class="link"
+                             x-text="'Evento ' + it.evento_referenciado.numero"></a>
+                        </template>
+                        <template x-if="it.evento_referenciado && it.evento_referenciado.fora_da_janela">
+                          <span class="text-base-content/40" :title="it.evento_referenciado.dica"
+                                x-text="'Evento ' + it.evento_referenciado.numero + ' (fora da janela)'"></span>
+                        </template>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+                <tfoot>
+                  <tr x-show="intimacoesInativasCount()">
+                    <td colspan="5" class="text-center py-1">
+                      <button type="button" class="btn btn-ghost btn-xs gap-1" @click="verInativas = !verInativas">
+                        <span x-text="(verInativas ? 'Ocultar fechadas' : 'Ver mais') "></span>
+                        <span x-show="!verInativas" x-text="'(' + intimacoesInativasCount() + ' fechada(s))'"></span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3 transition-transform" :class="verInativas ? 'rotate-180' : ''"
+                             fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25 12 15.75 4.5 8.25" />
+                        </svg>
+                      </button>
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+
+        <!-- Timeline de eventos -->
+        <div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg">
+          <input type="checkbox" checked aria-label="Expandir/recolher Eventos" />
+          <div class="collapse-title text-sm font-semibold flex items-center gap-2">
+            Eventos
+            <span class="badge badge-ghost badge-sm" x-text="resultado.qtd_eventos"></span>
+          </div>
+          <div class="collapse-content">
+            <div class="flex items-center justify-end gap-2 mb-2" x-show="eventosComDocPendente().length">
+              <span class="text-xs text-base-content/50" x-text="eventosComDocPendente().length + ' evento(s) com documento pendente'"></span>
+              <button type="button" class="btn btn-ghost btn-xs gap-1" @click="baixarDocumentosEventos(eventosComDocPendente())" :disabled="baixandoDocs">
+                <span x-show="baixandoDocs" class="loading loading-spinner loading-xs"></span>
+                <svg x-show="!baixandoDocs" class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3"></path></svg>
+                Baixar todos os pendentes
+              </button>
+            </div>
+            <div class="overflow-x-auto table-scroll-fix">
+              <table class="table table-sm eventos-table">
+                <thead>
+                  <tr class="text-xs font-bold">
+                    <th class="th-min">Nº</th>
+                    <th class="th-min">Data/hora</th>
+                    <th>Descrição</th>
+                    <th class="th-min">Usuário</th>
+                    <th>Documentos</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <template x-for="ev in (resultado.eventos || [])" :key="ev.numero">
+                    <tr :id="'ev-' + ev.numero" :class="corEvento(ev) ? 'linha-intim' : ''"
+                        :style="corEvento(ev) ? ('background-color:' + corEvento(ev)) : ''">
+                      <td class="text-xs tnum" x-text="ev.numero"></td>
+                      <td class="text-xs tnum whitespace-nowrap" x-text="ev.data_hora"></td>
+                      <td class="text-xs ev-desc" x-text="ev.descricao"></td>
+                      <td class="text-xs">
+                        <div x-text="ev.usuario"></div>
+                        <span class="badge badge-ghost badge-xs mt-0.5" x-text="ev.ator_tipo" x-show="ev.ator_tipo"></span>
+                      </td>
+                      <td class="text-xs">
+                        <template x-if="(ev.arquivos_baixados || []).length">
+                          <div class="flex flex-wrap items-center gap-1">
+                            <template x-for="arq in ev.arquivos_baixados" :key="arq.arquivo">
+                              <a :href="linkArquivo(arq)" target="_blank"
+                                 class="badge badge-sm gap-1 border border-black/15"
+                                 :class="corBadgeDocumento(arq.nome_arquivo)"
+                                 :title="arq.nome_arquivo">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                <span x-text="nomeDocumento(arq.nome_arquivo)"></span>
+                              </a>
+                            </template>
+                          </div>
+                        </template>
+                        <template x-if="!(ev.arquivos_baixados || []).length && (ev.documentos || []).length">
+                          <div class="flex flex-wrap items-center gap-1">
+                            <template x-for="(d, i) in ev.documentos" :key="i">
+                              <button type="button" @click="baixarDocumentosEventos([ev])" :disabled="baixandoDocs"
+                                      class="badge badge-sm gap-1 border border-black/15 bg-base-200 text-base-content/60"
+                                      :title="(d.sigla || d.nome || 'documento') + ' — clique p/ baixar'">
+                                <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                <span x-text="d.sigla || d.nome || 'doc'"></span>
+                              </button>
+                            </template>
+                          </div>
+                        </template>
+                        <span x-show="!(ev.arquivos_baixados || []).length && !(ev.documentos || []).length" class="text-base-content/30">—</span>
+                      </td>
+                    </tr>
+                  </template>
+                </tbody>
+                <tfoot>
+                  <tr x-show="!todosEventos && (resultado.eventos || []).length >= eventosLimit">
+                    <td colspan="5" class="text-center py-1">
+                      <button type="button" class="btn btn-ghost btn-xs gap-1" @click="mostrarMaisEventos()" :disabled="carregando">
+                        <span x-show="carregando" class="loading loading-spinner loading-xs"></span>
+                        <span>Mostrar mais</span>
+                        <svg xmlns="http://www.w3.org/2000/svg" class="w-3 h-3" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                          <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 8.25 12 15.75 4.5 8.25" />
+                        </svg>
+                      </button>
+                    </td>
+                  </tr>
+                </tfoot>
+              </table>
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </template>
+
+  </div>
+</div>
+
+<script>
+function eprocConsultarApp() {
+  return {
+    numero: '', instancia: 1, todosEventos: false,
+    carregando: false, erro: '', resultado: null,
+    verInativas: false,
+    eventosLimit: 30,
+    baixandoDocs: false,
+    lembretes: [], carregandoLembretes: false,
+
+    async init() {
+      const params = new URLSearchParams(window.location.search);
+      const num = params.get('numero');
+      if (num) {
+        this.numero = num;
+        this.instancia = parseInt(params.get('instancia') || '1', 10) || 1;
+        await this.buscar();
+      }
+    },
+
+    cab() { return (this.resultado && this.resultado.cabecalho) || {}; },
+    intimacoesInativasCount() {
+      return ((this.resultado && this.resultado.intimacoes) || []).filter((it) => !it.ativa).length;
+    },
+
+    // Cor de status de intimação — mesma paleta usada na tabela de Eventos
+    // (linha do evento que a originou) e na aba Prazos (tabela de Citações/
+    // Intimações). A triagem MCP não expõe "urgente" (isso só vem da leitura
+    // via navegador usada em Prazos) — aqui é só aberta/aguardando.
+    corIntimacao(it) {
+      if (!it || !it.ativa) return '';
+      return it.prazo_aberto ? 'var(--cor-intim-aberta)' : 'var(--cor-intim-aguardando)';
+    },
+    // Cor da linha do EVENTO que originou uma intimação ativa (cruza pelo
+    // número do evento — `evento_intimacao` de cada item de `intimacoes`).
+    corEvento(ev) {
+      const it = (this.resultado.intimacoes || []).find(
+        (i) => i.ativa && String(i.evento_intimacao) === String(ev.numero)
+      );
+      return it ? this.corIntimacao(it) : '';
+    },
+
+    // Nova busca (form/link direto): começa do zero, com a janela padrão de eventos.
+    async buscar() {
+      this.eventosLimit = 30;
+      await this.consultar();
+    },
+
+    // "Mostrar mais" na tabela de Eventos: amplia a janela e refaz a consulta.
+    async mostrarMaisEventos() {
+      this.eventosLimit += 30;
+      await this.consultar();
+    },
+
+    async consultar() {
+      const num = (this.numero || '').trim();
+      if (!num) { this.erro = 'Informe o número do processo.'; return; }
+      this.carregando = true; this.erro = ''; this.resultado = null;
+      this.verInativas = false;
+
+      // Atualiza a URL (sem recarregar) p/ permitir link direto/compartilhável.
+      const url = new URL(window.location);
+      url.searchParams.set('numero', num);
+      url.searchParams.set('instancia', this.instancia);
+      window.history.replaceState({}, '', url);
+
+      this.carregarLembretes(num);
+
+      try {
+        const qs = new URLSearchParams({
+          numero: num, instancia: this.instancia, eventos: this.eventosLimit,
+          todos_eventos: this.todosEventos ? 'true' : 'false',
+        });
+        const resp = await fetch('/api/eproc-mcp/triagem?' + qs.toString());
+        const r = await resp.json();
+        if (!resp.ok || r.erro) { this.erro = r.erro || 'Falha ao consultar o processo.'; }
+        else { this.resultado = r; }
+      } catch (e) { this.erro = 'Falha de rede ao consultar o e-proc (MCP).'; }
+      finally { this.carregando = false; }
+    },
+
+    // Lembretes NATIVOS do e-proc (cache da aba Prazos) — busca em paralelo à
+    // triagem, sem bloquear/atrasar o resultado principal.
+    async carregarLembretes(numero) {
+      this.carregandoLembretes = true;
+      try {
+        const r = await (await fetch('/api/eproc-mcp/lembretes?numero=' + encodeURIComponent(numero))).json();
+        this.lembretes = r.lembrete_itens || [];
+      } catch (e) { this.lembretes = []; }
+      finally { this.carregandoLembretes = false; }
+    },
+
+    // Abre o processo no e-proc (aba nova na janela persistente do navegador),
+    // pesquisando direto pelo número — mesma tool usada no minimenu da aba Prazos.
+    async abrirNoNavegador() {
+      if (!this.numero) return;
+      try { await fetch('/api/prazos/abrir-processo-numero?numero=' + encodeURIComponent(this.numero)); }
+      catch (e) { this.erro = 'Falha ao abrir o processo no navegador do e-proc.'; }
+    },
+
+    irParaEvento(numero) {
+      const el = document.getElementById('ev-' + numero);
+      if (!el) return;
+      // A seção "Eventos" começa recolhida (collapse-arrow) — abre antes de rolar.
+      const collapse = el.closest('.collapse');
+      const chk = collapse && collapse.querySelector('input[type=checkbox]');
+      if (chk && !chk.checked) chk.checked = true;
+      setTimeout(() => el.scrollIntoView({ behavior: 'smooth', block: 'center' }), 50);
+    },
+
+    // --- Documentos dos eventos (mesma linguagem visual da coluna Documentos
+    // das movimentações do PAJ — ver static/js/movimentacoes.js) -------------
+    extDocumento(nomeArquivo) {
+      const ext = (nomeArquivo || '').split('.').pop();
+      return (ext && ext.length <= 5 ? ext : 'doc').toUpperCase();
+    },
+    // Nome de exibição do badge — igual ao sigla/nome do e-proc (ex.:
+    // "DESPADEC1"), sem a extensão. Usado tanto ANTES quanto DEPOIS de baixar,
+    // pra não trocar de rótulo (era o bug: depois de baixado o badge mostrava
+    // a EXTENSÃO — "HTML" — em vez do nome do documento).
+    nomeDocumento(nomeArquivo) {
+      return (nomeArquivo || '').replace(/\.[^.]+$/, '') || nomeArquivo;
+    },
+    corBadgeDocumento(nomeArquivo) {
+      const ext = this.extDocumento(nomeArquivo).toLowerCase();
+      if (ext === 'pdf') return 'badge-error';
+      if (['doc', 'docx', 'html'].includes(ext)) return 'badge-info';
+      if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) return 'badge-warning';
+      return 'badge-ghost';
+    },
+    linkArquivo(arq) {
+      return '/api/eproc-mcp/arquivo?' + new URLSearchParams({
+        numero: this.numero, arquivo: arq.arquivo,
+      }).toString();
+    },
+    // Eventos com documento(s) conhecidos mas ainda não baixados nesta pasta.
+    eventosComDocPendente() {
+      return (this.resultado && this.resultado.eventos || []).filter(
+        (ev) => (ev.documentos || []).length && !(ev.arquivos_baixados || []).length
+      );
+    },
+    // Baixa os documentos de uma lista de eventos (1 = clique individual; N =
+    // "Baixar todos os pendentes"). Atualiza só os eventos afetados, sem
+    // refazer a triagem inteira.
+    async baixarDocumentosEventos(evs) {
+      if (!evs || !evs.length || this.baixandoDocs) return;
+      const eventoIds = evs.map((ev) => String(ev.numero));
+      this.baixandoDocs = true;
+      try {
+        const resp = await fetch('/api/eproc-mcp/baixar-documentos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ numero: this.numero, instancia: this.instancia, evento_ids: eventoIds }),
+        });
+        const r = await resp.json();
+        if (!resp.ok || r.erro) {
+          this.erro = r.erro || 'Falha ao baixar documento(s).';
+          return;
+        }
+        const arquivosPorEvento = r.arquivos_por_evento || {};
+        for (const ev of (this.resultado.eventos || [])) {
+          const arqs = arquivosPorEvento[String(ev.numero)];
+          if (arqs) ev.arquivos_baixados = arqs;
+        }
+        if (r.erros && r.erros.length) {
+          this.erro = r.erros.length + ' documento(s) não puderam ser baixados (acesso restrito ou indisponível).';
+        }
+      } catch (e) {
+        this.erro = 'Falha de rede ao baixar documento(s).';
+      } finally {
+        this.baixandoDocs = false;
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

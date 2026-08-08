@@ -3,10 +3,12 @@
 from fastapi import APIRouter, Body, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from services import lembretes_service
 from services.download_completo_service import gerar_pdf_consolidado, verificar_sincronizacao_completa
 from services.paj_service import (
     PajNorm,
     abrir_pasta_paj,
+    invalidar_cache_listagem,
     ler_paj,
     ler_notas,
     limpar_anexos_paj,
@@ -134,4 +136,52 @@ async def api_notas_salvar(paj_norm: PajNorm, payload: dict = Body(...)):
     ok = salvar_notas(paj_norm, texto)
     if not ok:
         return JSONResponse({"ok": False, "erro": "PAJ inválido"}, status_code=400)
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# Lembretes — nos moldes da ferramenta "Lembretes" do e-proc (descrição + cor).
+# Vide services/lembretes_service.py para o modelo de dados e a paleta.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/paj/{paj_norm}/lembretes", response_class=JSONResponse)
+async def api_lembretes_listar(paj_norm: PajNorm):
+    return {"lembretes": lembretes_service.listar_lembretes(paj_norm)}
+
+
+@router.post("/api/paj/{paj_norm}/lembretes", response_class=JSONResponse)
+async def api_lembretes_criar(paj_norm: PajNorm, payload: dict = Body(...)):
+    """Cria um lembrete. Body: {"descricao": "...", "cor": "amarelo"}."""
+    descricao = (payload.get("descricao") or "").strip() if isinstance(payload, dict) else ""
+    cor = (payload.get("cor") or "").strip() if isinstance(payload, dict) else ""
+    if not descricao:
+        return JSONResponse({"ok": False, "erro": "Descrição é obrigatória"}, status_code=400)
+    lembrete = lembretes_service.criar_lembrete(paj_norm, descricao, cor)
+    if lembrete is None:
+        return JSONResponse({"ok": False, "erro": "PAJ inválido"}, status_code=400)
+    invalidar_cache_listagem()  # dashboard precisa refletir o novo lembrete
+    return {"ok": True, "lembrete": lembrete}
+
+
+@router.put("/api/paj/{paj_norm}/lembretes/{lembrete_id}", response_class=JSONResponse)
+async def api_lembretes_atualizar(paj_norm: PajNorm, lembrete_id: str, payload: dict = Body(...)):
+    """Altera um lembrete existente. Body: {"descricao": "...", "cor": "azul"}."""
+    descricao = (payload.get("descricao") or "").strip() if isinstance(payload, dict) else ""
+    cor = (payload.get("cor") or "").strip() if isinstance(payload, dict) else ""
+    if not descricao:
+        return JSONResponse({"ok": False, "erro": "Descrição é obrigatória"}, status_code=400)
+    lembrete = lembretes_service.atualizar_lembrete(paj_norm, lembrete_id, descricao, cor)
+    if lembrete is None:
+        return JSONResponse({"ok": False, "erro": "Lembrete não encontrado"}, status_code=404)
+    invalidar_cache_listagem()
+    return {"ok": True, "lembrete": lembrete}
+
+
+@router.delete("/api/paj/{paj_norm}/lembretes/{lembrete_id}", response_class=JSONResponse)
+async def api_lembretes_remover(paj_norm: PajNorm, lembrete_id: str):
+    ok = lembretes_service.remover_lembrete(paj_norm, lembrete_id)
+    if not ok:
+        return JSONResponse({"ok": False, "erro": "Lembrete não encontrado"}, status_code=404)
+    invalidar_cache_listagem()
     return {"ok": True}

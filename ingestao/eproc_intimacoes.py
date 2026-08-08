@@ -429,6 +429,60 @@ def carregar() -> dict:
         return {"sincronizado_em": "", "resumo": [], "secoes": {}, "diff": {}, "saidas": []}
 
 
+def buscar_lembretes(numero: str) -> dict:
+    """Lembretes NATIVOS do e-proc (ícone/tooltip da listagem de intimações) de
+    um processo, lidos do cache já sincronizado por "Sincronizar intimações"
+    (aba Prazos) — NÃO é uma leitura ao vivo por NPU avulso: essa tela de
+    lembretes só é vista via navegador na listagem de citações/intimações, o
+    MNI/scraper do processo (usado pela página "Consultar processo") não a
+    expõe. Por isso só acha algo se o processo já passou por aquela sync.
+
+    Retorna {"encontrado": bool, "lembrete_itens": [{seq,texto}, ...],
+    "sincronizado_em": "..."}."""
+    dados = carregar()
+    alvo = re.sub(r"\D", "", numero or "")
+    if alvo:
+        for casos in (dados.get("secoes") or {}).values():
+            for c in casos:
+                if re.sub(r"\D", "", c.get("processo") or "") == alvo:
+                    return {
+                        "encontrado": True,
+                        "lembrete_itens": c.get("lembrete_itens") or [],
+                        "sincronizado_em": dados.get("sincronizado_em") or "",
+                    }
+    return {"encontrado": False, "lembrete_itens": [], "sincronizado_em": dados.get("sincronizado_em") or ""}
+
+
+def prazos_processo(numero: str) -> dict:
+    """Prazos do MEU Painel do Procurador (cache já sincronizado) para este
+    NPU — usado pra confirmar quais intimações da triagem MCP (que lê o
+    processo INTEIRO, de TODAS as partes) são efetivamente da DPU.
+
+    Não usa casamento por NOME de propósito: o e-proc roteia o Painel do
+    Procurador por PROCURADOR REGISTRADO, não por nome — isso já resolve
+    corretamente representante legal e litisconsórcio ativo (todas as partes
+    que a DPU representa aparecem aqui, sem heurística nenhuma), e evita
+    omissão por divergência de nome cadastrado entre SISDPU e e-proc.
+
+    Retorna {"encontrado": bool, "prazos": [{parte,evento,prazo_dias,
+    data_envio,inicio_prazo,final_prazo,...}, ...], "sincronizado_em": "..."}.
+    `encontrado=False` (processo não sincronizado ainda, ou sem prazo atual no
+    Painel) — o chamador deve tratar como "sem informação" e NÃO filtrar
+    (fail-open: melhor mostrar demais do que omitir uma intimação real)."""
+    dados = carregar()
+    alvo = re.sub(r"\D", "", numero or "")
+    if alvo:
+        for casos in (dados.get("secoes") or {}).values():
+            for c in casos:
+                if re.sub(r"\D", "", c.get("processo") or "") == alvo:
+                    return {
+                        "encontrado": True,
+                        "prazos": c.get("prazos") or [],
+                        "sincronizado_em": dados.get("sincronizado_em") or "",
+                    }
+    return {"encontrado": False, "prazos": [], "sincronizado_em": dados.get("sincronizado_em") or ""}
+
+
 # ---- leitura ----------------------------------------------------------------
 
 async def _esperar_listagem(ctx, painel, cat: dict):

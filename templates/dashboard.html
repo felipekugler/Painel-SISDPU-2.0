@@ -49,6 +49,20 @@
   .btn-royal:hover { background-color: #3457cc !important; border-color: #3457cc !important; }
   .btn-royal:disabled,
   .btn-royal[disabled] { background-color: #4169e1 !important; border-color: #4169e1 !important; opacity: .45 !important; }
+
+  /* Ícone e tooltip do Lembrete — post-it igual ao e-proc (mesmo padrão já
+     usado em templates/prazos.html para os lembretes do próprio e-proc). */
+  .lembrete-icon { cursor: help; vertical-align: middle; }
+  .lembrete-icon:hover { filter: brightness(0.93); }
+  .lembrete-pop { position: fixed; z-index: 1000; background: #fcf8db; border: 1px solid rgba(0,0,0,0.2);
+                  border-radius: 3px; box-shadow: 0 10px 20px rgba(0,0,0,0.19), 0 6px 6px rgba(0,0,0,0.23);
+                  font-family: Roboto, 'Segoe UI', sans-serif; font-size: 11px; color: #000; max-width: 24rem;
+                  pointer-events: none; }
+  .lembrete-pop table { border-collapse: collapse; }
+  .lembrete-pop td { padding: 3px 7px; vertical-align: top; }
+  .lembrete-pop td:first-child { width: 0.9rem; padding-right: 0; }
+  .lembrete-pop .cor-chip { display: inline-block; width: 0.65rem; height: 0.65rem; border-radius: 2px; border: 1px solid rgba(0,0,0,0.25); }
+  .lembrete-pop tr:nth-of-type(even) { background: rgba(0,0,0,0.05); }
 </style>
 {% endblock %}
 
@@ -424,7 +438,7 @@
         <select x-model="filtroPretensao" @change="aplicarFiltros()" class="bg-transparent text-sm focus:outline-none cursor-pointer appearance-none pr-1 w-28 truncate" title="Pretensão">
           <option value="">Todas as pretensões</option>
           <template x-for="c in pretensoesUnicas" :key="c">
-            <option :value="c" x-text="c"></option>
+            <option :value="c" :title="c" x-text="formatarPretensao(c)"></option>
           </template>
         </select>
         <svg class="w-3.5 h-3.5 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path></svg>
@@ -488,7 +502,7 @@
       </template>
       <template x-if="filtroPretensao">
         <span class="badge badge-sm badge-ghost gap-1">
-          <span x-text="filtroPretensao"></span>
+          <span x-text="formatarPretensao(filtroPretensao)" :title="filtroPretensao"></span>
           <button @click.stop="filtroPretensao = ''; aplicarFiltros()" class="ml-1 opacity-60 hover:opacity-100">×</button>
         </span>
       </template>
@@ -528,13 +542,13 @@
         <table class="w-full border-collapse text-sm table-fixed">
           <thead class="sticky top-0 z-10 bg-base-100">
             <tr class="text-[11px] text-base-content/40 font-semibold border-b border-base-content/10">
-              <th class="px-4 py-2 text-left w-[160px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('paj')">PAJ <span x-text="iconOrdem('paj')"></span></button></th>
-              <th class="px-4 py-2 text-left w-[280px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('assistido')">Assistido <span x-text="iconOrdem('assistido')"></span></button></th>
-              <th class="px-4 py-2 text-left w-[100px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('oficio')">Ofício <span x-text="iconOrdem('oficio')"></span></button></th>
-              <th class="px-4 py-2 text-left w-[470px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('classificacao')">Pretensão <span x-text="iconOrdem('classificacao')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[175px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('paj')">PAJ <span x-text="iconOrdem('paj')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[240px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('assistido')">Assistido <span x-text="iconOrdem('assistido')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[95px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('oficio')">Ofício <span x-text="iconOrdem('oficio')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[378px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('classificacao')">Pretensão <span x-text="iconOrdem('classificacao')"></span></button></th>
               <th class="px-4 py-2 text-left w-full min-w-[360px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('desc_caixa')">Descrição <span x-text="iconOrdem('desc_caixa')"></span></button></th>
               <th class="px-4 py-2 text-left w-[88px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('data_caixa')">Data <span x-text="iconOrdem('data_caixa')"></span></button></th>
-              <th class="px-4 py-2 text-left w-[76px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('n_documentos_indexados')">Anexos</button></th>
+              <th class="px-4 py-2 text-left w-[100px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('n_documentos_indexados')">Anexos</button></th>
               <th class="px-4 py-2 text-left w-[110px]">
                 <button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('tem_analise_ia')">
                   <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"></path></svg>
@@ -556,9 +570,25 @@
                     <span class="w-2 h-2 rounded-full bg-info shrink-0" title="PAJ novo — ainda não visitado"></span>
                   </template>
                   <span x-text="paj.paj"></span>
+                  <template x-if="(paj.lembrete_itens || []).length">
+                    <svg class="lembrete-icon inline-block shrink-0" width="15" height="15" viewBox="0 0 16 16"
+                         @mouseenter="mostrarLembrete($event, paj)" @mouseleave="lembreteTip.show = false"
+                         title="Este PAJ tem lembrete(s) cadastrado(s)">
+                      <path d="M2 1.6h12A1.5 1.5 0 0 1 15.5 3.1v6.3A1.5 1.5 0 0 1 14 10.9H6.4L3.3 13.7v-2.8H2A1.5 1.5 0 0 1 .5 9.4V3.1A1.5 1.5 0 0 1 2 1.6z"
+                            fill="#fcfec4" stroke="#7c7a7c" stroke-width="1" stroke-linejoin="round"/>
+                    </svg>
+                  </template>
                 </div>
-                <!-- 2ª linha: processo judicial -->
-                <div class="font-mono text-[10.5px] text-base-content/40 truncate mt-0" x-text="paj.processo_judicial || ''"></div>
+                <!-- 2ª linha: processo judicial (minimenu: consultar via MCP ou abrir no navegador) -->
+                <div class="dropdown mt-0" x-show="paj.processo_judicial" @click.stop>
+                    <div tabindex="0" role="button"
+                         class="font-mono text-[10.5px] text-base-content/40 hover:text-base-content/70 truncate link"
+                         title="Escolher onde consultar o processo" x-text="paj.processo_judicial"></div>
+                    <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-52 p-1 shadow border border-base-300">
+                        <li><a @click.stop="consultarProcessoMcp(paj.processo_judicial)">Consultar processo (MCP)</a></li>
+                        <li><a @click.stop="abrirProcessoNavegador(paj.processo_judicial, $event.target)">Abrir no navegador</a></li>
+                    </ul>
+                </div>
                 <template x-if="paj.etiqueta">
                   <span class="inline-flex items-center gap-1 mt-0 text-[10px] font-medium text-accent/80 bg-accent/10 rounded px-1.5 py-0.5">
                     <span class="w-1 h-1 rounded-full bg-accent"></span>
@@ -582,7 +612,7 @@
                 <span class="pretensao-badge inline-block max-w-full truncate align-middle"
                       :class="corPretensao(paj.pretensaopura)"
                       :title="paj.pretensaopura"
-                      x-text="paj.pretensaopura || '—'"></span>
+                      x-text="formatarPretensao(paj.pretensaopura) || '—'"></span>
               </td>
 
               <!-- Descrição (trâmite da caixa de entrada) -->
@@ -655,6 +685,17 @@
 
   </section>
 
+  <!-- Tooltip do Lembrete (post-it estilo e-proc) — mostra todos os lembretes
+       do PAJ ao passar o mouse no ícone da coluna PAJ. -->
+  <div class="lembrete-pop" x-show="lembreteTip.show" x-cloak
+       :style="`left:${lembreteTip.x}px; top:${lembreteTip.y}px`">
+    <table><tbody>
+      <template x-for="(it, i) in lembreteTip.itens" :key="i">
+        <tr><td><span class="cor-chip" :style="'background-color:' + it.cor_hex"></span></td><td x-text="it.texto"></td></tr>
+      </template>
+    </tbody></table>
+  </div>
+
 </div>
 {% endblock %}
 
@@ -679,6 +720,7 @@ function dashboardApp() {
         analiseStatusMap: {},
         stats: {running: 0, queued: 0, max_parallel: 5},
         cota: {ativo: false, n_pendentes: 0, redisparo_em: '', pausado: false, ciclo: 0, max_ciclos: 12, ultimo_log: ''},
+        lembreteTip: { show: false, x: 0, y: 0, itens: [] },
 
         // Estado do modal "Elaborar todos" (lote)
         loteSkills: [],
@@ -713,6 +755,21 @@ function dashboardApp() {
             this.filtroAnalise = '';
             this.busca = '';
             this.aplicarFiltros();
+        },
+
+        // Lembretes — ícone com tooltip na coluna PAJ (mesmo padrão do e-proc,
+        // vide templates/prazos.html). Cores fixas: services/lembretes_service.py.
+        corLembreteHex(nome) {
+            const mapa = { amarelo: '#efef8f', azul: '#87adcd', laranja: '#f5b574', verde: '#a7eda7', vermelho: '#db8080' };
+            return mapa[nome] || '#efef8f';
+        },
+        mostrarLembrete(ev, paj) {
+            const r = ev.currentTarget.getBoundingClientRect();
+            let x = r.left, y = r.bottom + 6;
+            const limite = window.innerWidth - 400;
+            if (x > limite) x = Math.max(8, limite);
+            const itens = (paj.lembrete_itens || []).map((it) => ({ texto: it.texto, cor_hex: this.corLembreteHex(it.cor) }));
+            this.lembreteTip = { show: true, x, y, itens };
         },
 
         async atualizarStatus() {

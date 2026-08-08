@@ -132,6 +132,45 @@ async def _ensure_chromium(url: str = EPROC_HOME) -> None:
         time.sleep(0.5)
 
 
+
+# Páginas antigas do e-proc (ex.: as listagens de "Citações/Intimações" do
+# Painel do Procurador) não declaram charset (nem header Content-Type, nem
+# <meta charset>) — o Chromium então ADIVINHA a codificação e às vezes erra,
+# renderizando acento como caractere de substituição (U+FFFD) DENTRO do DOM.
+# Como o erro acontece no PRÓPRIO NAVEGADOR (antes de qualquer `innerText`
+# nosso rodar), não tem como corrigir depois — o texto já foi perdido. A
+# correção tem que entrar ANTES do parse: intercepta a resposta e injeta
+# `charset=ISO-8859-1` no Content-Type quando ausente (mesma codificação já
+# confirmada nos documentos do e-proc — ver CLAUDE.md do MCP eproc-trf4).
+# Se a página já declarar um charset, não mexe (defensivo/idempotente).
+_ROUTE_CHARSET_INSTALADO: set[int] = set()
+
+
+async def _fixar_charset_eproc(ctx) -> None:
+    """Instala (uma única vez por contexto) um interceptador que corrige o
+    Content-Type das respostas HTML do e-proc sem charset declarado."""
+    if id(ctx) in _ROUTE_CHARSET_INSTALADO:
+        return
+    _ROUTE_CHARSET_INSTALADO.add(id(ctx))
+
+    async def _handler(route):
+        try:
+            resp = await route.fetch()
+            headers = dict(resp.headers)
+            ct = (headers.get("content-type") or "").lower()
+            if "text/html" in ct and "charset" not in ct:
+                base = (headers.get("content-type") or "text/html").split(";")[0].strip()
+                headers["content-type"] = f"{base}; charset=ISO-8859-1"
+            await route.fulfill(response=resp, headers=headers)
+        except Exception:  # noqa: BLE001 — nunca deixa a navegação travar por causa disto
+            with contextlib.suppress(Exception):
+                await route.continue_()
+
+    with contextlib.suppress(Exception):
+        await ctx.route("**/eproc.jfpr.jus.br/**", _handler)
+        await ctx.route("**/eproc.trf4.jus.br/**", _handler)
+
+
 async def _connect(url: str = EPROC_HOME):
     """Conecta ao Chromium persistente e devolve (browser, page). Chame
     `browser.close()` ao fim — fecha só a CONEXÃO CDP, não o Chromium."""
@@ -139,8 +178,29 @@ async def _connect(url: str = EPROC_HOME):
     pw = await _pw_start()
     browser = await pw.chromium.connect_over_cdp(f"http://127.0.0.1:{_CDP_PORT}")
     ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
+    await _fixar_charset_eproc(ctx)
     page = ctx.pages[0] if ctx.pages else await ctx.new_page()
     return browser, page
+
+
+async def _maximizar_janela(page) -> None:
+    """Garante que a janela (SO) do Chromium esteja maximizada — `bring_to_front`
+    do Playwright só ativa a ABA dentro do navegador, não restaura uma janela
+    minimizada do SO (limitação conhecida do CDP em alto nível). Usa o
+    protocolo CDP puro (`Browser.getWindowForTarget`/`setWindowBounds`).
+    Chromium não aceita ir direto de "minimized" para "maximized" — por isso
+    passa por "normal" primeiro. Silencioso em qualquer falha (best-effort;
+    nunca deve quebrar o fluxo de abrir o processo)."""
+    with contextlib.suppress(Exception):
+        cdp = await page.context.new_cdp_session(page)
+        info = await cdp.send("Browser.getWindowForTarget")
+        window_id = info.get("windowId")
+        if window_id is not None:
+            with contextlib.suppress(Exception):
+                await cdp.send("Browser.setWindowBounds",
+                                {"windowId": window_id, "bounds": {"windowState": "normal"}})
+            await cdp.send("Browser.setWindowBounds",
+                            {"windowId": window_id, "bounds": {"windowState": "maximized"}})
 
 
 def _em_sso(u: str) -> bool:
@@ -262,6 +322,7 @@ async def abrir(url: str = EPROC_HOME, usuario: str = "", senha: str = "") -> di
     try:
         with contextlib.suppress(Exception):
             await page.bring_to_front()
+        await _maximizar_janela(page)
         with contextlib.suppress(Exception):
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(1500)
@@ -490,7 +551,48 @@ async def abrir_processo(url: str) -> dict:
             await nova.goto(url, wait_until="domcontentloaded", timeout=60000)
             await nova.wait_for_timeout(400)
             await nova.bring_to_front()
+        await _maximizar_janela(nova)
         return {"ok": True, "url": nova.url}
+    finally:
+        with contextlib.suppress(Exception):
+            await browser.close()
+
+
+async def abrir_processo_por_numero(numero: str) -> dict:
+    """Abre a Consulta Processual do e-proc pesquisando DIRETO pelo número, numa
+    ABA NOVA da janela onde o usuário está logado — mesma "pesquisa rápida" usada
+    por `_abrir_tela_peticionamento`, mas sem clicar em "Movimentar/Peticionar" no
+    fim (aqui só queremos ver o processo, não peticionar).
+
+    Diferente de `abrir_processo`, NÃO depende de um link/hash pré-capturado numa
+    sincronização — funciona pra qualquer número, inclusive processos vinculados a
+    um PAJ que nunca passaram pela sincronização de Prazos e-proc. Fechar a conexão
+    CDP no fim NÃO fecha a aba — ela permanece aberta para o usuário."""
+    numero_limpo = re.sub(r"\D", "", numero or "")
+    if not numero_limpo:
+        return {"ok": False, "erro": "Número de processo vazio."}
+    browser, pagina_ref = await _connect()
+    ctx = pagina_ref.context
+    try:
+        page = await ctx.new_page()
+        await page.goto(EPROC_HOME, wait_until="domcontentloaded", timeout=30000)
+        await page.wait_for_timeout(800)
+        if not _status_dict(page.url)["logado"]:
+            return {
+                "ok": False,
+                "erro": "Sessão do e-proc não está logada — faça login na janela do e-proc e tente de novo.",
+            }
+        campo = page.locator("#txtNumProcessoPesquisaRapida:visible")
+        await campo.click()
+        await campo.fill(numero_limpo)
+        await campo.press("Enter")
+        await page.wait_for_load_state("domcontentloaded", timeout=20000)
+        await page.wait_for_timeout(600)
+        await page.bring_to_front()
+        await _maximizar_janela(page)
+        return {"ok": True, "url": page.url}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:300]}
     finally:
         with contextlib.suppress(Exception):
             await browser.close()

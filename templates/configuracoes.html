@@ -675,6 +675,55 @@
             </div>
         </div>
     </div>
+
+    <!-- Documentos baixados (cache da página "Consultar processo") -->
+    <div class="card bg-base-200 shadow mt-4" x-data="eprocDocsCache()" x-init="init()">
+        <div class="card-body gap-5">
+            <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
+                <h3 class="text-lg font-semibold text-base-content/80">Documentos baixados (e-proc)</h3>
+            </div>
+            <p class="text-sm text-base-content/60">
+                PDFs e HTMLs de eventos, baixados sob demanda na página <strong>Consultar processo</strong> e
+                guardados em disco para não precisar baixar de novo a cada visita. É só um <strong>cache</strong> —
+                sempre re-baixável do e-proc a qualquer momento, nada é perdido de verdade se for apagado.
+            </p>
+
+            <div class="stats stats-horizontal shadow bg-base-300 w-fit">
+                <div class="stat py-3 px-5">
+                    <div class="stat-title text-xs">Arquivos em disco</div>
+                    <div class="stat-value text-lg" x-text="status.arquivos ?? '—'"></div>
+                </div>
+                <div class="stat py-3 px-5">
+                    <div class="stat-title text-xs">Espaço ocupado</div>
+                    <div class="stat-value text-lg" x-text="formatarBytes(status.bytes)"></div>
+                </div>
+            </div>
+
+            <div class="flex items-end gap-3 flex-wrap">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Reter por (dias)</span></label>
+                    <input type="number" min="1" max="3650" class="input input-bordered input-sm w-28"
+                           x-model.number="retencaoDias">
+                </div>
+                <button class="btn btn-sm btn-primary" :disabled="salvandoRetencao" @click="salvarRetencao()">
+                    <span x-show="salvandoRetencao" class="loading loading-spinner loading-xs"></span>
+                    Salvar
+                </button>
+                <span class="text-xs text-base-content/50">
+                    Arquivos não acessados há mais tempo que isso são apagados sozinhos toda vez que o painel inicia.
+                </span>
+            </div>
+
+            <div class="flex items-center gap-3 pt-2 border-t border-base-300">
+                <button class="btn btn-sm btn-error btn-outline" :disabled="limpando" @click="limparTudo()">
+                    <span x-show="limpando" class="loading loading-spinner loading-xs"></span>
+                    Limpar tudo
+                </button>
+                <span class="text-xs text-base-content/50">Apaga os documentos de TODOS os processos já baixados.</span>
+            </div>
+            <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
+        </div>
+    </div>
     </div><!-- /cfg-panel eproc -->
 
     <p class="text-xs text-base-content/40 mt-4">
@@ -1054,6 +1103,54 @@ function eprocSigiloPrefs() {
                 else { this.msgErro = true; this.msg2 = 'Falha ao salvar.'; }
             } catch (e) { this.msgErro = true; this.msg2 = 'Erro ao salvar: ' + e; }
             finally { this.salvando = false; }
+        },
+    };
+}
+
+// Cache de documentos baixados na página "Consultar processo" (dados/eproc_docs/) —
+// retenção configurável (limpeza automática roda sozinha no startup do painel) +
+// botão "Limpar tudo" para esvaziar na hora.
+function eprocDocsCache() {
+    return {
+        status: { arquivos: 0, bytes: 0 }, retencaoDias: 30,
+        salvandoRetencao: false, limpando: false, msg: '', msgErro: false,
+        async init() {
+            try {
+                const j = await (await fetch('/api/eproc-mcp/docs-cache')).json();
+                this.status = { arquivos: j.arquivos, bytes: j.bytes };
+                this.retencaoDias = j.retencao_dias;
+            } catch (e) {}
+        },
+        formatarBytes(n) {
+            if (!n) return '0 B';
+            const un = ['B', 'KB', 'MB', 'GB'];
+            let i = 0;
+            while (n >= 1024 && i < un.length - 1) { n /= 1024; i++; }
+            return n.toFixed(i ? 1 : 0) + ' ' + un[i];
+        },
+        async salvarRetencao() {
+            this.salvandoRetencao = true; this.msg = ''; this.msgErro = false;
+            try {
+                const r = await fetch('/api/eproc-mcp/docs-cache/retencao', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ dias: this.retencaoDias }),
+                });
+                const j = await r.json();
+                if (j.ok) { this.retencaoDias = j.retencao_dias; this.msg = 'Retenção salva ✓'; setTimeout(() => this.msg = '', 2500); }
+                else { this.msgErro = true; this.msg = 'Falha ao salvar.'; }
+            } catch (e) { this.msgErro = true; this.msg = 'Erro ao salvar: ' + e; }
+            finally { this.salvandoRetencao = false; }
+        },
+        async limparTudo() {
+            if (!confirm('Apagar TODOS os documentos já baixados de TODOS os processos? Eles continuam disponíveis no e-proc — só precisará baixar de novo se quiser vê-los aqui.')) return;
+            this.limpando = true; this.msg = ''; this.msgErro = false;
+            try {
+                const r = await fetch('/api/eproc-mcp/docs-cache/limpar-tudo', { method: 'POST' });
+                const j = await r.json();
+                this.status = { arquivos: 0, bytes: 0 };
+                this.msg = `${j.removidos} arquivo(s) removido(s), ${this.formatarBytes(j.bytes_liberados)} liberado(s).`;
+            } catch (e) { this.msgErro = true; this.msg = 'Erro ao limpar: ' + e; }
+            finally { this.limpando = false; }
         },
     };
 }

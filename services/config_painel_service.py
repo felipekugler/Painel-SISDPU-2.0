@@ -492,6 +492,34 @@ def set_oficios_siglas(itens: list[dict]) -> list[dict]:
     return get_oficios_siglas()
 
 
+# --- Retenção do cache de documentos do e-proc (página "Consultar processo") ---
+# Arquivos em dados/eproc_docs/<npu>/ são só CACHE — sempre re-baixáveis do
+# e-proc — mas sem limpeza cresceriam pra sempre. Configurável para o usuário
+# ajustar conforme a necessidade; default segue o mesmo espírito da rotação de
+# logs (TimedRotatingFileHandler, 7 dias) só que mais generoso pro caso de uso.
+EPROC_DOCS_RETENCAO_DIAS_DEFAULT = 30
+
+
+def get_eproc_docs_retencao_dias() -> int:
+    raw = _ler_raw()
+    try:
+        dias = int(raw.get("eproc_docs_retencao_dias", EPROC_DOCS_RETENCAO_DIAS_DEFAULT))
+    except Exception:
+        dias = EPROC_DOCS_RETENCAO_DIAS_DEFAULT
+    return min(3650, max(1, dias))
+
+
+def set_eproc_docs_retencao_dias(dias) -> int:
+    try:
+        dias = min(3650, max(1, int(dias)))
+    except Exception:
+        dias = EPROC_DOCS_RETENCAO_DIAS_DEFAULT
+    raw = _ler_raw()
+    raw["eproc_docs_retencao_dias"] = dias
+    _salvar_raw(raw)
+    return dias
+
+
 def sigla_de_oficio(raw: str) -> str:
     """Converte um nome de ofício (cru, como vem do SISDPU) na SIGLA correspondente.
     Sem correspondência → devolve uma versão limpa do nome (sem prefixo de área/'|')."""

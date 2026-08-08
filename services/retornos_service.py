@@ -548,12 +548,34 @@ async def sincronizar_stream() -> AsyncIterator[dict]:
     yield {"done": True, "resultado": {"ok": True, "n_caixa": len(pendentes), "n_saidos": saidos}}
 
 
-async def ressincronizar_paj_stream(id_tramite: str) -> AsyncIterator[dict]:
-    """Ressincroniza UM retorno já conhecido, pelo MESMO caminho leve da sincronização
-    em lote (`sincronizador._processar_paj` com `baixar_anexos=False,
-    extrair_documentos=False, esperas_curtas=True`) — NUNCA a sincronização pesada da
-    aba PAJs. Não dispara a IA (isso é o botão "Reanálise pela IA"); só refresca o
-    núcleo do metadata (ofício, assistido, pretensão, movimentações) + caixas abertas."""
+async def ressincronizar_paj_stream(id_tramite: str, completo: bool = False,
+                                    ia: bool = False) -> AsyncIterator[dict]:
+    """Ressincroniza UM retorno já conhecido — modo e IA são escolhas INDEPENDENTES no
+    minimenu do botão "Sincronizar" de cada linha (mesmo padrão do dropdown "Consultar
+    processo"), pra deixar o usuário disparar a IA só quando for realmente necessário:
+
+    `completo=False` (**Sincronização leve**, padrão): `baixar_anexos=False,
+    extrair_documentos=False, esperas_curtas=True` — só refresca o núcleo do metadata
+    (ofício, assistido, pretensão, movimentações, caixas abertas), sem indexar
+    documentos. É rápida o bastante pra ser usada como "conferência": depois de um
+    "erro de conexão" no console Ações no SISDPU (mov→tram→conclui — ver
+    [[project_painel_retornos]]), verificar aqui se a movimentação/tramitação/conclusão
+    realmente foi efetivada no SISDPU antes de decidir o que reexecutar.
+
+    `completo=True` (**Sincronização completa**): `baixar_anexos=True,
+    extrair_documentos=True, esperas_curtas=False` — o MESMO caminho que a aba PAJs usa
+    em "Sincronizar (com anexos)" (baixa e indexa os documentos de cada movimentação,
+    populando a coluna "Documentos" do modal compartilhado igual à aba PAJs).
+
+    `ia=True` (independente do modo acima): ao final, dispara uma reanálise da IA
+    (mesma lógica de `reanalisar()`) — resumo/sugestão são recalculados e substituem
+    os salvos. Fica desligado por padrão porque a maior parte das ressincronizações
+    de UM PAJ é justamente conferência rápida (ver caso de uso do modo leve acima),
+    onde a IA não agrega nada e só custa tempo.
+
+    Em qualquer combinação: NUNCA é a sincronização pesada da aba PAJs propriamente
+    dita (roda aqui mesmo, sem navegar para /paj/...). A IA também está disponível à
+    parte no botão "Reanálise pela IA", sem precisar ressincronizar nada."""
     store = _ler_store()
     rec = store.get(id_tramite)
     if not rec:
@@ -595,10 +617,13 @@ async def ressincronizar_paj_stream(id_tramite: str) -> AsyncIterator[dict]:
         "data": it.get("data_envio", ""),
         "desc": (it.get("descricao", "") + " | " + it.get("linha_texto", "")).strip(),
     }
-    yield _ev("info", "Regravando dados unificados (modo rápido, sem anexos)…")
+    if completo:
+        yield _ev("info", "Regravando dados unificados (completo: baixando e indexando documentos)…")
+    else:
+        yield _ev("info", "Regravando dados unificados (leve: sem documentos)…")
     _, exc, eventos = await _com_auto_reconexao(lambda: sincronizador._processar_paj(
-        adapter, _log_noop, baixar_anexos=False,
-        extrair_documentos=False, esperas_curtas=True))
+        adapter, _log_noop, baixar_anexos=completo,
+        extrair_documentos=completo, esperas_curtas=not completo))
     for ev in eventos:
         yield ev
     if exc is not None:
@@ -639,12 +664,35 @@ async def ressincronizar_paj_stream(id_tramite: str) -> AsyncIterator[dict]:
         "remetente": remetente,
         "descricao_retorno": descricao_retorno,
         "n_movimentacoes": len(movs),
-        # IA preservada — este botão não reanalisa (ver "Reanálise pela IA").
+        # IA preservada quando ia=False (ver "Reanálise pela IA" p/ acionar sob
+        # demanda depois); quando ia=True, reanalisada logo abaixo.
     })
     store[id_tramite] = rec
     _gravar_store(store)
 
-    yield _ev("ok", f"{paj} — ressincronizado com sucesso.")
+    if ia:
+        if retornos_ia.disponivel():
+            yield _ev("info", "Reanalisando com a IA…")
+            narrativa = _narrativa_do_paj(paj_norm)
+            analise = await asyncio.to_thread(
+                retornos_ia.analisar_retorno, narrativa, movs, descricao_retorno, assistido, pretensao)
+            if analise:
+                rec["resumo_ia"] = analise.get("resumo", "")
+                rec["precisa_acao"] = analise.get("precisa_acao")
+                rec["sugestao_ia"] = analise.get("sugestao", "")
+                rec["sugestao_editada"] = ""
+                rec["ia_status"] = "ok"
+                yield _ev("ok", "Reanálise concluída.")
+            else:
+                rec["ia_status"] = "erro"
+                yield _ev("muted", "IA não retornou análise.")
+            store[id_tramite] = rec
+            _gravar_store(store)
+        else:
+            yield _ev("muted", "IA indisponível (claude não encontrado ou desligado) — sem reanálise.")
+
+    modo_txt = ('completo' if completo else 'leve') + (' + IA' if ia else '')
+    yield _ev("ok", f"{paj} — ressincronizado com sucesso ({modo_txt}).")
     yield {"done": True, "resultado": {"ok": True}}
 
 

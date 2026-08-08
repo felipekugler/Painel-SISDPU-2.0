@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Prazos e-proc{% endblock %}
+{% block title %}Prazos{% endblock %}
 
 {% block content_class %}flex flex-col flex-1 p-0{% endblock %}
 
@@ -22,6 +22,12 @@
   .intim-table tr.linha-eproc .text-base-content\/40,
   .intim-table tr.linha-eproc .lembrete-cell { color: #374151 !important; }
   .intim-table tr.linha-eproc a.link { color: #0a4bad !important; }
+  /* Menu "Ver no Painel/Ver no navegador": sem isso, o texto herdava a cor escura
+     forçada acima (pensada p/ ficar legível sobre o fundo claro da linha) — dentro
+     do popup (fundo do tema, claro OU escuro) essa cor fixa quebrava o contraste. */
+  .intim-table .dropdown-content { background: var(--card) !important; border-color: var(--stroke-strong) !important; }
+  .intim-table .dropdown-content li > a { color: var(--text) !important; }
+  .intim-table .dropdown-content li > a:hover { background: var(--card-hover) !important; }
   /* Nome do polo ativo: negrito + vermelho-escuro, igual ao e-proc (rgb(153,0,0)) */
   .autor-nome { color: #990000; font-weight: 700; }
   .intim-table tr.linha-eproc .autor-nome { color: #990000 !important; }
@@ -61,10 +67,21 @@
   {% endif %}
 
   <!-- Top bar -->
-  <div class="px-8 pt-6 pb-2">
-    <h1 class="text-3xl font-semibold tracking-tight">Prazos e-proc</h1>
-    <div class="text-xs text-base-content/50 mt-1">
-      Intimações da caixa do Procurador (e-proc / JFPR — 1ª instância).
+  <div class="px-8 pt-6 pb-2 flex items-start justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="text-3xl font-semibold tracking-tight">Prazos</h1>
+      <div class="text-xs text-base-content/50 mt-1">
+        Intimações da caixa do Procurador (e-proc / JFPR — 1ª instância).
+      </div>
+    </div>
+    <div class="flex flex-col items-end gap-1">
+      <button class="btn btn-sm btn-primary" @click="sincronizar()" :disabled="sincronizando">
+        <span x-show="sincronizando" class="loading loading-spinner loading-xs"></span>
+        Sincronizar intimações
+      </button>
+      <span class="text-xs text-base-content/50" x-show="sincronizadoEm">
+        Última sincronização: <span x-text="formatarDataHora(sincronizadoEm)"></span>
+      </span>
     </div>
   </div>
 
@@ -72,7 +89,7 @@
   <div class="px-8 py-3">
     <div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3">
       <div class="flex items-center gap-3 flex-wrap">
-        <span class="text-sm font-medium">Sessão e-proc:</span>
+        <span class="text-sm font-medium">Sessão via navegador:</span>
         <span class="badge" :class="sessaoOk ? 'badge-success' : 'badge-warning'"
               x-text="sessaoOk ? 'Conectado' : 'Não conectado'"></span>
         <button class="btn btn-sm btn-primary" @click="abrirEproc()" :disabled="sessaoBusy">
@@ -80,16 +97,17 @@
           Abrir e-proc / Login
         </button>
         <button class="btn btn-sm btn-ghost" @click="verificarSessao()" :disabled="sessaoBusy">Verificar sessão</button>
-        <span class="text-xs text-base-content/60" x-text="sessaoMsg"></span>
-        <div class="ml-auto flex items-center gap-3">
-          <button class="btn btn-sm btn-primary" @click="sincronizar()" :disabled="sincronizando">
-            <span x-show="sincronizando" class="loading loading-spinner loading-xs"></span>
-            Sincronizar intimações
-          </button>
-          <span class="text-xs text-base-content/50" x-show="sincronizadoEm">
-            Última sincronização: <span x-text="formatarDataHora(sincronizadoEm)"></span>
-          </span>
-        </div>
+
+        <div class="divider divider-horizontal mx-0"></div>
+
+        <span class="text-sm font-medium">Sessão via MCP:</span>
+        <span class="badge" :class="mcpOk ? 'badge-success' : 'badge-warning'"
+              x-text="mcpOk ? 'Conectado' : 'Não conectado'"></span>
+        <button class="btn btn-sm btn-ghost" @click="verificarMcp()" :disabled="mcpBusy">
+          <span x-show="mcpBusy" class="loading loading-spinner loading-xs"></span>
+          Verificar MCP
+        </button>
+        <span class="text-xs text-base-content/60" x-text="mcpMsg"></span>
       </div>
     </div>
   </div>
@@ -122,7 +140,9 @@
                   :title="(secoes[item.chave] || []).length ? 'Ir para a lista' : ''">
                 <td class="text-sm" x-text="item.label"></td>
                 <td class="text-right tnum">
-                  <span class="badge badge-sm" :class="item.quantidade > 0 ? badgeCategoria(item.chave) : 'badge-ghost'"
+                  <span class="badge badge-sm"
+                        :class="item.quantidade === 0 ? 'badge-ghost' : (item.chave === 'decurso' ? 'badge-error' : '')"
+                        :style="item.quantidade > 0 && corBadgeResumo(item.chave) ? ('background-color:' + corBadgeResumo(item.chave) + ';color:' + corBadgeResumoTexto(item.chave) + ';border-color:transparent') : ''"
                         x-text="item.quantidade"></span>
                 </td>
               </tr>
@@ -145,7 +165,10 @@
            class="bg-base-200 rounded-lg border border-base-300 overflow-hidden scroll-mt-4">
         <div class="px-4 py-2 border-b border-base-300 flex items-center justify-center gap-2">
           <span class="text-sm font-semibold" x-text="item.label"></span>
-          <span class="badge badge-sm" :class="badgeCategoria(item.chave)" x-text="(secoes[item.chave] || []).length + ' processo(s)'"></span>
+          <span class="badge badge-sm"
+                :class="item.chave === 'decurso' ? 'badge-error' : ''"
+                :style="corBadgeResumo(item.chave) ? ('background-color:' + corBadgeResumo(item.chave) + ';color:' + corBadgeResumoTexto(item.chave) + ';border-color:transparent') : ''"
+                x-text="(secoes[item.chave] || []).length + ' processo(s)'"></span>
         </div>
         <div class="overflow-x-auto">
           <table class="table table-sm intim-table">
@@ -166,13 +189,15 @@
                 <tr :class="c.cor ? 'linha-eproc' : ''" :style="c.cor ? ('background-color:' + c.cor) : ''">
                   <td class="max-w-[15rem]">
                     <div class="font-mono text-xs whitespace-nowrap">
-                      <template x-if="c.processo_url">
-                        <a href="#" @click.prevent="abrirProcesso(c)" class="link"
-                           title="Abrir o processo no e-proc (aba nova na janela do e-proc)" x-text="c.processo"></a>
-                      </template>
-                      <template x-if="!c.processo_url">
-                        <span x-text="c.processo"></span>
-                      </template>
+                      <div class="dropdown inline-block">
+                        <div tabindex="0" role="button" class="link" title="Escolher onde abrir o processo" x-text="c.processo"></div>
+                        <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-44 p-1 shadow border border-base-300">
+                          <li><a @click="verNoPainel(c)">Ver no Painel</a></li>
+                          <template x-if="c.processo_url">
+                            <li><a @click="abrirProcesso(c)">Ver no navegador</a></li>
+                          </template>
+                        </ul>
+                      </div>
                       <template x-if="c.novo">
                         <span class="badge badge-success badge-sm ml-1" title="Nova desde a última sincronização">novo</span>
                       </template>
@@ -268,6 +293,7 @@
 function prazosEprocApp() {
   return {
     sessaoOk: false, sessaoBusy: false, sessaoMsg: '',
+    mcpOk: false, mcpBusy: false, mcpMsg: '',
     resumo: [], secoes: {}, sincronizadoEm: '',
     diff: {}, saidas: [],
     sincronizando: false, syncErro: '',
@@ -276,6 +302,7 @@ function prazosEprocApp() {
 
     async init() {
       this.verificarSessao();
+      this.verificarMcp();
       this.carregarIntimacoes();
       setInterval(() => this.verificarSessaoLeve(), 5000);
     },
@@ -299,6 +326,14 @@ function prazosEprocApp() {
       if (this.sessaoBusy || this.sincronizando) return;
       try { const r = await (await fetch('/api/prazos/sessao-leve')).json();
         this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || ''; } catch (e) {}
+    },
+    // Sessão via MCP (headless, sem navegador) — só verificação/renovação; não abre janela.
+    async verificarMcp() {
+      this.mcpBusy = true;
+      try { const r = await (await fetch('/api/eproc-mcp/status?instancia=1')).json();
+        this.mcpOk = !!r.ok; this.mcpMsg = r.ok ? '' : (r.erro || 'Não foi possível conectar.'); }
+      catch (e) { this.mcpOk = false; this.mcpMsg = 'Erro ao verificar a conexão MCP.'; }
+      finally { this.mcpBusy = false; }
     },
     // Intimações
     async carregarIntimacoes() {
@@ -327,6 +362,11 @@ function prazosEprocApp() {
       if (!c.processo_url) return;
       try { await fetch('/api/prazos/abrir-processo?url=' + encodeURIComponent(c.processo_url)); }
       catch (e) { /* silencioso */ }
+    },
+    // Remissão direta à página "Consultar processo" (íntegra via MCP, na mesma tela)
+    verNoPainel(c) {
+      const qs = new URLSearchParams({ numero: c.processo, instancia: 1 });
+      window.location.href = '/eproc/consultar?' + qs.toString();
     },
 
     // Tooltip do lembrete (post-it) — posiciona ao lado do ícone
@@ -409,6 +449,23 @@ function prazosEprocApp() {
       if (chave === 'prazo_aberto') return 'badge-warning';
       if (chave === 'decurso') return 'badge-error';
       return 'badge-info';
+    },
+    // Cor do BADGE de quantidade na tabela-resumo "Citações/Intimações" (topo
+    // da página — mesma paleta da página "Consultar processo"): amarelo=prazo
+    // aberto, vermelho claro=aguardando abertura, vermelho=urgente (sempre
+    // vence, mesmo quando a categoria também é "aberto"). "decurso" fica sem
+    // cor própria (badgeCategoria cuida dele). NÃO mexe na cor da LINHA de
+    // cada processo nas tabelas de detalhe — essa continua vindo de `c.cor`
+    // (raspada do e-proc, representa fase processual/tipo de demanda).
+    corBadgeResumo(chave) {
+      if (chave.includes('urgente')) return 'var(--cor-intim-urgente)';
+      if (chave === 'prazo_aberto') return 'var(--cor-intim-aberta)';
+      if (chave === 'decurso') return '';
+      return 'var(--cor-intim-aguardando)'; // pendente, pendente_acordo, art334
+    },
+    corBadgeResumoTexto(chave) {
+      if (chave.includes('urgente')) return 'var(--cor-intim-urgente-texto)';
+      return this.corBadgeResumo(chave) ? 'var(--cor-intim-texto)' : '';
     },
     formatarDataHora(iso) {
       if (!iso) return '';
