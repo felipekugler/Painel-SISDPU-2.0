@@ -1,4 +1,4 @@
-# DPU-script-SIS
+# Painel SISDPU
 
 Interface web para o pipeline **dpuscript** — sistema de monitoramento para Defensores Públicos Federais.
 
@@ -8,7 +8,7 @@ Interface web para o pipeline **dpuscript** — sistema de monitoramento para De
 
 ## O que é
 
-O **DPU-script-SIS** é um painel web para Defensores/as Públicos/as Federais que usam o **SISDPU**. Centraliza num só lugar: organização e acompanhamento da caixa de entrada, triagem, gestão de prazos processuais, controle de peças.
+O **Painel SISDPU** é um painel web para Defensores/as Públicos/as Federais que usam o **SISDPU**. Centraliza num só lugar: organização e acompanhamento da caixa de entrada, triagem, gestão de prazos processuais, controle de peças.
 
 O sistema tem dois blocos:
 
@@ -46,8 +46,8 @@ O sistema tem dois blocos:
 
 ```bash
 # 1. Clone o repositório
-git clone https://github.com/tuliorm/DPU-script-SIS.git
-cd DPU-script-SIS
+git clone https://github.com/felipekugler/Painel-SISDPU.git
+cd Painel-SISDPU
 
 # 2. Crie o ambiente virtual (requer Python 3.11+)
 python -m venv .venv            # Windows
@@ -121,7 +121,7 @@ O painel mostra todos os PAJs detectados em `OFICIO_GERAL/PAJs/PAJ-*/`. Para cad
 ## Estrutura
 
 ```
-DPU-script-SIS/
+Painel-SISDPU/
 ├── app.py              # FastAPI + Uvicorn
 ├── config.py           # Configurações (lê .env)
 ├── ingestao/           # Pipeline de sincronização da caixa SISDPU

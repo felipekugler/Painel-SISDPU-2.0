@@ -65,7 +65,7 @@ echo    - Instalar o Tesseract OCR ^(idioma "por"^) e deixar no PATH
 echo      ^(https://github.com/UB-Mannheim/tesseract/wiki^).
 echo    - Ter o Claude Code CLI instalado ^(para IA e elaboracao^).
 echo.
-echo   Para abrir o painel: de duplo clique em DPU-script-SIS.bat
+echo   Para abrir o painel: de duplo clique em Painel-SISDPU.bat
 echo ============================================================
 echo.
 pause

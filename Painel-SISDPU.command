@@ -1,8 +1,8 @@
 #!/bin/bash
 # ============================================================
-#  DPU-script-SIS — inicia o servidor (se precisar) e abre o browser
-#  Equivalente macOS do DPU-script-SIS.bat
-#  Uso: duplo clique no Finder, ou  ./DPU-script-SIS.command  no terminal
+#  Painel-SISDPU — inicia o servidor (se precisar) e abre o browser
+#  Equivalente macOS do Painel-SISDPU.bat
+#  Uso: duplo clique no Finder, ou  ./Painel-SISDPU.command  no terminal
 # ============================================================
 set -euo pipefail
 
@@ -64,7 +64,7 @@ if [ ! -x "$PYTHON" ]; then
   exit 1
 fi
 
-echo "Iniciando o servidor DPU-script-SIS..."
+echo "Iniciando o servidor Painel-SISDPU..."
 # Sobe desacoplado do terminal (sobrevive a fechar a janela); log em arquivo
 nohup "$PYTHON" "$ROOT/app.py" >"$ROOT/.server.log" 2>&1 &
 

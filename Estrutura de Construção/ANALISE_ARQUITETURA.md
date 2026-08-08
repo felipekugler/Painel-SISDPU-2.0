@@ -91,7 +91,7 @@ Servir como **hub de produtividade jurídica**, permitindo que um defensor:
 ## 📁 Estrutura de Diretórios
 
 ```
-DPU-script-SIS/
+Painel-SISDPU/
 ├── app.py                      # Entrada da aplicação (FastAPI + Uvicorn)
 ├── config.py                   # Configurações centralizadas (variáveis de ambiente)
 ├── requirements.txt            # Dependências do projeto
