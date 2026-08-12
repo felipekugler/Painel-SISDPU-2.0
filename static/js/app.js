@@ -627,6 +627,170 @@ function baixarAnexosDesde(pajNorm) {
     };
 }
 
+/** Chamado após o console genérico "Ações no SISDPU" (movimentar/tramitar/
+ * concluir) terminar de executar NA PÁGINA DO PAJ — seja pelo próprio console
+ * ou pelo atalho "Concluir PAJ da Caixa de Entrada" do cabeçalho: registra a
+ * atividade no Histórico do painel e, se o trâmite foi concluído, marca o PAJ
+ * como fora da caixa (some do dashboard sem esperar a próxima sincronização).
+ * Mesmo efeito que posExecucaoRetorno() tem na Retornos — ver
+ * services/paj_service.registrar_pos_execucao_sisdpu(). */
+async function posExecucaoPaj(pajNorm, resultado) {
+    try {
+        const r = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/pos-execucao-sisdpu', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ resultado }),
+        });
+        return await r.json();
+    } catch (e) {
+        return { ok: false };
+    }
+}
+
+/* Concluir PAJ da Caixa de Entrada — atalho no cabeçalho do PAJ pra retirar o
+   trâmite da caixa sem precisar abrir o console completo "Ações no SISDPU".
+   Reusa o mesmo endpoint (/api/acoes-sisdpu/executar, so' com concluir=1 —
+   sem movimentar/tramitar) e o modal de sync (sync-modal) pro log SSE, mesmo
+   padrão de baixarAnexosDesde() acima. */
+/** Alpine do botão "Concluir PAJ da Caixa de Entrada" do cabeçalho — decide
+ * entre o caminho simples (0-1 trâmite, usa concluirPajCaixa() abaixo, com
+ * log SSE) e o modal de escolha múltipla (>1 trâmite pendente, ver
+ * window._paj_tramitacoes_caixa), que conclui os selecionados de uma vez via
+ * /api/paj/<paj>/concluir-tramites (services/paj_service.concluir_tramites_caixa). */
+function concluirPajModalApp(pajNorm, idProcesso, paj, idTramite) {
+    return {
+        pajNorm: pajNorm, idProcesso: idProcesso, paj: paj, idTramite: idTramite,
+        tramitacoes: window._paj_tramitacoes_caixa || [],
+        modalAberto: false,
+        selecionados: [],
+        concluindo: false,
+
+        abrir() {
+            if (this.tramitacoes.length <= 1) {
+                concluirPajCaixa(this.pajNorm, this.idProcesso, this.paj, this.idTramite);
+                return;
+            }
+            // Pré-marca o "trâmite de trabalho" (o mesmo usado por Ações no
+            // SISDPU/e-proc) — o usuário pode desmarcar ou marcar mais.
+            this.selecionados = this.idTramite ? [this.idTramite] : [];
+            this.modalAberto = true;
+        },
+        async concluirSelecionados() {
+            if (!this.selecionados.length) return;
+            if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
+            this.concluindo = true;
+            try {
+                const r = await fetch('/api/paj/' + encodeURIComponent(this.pajNorm) + '/concluir-tramites', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id_tramites: this.selecionados }),
+                });
+                const data = await r.json();
+                if (!data.ok && !(data.concluidos && data.concluidos.length)) {
+                    showToast(data.detalhe || 'Falha ao concluir trâmite(s)', 'error');
+                    return;
+                }
+                this.modalAberto = false;
+                const msg = data.saiu_da_caixa
+                    ? 'PAJ concluído na caixa de entrada — recarregando'
+                    : (data.concluidos.length + ' trâmite(s) concluído(s) — ainda restam '
+                       + (data.outros_tramites_abertos || 0) + ' — recarregando');
+                showToast(msg, 'success');
+                setTimeout(() => window.location.reload(), 800);
+            } catch (e) {
+                showToast('Falha ao concluir trâmite(s)', 'error');
+            } finally {
+                this.concluindo = false;
+            }
+        },
+    };
+}
+
+async function concluirPajCaixa(pajNorm, idProcesso, paj, idTramite) {
+    if (!idTramite) {
+        showToast('Este PAJ não está com trâmite pendente na caixa de entrada', 'warning');
+        return;
+    }
+    if (!confirm('Concluir o trâmite de ' + (paj || pajNorm) + ' na caixa de entrada do SISDPU?\n\nIsso retira o PAJ da caixa de entrada.')) return;
+
+    if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
+
+    let modal = document.getElementById('sync-modal');
+    let logEl = document.getElementById('sync-log');
+    let statusEl = document.getElementById('sync-status');
+    let titleEl = document.getElementById('sync-title');
+    let closeBtn = document.getElementById('sync-close-btn');
+    if (!modal || !logEl) {
+        showToast('Modal de sync não encontrado na página', 'error');
+        return;
+    }
+
+    logEl.textContent = '';
+    if (titleEl) titleEl.textContent = 'Concluir PAJ da Caixa de Entrada — ' + (paj || pajNorm);
+    statusEl.textContent = 'executando...';
+    statusEl.className = 'badge badge-sm badge-warning';
+    closeBtn.disabled = true;
+    _syncBtnCancel(false);  // este endpoint nao suporta cancel — esconde o botao
+    modal.showModal();
+
+    if (_syncSource) { _syncSource.close(); _syncSource = null; }
+
+    const qs = new URLSearchParams({
+        id_processo: idProcesso || '', paj: paj || '', paj_norm: pajNorm || '',
+        fase: '', descricao_mov: '', descricao_mov_html: '0',
+        grupo: '', descricao_tram: '', prazo: '0', prazo_data: '',
+        id_tramite: idTramite, concluir: '1', anexos: '[]',
+    });
+    _syncSource = new EventSource('/api/acoes-sisdpu/executar?' + qs.toString());
+
+    _syncSource.addEventListener('log', function (e) {
+        try {
+            const d = JSON.parse(e.data);
+            logEl.textContent += (d.msg || e.data) + '\n';
+        } catch (err) {
+            logEl.textContent += e.data + '\n';
+        }
+        logEl.scrollTop = logEl.scrollHeight;
+    });
+
+    _syncSource.addEventListener('done', async function (e) {
+        let res = {};
+        try { res = JSON.parse(e.data); } catch (err) {}
+        const ok = res.ok !== false;
+        logEl.textContent += '\nFinalizado.\n';
+        logEl.scrollTop = logEl.scrollHeight;
+        statusEl.textContent = res.status === 'ja_ausente' ? 'já estava concluído' : (ok ? 'concluído' : 'com aviso');
+        statusEl.className = 'badge badge-sm ' + (ok ? 'badge-success' : 'badge-error');
+        closeBtn.disabled = false;
+        if (_syncSource) { _syncSource.close(); _syncSource = null; }
+        // Registra no Histórico + tira da caixa (em_caixa_atual=false) — SÓ se não
+        // restar nenhum outro trâmite aberto deste PAJ (comum ter mais de um ao
+        // mesmo tempo; concluir aqui só afeta o trâmite específico deste botão).
+        const pos = await posExecucaoPaj(pajNorm, { ...res, idTramite: idTramite });
+        let msg = ok ? 'PAJ concluído na caixa de entrada — recarregando' : 'Concluído com aviso — recarregando';
+        if (ok && pos && pos.outros_tramites_abertos) {
+            msg = 'Trâmite concluído — mas o PAJ ainda tem ' + pos.outros_tramites_abertos
+                + ' outro(s) trâmite(s) aberto(s) na caixa — recarregando';
+        }
+        showToast(msg, ok ? 'success' : 'warning');
+        setTimeout(function () {
+            if (!modal.open) {
+                window.location.reload();
+            } else {
+                modal.addEventListener('close', function once() {
+                    modal.removeEventListener('close', once);
+                    window.location.reload();
+                });
+            }
+        }, 500);
+    });
+
+    _syncSource.onerror = function () {
+        statusEl.textContent = 'erro/desconectado';
+        statusEl.className = 'badge badge-sm badge-error';
+        closeBtn.disabled = false;
+        if (_syncSource) { _syncSource.close(); _syncSource = null; }
+    };
+}
+
 /* Docgen — streaming SSE do gerar_docx.py / gerar_peticao.py */
 let _docgenSource = null;
 
@@ -722,6 +886,141 @@ async function enviarCorrecaoAtual() {
         return;
     }
     await enviarCorrecao(_resumoPajAtual);
+}
+
+/** Módulo "Contatos" do cabeçalho do PAJ — App SISDPU/Telefone/E-mail/Endereço
+ * vêm de window._paj_contatos (extraídos na sincronização, ver
+ * ingestao/sisdpu_client.py). WhatsApp é escolha manual (o SISDPU não
+ * distingue "este telefone é WhatsApp"), persistida via POST
+ * /api/paj/<paj>/whatsapp. */
+/** "Caixas onde o PAJ está aberto" (igual à Retornos, ver .ret-caixas em
+ * base.html) + badge de "últimas tramitações" (mesmo padrão do badge "N
+ * movimentações" do card Resumo IA da Retornos — abre modal com tabela).
+ * Uma ÚNICA chamada a /api/paj/<paj>/tramitacoes traz os dois: caixas abertas
+ * agora e as últimas N tramitações do histórico completo. */
+function caixasAbertasApp(pajNorm) {
+    return {
+        pajNorm: pajNorm,
+        carregando: false,
+        caixas: [],
+        tramitacoes: [],
+        modalHistorico: false,
+        // `false` = já checou e realmente não há nada (ou dados válidos).
+        // `true` = a checagem em si falhou (conflito de sessão do SISDPU,
+        // timeout...) — NUNCA mostrar "nenhuma tramitação" nesse caso, senão
+        // parece que o PAJ está vazio quando na verdade não foi verificado.
+        falhouVerificacao: false,
+        erroVerificacao: '',
+
+        async init() {
+            await this.carregar();
+        },
+        async carregar() {
+            this.carregando = true;
+            this.falhouVerificacao = false;
+            this.erroVerificacao = '';
+            try {
+                const j = await (await fetch('/api/paj/' + encodeURIComponent(this.pajNorm) + '/tramitacoes?limite=10')).json();
+                if (j.ok === false) {
+                    this.falhouVerificacao = true;
+                    this.erroVerificacao = j.erro || 'Não foi possível verificar agora.';
+                    this.caixas = [];
+                    this.tramitacoes = [];
+                } else {
+                    this.caixas = j.abertas || [];
+                    this.tramitacoes = j.tramitacoes || [];
+                }
+            } catch (e) {
+                this.falhouVerificacao = true;
+                this.erroVerificacao = 'Falha de conexão ao verificar.';
+                this.caixas = [];
+                this.tramitacoes = [];
+            } finally {
+                this.carregando = false;
+            }
+        },
+        abrirHistorico() {
+            this.modalHistorico = true;
+        },
+    };
+}
+
+function contatosApp(pajNorm) {
+    const d = window._paj_contatos || {};
+    return {
+        pajNorm: pajNorm,
+        temDados: !!d.temDados,
+        contatos: d.contatos || {},
+        telefones: d.telefones || [],   // [{numero, obs}]
+        emails: d.emails || [],
+        enderecosFmt: d.enderecosFmt || [],
+        whatsappNumeros: d.whatsappNumeros || [],
+        copied: null,
+        popoverWhatsapp: false,
+        selecaoWhatsapp: [],
+        salvandoWhatsapp: false,
+
+        tituloTelefone() {
+            if (!this.telefones.length) return 'Telefone — não cadastrado';
+            return 'Telefone (clique para copiar):\n' + this.telefones.map((t) => t.numero).join(', ');
+        },
+        tituloEmail() {
+            if (!this.emails.length) return 'E-mail — não cadastrado';
+            return 'E-mail (clique para copiar):\n' + this.emails.join(', ');
+        },
+        tituloEndereco() {
+            if (!this.enderecosFmt.length) return 'Correio/Endereço — não cadastrado';
+            return 'Correio/Endereço (clique para copiar):\n' + this.enderecosFmt.join('\n');
+        },
+        tituloWhatsapp() {
+            if (!this.telefones.length) return 'WhatsApp — nenhum telefone cadastrado para escolher';
+            if (this.whatsappNumeros.length) return 'WhatsApp (clique para alterar):\n' + this.whatsappNumeros.join(', ');
+            return 'WhatsApp — clique para escolher o(s) número(s)';
+        },
+
+        copiar(texto, campo) {
+            if (!texto) return;
+            navigator.clipboard.writeText(texto);
+            this.copied = campo;
+            setTimeout(() => { this.copied = null; }, 2000);
+        },
+        copiarTelefones() { this.copiar(this.telefones.map((t) => t.numero).join(', '), 'telefone'); },
+        copiarEmails() { this.copiar(this.emails.join(', '), 'email'); },
+        copiarEnderecos() { this.copiar(this.enderecosFmt.join(' | '), 'endereco'); },
+
+        abrirWhatsapp() {
+            if (!this.telefones.length) return;
+            this.selecaoWhatsapp = [...this.whatsappNumeros];
+            this.popoverWhatsapp = true;
+        },
+        toggleSelecao(numero) {
+            const i = this.selecaoWhatsapp.indexOf(numero);
+            if (i >= 0) this.selecaoWhatsapp.splice(i, 1);
+            else this.selecaoWhatsapp.push(numero);
+        },
+        async salvarWhatsapp() {
+            this.salvandoWhatsapp = true;
+            try {
+                const r = await fetch('/api/paj/' + encodeURIComponent(this.pajNorm) + '/whatsapp', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ numeros: this.selecaoWhatsapp }),
+                });
+                const data = await r.json();
+                if (data.ok) {
+                    this.whatsappNumeros = this.selecaoWhatsapp;
+                    this.contatos.whatsapp = this.whatsappNumeros.length > 0;
+                    this.popoverWhatsapp = false;
+                } else {
+                    showToast(data.erro || 'Falha ao salvar WhatsApp', 'error');
+                }
+            } catch (e) {
+                showToast('Falha ao salvar WhatsApp', 'error');
+            } finally {
+                this.salvandoWhatsapp = false;
+            }
+        },
+    };
 }
 
 function elaborarApp(pajNorm) {
@@ -1236,6 +1535,39 @@ function formatarPretensao(txt) {
     return m ? m[1].trim() : txt;
 }
 
+/* Estrela de watchlist — toggle rápido de incluir/remover, sempre ao lado do
+   ícone de copiar o número do PAJ (dashboard, Retornos, página do PAJ). Um
+   clique só: sem motivo, sem modal (pra motivo, use a página Watchlist).
+   Devolve o novo estado `watched` (ou o antigo, sem mudar, se a chamada
+   falhar) — quem chama atualiza sua própria variável reativa com o retorno. */
+async function toggleWatchlist(pajNorm, watched) {
+    try {
+        if (watched) {
+            const r = await fetch('/api/watchlist/' + encodeURIComponent(pajNorm), { method: 'DELETE' });
+            if (!r.ok && r.status !== 404) {
+                showToast('Erro ao remover da watchlist', 'error');
+                return watched;
+            }
+            showToast('Removido da watchlist', 'info');
+            return false;
+        }
+        const r = await fetch('/api/watchlist', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ paj_norm: pajNorm, motivo: '' }),
+        });
+        if (!r.ok) {
+            showToast('Erro ao adicionar à watchlist', 'error');
+            return watched;
+        }
+        showToast('Adicionado à watchlist', 'success');
+        return true;
+    } catch (e) {
+        showToast('Falha de rede', 'error');
+        return watched;
+    }
+}
+
 /* Minimenu "Consultar processo" (número do processo clicável) — mesmo padrão da
    tabela de intimações (Prazos e-proc): "Consultar processo (MCP)" abre a página
    de íntegra estruturada (sem navegador); "Abrir no navegador" abre a Consulta
@@ -1243,7 +1575,7 @@ function formatarPretensao(txt) {
 function consultarProcessoMcp(numero) {
     if (!numero) return;
     const qs = new URLSearchParams({ numero: numero, instancia: 1 });
-    window.location.href = '/eproc/consultar?' + qs.toString();
+    window.open('/eproc/consultar?' + qs.toString(), '_blank');
 }
 
 async function abrirProcessoNavegador(numero, link) {
@@ -1263,6 +1595,19 @@ async function abrirProcessoNavegador(numero, link) {
     } finally {
         if (link) { link.style.opacity = ''; link.style.pointerEvents = ''; }
     }
+}
+
+/* Minimenu "Abrir PAJ" (número do PAJ clicável) — mesmo padrão do minimenu de
+   processo: "Abrir no Painel" navega pra página do PAJ neste painel (mesma
+   aba); "Abrir no navegador" abre o detalhamento do PAJ no SISDPU (aba nova,
+   via /api/prazos/abrir-paj — resolve o link stateless e redireciona). */
+function abrirPajPainel(pajNorm) {
+    if (!pajNorm) return;
+    window.open('/paj/' + pajNorm, '_blank');
+}
+function abrirPajNavegador(pajDisplay) {
+    if (!pajDisplay) return;
+    window.open('/api/prazos/abrir-paj?paj=' + encodeURIComponent(pajDisplay), '_blank');
 }
 
 /* =========================================================

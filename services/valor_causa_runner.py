@@ -30,6 +30,92 @@ import sys
 from pathlib import Path
 
 
+# ── Valor por extenso (pt-BR, moeda) ──────────────────────────────────────
+# Padrão de redação deste ofício: o campo do valor da causa sai SEMPRE como o
+# valor numérico seguido do valor por extenso entre parênteses. Como é o painel
+# que injeta o valor no lugar do marcador {{VALOR_CAUSA}}, o por extenso é gerado
+# aqui, a partir do total calculado (nunca pelo LLM). num2words não é dependência
+# do projeto, por isso a conversão é local.
+_UNI = ['zero', 'um', 'dois', 'três', 'quatro', 'cinco', 'seis', 'sete', 'oito',
+        'nove', 'dez', 'onze', 'doze', 'treze', 'catorze', 'quinze', 'dezesseis',
+        'dezessete', 'dezoito', 'dezenove']
+_DEZ = ['', '', 'vinte', 'trinta', 'quarenta', 'cinquenta', 'sessenta',
+        'setenta', 'oitenta', 'noventa']
+_CEM = ['', 'cento', 'duzentos', 'trezentos', 'quatrocentos', 'quinhentos',
+        'seiscentos', 'setecentos', 'oitocentos', 'novecentos']
+_ESCALA = [('', ''), ('mil', 'mil'), ('milhão', 'milhões'),
+           ('bilhão', 'bilhões'), ('trilhão', 'trilhões')]
+
+
+def _grupo_extenso(n: int) -> str:
+    """Número de 0 a 999 por extenso ('' para zero)."""
+    if n == 0:
+        return ''
+    if n == 100:
+        return 'cem'
+    centena, resto = divmod(n, 100)
+    partes = []
+    if centena:
+        partes.append(_CEM[centena])
+    if resto:
+        if resto < 20:
+            partes.append(_UNI[resto])
+        else:
+            dez, uni = divmod(resto, 10)
+            partes.append(_DEZ[dez] + (' e ' + _UNI[uni] if uni else ''))
+    return ' e '.join(partes)
+
+
+def _inteiro_extenso(n: int) -> str:
+    """Inteiro não negativo por extenso (até trilhões)."""
+    if n == 0:
+        return 'zero'
+    grupos = []
+    escala = 0
+    resto = n
+    while resto > 0:
+        grupos.append((escala, resto % 1000))
+        resto //= 1000
+        escala += 1
+    grupos = [(e, v) for (e, v) in grupos if v != 0]
+    grupos.sort(reverse=True)
+    textos = []
+    for e, v in grupos:
+        if e == 0:
+            t = _grupo_extenso(v)
+        elif e == 1:
+            t = 'mil' if v == 1 else _grupo_extenso(v) + ' mil'
+        else:
+            sing, plur = _ESCALA[e]
+            t = _grupo_extenso(v) + ' ' + (sing if v == 1 else plur)
+        textos.append((v, t))
+    resultado = textos[0][1]
+    for i in range(1, len(textos)):
+        v, t = textos[i]
+        ultimo = i == len(textos) - 1
+        conector = ' e ' if (ultimo and (v < 100 or v % 100 == 0)) else ', '
+        resultado += conector + t
+    return resultado
+
+
+def _extenso_reais(valor: float) -> str:
+    """Valor monetário por extenso, ex.: 34181.90 -> 'trinta e quatro mil,
+    cento e oitenta e um reais e noventa centavos'."""
+    valor = round(float(valor) + 1e-9, 2)
+    reais = int(valor)
+    centavos = int(round((valor - reais) * 100))
+    if centavos >= 100:
+        reais += 1
+        centavos -= 100
+    partes = []
+    if reais > 0:
+        partes.append(_inteiro_extenso(reais) + (' real' if reais == 1 else ' reais'))
+    if centavos > 0:
+        cent = _inteiro_extenso(centavos) + (' centavo' if centavos == 1 else ' centavos')
+        partes.append(('e ' + cent) if reais > 0 else cent)
+    return ' '.join(partes) if partes else 'zero reais'
+
+
 def _injetar_txt(caminho: Path, placeholder: str, valor: str) -> bool:
     with contextlib.suppress(Exception):
         c = caminho.read_text(encoding="utf-8", errors="replace")
@@ -107,7 +193,8 @@ def main() -> int:
         return 1
 
     valor_final = total_atual or total_nom
-    valor_str = calc._moeda(valor_final)
+    # Padrão deste ofício: valor numérico seguido do por extenso entre parênteses.
+    valor_str = calc._moeda(valor_final) + f" ({_extenso_reais(valor_final)})"
 
     placeholder = job.get("placeholder", "{{VALOR_CAUSA}}")
     injetados = []

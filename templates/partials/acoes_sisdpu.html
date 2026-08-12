@@ -2,7 +2,7 @@
    Inclua dentro de um elemento com x-data="acoesSisdpuBlock({...})" (ver
    static/js/acoes_sisdpu.js) — autocontido, não depende do escopo pai. #}
 <div class="ret-acoes p-3">
-    <button type="button" class="flex items-center justify-between w-full text-left" @click="aberto = !aberto">
+    <button type="button" class="flex items-center justify-between w-full text-left" @click="abrir()">
         <span class="ret-card-label mb-0">Ações no SISDPU</span>
         <svg class="ret-caret" :class="aberto ? 'ret-caret-open' : ''"
              xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
@@ -25,23 +25,109 @@
                 <span x-show="!fasesDropdown().length" class="text-[11px] text-base-content/50">configure em Configurações › SISDPU</span>
             </div>
             <!-- Descrição da movimentação: só desenhada quando o chamador não injeta
-                 uma fonte própria (ex.: Retornos usa a Sugestão IA via getDescricaoMov). -->
+                 uma fonte própria (ex.: Retornos usa a Sugestão IA via getDescricaoMov).
+                 Editor de texto RICO (Quill — negrito/itálico/sublinhado, cor, citação,
+                 listas, recuo, alinhamento): o despacho da movimentação é um CKEditor de
+                 verdade no SISDPU, aceita o HTML gerado aqui. Cai pra textarea simples
+                 se o Quill não montar (ex.: CDN fora do ar — ver quillMovOk no JS). -->
             <template x-if="!getDescricaoMov">
-                <textarea class="textarea textarea-bordered textarea-sm w-full mt-2 text-[12.5px]"
-                          rows="2" x-model="descMov"
-                          placeholder="Descrição da movimentação (opcional)"></textarea>
+                <div class="mt-2">
+                    <div :id="uidMov" x-show="quillMovOk"></div>
+                    <textarea x-show="!quillMovOk" class="textarea textarea-bordered textarea-sm w-full text-[12.5px]"
+                              rows="2" x-model="descMov"
+                              placeholder="Descrição da movimentação (opcional)"></textarea>
+                    <!-- Só existe quando o chamador informa getValorInicialMov (ex.: a
+                         Sugestão IA da Retornos) — "puxa" a fonte de novo por pedido
+                         explícito, nunca automático (evita apagar formatação sem avisar). -->
+                    <button type="button" class="btn btn-xs btn-ghost text-[11px] mt-1" x-show="!!getValorInicialMov"
+                            @click="atualizarMovDaFonte()">Atualizar da Sugestão IA</button>
+                </div>
             </template>
-            <!-- Anexos SISDPU do PAJ a incluir na movimentação (mesma tabela/fonte da
-                 aba "Anexos SISDPU" do PAJ e do módulo "Ações no Eproc") — só relevante
-                 quando há uma fase selecionada (anexo acompanha a movimentação). -->
+            <!-- Anexos da movimentação — só relevante quando há uma fase selecionada
+                 (anexo acompanha a movimentação). Ação principal: enviar arquivo(s) do
+                 computador (o caso comum). Ação secundária, discreta: reanexar algo que
+                 já está no PAJ (raro) — abre modal com a tabela de documentos baixados. -->
             <div class="mt-2" x-show="fase">
-                <div class="flex items-center justify-between mb-1" x-show="docsPaj.length">
-                    <span class="text-[11px] text-base-content/60">Anexar documentos do PAJ à movimentação (opcional)</span>
-                    <button type="button" class="btn btn-xs btn-ghost text-[11px]" @click="toggleTodosAnexos()">
-                        <span x-text="anexosTodosSelecionados() ? 'Desmarcar todos' : 'Selecionar todos'"></span>
+                <div class="flex items-center gap-2 flex-wrap mb-1.5">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                         style="width:20px;height:20px" :class="anexosStaged.length ? 'text-error' : 'text-base-content/50'">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="m18.375 12.739-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01-.01.01m5.699-9.941-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13" />
+                    </svg>
+                    <span class="text-[13.5px] font-medium text-base-content/70">Anexos da movimentação</span>
+                    <span class="badge badge-sm badge-error" x-show="anexosStaged.length" x-text="anexosStaged.length"></span>
+                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="enviandoAnexo" @click="adicionarAnexoExterno()">
+                        <span x-show="enviandoAnexo" class="loading loading-spinner loading-xs"></span>
+                        <span x-show="!enviandoAnexo">+ Adicionar arquivo(s)</span>
+                        <span x-show="enviandoAnexo">Enviando…</span>
+                    </button>
+                    <input type="file" multiple class="hidden" x-ref="inputAnexoExterno"
+                           accept=".doc,.docx,.odt,.png,.jpg,.jpeg,.gif,.pdf"
+                           @change="onArquivosExternosEscolhidos($event)">
+                    <button type="button" class="btn btn-xs btn-ghost text-[11px]" @click="abrirModalAnexosPaj()">
+                        Anexar do PAJ
                     </button>
                 </div>
-                <div class="overflow-x-auto max-h-40 overflow-y-auto rounded border border-base-300" x-show="docsPaj.length">
+                <div class="text-[11px] text-base-content/40 mb-1" x-show="!anexosStaged.length">
+                    Nenhum anexo adicionado. Aceitos: DOC, DOCX, ODT, PNG, JPEG, GIF, PDF.
+                </div>
+                <div class="overflow-x-auto max-h-48 overflow-y-auto rounded border border-base-300" x-show="anexosStaged.length">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr class="bg-base-300/50">
+                                <th>Arquivo</th>
+                                <th>Descrição</th>
+                                <th class="w-44">Tipo de Arquivo</th>
+                                <th class="w-16">Tam.</th>
+                                <th class="w-14">Origem</th>
+                                <th class="w-8"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <!-- Arquivo: nome real, NÃO editável. Descrição nasce igual ao nome
+                                 SEM a extensão (editável). Tipo de Arquivo nasce "Não informado"
+                                 (editável) — catálogo real do SISDPU (ver TIPOS_ARQUIVO_ANEXO em
+                                 acoes_sisdpu.js). -->
+                            <template x-for="(a, i) in anexosStaged" :key="a.origem + a.ref">
+                                <tr class="hover:bg-base-300/30">
+                                    <td class="font-mono text-xs break-all max-w-[10rem]" x-text="a.nome"></td>
+                                    <td>
+                                        <input type="text" class="input input-bordered input-xs w-full font-mono" x-model="a.descricao">
+                                    </td>
+                                    <td>
+                                        <select class="select select-bordered select-xs w-full" x-model="a.tipoArquivo">
+                                            <template x-for="t in tiposArquivoAnexo" :key="t"><option :value="t" x-text="t"></option></template>
+                                        </select>
+                                    </td>
+                                    <td class="text-xs whitespace-nowrap" x-text="formatarTamanho(a.tamanho)"></td>
+                                    <td>
+                                        <span class="badge badge-xs" :class="a.origem === 'paj' ? 'badge-ghost' : 'badge-info'"
+                                              :title="a.origem === 'paj' ? 'Já estava no PAJ' : 'Enviado do computador'"
+                                              x-text="a.origem === 'paj' ? 'PAJ' : 'Env.'"></span>
+                                    </td>
+                                    <td>
+                                        <button type="button" class="btn btn-ghost btn-xs text-error" @click="removerAnexoStaged(a)" title="Remover anexo">✕</button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </div>
+
+        <!-- Modal: "Anexar do PAJ" — mesma tabela/estilo do "Adicionar do SISDPU" do
+             módulo Ações no Eproc. Uso raro: reanexar algo que já está na pasta do PAJ. -->
+        <div class="modal" :class="{'modal-open': modalPajAberto}" @click.self="fecharModalAnexosPaj()">
+            <div class="modal-box max-w-3xl">
+                <h3 class="font-bold text-lg mb-1">Anexar do PAJ</h3>
+                <p class="text-xs text-base-content/50 mb-3">
+                    Documentos já baixados do SISDPU para este PAJ. Uso raro — o comum é
+                    "Adicionar arquivo(s)" (enviar do seu computador).
+                </p>
+                <div x-show="!docsPaj.length" class="text-sm text-base-content/40 py-4 text-center">
+                    Nenhum documento do PAJ carregado (ou o PAJ ainda não tem anexos do SISDPU baixados).
+                </div>
+                <div class="overflow-x-auto max-h-[55vh] overflow-y-auto" x-show="docsPaj.length">
                     <table class="table table-sm">
                         <thead>
                             <tr class="bg-base-300/50">
@@ -55,8 +141,7 @@
                             <template x-for="d in docsPaj" :key="docKey(d)">
                                 <tr class="hover:bg-base-300/30">
                                     <td>
-                                        <input type="checkbox" class="checkbox checkbox-sm"
-                                               :checked="!!anexosSelecionados[docKey(d)]" @change="anexoToggle(docKey(d))">
+                                        <input type="checkbox" class="checkbox checkbox-sm" x-model="modalPajSelecionados[docKey(d)]">
                                     </td>
                                     <td class="font-mono text-xs break-all max-w-md" x-text="docLabel(d)"></td>
                                     <td class="text-xs whitespace-nowrap" x-text="formatarTamanho(d.tamanho)"></td>
@@ -75,9 +160,10 @@
                         </tbody>
                     </table>
                 </div>
-                <span class="text-[11px] text-base-content/40" x-show="!docsPaj.length">
-                    Nenhum anexo do SISDPU baixado para este PAJ ainda.
-                </span>
+                <div class="modal-action">
+                    <button type="button" class="btn btn-sm" @click="fecharModalAnexosPaj()">Cancelar</button>
+                    <button type="button" class="btn btn-sm btn-primary" @click="confirmarAnexosPaj()">Adicionar anexos</button>
+                </div>
             </div>
         </div>
         <!-- Tramitar -->
@@ -94,6 +180,8 @@
             </div>
             <div class="flex items-center gap-2 flex-wrap mt-2" x-show="grupo">
                 <span class="text-[11px] text-base-content/60 mr-1">Prazo:</span>
+                <button type="button" class="btn btn-xs" :class="urgenteSelecionado() ? 'btn-error' : 'btn-outline'"
+                        @click="marcarUrgente()" title="Tramita para o mesmo dia da movimentação">Urgente</button>
                 <template x-for="p in [0,5,10,15,30]" :key="p">
                     <button type="button" class="btn btn-xs" :class="(!prazoData && prazo===p) ? 'btn-primary' : 'btn-outline'" @click="prazo=p; prazoData=''" x-text="p===0 ? 'Sem prazo' : (p + ' dias')"></button>
                 </template>

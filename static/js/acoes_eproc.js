@@ -41,6 +41,12 @@ function acoesEprocBlock(cfg) {
 
         prazos: [], prazosSelecionados: {}, carregandoPrazos: false, prazosCarregados: false,
         evento: '', peticaoTexto: '',
+        // Editor de texto rico (Quill) da Petição — montado sob demanda em
+        // _carregarAoAbrir() (mesmo padrão lazy de prazos/docsPaj: não faz sentido
+        // montar um Quill por linha da Retornos se o console nunca for aberto).
+        // `quillPeticaoOk` começa otimista; só vira false se o Quill não carregar.
+        uidPeticao: 'qpet-' + Math.random().toString(36).slice(2, 9),
+        _editorPeticao: null, quillPeticaoOk: true,
         docsPaj: [], docsCarregados: false,
         // tabela de anexos — itens numerados, adicionados um a um:
         // {origem:'paj'|'upload', docPajKey, docLabelCache, arquivo, tipo, sigilo}
@@ -103,7 +109,17 @@ function acoesEprocBlock(cfg) {
             }
             if (!this.prazosCarregados) await this.carregarPrazos();
             if (!this.docsCarregados) await this.carregarDocsPaj();
+            if (!this._editorPeticao && this.quillPeticaoOk) {
+                await this.$nextTick();
+                this._editorPeticao = criarEditorRico(this.uidPeticao, {
+                    placeholder: 'Texto da petição ou referência a um PDF já pronto (formato em definição — próxima fase).',
+                });
+                this.quillPeticaoOk = !!this._editorPeticao;
+            }
         },
+        // Texto/HTML efetivo da petição — usado quando o peticionamento real for
+        // implementado (Fase 4). Por ora nada consome isto ainda.
+        peticaoEfetiva() { return this._editorPeticao ? this._editorPeticao.getHTML() : this.peticaoTexto; },
         // Chamado ao trocar a seleção no dropdown "Processo judicial" — os prazos
         // são recarregados escopados ao novo processo (evita misturar/confundir
         // prazos de processos diferentes vinculados ao mesmo PAJ).

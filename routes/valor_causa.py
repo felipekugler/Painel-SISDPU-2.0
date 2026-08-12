@@ -11,10 +11,16 @@ from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 
 from config import PAJS_DIR
-from services import valor_causa_service
+from services import indices_service, valor_causa_service
 from services.paj_service import PajNorm
 
 router = APIRouter()
+
+
+@router.post("/api/valor-causa/indices/atualizar")
+def valor_causa_indices_atualizar(payload: dict = Body(default={})):
+    """Força a atualização dos índices de CM (INPC/IPCA-E) a partir do IBGE."""
+    return indices_service.atualizar(force=bool(payload.get("force", True)))
 
 
 # Endpoint síncrono (def) — FastAPI roda em threadpool; a geração via Word

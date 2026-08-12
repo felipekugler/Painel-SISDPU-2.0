@@ -38,6 +38,7 @@ from pathlib import Path
 from config import PAJS_DIR
 from services import historico
 from services.chat_service import ChatSession
+from services.valor_causa_service import INSTRUCAO_VALOR_CAUSA
 
 # tipo -> {skill, label, palavras-chave da pretensão que habilitam o botão}.
 # Adicionar "bi" aqui (mesmo padrão) quando a versão BPC estiver validada.
@@ -178,39 +179,9 @@ _TRAILER_GENERICO_PROMPT_MAX = (
 )
 
 
-# Instrução do sub-passo "cálculo do valor da causa": quando a skill redigir uma
-# petição inicial que pleiteia benefício com parcelas devidas, ela deve (1) emitir
-# um `valor_causa.json` com os PARÂMETROS das parcelas e (2) deixar o placeholder
-# {{VALOR_CAUSA}} no ponto do valor da causa. O painel calcula deterministicamente
-# (dias/atualização), gera o PDF junto à PI e substitui o placeholder — a skill NÃO
-# deve fazer a aritmética do valor da causa (evita erro de cálculo do LLM).
-_INSTRUCAO_VALOR_CAUSA = (
-    "CÁLCULO DO VALOR DA CAUSA (automático pelo painel): se — agora ou depois — "
-    "você redigir uma **petição inicial** que pleiteia benefício com parcelas "
-    "devidas (BPC/LOAS, benefício por incapacidade, aposentadoria, "
-    "restabelecimento etc.), faça DUAS coisas além da petição:\n"
-    "  1. No corpo da petição, no ponto em que se atribui o valor da causa, "
-    "escreva o marcador literal `{{VALOR_CAUSA}}` em vez de um número "
-    "(ex.: \"Dá-se à causa o valor de {{VALOR_CAUSA}}.\") — tanto no `.txt` "
-    "quanto no `.docx`, se você gerar o `.docx`. NÃO calcule o valor você mesmo; "
-    "o painel calcula e substitui o marcador.\n"
-    "  2. Salve, NA MESMA PASTA da petição, um arquivo `valor_causa.json` com os "
-    "parâmetros que você extraiu dos documentos (é o painel que fará a conta):\n"
-    "     {\n"
-    "       \"nb\": \"NNN.NNN.NNN-N\",\n"
-    "       \"especie\": \"ex.: BPC Deficiente (87) | Auxílio por Incapacidade (31)\",\n"
-    "       \"nome\": \"nome do assistido\",\n"
-    "       \"tipo\": \"assistencial | previdenciario  (opcional; o painel deriva da pretensão)\",\n"
-    "       \"valor_mensal\": 0.00,  (RMI/último pagamento da mesma espécie; deixe null se BPC ou se nunca recebeu — o painel usa o salário mínimo)\n"
-    "       \"valor_mensal_origem\": \"de onde tirou (ex.: Declaração de Benefícios; salário mínimo)\",\n"
-    "       \"marco\": \"DER  (concessão)  |  DCB+1  (restabelecimento)\",\n"
-    "       \"data_marco\": \"DD/MM/AAAA  (a DER, ou a DCB no restabelecimento)\",\n"
-    "       \"meses_vincendos\": 12\n"
-    "     }\n"
-    "  Regras: valores em ponto decimal (1518.00), datas DD/MM/AAAA. Se algum "
-    "dado não constar dos documentos, use null e explique em `valor_mensal_origem` "
-    "ou num campo `observacao`. Não invente valores.\n\n"
-)
+# A instrução transversal do cálculo do valor da causa (INSTRUCAO_VALOR_CAUSA) vem
+# de services.valor_causa_service — mesma usada pelo "Elaborar" genérico, para o
+# comportamento ser uniforme em todo o painel.
 
 
 # Instrução do sub-passo "redação da peça" — só entra em jogo se/quando a sessão
@@ -310,7 +281,7 @@ def _montar_instrucao_diagnostico(paj_norm: str, skill_slug: str, prompt_max: st
         f"se não existir; ex.: `peticao_inicial.txt`) — dentro da pasta deste PAJ "
         f"no PAINEL SISDPU, não a estrutura de pastas do workspace teses-dpu/PREV4.\n\n"
         + _INSTRUCAO_PIPELINE_E_ESTILO_PECA
-        + _INSTRUCAO_VALOR_CAUSA
+        + INSTRUCAO_VALOR_CAUSA
         + "---\n\n"
         f"{prompt_max_limpo}"
     )
@@ -320,25 +291,6 @@ def _aguardar_conclusao(session: ChatSession, timeout: int = 1800) -> None:
     inicio = time.time()
     while session.is_alive() and session.status == "running" and time.time() - inicio < timeout:
         time.sleep(0.5)
-
-
-def _pos_pi_valor_causa(paj_norm: str) -> None:
-    """Sub-passo AUTOMÁTICO após a conclusão da sessão: se a skill emitiu
-    `valor_causa.json` ao redigir a petição inicial, calcula o valor da causa,
-    gera o PDF na mesma pasta da PI e injeta o total no texto. No-op quando a
-    sessão parou no diagnóstico (sem PI). Best-effort — nunca quebra o fluxo."""
-    with contextlib.suppress(Exception):
-        from services import valor_causa_service
-
-        res = valor_causa_service.processar_se_pi(paj_norm)
-        if res.get("ok") and not res.get("skip"):
-            with contextlib.suppress(Exception):
-                historico.registrar(
-                    paj_norm,
-                    "valor_causa",
-                    status="done",
-                    resumo=f"Valor da causa {res.get('valor_causa', '')} · {res.get('pdf', '')}",
-                )
 
 
 def iniciar(paj_norm: str, tipo: str) -> dict:
@@ -405,7 +357,6 @@ def iniciar(paj_norm: str, tipo: str) -> dict:
             return
         _aguardar_conclusao(session)
         _persistir(paj_norm, session, tipo)
-        _pos_pi_valor_causa(paj_norm)
 
     threading.Thread(target=_run, daemon=True).start()
     return {"ok": True}
@@ -458,7 +409,6 @@ def reenviar(paj_norm: str, mensagem: str) -> dict:
         session.send_message(mensagem_final)
         _aguardar_conclusao(session)
         _persistir(paj_norm, session, tipo)
-        _pos_pi_valor_causa(paj_norm)
 
     threading.Thread(target=_run, daemon=True).start()
     return {"ok": True}

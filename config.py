@@ -122,10 +122,12 @@ DOCGEN_OUT_DIR = Path(os.getenv("DOCGEN_OUT_DIR", str(OFICIO_GERAL / "Peças Fei
 VALOR_CAUSA_DIR = Path(
     os.getenv("VALOR_CAUSA_DIR", r"C:\Claude\DPU\Modelos\Peticoes")
 )
-# Salário mínimo vigente — valor mensal presumido em BPC/assistencial e em
-# benefícios previdenciários que o segurado nunca chegou a receber. Atualizar
-# anualmente (ou via .env) quando o mínimo mudar.
-SALARIO_MINIMO = float(os.getenv("SALARIO_MINIMO", "1518.00"))
+# Salário mínimo vigente (2026, Decreto 12.797/2025) — usado só como fallback.
+# O cálculo do valor da causa em benefício de 1 salário mínimo usa, na verdade,
+# a tabela `salario_minimo.py` (mínimo VIGENTE em cada competência); esta
+# constante entra apenas se aquela tabela não estiver disponível. Atualizar
+# anualmente (ou via .env) — e, de preferência, atualizar também salario_minimo.py.
+SALARIO_MINIMO = float(os.getenv("SALARIO_MINIMO", "1621.00"))
 # Interpretador Python que roda o calc_valor_causa (precisa de python-docx +
 # pywin32/Word). O venv do painel NÃO tem essas libs de propósito (a geração de
 # docx é delegada a subprocess), então o cálculo roda no Python do sistema.

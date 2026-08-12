@@ -11,6 +11,9 @@
 //   processos — lista de {processo_judicial, juizo, data_inclusao, observacoes_processo,
 //               validacao:{sucesso, motivo}} vindos direto de sisdpu_raw.processos_judiciais
 //               (metadata.json) — sem reparse, sem chamada extra pra montar essa parte.
+//   audiencias — lista de {data_hora, local, observacao} vinda direto de
+//                sisdpu_raw.audiencias (extraída em ingestao/sisdpu_client.py, tabela
+//                dedicada do SISDPU) — nível do PAJ, não por processo individual.
 //
 // A busca de intimações é 100% ao vivo (headless, sem navegador — mesmo backend MCP da
 // página "Consultar processo") e roda em paralelo pra cada processo, assim que a seção
@@ -19,6 +22,7 @@ function processoJudicialBlock(cfg) {
     cfg = cfg || {};
     return {
         processos: cfg.processos || [],
+        audiencias: cfg.audiencias || [],
         resultados: {},        // idx -> resposta de /api/eproc-mcp/triagem (intimacoes + eventos)
         prazosProcurador: {},  // idx -> prazos do MEU Painel do Procurador (cache da aba Prazos) | null = sem info
         carregando: {},   // idx -> bool
@@ -59,6 +63,20 @@ function processoJudicialBlock(cfg) {
             } catch (e) {
                 this.prazosProcurador[idx] = null;
             }
+            // Pré-inicializa `baixando[idx:numeroEvento] = false` pra cada intimação com
+            // documento pendente — sem isso, o binding `:disabled="baixando[chave]"` do
+            // botão "Ler intimação" lê uma chave que NUNCA existiu no objeto reativo na
+            // primeira renderização (o item só passa a existir quando os dois fetches
+            // acima terminam, no mesmo tick em que o <template x-if> monta o botão pela
+            // primeira vez) e o Alpine não reage corretamente depois — o botão nasce
+            // com `disabled=true` preso, mesmo com o documento disponível pra baixar.
+            for (const it of this.intimacoesAtivas(idx)) {
+                const ref = it.evento_referenciado;
+                if (ref && !ref.fora_da_janela) {
+                    const chave = idx + ':' + ref.numero;
+                    if (!(chave in this.baixando)) this.baixando[chave] = false;
+                }
+            }
         },
 
         // Pega só "dd/mm/aaaa" de uma string de data/hora (formatos batem: a
@@ -68,43 +86,90 @@ function processoJudicialBlock(cfg) {
             return m ? m[1] : '';
         },
         // A triagem MCP lê o processo INTEIRO — traz intimação de TODAS as partes
-        // (autor via DPU E réu, tipicamente o INSS, com procurador próprio). Sem
-        // filtro, a seção "Processo Judicial" do PAJ mostrava também os prazos do
-        // INSS, que não são responsabilidade da DPU.
+        // (autor via DPU E réu, tipicamente o INSS, com procurador próprio). O
+        // MEU Painel do Procurador (cache da aba Prazos), ao contrário, NUNCA
+        // traz intimação de quem eu não sou procurador — não precisa adivinhar
+        // nada, é o universo certo por definição (cobre representante legal e
+        // litisconsórcio automaticamente, sem heurística de nome ou de polo).
         //
-        // NÃO filtra por nome do assistido (era a 1ª versão) — nome é frágil:
-        // representante legal cadastrado separado, litisconsórcio ativo com mais
-        // de um assistido, ou nome diferente entre SISDPU e e-proc geram FALSO
-        // NEGATIVO (omite intimação real, muito pior que mostrar a do INSS).
+        // Por isso o PAINEL é a fonte PRINCIPAL do que aparece aqui — não um
+        // filtro aplicado sobre a triagem. A triagem MCP só ENRIQUECE cada
+        // prazo do Painel (evento_referenciado, documentos), quando dá pra casar
+        // por (mesmo dia de envio + mesmo nº de dias, ainda não usado por outro
+        // prazo do Painel — um-para-um, evita casar o mesmo evento da triagem
+        // com dois prazos do Painel). Sem casar, o prazo do Painel aparece do
+        // mesmo jeito, só sem link de documento.
         //
-        // Em vez disso, confirma contra o MEU Painel do Procurador (cache da aba
-        // Prazos): o e-proc já resolve isso pelo PROCURADOR REGISTRADO, não por
-        // nome — cobre representante legal e litisconsórcio automaticamente, sem
-        // heurística nenhuma da nossa parte. Casa por (mesmo processo já garantido
-        // pelo idx) + mesmo dia de envio + mesmo nº de dias do prazo.
+        // (Tentei antes usar a triagem como universo e "confirmar" contra o
+        // Painel, com desempate por polo ativo/passivo quando duas intimações
+        // tinham timing idêntico — falha quando a DPU representa o polo passivo
+        // (réu), caso comum. Invertido: o Painel já É o universo, não precisa
+        // desempate nenhum.)
         //
-        // FAIL-OPEN: sem sync do Painel para este processo (nunca sincronizado,
-        // ou sem prazo ativo nele agora), não filtra — mostra tudo. Prefere
-        // mostrar demais (ex.: INSS) a arriscar omitir uma intimação real por
-        // falta de informação ou dessincronia entre as duas fontes.
-        _confirmadaNoPainel(idx, it) {
-            const lista = this.prazosProcurador[idx];
-            if (!lista || !lista.length) return true;
-            const diaIt = this._soData(it.enviado_em);
-            const diasIt = parseInt(it.prazo_dias, 10);
-            return lista.some((p) => {
-                const diaP = this._soData(p.data_envio);
-                if (!diaIt || !diaP || diaIt !== diaP) return false;
-                const diasP = parseInt(p.prazo_dias, 10);
-                if (!isNaN(diasIt) && !isNaN(diasP) && diasIt !== diasP) return false;
-                return true;
-            });
+        // Papéis que NUNCA são a parte representada pela DPU — perito,
+        // testemunha, terceiro. Diferente de Autor/Réu (a DPU pode estar em
+        // QUALQUER polo dependendo do caso — por isso não dá pra usar polo pra
+        // decidir "é meu"), esses papéis são estruturalmente sempre de outra
+        // pessoa; excluir é seguro em qualquer caso, não uma adivinhação.
+        // Sem isso, quando o Painel não tem dado nenhum pro processo (fail-
+        // open) e a única intimação ativa na janela é a de um perito (ex.:
+        // prazo pra entregar laudo), ela aparecia como se fosse da DPU.
+        _ehTerceiroNuncaDpu(it) {
+            const papel = (it.parte_intimada || '').split(/[-–]/)[0].trim().toUpperCase();
+            return ['PERITO', 'PERITA', 'TESTEMUNHA', 'TERCEIRO', 'ASSISTENTE TÉCNICO', 'ASSISTENTE TECNICO']
+                .includes(papel);
         },
-        // Só as ATIVAS (pendentes/abertas) confirmadas como sendo da DPU — nunca as
-        // fechadas, nem as de outras partes (ex.: INSS) quando confirmável.
+        // SEM fail-open (removido — era o problema real): sem prazo confirmado
+        // no Painel pra este processo, o universo é VAZIO. Nunca cai pra
+        // mostrar a triagem MCP crua (que pode trazer INSS, perito, etc.) só
+        // porque o Painel não tem dado — nesse caso `temInfoIncompleta(idx)`
+        // sinaliza a situação na tela (ver partials/processo_judicial.html),
+        // orientando a sincronizar a aba Prazos, em vez de arriscar mostrar
+        // algo que nunca esteve confirmado como sendo da DPU.
+        temInfoIncompleta(idx) {
+            const lista = this.prazosProcurador[idx];
+            return !lista || !lista.length;
+        },
         intimacoesAtivas(idx) {
+            const lista = this.prazosProcurador[idx];
+            if (!lista || !lista.length) return [];
+
             const r = this.resultados[idx];
-            return r ? (r.intimacoes || []).filter((it) => it.ativa && this._confirmadaNoPainel(idx, it)) : [];
+            const triagem = (r ? (r.intimacoes || []) : [])
+                .filter((it) => it.ativa && !this._ehTerceiroNuncaDpu(it));
+            const usadas = new Set();
+            return lista.map((p) => {
+                const diaP = this._soData(p.data_envio);
+                const diasP = parseInt(p.prazo_dias, 10);
+                const iMatch = triagem.findIndex((it, i) => {
+                    if (usadas.has(i)) return false;
+                    const diaIt = this._soData(it.enviado_em);
+                    if (!diaP || !diaIt || diaP !== diaIt) return false;
+                    const diasIt = parseInt(it.prazo_dias, 10);
+                    if (!isNaN(diasP) && !isNaN(diasIt) && diasP !== diasIt) return false;
+                    return true;
+                });
+                if (iMatch !== -1) {
+                    usadas.add(iMatch);
+                    return triagem[iMatch]; // item da triagem: já tem evento_referenciado/docs
+                }
+                // Sem correspondência na triagem (fora da janela de eventos, p.ex.)
+                // — mostra só com os dados do próprio Painel, sem link de documento.
+                return {
+                    parte_intimada: p.parte || '',
+                    prazo_dias: p.prazo_dias,
+                    status: p.inicio_prazo ? 'ABERTO' : 'AGUARD. ABERTURA',
+                    ativa: true,
+                    enviado_em: p.data_envio,
+                    data_inicial_prazo: p.inicio_prazo || '',
+                    data_final_prazo: p.final_prazo || '',
+                    prazo_aberto: !!p.inicio_prazo,
+                    previsao: !p.inicio_prazo,
+                    previsao_ciencia_ficta: p.inicio_estimado || '',
+                    evento_referenciado: null,
+                    dias_restantes: null,
+                };
+            });
         },
         totalIntimacoesAtivas() {
             return this.processos.reduce((acc, _, idx) => acc + this.intimacoesAtivas(idx).length, 0);
@@ -133,13 +198,24 @@ function processoJudicialBlock(cfg) {
             const ev = this.eventoDe(idx, ref.numero);
             return !!(ev && (ev.documentos || []).length && !(ev.arquivos_baixados || []).length);
         },
+        // Documentos do evento referenciado AINDA NÃO baixados — um badge por
+        // documento (mesmo padrão da coluna "Documentos" da página "Consultar
+        // processo"), clicar em qualquer um baixa todos de uma vez (mesmo
+        // request de sempre — ver baixarDocIntimacao).
+        docsPendentes(idx, it) {
+            const ref = it.evento_referenciado;
+            if (!ref) return [];
+            const ev = this.eventoDe(idx, ref.numero);
+            return (ev && ev.documentos) || [];
+        },
         linkArquivo(idx, arq) {
             const numero = this.processos[idx].processo_judicial;
             return '/api/eproc-mcp/arquivo?' + new URLSearchParams({ numero: numero, arquivo: arq.arquivo }).toString();
         },
 
         // Baixa o(s) documento(s) do evento referenciado por UMA intimação — sob demanda,
-        // só quando o defensor clica "Ler intimação" (não baixa tudo automaticamente).
+        // só quando o defensor clica no badge do documento pendente (não baixa tudo
+        // automaticamente). Clicar em qualquer badge do mesmo evento baixa todos de uma vez.
         async baixarDocIntimacao(idx, it) {
             const ref = it.evento_referenciado;
             if (!ref) return;
@@ -188,6 +264,20 @@ function processoJudicialBlock(cfg) {
             if (['doc', 'docx', 'html'].includes(ext)) return 'badge-info';
             if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) return 'badge-warning';
             return 'badge-ghost';
+        },
+
+        // Campos livres de Audiências (Local/Observação) às vezes trazem o link da
+        // sala virtual como TEXTO PURO (não como <a href> de verdade) — detecta URLs
+        // e as torna clicáveis. Escapa tudo antes (nunca confia em texto vindo do
+        // SISDPU) e preserva quebras de linha reais como <br>. Usar com x-html.
+        linkify(texto) {
+            if (!texto) return '';
+            const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            const urlRe = /(https?:\/\/[^\s<]+)/g;
+            return esc(texto)
+                .split('\n')
+                .map((linha) => linha.replace(urlRe, (m) => `<a href="${m}" target="_blank" rel="noopener" class="link">${m}</a>`))
+                .join('<br>');
         },
     };
 }

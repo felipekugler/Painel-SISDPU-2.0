@@ -16,6 +16,10 @@ visível) — aqui é tudo sem janela, com login 100% automático via TOTP.
 - `/api/eproc-mcp/arquivo`: serve um documento já baixado dessa pasta.
 - `/api/eproc-mcp/lembretes`: lembretes NATIVOS do e-proc (não os do painel),
   lidos do cache já sincronizado pela aba Prazos — somente leitura.
+- `/api/eproc-mcp/chave-paj`: procura, nos PAJs locais, a chave de acesso
+  (número + chave) cadastrada para um processo — usada pelo botão "Atualizar
+  com chave" da tela de consulta, pra ver documento sigiloso (cálculo/RPV/
+  precatório) sem o usuário ter que digitar/lembrar a chave.
 """
 
 from __future__ import annotations
@@ -40,12 +44,15 @@ async def api_eproc_mcp_status(instancia: int = 1):
 
 
 @router.get("/api/eproc-mcp/consultar", response_class=JSONResponse)
-async def api_eproc_mcp_consultar(numero: str, instancia: int = 1):
+async def api_eproc_mcp_consultar(numero: str, instancia: int = 1, chave: str | None = None):
     """Dados cadastrais do processo (classe, partes, juízo, valor) — sem abrir
-    aba no navegador do e-proc."""
+    aba no navegador do e-proc.
+
+    `chave`: ver `/api/eproc-mcp/chave-paj` — libera documento sigiloso
+    (cálculo/RPV/precatório)."""
     from ingestao import eproc_mcp_client as emc
 
-    res = await emc.consultar_processo(numero, instancia=instancia)
+    res = await emc.consultar_processo(numero, instancia=instancia, chave=chave or None)
     return JSONResponse(res, status_code=200 if "erro" not in res else 400)
 
 
@@ -57,16 +64,42 @@ async def api_eproc_mcp_triagem(
     todos_eventos: bool = False,
     desde_evento: int | None = None,
     incluir_texto: bool = False,
+    chave: str | None = None,
 ):
     """Cabeçalho + timeline + intimações (com ciência ficta CRUA, sem calendário
-    de feriados — para a estimativa com dias úteis, ver a aba "Prazos e-proc")."""
+    de feriados — para a estimativa com dias úteis, ver a aba "Prazos e-proc").
+
+    `chave`: chave de acesso (número + chave) pra ver eventos com documento
+    SIGILOSO (cálculo/RPV/precatório) ocultos mesmo com vínculo normal — busque
+    primeiro em `/api/eproc-mcp/chave-paj` (vem do PAJ, o usuário não digita).
+    NÃO persiste na sessão: sem ela de novo, a próxima consulta volta a ocultar
+    esses eventos."""
     from ingestao import eproc_mcp_client as emc
 
     res = await emc.triagem_processo(
         numero, instancia=instancia, eventos=eventos, todos_eventos=todos_eventos,
         desde_evento=desde_evento, incluir_texto_referenciados=incluir_texto,
+        chave=chave or None,
     )
     return JSONResponse(res, status_code=200 if "erro" not in res else 400)
+
+
+@router.get("/api/eproc-mcp/chave-paj", response_class=JSONResponse)
+async def api_eproc_mcp_chave_paj(numero: str):
+    """Procura, nos PAJs locais, a chave de acesso (número + chave) cadastrada
+    para este processo (campo `observacoes_processo`) — leitura pura de
+    arquivo, não fala com o e-proc. Usada pelo botão "Atualizar com chave" da
+    tela de consulta, pra não exigir que o usuário digite/lembre a chave.
+
+    Retorna {"encontrada": true, "chave": "...", "paj_norm": "...", "paj": "..."}
+    ou {"encontrada": false} se nenhum PAJ tiver essa chave cadastrada para o
+    processo (ou nenhum PAJ vinculado a ele)."""
+    from ingestao import eproc_mcp_client as emc
+
+    achado = emc.buscar_chave_paj(numero)
+    if not achado:
+        return JSONResponse({"encontrada": False})
+    return JSONResponse({"encontrada": True, **achado})
 
 
 @router.post("/api/eproc-mcp/acesso-integra", response_class=JSONResponse)
@@ -91,7 +124,10 @@ async def api_eproc_mcp_acesso_integra(request: Request):
 async def api_eproc_mcp_baixar_documentos(request: Request):
     """Baixa os documentos de um ou mais eventos (MNI-first, fallback raspador)
     numa pasta persistente do processo. Corpo esperado: {"numero": "...",
-    "instancia": 1, "evento_ids": ["37", "40"]}."""
+    "instancia": 1, "evento_ids": ["37", "40"], "chave": null}.
+
+    `chave`: necessária pra baixar documento sigiloso (cálculo/RPV/precatório)
+    — ver `/api/eproc-mcp/chave-paj`. Não persiste na sessão."""
     from ingestao import eproc_mcp_client as emc
 
     body = await request.json()
@@ -102,7 +138,10 @@ async def api_eproc_mcp_baixar_documentos(request: Request):
             {"erro": "numero e evento_ids (não vazio) são obrigatórios."}, status_code=400
         )
     instancia = int(body.get("instancia") or 1)
-    res = await emc.baixar_documentos_evento(numero, instancia=instancia, evento_ids=evento_ids)
+    chave = (body.get("chave") or "").strip() or None
+    res = await emc.baixar_documentos_evento(
+        numero, instancia=instancia, evento_ids=evento_ids, chave=chave
+    )
     return JSONResponse(res, status_code=200 if "erro" not in res else 400)
 
 

@@ -74,7 +74,7 @@ _configurar_logging()
 # Versao do painel — fonte unica. Usada pelo FastAPI (OpenAPI/docs) e tambem
 # exposta a todos os templates via Jinja globals (renderizada no rodape da
 # sidebar). Para incrementar: mude aqui e so aqui.
-APP_VERSION = "0.4.12"
+APP_VERSION = "0.4.37"
 
 app = FastAPI(title="oficio-geral-ui", version=APP_VERSION)
 app.state.jinja = jinja2.Environment(
@@ -123,6 +123,24 @@ def _formatar_pretensao(valor: str | None) -> str:
         return valor or ""
     m = _RE_PRETENSAO_PARENS.search(str(valor))
     return m.group(1).strip() if m else valor
+
+
+def _formatar_endereco_contato(e: dict | None) -> str:
+    """Formata um endereço (extraído do Cadastro de Pessoa Física do SISDPU —
+    ver ingestao/sisdpu_client.py) numa linha só, pra tooltip do módulo
+    Contatos. `e` é {tipo, logradouro, numero, complemento, bairro,
+    municipio, uf, cep}."""
+    if not e:
+        return ""
+    partes = [
+        f"{e.get('logradouro', '')}, {e.get('numero', '')}".strip(", "),
+        e.get("complemento") or "",
+        e.get("bairro") or "",
+        e.get("municipio") or "",
+        e.get("uf") or "",
+        e.get("cep") or "",
+    ]
+    return ", ".join(p for p in partes if p)
 
 
 # Formatadores de data — todas as datas exibidas ao usuario devem sair no
@@ -186,6 +204,7 @@ def _tipo_analise_pretensao(valor) -> str:
 
 app.state.jinja.filters["formatar_area"] = _formatar_area
 app.state.jinja.filters["formatar_pretensao"] = _formatar_pretensao
+app.state.jinja.filters["formatar_endereco_contato"] = _formatar_endereco_contato
 app.state.jinja.filters["data_br"] = _data_br
 app.state.jinja.filters["data_hora_br"] = _data_hora_br
 app.state.jinja.filters["oficio_sigla"] = _oficio_sigla

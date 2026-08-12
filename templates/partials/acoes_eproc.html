@@ -62,10 +62,13 @@
                 <span x-show="!eventosDropdown().length" class="text-[11px] text-base-content/50">configure em Configurações › e-proc</span>
             </div>
         </div>
-        <!-- Petição -->
+        <!-- Petição: editor de texto RICO (Quill — negrito/itálico/sublinhado, cor,
+             citação, listas, recuo, alinhamento). Cai pra textarea simples se o Quill
+             não montar (ex.: CDN fora do ar — ver quillPeticaoOk no JS). -->
         <div class="ret-acao-bloco">
             <div class="ret-acao-titulo">Petição</div>
-            <textarea class="textarea textarea-bordered w-full text-[12.5px] leading-[1.6]" rows="4"
+            <div :id="uidPeticao" x-show="quillPeticaoOk"></div>
+            <textarea x-show="!quillPeticaoOk" class="textarea textarea-bordered w-full text-[12.5px] leading-[1.6]" rows="4"
                       x-model="peticaoTexto"
                       placeholder="Texto da petição ou referência a um PDF já pronto (formato em definição — próxima fase)."></textarea>
         </div>

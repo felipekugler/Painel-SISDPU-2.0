@@ -447,6 +447,19 @@ def _limpar_fase(fases: str) -> str:
     return texto.strip().rstrip(";").strip()
 
 
+def _altura_texto_livre(texto: str, largura: float, fontsize: float, altura_linha: float = 13.0) -> float:
+    """Estima a altura (pt) necessaria pra `texto` corrido caber, sem cortar,
+    numa caixa de `largura` pontos — mesma heuristica (contagem de
+    caracteres por linha) que `_escrever_narrativa` ja usa pra paginar a
+    narrativa integral do PAJ. Superestima de propósito (a largura media de
+    caractere varia por fonte/conteudo) — melhor sobrar espaco em branco do
+    que cortar uma unica linha."""
+    pt_por_char = fontsize * (5 / 9.5)  # mesma proporcao calibrada da narrativa (fontsize 9.5 -> 5pt/char)
+    chars_por_linha = max(1, round(largura / pt_por_char))
+    n_linhas = max(1, -(-len(texto or "") // chars_por_linha))  # divisao com arredondamento pra cima
+    return n_linhas * altura_linha
+
+
 def _pagina_separadora(
     doc: fitz.Document,
     paj_norm: str,
@@ -456,19 +469,46 @@ def _pagina_separadora(
 ) -> tuple[float, float, float]:
     """Desenha a pagina separadora e retorna o tom escuro da categoria da
     sequencia — o chamador repassa essa cor pra tarja de todos os documentos
-    desta mesma sequencia, mantendo o esquema de cores consistente."""
+    desta mesma sequencia, mantendo o esquema de cores consistente.
+
+    "Descrição"/"Descrição Retorno" NUNCA sao truncadas nem tem altura fixa
+    — um despacho longo (ou uma descricao_retorno detalhada) e' comum e nao
+    pode sair cortado no meio da frase. A altura de cada campo e' calculada
+    a partir do texto real (`_altura_texto_livre`); se o total nao couber
+    na pagina atual, continua numa pagina nova (mesma cor de fundo/tarja da
+    sequencia, com "(continuação)" no titulo) — mesmo mecanismo de
+    paginacao que `_escrever_narrativa` ja usa pro texto integral da
+    narrativa."""
     categoria = _categoria_mov(mov)
     cor_clara, cor_escura = CORES_CATEGORIA[categoria]
-    page = _nova_pagina(doc)
-    page.draw_rect(page.rect, color=None, fill=cor_clara)
+    largura_valor = A4.width - MARGEM - (MARGEM + 95)
+
+    page = None
     y = MARGEM
-    _texto(page, MARGEM, y, A4.width - MARGEM, 36, f"SEQUÊNCIA {rotulo_seq}", fontsize=18, fontname=FONTE_NEGRITO)
-    y += 46
+
+    def _nova(continuacao: bool = False) -> None:
+        nonlocal page, y
+        page = _nova_pagina(doc)
+        page.draw_rect(page.rect, color=None, fill=cor_clara)
+        y = MARGEM
+        titulo = f"SEQUÊNCIA {rotulo_seq}" + (" (continuação)" if continuacao else "")
+        _texto(page, MARGEM, y, A4.width - MARGEM, 36, titulo, fontsize=18, fontname=FONTE_NEGRITO)
+        y += 46
+
+    def _quebra_se_precisar(altura_necessaria: float) -> None:
+        nonlocal page, y
+        # `y > MARGEM + 40` evita paginar em loop se um UNICO campo, sozinho,
+        # ja for maior que a pagina inteira (cabe o quanto puder e segue —
+        # bem melhor que ficar girando pagina em branco pra sempre).
+        if y + altura_necessaria > A4.height - MARGEM and y > MARGEM + 40:
+            _tarja(page, f"{paj_norm}  |  Seq. {rotulo_seq}  |  Página separadora", cor_escura)
+            _nova(continuacao=True)
+
+    _nova()
     if mov:
         data_hora = mov.get("data_original") or mov.get("data") or ""
         fase = _limpar_fase(mov.get("fases", ""))
         usuario = mov.get("usuario", "") or ""
-        desc = _truncar(_texto_simples(mov.get("descricao")), 380)
         for rotulo, valor, altura in [
             ("Data/Hora", data_hora, 20),
             ("Fase", fase, 20),
@@ -477,24 +517,34 @@ def _pagina_separadora(
             _texto(page, MARGEM, y, MARGEM + 90, altura, f"{rotulo}:", fontsize=10, fontname=FONTE_NEGRITO)
             _texto(page, MARGEM + 95, y, A4.width - MARGEM, altura, valor or "-", fontsize=10)
             y += altura + 4
-        _texto(page, MARGEM, y, MARGEM + 90, 130, "Descrição:", fontsize=10, fontname=FONTE_NEGRITO)
-        _texto(page, MARGEM + 95, y, A4.width - MARGEM, 130, desc or "-", fontsize=10)
-        y += 140
+
+        desc = _texto_simples(mov.get("descricao")) or "-"
+        altura_desc = _altura_texto_livre(desc, largura_valor, 10)
+        _quebra_se_precisar(altura_desc)
+        _texto(page, MARGEM, y, MARGEM + 90, altura_desc, "Descrição:", fontsize=10, fontname=FONTE_NEGRITO)
+        _texto(page, MARGEM + 95, y, A4.width - MARGEM, altura_desc, desc, fontsize=10)
+        y += altura_desc + 10
+
         if categoria == "retorno":
             # Em "Atendimento de retorno" a "Descrição" costuma ser so' um
             # texto burocratico ("Fase incluída automaticamente..."); o
             # conteudo real do atendimento fica no campo `descricao_retorno`
             # do metadata — por isso e' obrigatorio mostra-lo aqui.
-            desc_retorno = _truncar(_texto_simples(mov.get("descricao_retorno")), 380)
-            _texto(page, MARGEM, y, MARGEM + 90, 130, "Descrição Retorno:", fontsize=10, fontname=FONTE_NEGRITO)
-            _texto(page, MARGEM + 95, y, A4.width - MARGEM, 130, desc_retorno or "(não informado no SISDPU)", fontsize=10)
-            y += 140
+            desc_retorno = _texto_simples(mov.get("descricao_retorno")) or "(não informado no SISDPU)"
+            altura_dr = _altura_texto_livre(desc_retorno, largura_valor, 10)
+            _quebra_se_precisar(altura_dr)
+            _texto(page, MARGEM, y, MARGEM + 90, altura_dr, "Descrição Retorno:", fontsize=10, fontname=FONTE_NEGRITO)
+            _texto(page, MARGEM + 95, y, A4.width - MARGEM, altura_dr, desc_retorno, fontsize=10)
+            y += altura_dr + 10
     else:
         _texto(page, MARGEM, y, A4.width - MARGEM, 20, "(sequência sem movimentação correspondente no histórico)", fontsize=9, color=(0.35, 0.35, 0.35))
         y += 28
+
+    _quebra_se_precisar(44)
     _texto(page, MARGEM, y, A4.width - MARGEM, 20, "Documentos desta sequência:", fontsize=10, fontname=FONTE_NEGRITO)
     y += 24
     if not itens:
+        _quebra_se_precisar(18)
         _texto(page, MARGEM + 10, y, A4.width - MARGEM, 18, "Nenhum documento anexado nesta sequência.", fontsize=9, color=(0.35, 0.35, 0.35))
         y += 18
     for item in itens:
@@ -503,6 +553,7 @@ def _pagina_separadora(
             complemento = f"({anexo['tipo'].upper()}, {anexo['tamanho'] / 1024:.1f} KB)"
         else:
             complemento = "(não baixado localmente)"
+        _quebra_se_precisar(18)
         _texto(page, MARGEM + 10, y, A4.width - MARGEM, 18, f"- {item['descricao']}  {complemento}", fontsize=9)
         y += 18
     _tarja(page, f"{paj_norm}  |  Seq. {rotulo_seq}  |  Página separadora", cor_escura)

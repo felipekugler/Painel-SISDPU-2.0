@@ -12,18 +12,84 @@ store). Futuras páginas (PAJ detail, Watchlist etc.) podem chamar este módulo 
 
 from __future__ import annotations
 
+import contextlib
 import re
 import unicodedata
+import uuid
 from datetime import date, timedelta
+from pathlib import Path
 from typing import AsyncIterator
 
+from config import PAJS_DIR
 from ingestao import sisdpu_client
 from ingestao import sisdpu_movtram as movtram
 from services import paj_service
 
+# Mesma lista que o SISDPU aceita nos anexos de MOVIMENTAÇÃO (sisdpu_movtram.
+# _TIPOS_ANEXO_OK) — fora disso, o anexo seria silenciosamente pulado lá dentro;
+# validamos aqui pra avisar o usuário na hora, em vez de deixar sumir sem aviso.
+TIPOS_ANEXO_MOV_OK = {"doc", "docx", "odt", "png", "jpg", "jpeg", "gif", "pdf"}
+
 
 def _ev(level: str, msg: str) -> dict:
     return {"level": level, "msg": msg}
+
+
+def _pasta_anexos_externos(paj_norm: str) -> Path:
+    """Pasta temporária DENTRO da pasta do PAJ pra anexos externos (upload) ainda não
+    usados numa movimentação. Nome com "_" na frente: já é ignorada pelas listagens de
+    peças/despachos do PAJ (paj_service.ler_paj só itera ARQUIVOS na raiz, pastas são
+    puladas de qualquer forma — mas o prefixo deixa claro que é área de rascunho)."""
+    return PAJS_DIR / paj_norm / "_anexos_externos_tmp"
+
+
+def salvar_anexo_externo(paj_norm: str, nome_original: str, conteudo: bytes) -> dict:
+    """Salva um arquivo ENVIADO PELO USUÁRIO (upload) numa pasta temporária dentro da
+    pasta do PAJ — a automação (Playwright) só consegue anexar um arquivo que já esteja
+    em disco no servidor, não um File do navegador direto. Fica ali até a movimentação
+    de fato usá-lo (aí é removido — ver executar_stream) ou até o usuário desistir e
+    remover da lista antes de executar (ver remover_anexo_externo).
+    Retorna {ok, ref, nome, tamanho, tipo} ou {ok:False, detalhe}."""
+    paj_norm = (paj_norm or "").strip()
+    nome_original = (nome_original or "").strip()
+    if not paj_norm or not nome_original:
+        return {"ok": False, "detalhe": "paj_norm ou nome do arquivo ausente."}
+    pasta_paj = PAJS_DIR / paj_norm
+    if not pasta_paj.exists():
+        return {"ok": False, "detalhe": "PAJ não encontrado localmente (sincronize antes)."}
+    ext = Path(nome_original).suffix.lstrip(".").lower()
+    if ext not in TIPOS_ANEXO_MOV_OK:
+        aceitos = ", ".join(sorted(t.upper() for t in TIPOS_ANEXO_MOV_OK))
+        return {"ok": False, "detalhe": f'Formato ".{ext or "?"}" não é aceito pelo SISDPU nos anexos de movimentação. Aceitos: {aceitos}.'}
+    pasta = _pasta_anexos_externos(paj_norm)
+    pasta.mkdir(parents=True, exist_ok=True)
+    ref = f"{uuid.uuid4().hex[:12]}_{nome_original}"
+    caminho = pasta / ref
+    caminho.write_bytes(conteudo)
+    return {"ok": True, "ref": ref, "nome": nome_original, "tamanho": caminho.stat().st_size, "tipo": ext}
+
+
+def _resolver_anexo_externo(paj_norm: str, ref: str) -> Path | None:
+    """Resolve um `ref` de anexo externo pro caminho absoluto — mesma proteção contra
+    path traversal do download de arquivos (paj_service.ler_arquivo)."""
+    pasta = _pasta_anexos_externos(paj_norm)
+    caminho = pasta / (ref or "")
+    try:
+        caminho.resolve().relative_to(pasta.resolve())
+    except (ValueError, OSError):
+        return None
+    return caminho if caminho.exists() and caminho.is_file() else None
+
+
+def remover_anexo_externo(paj_norm: str, ref: str) -> dict:
+    """Apaga um anexo externo staged — best-effort. Chamado quando o usuário remove da
+    lista ANTES de executar (desiste dele), ou automaticamente depois que a movimentação
+    já o usou com sucesso (ver executar_stream)."""
+    caminho = _resolver_anexo_externo(paj_norm, ref)
+    if caminho:
+        with contextlib.suppress(Exception):
+            caminho.unlink()
+    return {"ok": True}
 
 
 def _normalizar(s: str) -> str:
@@ -84,6 +150,7 @@ async def executar_stream(
     paj_norm: str = "",
     fase: str = "",
     descricao_mov: str = "",
+    descricao_mov_html: bool = False,
     grupo: str | None = None,
     descricao_tram: str = "",
     prazo_dias: int = 0,
@@ -91,7 +158,7 @@ async def executar_stream(
     id_tramite: str | None = None,
     concluir: bool = False,
     dry_run: bool = False,
-    anexos: list[str] | None = None,
+    anexos: list[dict] | None = None,
 ) -> AsyncIterator[dict]:
     """Executa mov→tram→conclui (cada etapa opcional) em UM PAJ do SISDPU identificado
     por `id_processo`. Emite eventos SSE-like: {level,msg} de log; evento final
@@ -99,9 +166,19 @@ async def executar_stream(
     também for informado (é o trâmite específico que sai da caixa de entrada).
     `descricao_mov` e `descricao_tram` são independentes — o SISDPU aceita ambas
     (ou qualquer uma delas) em branco, então não há validação de obrigatoriedade aqui.
-    `anexos`: caminhos RELATIVOS (dentro da pasta do PAJ) dos documentos já baixados
-    ("Anexos SISDPU") a incluir na MOVIMENTAÇÃO — requer `paj_norm` para resolver;
-    ignorado se `fase` estiver vazio (nada a anexar sem movimentação)."""
+    `descricao_mov_html=True` quando `descricao_mov` é HTML de verdade (editor rico do
+    módulo — Quill) em vez de texto puro (ex.: a Sugestão IA da Retornos): grava direto
+    no CKEditor da movimentação em vez de escapar como texto. SÓ a movimentação suporta
+    isso — a tramitação no SISDPU é um campo de texto puro, sem CKEditor.
+    `anexos`: lista de {"origem": "paj"|"externo", "ref": "...", "descricao": "...",
+    "tipo_arquivo": "..."} a incluir na MOVIMENTAÇÃO — descricao/tipo_arquivo são POR
+    ANEXO (escolhidos na tela; tipo_arquivo é o catálogo real do SISDPU — "Não
+    informado", "Ofício", "Correspondência" etc.) — requer `paj_norm` para resolver;
+    ignorado se `fase` estiver vazio
+    (nada a anexar sem movimentação). "paj": `ref` é o caminho RELATIVO de um documento
+    já baixado ("Anexos SISDPU"). "externo": `ref` é o token devolvido por
+    salvar_anexo_externo() (upload do usuário) — removido do disco automaticamente
+    depois que a movimentação o usa com sucesso."""
     fase = (fase or "").strip()
     descricao_mov = (descricao_mov or "").strip()
     descricao_tram = (descricao_tram or "").strip()
@@ -132,24 +209,46 @@ async def executar_stream(
     # 1) MOVIMENTAR (opcional — carrega o despacho como descrição da movimentação)
     mv: dict = {}
     if fase:
-        # Resolve os anexos selecionados (caminhos relativos à pasta do PAJ) para
-        # caminhos ABSOLUTOS via o mesmo helper seguro usado pelo download de arquivos
-        # (paj_service.ler_arquivo — barra path traversal). Ignora silenciosamente
-        # qualquer caminho que não resolva (arquivo removido/renomeado entre a listagem
-        # e a execução).
+        # Resolve os anexos (mistura de documentos já no PAJ + uploads externos) para
+        # caminhos ABSOLUTOS. "paj" usa o mesmo helper seguro do download de arquivos
+        # (paj_service.ler_arquivo — barra path traversal); "externo" usa o equivalente
+        # pra pasta de uploads (_resolver_anexo_externo). Ignora silenciosamente
+        # qualquer item que não resolva (arquivo removido/renomeado entre a listagem e
+        # a execução).
         anexos_ctx: list[dict] = []
+        refs_externos_usados: list[str] = []
         if anexos and paj_norm:
-            for rel in anexos:
-                arq, _ct = paj_service.ler_arquivo(paj_norm, rel)
-                if arq:
-                    anexos_ctx.append({"nome": arq.name, "caminho": str(arq),
-                                        "tipo": arq.suffix.lstrip(".").lower()})
+            for item in anexos:
+                origem = (item or {}).get("origem") or "paj"
+                ref = (item or {}).get("ref") or ""
+                if not ref:
+                    continue
+                # Descrição/Tipo de Arquivo são escolhidos POR ANEXO na tela (dropdown
+                # com o catálogo real do SISDPU, padrão "Não informado") — repassa como
+                # veio; sem eles, movtram cai no nome do arquivo / "Documentos do
+                # Assistido" (compatibilidade com quem não manda esses campos).
+                descricao_item = ((item or {}).get("descricao") or "").strip()
+                tipo_arquivo_item = ((item or {}).get("tipo_arquivo") or "").strip()
+                if origem == "externo":
+                    arq = _resolver_anexo_externo(paj_norm, ref)
+                    if arq:
+                        nome = arq.name.split("_", 1)[-1] if "_" in arq.name else arq.name
+                        anexos_ctx.append({"nome": nome, "caminho": str(arq), "tipo": arq.suffix.lstrip(".").lower(),
+                                            "descricao": descricao_item or nome, "tipo_arquivo": tipo_arquivo_item})
+                        refs_externos_usados.append(ref)
+                else:
+                    arq, _ct = paj_service.ler_arquivo(paj_norm, ref)
+                    if arq:
+                        anexos_ctx.append({"nome": arq.name, "caminho": str(arq),
+                                            "tipo": arq.suffix.lstrip(".").lower(),
+                                            "descricao": descricao_item or arq.name, "tipo_arquivo": tipo_arquivo_item})
             if anexos_ctx:
                 yield _ev("info", f"Anexando {len(anexos_ctx)} documento(s) à movimentação…")
 
         yield _ev("info", f"Movimentando (fase: {fase})…")
         mv, exc, eventos = await com_auto_reconexao(
-            lambda: movtram.movimentar_paj(pajs, descricao_mov, fase, anexos_ctx, "Documentos do Assistido", dry_run))
+            lambda: movtram.movimentar_paj(pajs, descricao_mov, fase, anexos_ctx, "Não informado",
+                                           dry_run, descricao_html=descricao_mov_html))
         for ev in eventos:
             yield ev
         if exc is not None:
@@ -161,6 +260,12 @@ async def executar_stream(
         if not mv.get("ok"):
             yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": mv.get("detalhe", "")}}
             return
+        # Movimentação confirmada: os anexos externos já foram entregues ao SISDPU —
+        # remove as cópias temporárias (se a movimentação tivesse falhado, ficariam
+        # pra uma nova tentativa não exigir reenviar o arquivo).
+        if not dry_run:
+            for ref in refs_externos_usados:
+                remover_anexo_externo(paj_norm, ref)
 
     # 2) TRAMITAR (opcional)
     tram_caixa = ""

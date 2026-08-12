@@ -300,7 +300,14 @@ async def _ler_seq_mov(page, id_processo: str) -> int | None:
 async def _anexar_documentos_movimentacao(page, anexos: list[dict], tipo_arquivo: str) -> list[str]:
     """Anexa documentos à MOVIMENTAÇÃO (popup 'dlgModalArquivos' da fase). Para cada
     anexo: abre o popup, sobe o arquivo (buffer, preserva nome), Descrição = nome,
-    Tipo de Arquivo = `tipo_arquivo`, 'Anexar'. Fecha o popup ao fim. Best-effort."""
+    Tipo de Arquivo = `tipo_arquivo`, 'Anexar'. Fecha o popup ao fim. Best-effort.
+
+    Descrição e Tipo de Arquivo podem vir POR ANEXO (chaves `descricao`/`tipo_arquivo`
+    no próprio dict do anexo — usado pelo "Ações no SISDPU", que deixa o usuário
+    escolher um Tipo por documento) — nesse caso prevalecem sobre `nome`/`tipo_arquivo`
+    (o parâmetro da função). Sem essas chaves, cai no comportamento antigo: Descrição =
+    nome do arquivo, Tipo = o mesmo `tipo_arquivo` (o parâmetro) pra todos (uso do
+    sat_service.py, que não tem escolha por documento)."""
     anexos = [a for a in (anexos or []) if a]
     if not anexos:
         return []
@@ -313,6 +320,8 @@ async def _anexar_documentos_movimentacao(page, anexos: list[dict], tipo_arquivo
     for a in anexos:
         caminho = a.get("caminho") or ""
         nome = a.get("nome") or (Path(caminho).name if caminho else "documento")
+        descricao_anexo = (a.get("descricao") or "").strip() or nome
+        tipo_arquivo_anexo = (a.get("tipo_arquivo") or "").strip() or tipo_arquivo
         if not caminho or not Path(caminho).exists():
             _log.warning("mov anexo ausente no disco, pulado: %s (%s)", nome, caminho)
             continue
@@ -328,18 +337,18 @@ async def _anexar_documentos_movimentacao(page, anexos: list[dict], tipo_arquivo
             desc_sel = _sel(f"{_MOV_FORM}:arquivosSalvar:0:desc")
             await page.wait_for_selector(desc_sel, timeout=10000)
             with contextlib.suppress(Exception):
-                await page.fill(desc_sel, nome)
+                await page.fill(desc_sel, descricao_anexo)
             tp = await page.evaluate(
-                _JS_SELECT_OPT, [f"{_MOV_FORM}:arquivosSalvar:0:tipoArquivo", tipo_arquivo, False])
+                _JS_SELECT_OPT, [f"{_MOV_FORM}:arquivosSalvar:0:tipoArquivo", tipo_arquivo_anexo, False])
             if not tp.get("ok"):
-                _log.warning("mov anexo: tipo %r não achado (opts=%s)", tipo_arquivo, tp.get("opts"))
+                _log.warning("mov anexo: tipo %r não achado (opts=%s)", tipo_arquivo_anexo, tp.get("opts"))
             with contextlib.suppress(Exception):
                 await page.locator(
                     'button[name^="%s:arquivosSalvar"]' % _MOV_FORM, has_text="Anexar").first.click()
             await _wait_pf_ajax(page)
             await page.wait_for_timeout(500)
             anexados.append(nome)
-            _log.info("mov anexo incluído: %s (tipo=%s)", nome, tipo_arquivo)
+            _log.info("mov anexo incluído: %s (descricao=%r, tipo=%s)", nome, descricao_anexo, tipo_arquivo_anexo)
         except Exception as e:  # noqa: BLE001
             _log.warning("mov falha ao anexar %s: %r", nome, e)
     with contextlib.suppress(Exception):
@@ -820,3 +829,75 @@ async def caixas_abertas_paj(id_processo: str) -> list[dict]:
     except Exception as e:  # noqa: BLE001
         _log.warning("caixas_abertas_paj falhou: %r", e)
         return []
+
+
+# Igual a _JS_CAIXAS_ABERTAS, mas devolve TODAS as linhas (concluídas ou não, com
+# o campo `conclusao`), ordenadas pela data do trâmite (mais recente primeiro) —
+# usado pela página do PAJ pra mostrar "últimas tramitações" sem precisar de uma
+# segunda navegação à mesma tela (ver `caixas_e_historico_paj`).
+_JS_HISTORICO_TRAMITACOES = r"""() => {
+  const parseData = (s) => {
+    const m = (s || '').match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?/);
+    if (!m) return 0;
+    return new Date(+m[3], +m[2] - 1, +m[1], +(m[4] || 0), +(m[5] || 0)).getTime();
+  };
+  for (const t of document.querySelectorAll('table')) {
+    const ths = [...t.querySelectorAll('thead th, thead td')].map(x => (x.innerText||'').trim());
+    if (!ths.length) continue;
+    const iConcl = ths.findIndex(h => /conclus/i.test(h));
+    const iGrupo = ths.findIndex(h => /grupo/i.test(h));
+    const iDest  = ths.findIndex(h => /destinat/i.test(h));
+    const iRem   = ths.findIndex(h => /remetente/i.test(h));
+    const iData  = ths.findIndex(h => /tr[âa]mite/i.test(h));
+    const iDesc  = ths.findIndex(h => /descri/i.test(h));
+    if (iConcl < 0 || (iGrupo < 0 && iDest < 0)) continue;
+    const todas = [];
+    for (const tr of t.querySelectorAll('tbody tr')) {
+      const tds = [...tr.querySelectorAll('td')];
+      if (!tds.length) continue;
+      const cell = i => (i >= 0 && tds[i] ? (tds[i].innerText||'').trim() : '');
+      const grupo = cell(iGrupo), dest = cell(iDest);
+      const local = grupo || dest;
+      if (!local) continue;
+      const dataTxt = cell(iData);
+      todas.push({ local, grupo, destinatario: dest, remetente: cell(iRem),
+                   data: dataTxt, descricao: cell(iDesc), conclusao: cell(iConcl),
+                   _ts: parseData(dataTxt) });
+    }
+    todas.sort((a, b) => b._ts - a._ts);
+    return todas.map(({ _ts, ...r }) => r);
+  }
+  return [];
+}"""
+
+
+async def caixas_e_historico_paj(id_processo: str, limite: int = 10) -> dict:
+    """Uma ÚNICA navegação à tela 'Histórico de Tramitações do PAJ': devolve tanto
+    as caixas ABERTAS agora (sem conclusão — mesmo filtro de `caixas_abertas_paj`)
+    quanto as últimas `limite` tramitações (concluídas ou não, mais recentes
+    primeiro). Usado pela página do PAJ pra evitar duas navegações separadas à
+    mesma tela (uma pras caixas abertas, outra pro histórico).
+
+    Retorna {"ok": bool, "abertas": [...], "tramitacoes": [...], "erro": str}.
+    `ok=False` significa que NÃO foi possível confirmar (conflito de sessão,
+    timeout, exceção) — `abertas`/`tramitacoes` vazias aí NÃO significam "sem
+    tramitação", significam "não verificado". O chamador deve distinguir os
+    dois casos (nunca mostrar "nenhuma tramitação em aberto" quando ok=False)."""
+    if not id_processo:
+        return {"ok": False, "abertas": [], "tramitacoes": [], "erro": "id_processo ausente."}
+    try:
+        await _ensure_logged_in()
+        page = await _get_page()
+        url = f"{SISDPU_URL}/pages/tramite/historicoTramitacao.xhtml?id={id_processo}"
+        await page.goto(url, wait_until="domcontentloaded", timeout=30000)
+        await _wait_pf_ajax(page); await page.wait_for_timeout(800)
+        if not await _resolver_conflito_login(page):
+            _log.warning("caixas_e_historico_paj: conflito de sessão não resolvido (id_processo=%s)", id_processo)
+            return {"ok": False, "abertas": [], "tramitacoes": [], "erro": _MSG_CONFLITO_SESSAO}
+        res = await _eval_seguro(page, _JS_HISTORICO_TRAMITACOES)
+        todas = res if isinstance(res, list) else []
+    except Exception as e:  # noqa: BLE001
+        _log.warning("caixas_e_historico_paj falhou: %r", e)
+        return {"ok": False, "abertas": [], "tramitacoes": [], "erro": f"{type(e).__name__}: {e}"}
+    abertas = [t for t in todas if not t.get("conclusao")]
+    return {"ok": True, "abertas": abertas, "tramitacoes": todas[:limite], "erro": ""}

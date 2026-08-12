@@ -254,10 +254,16 @@ async def status(instancia: int = 1) -> dict[str, Any]:
         return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:400], "instancia": instancia}
 
 
-async def consultar_processo(numero: str, instancia: int = 1) -> dict[str, Any]:
+async def consultar_processo(
+    numero: str, instancia: int = 1, chave: Optional[str] = None
+) -> dict[str, Any]:
     """Dados cadastrais do processo (classe, partes, juízo, valor) — via MNI ou
-    raspador HTTP, sem navegador. Espelha a tool MCP `consultar_processo`."""
-    return await _mcp_server().consultar_processo(numero, instancia=instancia)
+    raspador HTTP, sem navegador. Espelha a tool MCP `consultar_processo`.
+
+    `chave`: chave de acesso (número + chave) para processos com documento
+    sigiloso (cálculo/RPV/precatório) — ver `paj_service.buscar_chave_por_processo`
+    e `triagem_processo`."""
+    return await _mcp_server().consultar_processo(numero, instancia=instancia, chave=chave)
 
 
 async def triagem_processo(
@@ -267,6 +273,7 @@ async def triagem_processo(
     todos_eventos: bool = False,
     desde_evento: Optional[int] = None,
     incluir_texto_referenciados: bool = False,
+    chave: Optional[str] = None,
 ) -> dict[str, Any]:
     """Visão estruturada (cabeçalho + timeline + intimações com prazo/ciência
     ficta) — via raspador HTTP, sem navegador. Espelha a tool MCP
@@ -284,6 +291,15 @@ async def triagem_processo(
         resposta é a mesma da 1ª consulta, ainda incompleta; `erro` explica
         o motivo). Caso raro — no TRF4 o desbloqueio é automático e confiável.
 
+    `chave`: chave de acesso (número + chave), pra ver eventos com documento
+    SIGILOSO (cálculo/RPV/precatório — ex.: "Requisição de pagamento de
+    pequeno valor enviada ao Tribunal") que ficam ocultos mesmo com vínculo
+    normal e mesmo já resolvido o "Acesso à Íntegra" acima — é um mecanismo
+    SEPARADO. A chave normalmente está cadastrada no PAJ (campo
+    `observacoes_processo`) — ver `services.paj_service.buscar_chave_por_processo`.
+    **Não persiste na sessão** (confirmado empiricamente) — precisa ser
+    passada de novo em toda chamada que precise desses eventos.
+
     NOTA: a estimativa de prazo aqui é a "ciência ficta crua" (Enviado em + 10
     dias corridos, sem calendário de feriados) — para a estimativa já com dias
     úteis/feriados (usada na aba "Prazos e-proc"), continue com
@@ -292,6 +308,7 @@ async def triagem_processo(
     kwargs = dict(
         instancia=instancia, eventos=eventos, todos_eventos=todos_eventos,
         desde_evento=desde_evento, incluir_texto_referenciados=incluir_texto_referenciados,
+        chave=chave,
     )
     res = await server_mod.triagem_processo(numero, **kwargs)
 
@@ -344,7 +361,7 @@ def decode_html_documento(conteudo: bytes) -> str:
 
 
 async def baixar_documentos_evento(
-    numero: str, instancia: int, evento_ids: list[str]
+    numero: str, instancia: int, evento_ids: list[str], chave: Optional[str] = None
 ) -> dict[str, Any]:
     """Baixa (MNI-first, com fallback raspador) TODOS os documentos dos eventos
     pedidos, gravando na pasta PERSISTENTE do processo (`EPROC_DOCS_DIR`, não o
@@ -353,6 +370,10 @@ async def baixar_documentos_evento(
     inteiro (mesma lógica de acesso — PDF direto, HTML convertido para .txt
     limpo, resolução de "Acesso à Íntegra" já ocorrida na triagem); só muda o
     destino.
+
+    `chave`: necessária pra baixar documento sigiloso (cálculo/RPV/precatório)
+    — ver `triagem_processo`. Não persiste na sessão: se o evento pedido for
+    desse tipo, `chave` tem que vir preenchida NESTA chamada específica.
 
     Retorna o dict cru da tool (`baixados`/`ignorados_sem_documento`/`erros`/
     `via`) + `arquivos_por_evento` (mesmo formato de `listar_arquivos_baixados`,
@@ -373,9 +394,20 @@ async def baixar_documentos_evento(
                 f.unlink()
     res = await server_mod.baixar_documentos(
         numero, instancia=instancia, evento_ids=evento_ids, diretorio_destino=str(destino),
+        chave=chave,
     )
     res["arquivos_por_evento"] = listar_arquivos_baixados(numero)
     return res
+
+
+def buscar_chave_paj(numero_processo: str) -> Optional[dict[str, Any]]:
+    """Procura a chave de acesso (número + chave) cadastrada no PAJ deste
+    processo — ver `services.paj_service.buscar_chave_por_processo`. Só lê
+    arquivos locais (PAJs), não fala com o e-proc; retorna None se nenhum PAJ
+    tiver essa chave cadastrada (ou nenhum PAJ vinculado a este processo)."""
+    from services import paj_service
+
+    return paj_service.buscar_chave_por_processo(numero_processo)
 
 
 async def resolver_acesso_integra(

@@ -213,23 +213,38 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
         if not metadata:
             continue
 
-        # Filtro de concluidos: so exclui se o flag esta EXPLICITAMENTE False
         em_caixa = metadata.get("em_caixa_atual")
-        esta_concluido = em_caixa is False
-        if esta_concluido and not incluir_concluidos:
-            continue
+
+        # `tramitacoes_caixa` (lista, uma entrada por tramitação GERAL pendente
+        # na caixa — Retornos/SAT já ficam de fora dela na origem, ver
+        # ingestao.sincronizador._atualizar_tramitacoes_caixa) é AUTORITATIVA
+        # quando presente: um PAJ pode ter 2+ tramitações simultâneas, e só sai
+        # do dashboard quando NENHUMA restar. Supera em_caixa_atual/
+        # categoria_caixa (campos únicos, sobrescritos a cada sync) pra PAJs
+        # já sincronizados com essa lógica. PAJs ainda não resincronizados
+        # (campo ausente) caem no comportamento antigo, abaixo.
+        tramitacoes_caixa = metadata.get("tramitacoes_caixa")
+        if tramitacoes_caixa is not None:
+            esta_concluido = len(tramitacoes_caixa) == 0
+            if esta_concluido and not incluir_concluidos:
+                continue
+        else:
+            # Filtro de concluidos: so exclui se o flag esta EXPLICITAMENTE False
+            esta_concluido = em_caixa is False
+            if esta_concluido and not incluir_concluidos:
+                continue
+
+            # PAJs que pertencem a um submenu especializado (Retornos/SAT) NÃO
+            # aparecem no dashboard — só no submenu próprio (decisão do usuário).
+            # Fail-safe: categoria ausente/"" → PAJ geral, aparece normalmente.
+            if excluir_submenu and metadata.get("categoria_caixa"):
+                continue
 
         # PAJs adicionados via watchlist (busca explicita pelo defensor) NAO
         # aparecem no dashboard — sao visiveis so na watchlist e via URL direta.
         # Excecao: se uma sync regular ja confirmou em_caixa_atual=True, e' um
         # PAJ "promovido" para a caixa e volta a aparecer normalmente.
         if metadata.get("via_watchlist") and em_caixa is not True:
-            continue
-
-        # PAJs que pertencem a um submenu especializado (Retornos/SAT) NÃO
-        # aparecem no dashboard — só no submenu próprio (decisão do usuário).
-        # Fail-safe: categoria ausente/"" → PAJ geral, aparece normalmente.
-        if excluir_submenu and metadata.get("categoria_caixa"):
             continue
 
         paj_norm = pasta.name
@@ -299,6 +314,12 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
             # da ultima movimentacao, com HTML removido.
             "desc_caixa": (metadata.get("desc_mov_caixa") or "").strip()
             or _strip_html(ultima_mov.get("descricao") or "")[:300],
+            # Todas as tramitações GERAIS pendentes na caixa deste PAJ (pode
+            # ser mais de uma — comum no SISDPU) — cada uma com seu próprio
+            # id_tramite, pra concluir individualmente. Lista vazia = PAJ
+            # ainda não resincronizado com essa lógica (ver `tramitacoes_caixa`
+            # acima) ou realmente sem tramitação geral aberta.
+            "tramitacoes_caixa": tramitacoes_caixa or [],
             "processo_judicial": metadata.get("processo_judicial", ""),
             "n_pecas": n_pecas_geradas,
             "n_anexos_sisdpu": n_anexos_sisdpu,
@@ -358,6 +379,68 @@ def tem_processo(item: dict) -> bool:
     metadata bruto (ambos expoem `processo_judicial`).
     """
     return bool((item.get("processo_judicial") or "").strip())
+
+
+_RE_DIGITOS = re.compile(r"\d+")
+_TAMANHO_CHAVE = 12  # confirmado (usuário + amostra real): a chave de acesso do e-proc tem sempre 12 dígitos, ex. "352882565025"
+
+
+def _extrair_chave_de_texto(texto: str) -> str:
+    """Extrai a chave de acesso de um texto livre — sempre uma sequência de
+    EXATOS 12 dígitos (ex.: "352882565025"), mesmo com rótulo/quebra de linha
+    ao redor no campo `observacoes_processo` do PAJ — confirmado varrendo os
+    PAJs reais: só o número ("737324295824"), com rótulo e quebra de linha
+    ("Chave Processo:\\n300160906026"), ou rótulo com espaço
+    ("Chave: 737324295824"). Filtra pelo tamanho exato em vez de "a sequência
+    mais longa" — mais preciso, e ignora de propósito qualquer outra sequência
+    de dígitos de tamanho diferente que apareça no texto (ex.: um ano)."""
+    candidatos = [d for d in _RE_DIGITOS.findall(texto or "") if len(d) == _TAMANHO_CHAVE]
+    return candidatos[0] if candidatos else ""
+
+
+def buscar_chave_por_processo(numero_processo: str) -> dict | None:
+    """Procura, em TODOS os PAJs, a chave de acesso cadastrada pro processo
+    judicial informado — campo `observacoes_processo` de `processos_judiciais`
+    no metadata.json (cadastrado manualmente na narrativa/instauração do PAJ,
+    ex.: "Nº Processo: ...  Chave para Consulta  ...").
+
+    Usado pelo botão "Atualizar com chave" da tela de consulta de processo —
+    ação pontual e manual (não fica em loop nem em polling), por isso varre
+    todos os PAJs sem cache: ~100 arquivos pequenos, custo desprezível numa
+    chamada isolada.
+
+    Retorna {"chave": "...", "paj_norm": "PAJ-AAAA-UUU-NNNNN", "paj": "AAAA/UUU-NNNNN"}
+    do primeiro PAJ que tiver esse processo cadastrado com uma chave extraível,
+    ou None se nenhum PAJ tiver essa chave (processo sem chave cadastrada, ou
+    sem PAJ vinculado)."""
+    alvo = re.sub(r"\D", "", numero_processo or "")
+    if not alvo or not PAJS_DIR.exists():
+        return None
+
+    for pasta in PAJS_DIR.iterdir():
+        if not _e_pasta_paj(pasta):
+            continue
+        metadata = _ler_json(pasta / "metadata.json")
+        if not isinstance(metadata, dict):
+            continue
+
+        candidatos_proc = list(metadata.get("processos_judiciais") or [])
+        # Também considera o par singular no nível raiz (mesma informação,
+        # formato mais antigo/redundante do migrador do SISDPU).
+        if metadata.get("processo_judicial"):
+            candidatos_proc.append({
+                "processo_judicial": metadata.get("processo_judicial"),
+                "observacoes_processo": metadata.get("observacoes_processo", ""),
+            })
+
+        for proc in candidatos_proc:
+            num_proc = re.sub(r"\D", "", str(proc.get("processo_judicial") or ""))
+            if num_proc != alvo:
+                continue
+            chave = _extrair_chave_de_texto(proc.get("observacoes_processo") or "")
+            if chave:
+                return {"chave": chave, "paj_norm": pasta.name, "paj": metadata.get("paj", "")}
+    return None
 
 
 def ler_paj(paj_norm: str) -> dict | None:
@@ -526,6 +609,243 @@ def ler_paj(paj_norm: str) -> dict | None:
         "tem_pasta_ajuizamento": _tem_ajuizamento,
         "lembretes": lembretes_service.ler_lembretes_pasta(pasta),
         "pasta": str(pasta),
+    }
+
+
+def definir_whatsapp_numeros(paj_norm: str, numeros: list[str]) -> dict | None:
+    """Escolha MANUAL de quais telefones (já extraídos do SISDPU) valem como
+    WhatsApp — o SISDPU não distingue isso, então é o único dado de Contatos
+    que não vem da sincronização. Persiste em metadata.json (sobrevive a
+    re-sincronizações — ver `_montar_contatos` em ingestao/sincronizador.py).
+
+    Retorna o `contatos` atualizado, ou None se o PAJ não existir."""
+    pasta = PAJS_DIR / paj_norm
+    meta_path = pasta / "metadata.json"
+    if not meta_path.exists():
+        return None
+
+    metadata = _ler_json(meta_path) or {}
+    numeros_validos = [n.strip() for n in (numeros or []) if n and n.strip()]
+    metadata["whatsapp_numeros"] = numeros_validos
+    contatos = metadata.get("contatos") or {
+        "app_sisdpu": False, "telefone": False, "whatsapp": False,
+        "email": False, "endereco": False,
+    }
+    contatos["whatsapp"] = bool(numeros_validos)
+    metadata["contatos"] = contatos
+
+    meta_path.write_text(
+        json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
+        encoding="utf-8",
+    )
+    return contatos
+
+
+async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
+    """Efeitos após uma execução do console genérico "Ações no SISDPU"
+    (`static/js/acoes_sisdpu.js`) NA PÁGINA DO PAJ — seja pelo próprio console
+    (movimentar/tramitar/concluir) ou pelo atalho "Concluir PAJ da Caixa de
+    Entrada" do cabeçalho (que roda o mesmo endpoint com concluir=1): registra
+    a atividade no Histórico do painel e, quando o trâmite foi de fato
+    concluído, marca o PAJ como fora da caixa (`em_caixa_atual=False`) — some
+    do dashboard/caixa de entrada IMEDIATAMENTE, sem esperar a próxima
+    sincronização.
+
+    IMPORTANTE — PAJ com MAIS DE UM trâmite pendente na caixa (comum: o mesmo
+    processo tramitado pra grupos/pessoas diferentes em momentos diferentes,
+    cada um com seu próprio `id_tramite`): concluir_paj() só afeta o
+    id_tramite ESPECÍFICO passado — nunca conclui "tudo daquele PAJ" de uma
+    vez. Por isso, antes de marcar `em_caixa_atual=False`, confirmamos AO VIVO
+    (`sisdpu_movtram.caixas_abertas_paj`) que não resta NENHUM outro trâmite
+    aberto pra este PAJ — senão o PAJ sumiria do dashboard com pendência real
+    ainda na caixa. Falha ao confirmar (sessão caiu, etc.) = não esconde (erra
+    pro lado seguro: falso "ainda na caixa" é preferível a falso "concluído").
+
+    Mesma lógica de `retornos_service.registrar_pos_execucao`, adaptada pra
+    PAJs abertos direto pela própria página (não pelo store da aba Retornos).
+    `resultado` é o payload enriquecido que `acoesSisdpuBlock.onExecutado`
+    devolve (ok/status/concluido/tramitado_para/fase/descricao_mov_texto/...).
+    """
+    pasta = PAJS_DIR / paj_norm
+    meta_path = pasta / "metadata.json"
+    if not meta_path.exists():
+        return {"ok": False, "detalhe": "PAJ não encontrado."}
+
+    status = (resultado or {}).get("status")
+    ok = bool((resultado or {}).get("ok"))
+    ja_ausente = status == "ja_ausente"
+    if not (ok or ja_ausente):
+        return {"ok": False, "detalhe": "Execução sem êxito — nada a registrar."}
+
+    metadata = _ler_json(meta_path) or {}
+    fase = ((resultado or {}).get("fase") or "").strip()
+    concluido = bool((resultado or {}).get("concluido"))
+    tram_caixa = (resultado or {}).get("tramitado_para") or ""
+    # "descricao_mov_texto" (TEXTO PURO, sem tags) é preferida pro Histórico — a
+    # movimentação pode ser HTML de verdade (editor rico Quill); os demais campos
+    # só entram como fallback de compatibilidade.
+    descricao_final = ((resultado or {}).get("descricao_mov_texto") or (resultado or {}).get("descricao_mov")
+                        or (resultado or {}).get("descricao_tram") or "").strip()
+
+    algo_efetivado = bool(concluido or tram_caixa or fase)
+    if algo_efetivado:
+        if concluido:
+            atividade = "Conclusão do PAJ na Caixa de Entrada"
+        elif tram_caixa:
+            atividade = "Tramitação do PAJ na Caixa de Entrada"
+        else:
+            atividade = "Movimentação do PAJ na Caixa de Entrada"
+        from services import historico_painel
+
+        historico_painel.registrar({
+            "paj": metadata.get("paj", ""), "paj_norm": paj_norm,
+            "assistido": metadata.get("assistido_caixa", ""),
+            "origem": "paj", "atividade": atividade,
+            "movimentacao": fase or "—", "tramitado_para": tram_caixa,
+            "concluido": concluido, "detalhe": descricao_final[:300],
+        })
+
+    saiu_da_caixa = False
+    outros_tramites_abertos = 0
+    if concluido or ja_ausente:
+        id_tramite_concluido = str((resultado or {}).get("idTramite") or "").strip()
+        tramitacoes_caixa = metadata.get("tramitacoes_caixa")
+
+        if tramitacoes_caixa is not None:
+            # Modelo novo: a lista já é escopada à MINHA caixa (ver
+            # ingestao.sincronizador._atualizar_tramitacoes_caixa) — remover o
+            # id concluído dali é suficiente, sem precisar de nova consulta ao
+            # vivo. Sem id_tramite informado (ex.: chamada antiga), não
+            # arrisca remover o item errado — não decide.
+            if id_tramite_concluido:
+                restantes = [
+                    t for t in tramitacoes_caixa
+                    if str(t.get("id_tramite") or "").strip() != id_tramite_concluido
+                ]
+                outros_tramites_abertos = len(restantes)
+                metadata["tramitacoes_caixa"] = restantes
+                if not restantes:
+                    from datetime import datetime
+
+                    metadata["em_caixa_atual"] = False
+                    metadata["concluido_em"] = datetime.now().isoformat(timespec="seconds")
+                    saiu_da_caixa = True
+                meta_path.write_text(
+                    json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
+                    encoding="utf-8",
+                )
+                invalidar_cache_listagem()
+        else:
+            # Modelo antigo (PAJ ainda não passou por uma sync com a lista) —
+            # confirma ao vivo se não resta nenhum outro trâmite (qualquer
+            # grupo/pessoa, não só minha caixa) antes de esconder do dashboard.
+            sisdpu_raw = metadata.get("sisdpu_raw", {}) or {}
+            url_detalhe = sisdpu_raw.get("url", "") or ""
+            m_id = re.search(r"[?&]id=(\d+)", url_detalhe)
+            id_processo = m_id.group(1) if m_id else ""
+
+            outros_abertos = None  # None = nao foi possivel confirmar (nao decide)
+            if id_processo:
+                from ingestao import sisdpu_movtram
+
+                try:
+                    outros_abertos = await sisdpu_movtram.caixas_abertas_paj(id_processo)
+                except Exception:  # noqa: BLE001
+                    outros_abertos = None
+
+            if outros_abertos == []:
+                from datetime import datetime
+
+                metadata["em_caixa_atual"] = False
+                metadata["concluido_em"] = datetime.now().isoformat(timespec="seconds")
+                meta_path.write_text(
+                    json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
+                    encoding="utf-8",
+                )
+                invalidar_cache_listagem()
+                saiu_da_caixa = True
+            elif outros_abertos:
+                outros_tramites_abertos = len(outros_abertos)
+
+    return {
+        "ok": True, "concluido": concluido, "saiu_da_caixa": saiu_da_caixa,
+        "outros_tramites_abertos": outros_tramites_abertos,
+    }
+
+
+async def concluir_tramites_caixa(paj_norm: str, id_tramites: list[str]) -> dict:
+    """Conclui uma ou mais tramitações ESPECÍFICAS da caixa de entrada deste
+    PAJ, cada uma pelo seu próprio `id_tramite` — chamado tanto pelo pill "N
+    trâmites" do dashboard (conclusão individual) quanto pelo modal de escolha
+    do botão "Concluir PAJ da Caixa de Entrada" quando há mais de uma
+    pendente (o usuário marca quais quer concluir de uma vez).
+
+    `movtram.concluir_paj()` já aceita uma lista de ids — aqui só orquestramos
+    o registro no Histórico (uma entrada por trâmite efetivamente concluído) e
+    a atualização de `tramitacoes_caixa`/`em_caixa_atual`."""
+    pasta = PAJS_DIR / paj_norm
+    meta_path = pasta / "metadata.json"
+    if not meta_path.exists():
+        return {"ok": False, "detalhe": "PAJ não encontrado."}
+
+    ids = [str(i).strip() for i in (id_tramites or []) if str(i).strip()]
+    if not ids:
+        return {"ok": False, "detalhe": "Nenhum trâmite selecionado."}
+
+    from ingestao import sisdpu_movtram
+
+    try:
+        res = await sisdpu_movtram.concluir_paj(ids)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "detalhe": f"{type(e).__name__}: {e}"}
+
+    resultados = res.get("resultados") or {}
+    if not resultados:
+        return {"ok": False, "detalhe": res.get("detalhe", "Falha ao concluir — sem resultado do SISDPU.")}
+
+    metadata = _ler_json(meta_path) or {}
+    tramitacoes_caixa = metadata.get("tramitacoes_caixa")
+
+    from services import historico_painel
+
+    concluidos_ok: list[str] = []
+    for i in ids:
+        r = resultados.get(i, {})
+        if r.get("concluido") or r.get("ja_ausente"):
+            concluidos_ok.append(i)
+            tramite_info = next(
+                (t for t in (tramitacoes_caixa or []) if t.get("id_tramite") == i), {}
+            )
+            historico_painel.registrar({
+                "paj": metadata.get("paj", ""), "paj_norm": paj_norm,
+                "assistido": metadata.get("assistido_caixa", ""),
+                "origem": "paj", "atividade": "Conclusão do PAJ na Caixa de Entrada",
+                "movimentacao": "—", "tramitado_para": "",
+                "concluido": True, "detalhe": (tramite_info.get("descricao") or "")[:300],
+            })
+
+    saiu_da_caixa = False
+    outros_tramites_abertos = 0
+    if tramitacoes_caixa is not None:
+        restantes = [t for t in tramitacoes_caixa if t.get("id_tramite") not in concluidos_ok]
+        outros_tramites_abertos = len(restantes)
+        metadata["tramitacoes_caixa"] = restantes
+        if not restantes:
+            from datetime import datetime
+
+            metadata["em_caixa_atual"] = False
+            metadata["concluido_em"] = datetime.now().isoformat(timespec="seconds")
+            saiu_da_caixa = True
+        meta_path.write_text(
+            json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
+            encoding="utf-8",
+        )
+        invalidar_cache_listagem()
+
+    return {
+        "ok": bool(concluidos_ok), "concluidos": concluidos_ok,
+        "saiu_da_caixa": saiu_da_caixa, "outros_tramites_abertos": outros_tramites_abertos,
+        "detalhe": res.get("detalhe", ""),
     }
 
 

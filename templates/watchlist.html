@@ -131,10 +131,14 @@
       </template>
 
       <template x-if="itens.length > 0">
+        <div class="overflow-x-auto">
         <table class="table table-sm">
           <thead>
             <tr class="text-xs uppercase tracking-wide text-base-content/60">
               <th>PAJ</th>
+              <th>Assistido</th>
+              <th>Ofício</th>
+              <th>Pretensão</th>
               <th>Motivo</th>
               <th>Status</th>
               <th class="text-right">Adicionado</th>
@@ -144,12 +148,46 @@
           <tbody>
             <template x-for="item in itens" :key="item.paj_norm">
               <tr class="wl-row" :class="item.status === 'encerrado' ? 'encerrado' : ''">
+                <!-- PAJ com menu global único (apenas um aberto por vez, igual ao dashboard) -->
                 <td class="font-mono text-xs whitespace-nowrap">
-                  <a :href="'/paj/' + item.paj_norm" class="link link-hover" x-text="formatPaj(item.paj_norm)"></a>
+                  <button class="link link-hover" title="Escolher onde abrir o PAJ"
+                          @click.stop="menuAbertoPaj = (menuAbertoPaj === item.paj_norm ? null : item.paj_norm);
+                                      if (menuAbertoPaj === item.paj_norm) {
+                                        const rect = $el.getBoundingClientRect();
+                                        posMenu = { top: rect.bottom + window.scrollY, left: rect.left + window.scrollX };
+                                      }"
+                          x-text="formatPaj(item.paj_norm)"></button>
                 </td>
-                <td class="text-sm max-w-[26rem]">
-                  <div class="truncate-1" :title="item.motivo" x-text="item.motivo || '—'"></div>
+                <!-- Assistido -->
+                <td class="text-sm">
+                  <div class="truncate-1 max-w-xs" :title="item.assistido" x-text="item.assistido || '—'"></div>
                 </td>
+                <!-- Ofício -->
+                <td class="text-sm max-w-[120px]">
+                  <div class="truncate-1" :title="item.oficio" x-text="item.oficio_sigla || item.oficio || '—'"></div>
+                </td>
+                <!-- Pretensão -->
+                <td class="text-sm max-w-xs">
+                  <span class="inline-block max-w-full truncate align-middle pretensao-badge"
+                        :class="corPretensao(item.pretensaopura)"
+                        :title="item.pretensaopura"
+                        x-text="formatarPretensao(item.pretensaopura) || '—'"></span>
+                </td>
+                <!-- Motivo (com botão editar) -->
+                <td class="text-sm max-w-xs">
+                  <div class="flex items-center gap-2 group">
+                    <div class="truncate-1 flex-1" :title="item.motivo" x-text="item.motivo || '—'"></div>
+                    <button class="btn btn-xs btn-ghost opacity-0 group-hover:opacity-100 transition-opacity"
+                            title="Editar motivo"
+                            @click="abrirModalEditarMotivo(item)">
+                      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"></path>
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"></path>
+                      </svg>
+                    </button>
+                  </div>
+                </td>
+                <!-- Status -->
                 <td>
                   <template x-if="item.status === 'ativo'">
                     <span class="badge badge-warning badge-sm">ativo</span>
@@ -158,7 +196,9 @@
                     <span class="badge badge-ghost badge-sm">encerrado</span>
                   </template>
                 </td>
+                <!-- Adicionado -->
                 <td class="text-right text-xs text-base-content/60 whitespace-nowrap" x-text="formatTime(item.adicionado_em)"></td>
+                <!-- Ações -->
                 <td class="text-right whitespace-nowrap">
                   <template x-if="item.status === 'ativo'">
                     <button class="btn btn-xs btn-ghost"
@@ -178,9 +218,23 @@
             </template>
           </tbody>
         </table>
+        </div>
       </template>
     </div>
   </div>
+
+  <!-- Menu global único (PAJ): sempre o mesmo elemento, reposicionado por clique.
+       @click.outside fecha ao clicar fora; o botão-gatilho usa @click.stop pra não
+       disparar esse mesmo listener no clique que abre/troca o menu. -->
+  <template x-teleport="body">
+    <ul x-show="menuAbertoPaj !== null" x-cloak
+        @click.outside="menuAbertoPaj = null"
+        :style="'position:fixed; top:' + posMenu.top + 'px; left:' + posMenu.left + 'px;'"
+        class="menu menu-xs bg-base-100 rounded-box z-[1000] w-44 p-1 shadow border border-base-300">
+      <li><a @click.stop="abrirPajPainel(menuAbertoPaj); menuAbertoPaj = null">Abrir no Painel</a></li>
+      <li><a @click.stop="abrirPajNavegador(formatPaj(menuAbertoPaj)); menuAbertoPaj = null">Abrir no navegador</a></li>
+    </ul>
+  </template>
 
   <!-- Modal: adicionar -->
   <dialog id="modal-novo-wl" class="modal">
@@ -234,6 +288,41 @@
     <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
   </dialog>
 
+  <!-- Modal: editar motivo -->
+  <dialog id="modal-editar-motivo-wl" class="modal">
+    <div class="modal-box max-w-lg">
+      <div class="flex items-center justify-between mb-4">
+        <div>
+          <h3 class="font-bold text-lg">Editar motivo da watchlist</h3>
+          <div class="text-xs text-base-content/60 mt-1" x-text="formatPaj(edicao.paj_norm)"></div>
+        </div>
+        <form method="dialog"><button class="btn btn-sm btn-ghost">X</button></form>
+      </div>
+
+      <form @submit.prevent="salvarEdicaoMotivo()" class="flex flex-col gap-3">
+        <label class="form-control">
+          <span class="label-text text-xs mb-1">Motivo</span>
+          <textarea class="textarea textarea-bordered text-sm"
+                    rows="4"
+                    placeholder="Ex: aguardando decisão do agravo, prazo curto, processo prioritário..."
+                    x-model="edicao.motivo"
+                    autofocus></textarea>
+        </label>
+
+        <div class="flex justify-end gap-2 mt-2">
+          <button type="button" class="btn btn-sm btn-ghost" @click="fecharModalEdicao()" :disabled="editando">Cancelar</button>
+          <button type="submit" class="btn btn-sm btn-primary" :disabled="editando">
+            <span x-show="!editando">Salvar</span>
+            <span x-show="editando" class="flex items-center gap-2">
+              <span class="loading loading-spinner loading-xs"></span>
+            </span>
+          </button>
+        </div>
+      </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
+  </dialog>
+
 </div>
 
 {% include "partials/sync_modal.html" %}
@@ -246,6 +335,10 @@ function watchlistApp() {
     novo: { paj_norm: '', motivo: '' },
     salvando: false,
     erro: '',
+    edicao: { paj_norm: '', motivo: '' },
+    editando: false,
+    menuAbertoPaj: null,  // Estado global: qual PAJ tem menu aberto
+    posMenu: { top: 0, left: 0 },  // Posição do menu
 
     async init() {
       await this.recarregar();
@@ -270,6 +363,38 @@ function watchlistApp() {
 
     fecharModalNovo() {
       document.getElementById('modal-novo-wl').close();
+    },
+
+    abrirModalEditarMotivo(item) {
+      this.edicao = { paj_norm: item.paj_norm, motivo: item.motivo || '' };
+      this.editando = false;
+      document.getElementById('modal-editar-motivo-wl').showModal();
+    },
+
+    fecharModalEdicao() {
+      document.getElementById('modal-editar-motivo-wl').close();
+    },
+
+    async salvarEdicaoMotivo() {
+      this.editando = true;
+      try {
+        const r = await fetch('/api/watchlist/' + encodeURIComponent(this.edicao.paj_norm) + '/motivo', {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ motivo: (this.edicao.motivo || '').trim() }),
+        });
+        if (!r.ok) {
+          showToast('Erro ao salvar motivo', 'error');
+          return;
+        }
+        this.fecharModalEdicao();
+        await this.recarregar();
+        showToast('Motivo atualizado', 'success');
+      } catch (e) {
+        showToast('Falha de rede', 'error');
+      } finally {
+        this.editando = false;
+      }
     },
 
     async salvar() {
@@ -377,6 +502,31 @@ function watchlistApp() {
         const d = new Date(iso);
         return d.toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
       } catch { return iso; }
+    },
+
+    // Delegam para funções globais definidas em app.js
+    corPretensao(pretensao) {
+      return window.corPretensao ? window.corPretensao(pretensao) : 'outro';
+    },
+
+    formatarPretensao(txt) {
+      return window.formatarPretensao ? window.formatarPretensao(txt) : txt;
+    },
+
+    abrirPajPainel(paj_norm) {
+      window.open('/paj/' + encodeURIComponent(paj_norm), '_blank');
+    },
+
+    abrirPajNavegador(paj_exibicao) {
+      // Tenta abrir via SISDPU ou eproc, conforme o defensor tenha aberto (variável global)
+      const paj_norm = pajExibicaoParaNorm(paj_exibicao);
+      const paj = this.itens.find(i => i.paj_norm === paj_norm);
+      if (!paj || !paj.processo_judicial) {
+        showToast('PAJ sem processo judicial vinculado', 'info');
+        return;
+      }
+      // Abre no navegador (exemplo via e-proc)
+      window.open('https://eproc.trf4.jus.br', '_blank');
     },
   };
 }

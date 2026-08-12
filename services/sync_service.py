@@ -157,10 +157,17 @@ async def rodar_sync_paj(
     Reutiliza o mesmo lock global — evita que uma sync da caixa inteira colida
     com uma sync pontual, e vice-versa.
 
-    Despacha pela watchlist: PAJs marcados pelo defensor entram pelo campo
-    de pesquisa global do SIS-DPU (`rodar_paj_via_busca_global`) — funciona
-    mesmo se ja saiu da caixa (concluido). PAJs nao-watchlist seguem pela
-    caixa (`rodar_paj_unico`).
+    NAO ha restricao de escopo aqui: sincronizar um PAJ avulso funciona esteja
+    ele na caixa de entrada ou nao (concluido, watchlist, incluido a mao). O
+    escopo "so' o que esta na caixa" e' exclusivo do botao "Sincronizar caixa"
+    do dashboard (`rodar_sync`).
+
+    Despacha pela watchlist so' por eficiencia: PAJs marcados pelo defensor
+    ja entram direto pelo campo de pesquisa global do SIS-DPU
+    (`rodar_paj_via_busca_global`), pulando a leitura da caixa. Os demais
+    entram por `rodar_paj_unico`, que tenta a caixa primeiro (unico caminho
+    que traz etiqueta/`em_caixa_atual` frescos) e, se o PAJ nao estiver la,
+    cai sozinho na busca global reaproveitando a sessao aberta.
     """
     paj_norm = _paj_identificador_para_norm(paj_identificador)
     na_watchlist = bool(paj_norm) and watchlist_service.is_watched(paj_norm)

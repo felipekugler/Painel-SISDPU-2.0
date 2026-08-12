@@ -27,7 +27,7 @@ from config import (
     TIMEOUT_OCR_POR_PAGINA_SEG,
     TIMEOUT_TOTAL,
 )
-from ingestao import ocr, parser, sisdpu_client
+from ingestao import ocr, parser, sisdpu_client, sisdpu_movtram
 import contextlib
 
 
@@ -74,6 +74,65 @@ def _remover_html(texto: str) -> str:
     # Normaliza múltiplos espaços/quebras de linha em um único espaço
     normalizado = re.sub(r'\s+', ' ', sem_html)
     return normalizado.strip()
+
+
+def _preservar_descricao_retorno_antiga(mov_estruturadas: list[dict], movs_antigas: list[dict]) -> None:
+    """Preserva `descricao_retorno` de uma sincronizacao ANTERIOR pra
+    movimentacoes que vieram vazias nesta sincronizacao — mutando
+    `mov_estruturadas` in-place.
+
+    `descricao_retorno` (o texto real de um "Atendimento de retorno") vem de
+    uma segunda passagem no SISDPU que clica pra expandir cada linha de
+    retorno e le o conteudo — sujeita a race condition quando o PAJ tem
+    varias movimentacoes de retorno (AJAX em paralelo; ver `_wait_pf_ajax`
+    em `sisdpu_client.py`). Sem isso, uma sincronizacao que tropecasse nessa
+    race iria APAGAR um valor que uma sincronizacao anterior ja tinha
+    capturado certo — mesmo padrao de preservacao ja usado acima pra
+    `foto_assistido` e pra `whatsapp_numeros`."""
+    antigas_por_seq = {
+        str(mov_antiga.get("seq")): mov_antiga["descricao_retorno"]
+        for mov_antiga in movs_antigas
+        if mov_antiga.get("descricao_retorno")
+    }
+    for mov in mov_estruturadas:
+        if not mov.get("descricao_retorno"):
+            antiga = antigas_por_seq.get(str(mov.get("seq")))
+            if antiga:
+                mov["descricao_retorno"] = antiga
+
+
+def _montar_contatos(det: dict, meta_antiga: dict) -> dict:
+    """Monta o bloco `contatos` do metadata a partir do `det` fresco do SISDPU.
+
+    App SISDPU / Telefone / E-mail / Endereço vêm direto da extração desta
+    sincronização (sisdpu_client já visitou o Cadastro de Pessoa Física de
+    cada assistido). WhatsApp é a ÚNICA exceção: o SISDPU não distingue "este
+    telefone é WhatsApp" de um telefone comum — é uma escolha manual do
+    usuário (ver `services/contatos_service.py` / endpoint de definir
+    WhatsApp) — por isso `whatsapp_numeros` é lido do metadata ANTERIOR
+    (preservado através de re-sincronizações) em vez de recalculado aqui.
+
+    Retorna {"contatos": {...5 bool...}, "telefones": [...], "emails": [...],
+    "enderecos": [...], "whatsapp_numeros": [...]} pronto pra gravar direto em
+    `metadata` (chaves de topo, sobrevivem a `metadata["sisdpu_raw"] = det`).
+    """
+    telefones = det.get("telefones") or []
+    emails = det.get("emails") or []
+    enderecos = det.get("enderecos") or []
+    whatsapp_numeros = meta_antiga.get("whatsapp_numeros") or []
+    return {
+        "contatos": {
+            "app_sisdpu": bool(det.get("contato_app_sisdpu")),
+            "telefone": bool(telefones),
+            "whatsapp": bool(whatsapp_numeros),
+            "email": bool(emails),
+            "endereco": bool(enderecos),
+        },
+        "telefones": telefones,
+        "emails": emails,
+        "enderecos": enderecos,
+        "whatsapp_numeros": whatsapp_numeros,
+    }
 
 
 def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
@@ -811,6 +870,11 @@ async def _processar_paj_pos_detalhamento(
     elif foto_path.exists():
         metadata["foto_assistido"] = "foto_assistido.jpg"
 
+    # Contatos (App SISDPU/Telefone/WhatsApp/E-mail/Endereço) — extraídos
+    # diretamente do SISDPU nesta sincronização (leve ou completa); painel
+    # autônomo, não depende de nenhum outro sistema. Ver `_montar_contatos`.
+    metadata.update(_montar_contatos(det, meta_antiga))
+
     # Preenchido abaixo (se houver movimentacoes) e usado no bloco de anexos,
     # mais adiante, pra nomear os arquivos baixados com a seq real.
     seq_por_file_id: dict[str, int] = {}
@@ -819,6 +883,7 @@ async def _processar_paj_pos_detalhamento(
     # (evita parsing regex que perde campos como movimentacao, fases, usuario, anexo)
     if det.get("movimentacoes"):
         mov_estruturadas = parser.parsear_movimentacoes_estruturadas(det["movimentacoes"])
+        _preservar_descricao_retorno_antiga(mov_estruturadas, movs_antigas)
         if "detalhes_sisdpu" not in metadata:
             metadata["detalhes_sisdpu"] = {}
         metadata["detalhes_sisdpu"]["movimentacoes"] = mov_estruturadas
@@ -1060,6 +1125,87 @@ def _apagar_anexos_pasta(pasta: Path, log: Callable[[str], None]) -> tuple[int, 
     return (removidos, bytes_lib)
 
 
+async def _atualizar_tramitacoes_caixa(
+    pajs_na_caixa: set[str],
+    log: Callable[[str], None],
+) -> int:
+    """Grava `tramitacoes_caixa` (lista) no metadata de cada PAJ ainda na caixa:
+    TODAS as tramitações GERAIS (exclui Retornos/SAT, que têm fluxo próprio e
+    ficam de fora daqui) pendentes na caixa de entrada do usuário, com
+    `id_tramite` individualizado — permite ao dashboard mostrar quantas
+    existem e concluir cada uma isoladamente (ver `services/paj_service` e
+    `templates/dashboard.html`).
+
+    Comum o mesmo PAJ ter mais de uma tramitação pendente simultânea — antes,
+    cada uma sobrescrevia a anterior no metadata (etiqueta/descrição/data);
+    agora todas convivem lado a lado, sem conflito.
+
+    Fonte: `sisdpu_movtram.listar_caixa_estruturada()` — a MESMA leitura por
+    linha (data-rk) já usada por Retornos/SAT, com id_tramite, remetente e
+    prazo por tramitação (o scrape mais simples usado no resto deste módulo
+    só devolve texto solto, sem id por linha — não serve pra isto).
+
+    Só toca PAJs que JÁ TÊM metadata.json (PAJ nunca sincronizado localmente
+    não entra aqui — o laço principal cuida disso na primeira sincronização).
+    """
+    from services import categorias_caixa
+
+    try:
+        res = await sisdpu_movtram.listar_caixa_estruturada()
+    except Exception as e:  # noqa: BLE001
+        log(f"  [tramitacoes] falha ao ler caixa estruturada: {type(e).__name__}: {e}")
+        return 0
+    if not res.get("ok"):
+        log(f"  [tramitacoes] {res.get('detalhe', 'não foi possível ler a caixa estruturada')}")
+        return 0
+
+    por_paj: dict[str, list[dict]] = {}
+    for it in res.get("itens", []) or []:
+        paj_txt = (it.get("paj") or "").strip()
+        if not paj_txt:
+            continue
+        paj_norm = _normalizar_paj(paj_txt)
+        categoria = categorias_caixa.classificar(it.get("descricao", ""), it.get("linha_texto", ""))
+        if categoria:  # retorno/sat -> fluxo próprio, não entra na lista geral
+            continue
+        por_paj.setdefault(paj_norm, []).append({
+            "id_tramite": it.get("id_tramite", ""),
+            "id_processo": it.get("id", ""),
+            "descricao": it.get("descricao", ""),
+            "data_envio": it.get("data_envio", ""),
+            "remetente": it.get("remetente", ""),
+            "prazo": it.get("prazo", ""),
+        })
+
+    # PAJs a atualizar: todo PAJ ainda na caixa (geral ou não) — os só-retorno/
+    # só-sat também ficam com tramitacoes_caixa=[] explícito (nunca aparecem
+    # no dashboard geral de qualquer forma, mas o campo fica consistente).
+    atualizados = 0
+    for paj_norm in pajs_na_caixa:
+        meta_path = PAJS_DIR / paj_norm / "metadata.json"
+        if not meta_path.exists():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        novas = por_paj.get(paj_norm, [])
+        if meta.get("tramitacoes_caixa") == novas:
+            continue  # sem mudança
+        meta["tramitacoes_caixa"] = novas
+        try:
+            meta_path.write_text(
+                json.dumps(meta, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+            atualizados += 1
+        except Exception as e:  # noqa: BLE001
+            log(f"  [tramitacoes] falha ao gravar {paj_norm}: {type(e).__name__}: {e}")
+    if atualizados:
+        log(f"  [tramitacoes] {atualizados} PAJ(s) com tramitacoes_caixa atualizado")
+    return atualizados
+
+
 def _reconciliar_concluidos(
     pajs_na_caixa: set[str],
     log: Callable[[str], None],
@@ -1112,6 +1258,7 @@ def _reconciliar_concluidos(
         agora = datetime.now().isoformat(timespec="seconds")
         meta["em_caixa_atual"] = False
         meta["concluido_em"] = agora
+        meta["tramitacoes_caixa"] = []  # saiu da caixa por completo — zero tramitacoes
         # Limpa campo legado se presente (compat com metadata.json antigos)
         meta.pop("arquivado_em", None)
 
@@ -1267,11 +1414,23 @@ async def rodar(
             await sisdpu_client.fechar()
         return resumo
 
+    # Comum o mesmo PAJ ter mais de uma tramitação pendente na caixa (aparece
+    # mais de uma vez em `itens`) — o detalhamento/anexos/movs são os MESMOS
+    # PARA O PROCESSO independente de qual tramitação disparou, então
+    # processamos por completo só na PRIMEIRA ocorrência; as demais só
+    # precisam entrar em `pajs_na_caixa` (as tramitações individualizadas de
+    # cada uma são gravadas depois, em bloco, por `_atualizar_tramitacoes_caixa`).
+    vistos: set[str] = set()
     for i, item in enumerate(itens, start=1):
         if _cancelado():
             log(f"[sync] CANCELADO pelo usuário após {i - 1}/{len(itens)} PAJs")
             resumo["cancelado"] = True
             break
+        paj_norm_item = _normalizar_paj(item.get("paj", "") or "")
+        if paj_norm_item and paj_norm_item in vistos:
+            log(f"[{i}/{len(itens)}] {item.get('paj', '?')} — outra tramitação do mesmo PAJ, já sincronizado nesta rodada")
+            pajs_na_caixa.add(paj_norm_item)
+            continue
         log(f"[{i}/{len(itens)}] {item.get('paj', '?')}")
         try:
             paj_norm, ok = await _processar_paj(
@@ -1283,6 +1442,7 @@ async def rodar(
             )
             if paj_norm:
                 pajs_na_caixa.add(paj_norm)
+                vistos.add(paj_norm)
             if ok:
                 resumo["processados"] += 1
         except Exception as e:
@@ -1305,6 +1465,13 @@ async def rodar(
     resumo["concluidos"] = concluidos
     if concluidos:
         log(f"[sync] {concluidos} PAJ(s) marcados como concluídos")
+
+    # Tramitações individualizadas (id_tramite por linha) dos PAJs ainda na
+    # caixa — permite ao dashboard mostrar/concluir cada uma separadamente
+    # quando há mais de uma pro mesmo PAJ (comum no SISDPU).
+    log("[sync] atualizando tramitações individualizadas da caixa...")
+    with contextlib.suppress(Exception):
+        await _atualizar_tramitacoes_caixa(pajs_na_caixa, log)
 
     # Resumo de PAJs com anexos pendentes (overflow do limite de 30) e
     # PAJs com sincronizacao incompleta (cancelados mid-PAJ).
@@ -1682,8 +1849,13 @@ async def rodar_paj_unico(
 
     `paj_identificador` aceita tanto '2021/044-00635' quanto 'PAJ-2021-044-00635'.
 
-    Exige que o PAJ esteja na caixa de entrada atual (para localizar o link
-    na tela da caixa e clicar nele).
+    Entra PREFERENCIALMENTE pela caixa de entrada (clicando no link da tela da
+    caixa) — esse caminho e' o unico que traz `etiqueta_sisdpu` e confirma
+    `em_caixa_atual`. Se o PAJ NAO estiver na caixa (concluido, de outro
+    defensor, watchlist...), NAO aborta: cai automaticamente para a busca
+    global do SIS-DPU (`rodar_paj_via_busca_global`), reaproveitando a sessao
+    ja aberta. Ou seja, sincronizar um PAJ avulso nunca fica preso ao escopo
+    da caixa — esse escopo e' exclusivo da sync da caixa (`rodar`).
     """
 
     def log(msg: str) -> None:
@@ -1723,11 +1895,19 @@ async def rodar_paj_unico(
             break
 
     if not item_alvo:
-        log(f"[sync-paj] PAJ {alvo} NÃO encontrado na caixa atual")
-        resumo["erros"].append("PAJ fora da caixa")
-        with contextlib.suppress(Exception):
-            await sisdpu_client.fechar()
-        return resumo
+        # Fora da caixa nao e' erro: e' o caso normal de PAJ concluido, de
+        # watchlist ou incluido manualmente. Segue pela pesquisa global do
+        # SIS-DPU REAPROVEITANDO a sessao ja logada (forcar_sessao=False) —
+        # `rodar_paj_via_busca_global` fecha o navegador no fim.
+        log(f"[sync-paj] PAJ {alvo} não está na caixa atual — seguindo pela busca global do SIS-DPU")
+        return await rodar_paj_via_busca_global(
+            alvo,
+            log_callback,
+            deve_cancelar=deve_cancelar,
+            baixar_anexos=baixar_anexos,
+            rodar_ocr=rodar_ocr,
+            forcar_sessao=False,
+        )
 
     if not baixar_anexos:
         log("[sync-paj] modo RÁPIDO — anexos NÃO serão baixados")
@@ -1778,6 +1958,7 @@ async def rodar_paj_via_busca_global(
     deve_cancelar: Callable[[], bool] | None = None,
     baixar_anexos: bool = True,
     rodar_ocr: bool = False,
+    forcar_sessao: bool = True,
 ) -> dict:
     """Sincroniza UM PAJ via o campo de pesquisa global do SIS-DPU.
 
@@ -1795,6 +1976,10 @@ async def rodar_paj_via_busca_global(
       - `via_watchlist`, `concluido_em`, `n_anexos_removidos` — preservados.
 
     `paj_identificador` aceita 'PAJ-2026-044-00311' ou '2026/044-00311'.
+
+    `forcar_sessao=False` reaproveita a sessao Playwright ja aberta em vez de
+    fechar e relogar do zero — usado pelo fallback de `rodar_paj_unico`, que
+    ja abriu a caixa (e portanto ja esta logado).
     """
 
     def log(msg: str) -> None:
@@ -1823,7 +2008,8 @@ async def rodar_paj_via_busca_global(
     log("[busca-global] pesquisando no campo global do SIS-DPU...")
 
     try:
-        det = await sisdpu_client.buscar_paj_global(numero, ano, unidade)
+        det = await sisdpu_client.buscar_paj_global(
+            numero, ano, unidade, forcar_sessao=forcar_sessao)
     except Exception as e:
         log(f"[FATAL] falha na busca global: {type(e).__name__}: {e}")
         resumo["erros"].append(f"busca: {e}")
@@ -2036,6 +2222,15 @@ async def buscar_resumo_via_busca(
     pasta.mkdir(parents=True, exist_ok=True)
     (pasta / "sisdpu.txt").write_text(texto_sisdpu, encoding="utf-8")
 
+    # Metadata anterior (se este PAJ ja tinha sido sincronizado antes por outro
+    # caminho) — usado so' pra preservar a escolha manual de WhatsApp, que nao
+    # vem do SISDPU (ver `_montar_contatos`).
+    meta_antiga: dict = {}
+    with contextlib.suppress(Exception):
+        meta_path_antiga = pasta / "metadata.json"
+        if meta_path_antiga.exists():
+            meta_antiga = json.loads(meta_path_antiga.read_text(encoding="utf-8"))
+
     try:
         metadata = parser.montar_metadata(paj_norm, texto_sisdpu)
     except Exception as e:
@@ -2049,10 +2244,13 @@ async def buscar_resumo_via_busca(
         }
 
     metadata["sisdpu_raw"] = det
+    metadata.update(_montar_contatos(det, meta_antiga))
 
     # Se temos movimentacoes estruturadas do sisdpu_client, usa direto sem perda
     if det.get("movimentacoes"):
         mov_estruturadas = parser.parsear_movimentacoes_estruturadas(det["movimentacoes"])
+        movs_antigas = (meta_antiga.get("detalhes_sisdpu", {}) or {}).get("movimentacoes", []) or []
+        _preservar_descricao_retorno_antiga(mov_estruturadas, movs_antigas)
         if "detalhes_sisdpu" not in metadata:
             metadata["detalhes_sisdpu"] = {}
         metadata["detalhes_sisdpu"]["movimentacoes"] = mov_estruturadas

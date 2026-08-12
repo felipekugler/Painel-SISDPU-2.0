@@ -3,6 +3,7 @@
 {% block title %}Arquivos SAT Central{% endblock %}
 
 {% block content %}
+
 <div x-data="satPage()" x-init="init()">
 
     <div class="flex items-center justify-between mb-2">
@@ -144,10 +145,15 @@
                         <tbody>
                             <tr class="hover">
                                 <td class="font-mono whitespace-nowrap">
-                                    <a x-show="p.url_detalhe" :href="p.url_detalhe" target="_blank" rel="noopener"
-                                       class="link link-hover" style="color:var(--accent)"
-                                       title="Abrir o PAJ no SISDPU (conferir a anexação)" x-text="p.paj"></a>
-                                    <span x-show="!p.url_detalhe" x-text="p.paj"></span>
+                                    <button class="link" style="color:var(--accent)"
+                                            title="Escolher onde abrir o PAJ"
+                                            @click.stop="menuAbertoPaj = (menuAbertoPaj === p.paj_norm ? null : p.paj_norm);
+                                                        menuAbertoPajLabel = p.paj;
+                                                        if (menuAbertoPaj === p.paj_norm) {
+                                                          const rect = $el.getBoundingClientRect();
+                                                          posMenu = { top: rect.bottom + window.scrollY, left: rect.left + window.scrollX };
+                                                        }"
+                                            x-text="p.paj"></button>
                                     <span x-show="p.manual" class="badge badge-outline badge-xs ml-1" title="Adicionado manualmente — sem trâmite na caixa (não conclui)">manual</span>
                                     <button x-show="p.manual" class="btn btn-ghost btn-xs text-error px-1" :disabled="rodando"
                                             @click="removerManual(p)" title="Remover este PAJ manual da lista">✕</button>
@@ -703,6 +709,17 @@
         <div class="modal-backdrop" @click="logDlAberto=false"></div>
     </div>
 
+    <!-- Menu global único (PAJ): sempre o mesmo elemento, reposicionado por clique. -->
+    <template x-teleport="body">
+        <ul x-show="menuAbertoPaj !== null" x-cloak
+            @click.outside="menuAbertoPaj = null"
+            :style="'position:fixed; top:' + posMenu.top + 'px; left:' + posMenu.left + 'px;'"
+            class="menu menu-xs bg-base-100 rounded-box z-[1000] w-44 p-1 shadow border border-base-300">
+            <li><a @click.stop="abrirPajPainel(menuAbertoPaj); menuAbertoPaj = null">Abrir no Painel</a></li>
+            <li><a @click.stop="abrirPajNavegador(menuAbertoPajLabel); menuAbertoPaj = null">Abrir no navegador</a></li>
+        </ul>
+    </template>
+
 </div>
 {% endblock %}
 
@@ -790,6 +807,9 @@ function satPage() {
         instModal: false, instCpf: '', instNome: '', instAlvo: null,
         baixarMaisModal: false, bmAlvo: null, bmCpfPorEscopo: { assistido: '', instituidor: '' }, bmSel: [], bmLista: [], bmCarregando: false, bmModo: 'concluido', bmSemInventario: false,
         amModal: false, amAlvo: null, amLista: [], amSel: [], amCarregando: false,
+        menuAbertoPaj: null,
+        menuAbertoPajLabel: '',
+        posMenu: { top: 0, left: 0 },
 
         async init() {
             // NÃO abrir o navegador ao carregar a aba: checagem LEVE (peek) só LÊ o estado

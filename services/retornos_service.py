@@ -756,7 +756,12 @@ async def registrar_pos_execucao(id_tramite: str, resultado: dict) -> dict:
     fase = ((resultado or {}).get("fase") or "").strip()
     concluido = bool((resultado or {}).get("concluido"))
     tram_caixa = (resultado or {}).get("tramitado_para") or ""
-    descricao_final = ((resultado or {}).get("descricao_mov") or (resultado or {}).get("descricao_tram") or "").strip() or (
+    # "descricao_mov_texto" (versão em TEXTO PURO, sem tags) é preferida pro Histórico —
+    # a movimentação hoje pode ser HTML de verdade (editor rico Quill); "descricao_mov"
+    # cru só entra como fallback de compatibilidade (chamadores antigos que não mandem
+    # o campo texto).
+    descricao_final = ((resultado or {}).get("descricao_mov_texto") or (resultado or {}).get("descricao_mov")
+                        or (resultado or {}).get("descricao_tram") or "").strip() or (
         rec.get("sugestao_editada") or rec.get("sugestao_ia") or "").strip()
 
     algo_efetivado = bool(concluido or tram_caixa or fase)

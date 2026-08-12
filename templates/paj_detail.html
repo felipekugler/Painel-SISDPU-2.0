@@ -54,6 +54,26 @@
     // validação), direto de sisdpu_raw (ou sintetizada a partir dos campos
     // singulares em PAJs antigos — ver `processos_raw` no topo do arquivo).
     window._paj_processos_judiciais_completo = {{ processos_raw | tojson }};
+    // Audiências cadastradas no SISDPU (tabela dedicada — ver ingestao/sisdpu_client.py
+    // extrairAudiencias) — nível do PAJ, exibidas na mesma seção "Processo Judicial".
+    window._paj_audiencias = {{ (sisdpu_raw.audiencias or []) | tojson }};
+    // Contatos (App SISDPU/Telefone/WhatsApp/E-mail/Correio) — extraídos direto
+    // do SISDPU na sincronização (ver ingestao/sisdpu_client.py); `temDados=false`
+    // so' quando o PAJ ainda nao foi sincronizado com esse recurso (precisa
+    // resincronizar). WhatsApp e' a unica excecao: escolha manual do usuario.
+    window._paj_contatos = {
+      temDados: {{ 'true' if meta.get('contatos') is not none else 'false' }},
+      contatos: {{ (meta.contatos or {}) | tojson }},
+      telefones: {{ (meta.telefones or []) | tojson }},
+      emails: {{ (meta.emails or []) | tojson }},
+      enderecosFmt: {{ ((meta.enderecos or []) | map('formatar_endereco_contato') | list) | tojson }},
+      whatsappNumeros: {{ (meta.whatsapp_numeros or []) | tojson }},
+    };
+    // Tramitações GERAIS pendentes na caixa de entrada deste PAJ (pode ser
+    // mais de uma — ver ingestao/sincronizador._atualizar_tramitacoes_caixa).
+    // Usado pelo botão "Concluir PAJ da Caixa de Entrada" pra saber se precisa
+    // abrir o modal de escolha (N>1) ou seguir direto (N<=1).
+    window._paj_tramitacoes_caixa = {{ (meta.tramitacoes_caixa or []) | tojson }};
     // Config inicial da tabela COMPARTILHADA de movimentações (partials/movimentacoes_tabela.html).
     window.__movInicial = {
       movs: window._paj_movimentacoes,
@@ -169,7 +189,7 @@
 <!-- Card principal do PAJ: identidade do assistido em destaque, foto (quando o
      SISDPU tem uma cadastrada), PAJ/CPF, badges e acoes — tudo num so lugar. -->
 <div class="card bg-base-100 border border-base-300 shadow-sm mb-6"
-     x-data="{ copied: null, watched: false, loading: false, async init() { await this.checkWatched(); }, async checkWatched() { try { const r = await fetch('/api/watchlist/check/' + encodeURIComponent('{{ paj_norm }}')); const data = await r.json(); this.watched = !!data.watched; } catch (e) { this.watched = false; } }, async removeFromWatchlist() { if (!confirm('Remover {{ paj_norm }} da watchlist?')) return; this.loading = true; try { const r = await fetch('/api/watchlist/' + encodeURIComponent('{{ paj_norm }}'), { method: 'DELETE' }); if (!r.ok) { showToast('Erro ao remover', 'error'); return; } showToast('Removido da watchlist', 'info'); await this.checkWatched(); } catch (e) { showToast('Falha de rede', 'error'); } finally { this.loading = false; } } }"
+     x-data="{ copied: null, watched: false, loading: false, async init() { await this.checkWatched(); }, async checkWatched() { try { const r = await fetch('/api/watchlist/check/' + encodeURIComponent('{{ paj_norm }}')); const data = await r.json(); this.watched = !!data.watched; } catch (e) { this.watched = false; } }, async toggleWatched() { this.loading = true; try { this.watched = await toggleWatchlist('{{ paj_norm }}', this.watched); } finally { this.loading = false; } } }"
      @init="init()">
     <div class="card-body p-5">
         <div class="flex flex-col lg:flex-row lg:items-start gap-5">
@@ -202,12 +222,27 @@
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2 mt-1.5">
-                    <span class="badge badge-lg font-mono font-semibold border border-base-content/10">{{ meta.paj }}</span>
+                    <div class="dropdown">
+                        <div tabindex="0" role="button" class="badge badge-lg font-mono font-semibold border border-base-content/10 cursor-pointer"
+                             title="Escolher onde abrir o PAJ">{{ meta.paj }}</div>
+                        <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-44 p-1 shadow border border-base-300">
+                            <li><a onclick="abrirPajPainel('{{ paj_norm }}')">Abrir no Painel</a></li>
+                            <li><a onclick="abrirPajNavegador('{{ meta.paj }}')">Abrir no navegador</a></li>
+                        </ul>
+                    </div>
                     <button @click="navigator.clipboard.writeText('{{ meta.paj }}'); copied = 'paj'; setTimeout(() => copied = null, 2000)"
                             :title="copied === 'paj' ? 'Copiado!' : 'Copiar número do PAJ'"
                             class="btn btn-ghost btn-xs p-1 h-auto hover:bg-base-200">
                         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                        </svg>
+                    </button>
+                    <button type="button" @click="toggleWatched()" :disabled="loading"
+                            class="btn btn-ghost btn-xs p-1 h-auto hover:bg-base-200"
+                            :title="watched ? 'Remover da watchlist' : 'Adicionar à watchlist (acompanhamento prioritário)'">
+                        <svg class="w-4 h-4" :class="watched ? 'text-warning' : 'text-base-content/40'"
+                             :fill="watched ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
                         </svg>
                     </button>
 
@@ -223,36 +258,6 @@
                         </button>
                     </span>
                     {% endif %}
-
-                    <template x-if="!watched">
-                        <button class="btn btn-ghost btn-xs gap-1"
-                                onclick="document.getElementById('modal-watchlist-motivo').showModal()"
-                                :disabled="loading"
-                                title="Adicionar este PAJ à watchlist (acompanhamento prioritário)">
-                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
-                            </svg>
-                            Acompanhar
-                        </button>
-                    </template>
-                    <template x-if="watched">
-                        <button class="btn btn-success btn-outline btn-xs gap-1"
-                                @click="remover()"
-                                :disabled="loading"
-                                title="Remover da watchlist">
-                            <svg class="w-3 h-3" fill="currentColor" viewBox="0 0 24 24">
-                                <path d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
-                            </svg>
-                            Na watchlist
-                        </button>
-                    </template>
-
-                    <button type="button"
-                            onclick="(function(){ try { localStorage.removeItem('paj_seen_{{ paj_norm }}'); showToast('Marcado como não lido — recarregue para ver os destaques', 'info'); } catch(e){} })()"
-                            class="text-[11px] text-base-content/40 hover:text-info ml-auto underline-offset-2 hover:underline"
-                            title="Esquece a visita atual; movs e anexos voltam a ser destacados como novos no próximo refresh">
-                        ↺ não lido
-                    </button>
                 </div>
 
                 <div class="flex flex-wrap gap-3 mt-3 text-sm font-medium items-center">
@@ -268,75 +273,147 @@
                     <span class="text-base-content/60 text-xs" title="{{ meta.oficio_caixa }}">{{ meta.oficio_caixa | oficio_sigla }}</span>
                     {% endif %}
                 </div>
-
-                <!-- Info rapida: abertura / status / ultima movimentacao / ultima sync
-                     (antes era um card separado logo abaixo do header — unificado aqui). -->
-                <div class="flex flex-wrap gap-x-4 gap-y-1 mt-3 pt-3 border-t border-base-300 text-xs text-base-content/60">
-                    <span>Abertura: <span class="font-semibold text-base-content/80">{{ meta.data_abertura | data_br }}</span></span>
-                    <span>Status: <span class="font-semibold text-base-content/80">{{ det.status_paj or 'Ativo' }}</span></span>
-                    <span>Últ. movim.: <span class="font-semibold text-base-content/80">{{ dados.ultima_mov_data | data_br }}</span></span>
-                    {% if meta.data_mov_caixa %}
-                    <span>Última sincronização: <span class="font-semibold text-base-content/80">{{ meta.data_mov_caixa | data_br }}</span></span>
-                    {% endif %}
-                </div>
             </div>
 
-            <!-- Acoes de elaboracao: skills + Elaborar (sempre visivel, salvo quando
-                 rodando) + Ver Resumo (quando ha elaboracao concluida) + erro, se houver. -->
-            <div class="flex flex-col gap-2 lg:items-end shrink-0 lg:w-64"
-                 x-data="elaborarApp('{{ paj_norm }}')" x-init="init()">
-
-                {% if meta.sync_incompleto %}
-                <button class="btn btn-sm btn-disabled gap-1.5"
-                        disabled
-                        title="Re-sincronize este PAJ antes de elaborar — dados parciais.">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
-                    Elaborar (sincronize antes)
-                </button>
-                {% else %}
-                <!-- Select de skill + botao Elaborar: disponivel em idle/error/done.
-                     O label e' sempre "Elaborar" — o botao verde "Ver Resumo" ao lado
-                     ja sinaliza que existe uma elaboracao anterior. -->
-                <template x-if="status !== 'running'">
-                    <div class="flex flex-col gap-2 lg:items-end">
-                        <select class="select select-bordered select-sm w-full lg:max-w-xs"
-                                x-model="skillSlug"
-                                :disabled="skillsLoading">
-                            <option value="">Claude decide (automático)</option>
-                            <template x-for="grupo in grupos" :key="grupo">
-                                <optgroup :label="grupo">
-                                    <template x-for="s in skillsDoGrupo(grupo)" :key="s.slug">
-                                        <option :value="s.slug"
-                                                :title="s.descricao"
-                                                x-text="s.destaque ? ('★ ' + s.label) : s.label">
-                                        </option>
-                                    </template>
-                                </optgroup>
-                            </template>
-                        </select>
-                        <button class="btn btn-sm btn-primary" @click="iniciar()">
-                            Elaborar
-                        </button>
+            <!-- Contatos: quais meios de contato (App SISDPU, Telefone, WhatsApp,
+                 E-mail, Correio) o assistido tem cadastrados. App/Telefone/E-mail/
+                 Endereço vêm DIRETO do SISDPU a cada sincronização (painel autônomo,
+                 sem depender de nenhum outro sistema — ver ingestao/sisdpu_client.py).
+                 WhatsApp é a única exceção: o SISDPU não distingue "este telefone é
+                 WhatsApp" de um telefone comum, então é escolha manual (clique no
+                 ícone → escolhe entre os telefones extraídos), persistida em
+                 metadata.json. Clique nos demais ícones copia o valor. -->
+            <div class="shrink-0 lg:w-52" x-data="contatosApp('{{ paj_norm }}')">
+                <div class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 mb-1.5 lg:text-right">Contatos</div>
+                <template x-if="!temDados">
+                    <div class="text-[11px] text-base-content/40 lg:text-right" title="A extração de contatos foi adicionada depois da última sincronização deste PAJ.">
+                        Sincronize novamente para carregar
                     </div>
                 </template>
-                {% endif %}
+                <template x-if="temDados">
+                    <div class="flex items-center gap-1.5 lg:justify-end">
+                        <span class="contato-ic c-app" :class="contatos.app_sisdpu ? 'contato-on' : 'contato-off'"
+                              :title="'App SISDPU' + (contatos.app_sisdpu ? '' : ' — não cadastrado')">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 0 0 6 3.75v16.5a2.25 2.25 0 0 0 2.25 2.25h7.5A2.25 2.25 0 0 0 18 20.25V3.75a2.25 2.25 0 0 0-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" />
+                            </svg>
+                        </span>
+                        <span class="contato-ic c-tel" :class="[contatos.telefone ? 'contato-on' : 'contato-off', telefones.length ? 'cursor-pointer' : '']"
+                              :title="tituloTelefone()" @click="copiarTelefones()">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 4.5v2.25Z" />
+                            </svg>
+                        </span>
+                        <div class="relative">
+                            <span class="contato-ic c-zap" :class="[whatsappNumeros.length ? 'contato-on' : 'contato-off', telefones.length ? 'cursor-pointer' : '']"
+                                  :title="tituloWhatsapp()" @click="abrirWhatsapp()">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M8.625 9.75a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" />
+                                </svg>
+                            </span>
+                            <div x-show="popoverWhatsapp" x-cloak @click.outside="popoverWhatsapp = false"
+                                 class="absolute right-0 top-full mt-1 z-30 w-56 bg-base-100 border border-base-300 rounded-lg shadow-lg p-3 text-left">
+                                <div class="text-xs font-semibold mb-2">Quais são WhatsApp?</div>
+                                <template x-for="t in telefones" :key="t.numero">
+                                    <label class="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
+                                        <input type="checkbox" class="checkbox checkbox-xs checkbox-success"
+                                               :checked="selecaoWhatsapp.includes(t.numero)"
+                                               @change="toggleSelecao(t.numero)">
+                                        <span x-text="t.numero"></span>
+                                    </label>
+                                </template>
+                                <div class="flex justify-end gap-2 mt-2">
+                                    <button type="button" class="btn btn-ghost btn-xs" @click="popoverWhatsapp = false">Cancelar</button>
+                                    <button type="button" class="btn btn-success btn-xs" :disabled="salvandoWhatsapp" @click="salvarWhatsapp()">Salvar</button>
+                                </div>
+                            </div>
+                        </div>
+                        <span class="contato-ic c-mail" :class="[contatos.email ? 'contato-on' : 'contato-off', emails.length ? 'cursor-pointer' : '']"
+                              :title="tituloEmail()" @click="copiarEmails()">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 12a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Zm0 0c0 1.657 1.007 3 2.25 3S21 13.657 21 12a9 9 0 1 0-2.636 6.364M16.5 12V8.25" />
+                            </svg>
+                        </span>
+                        <span class="contato-ic c-addr" :class="[contatos.endereco ? 'contato-on' : 'contato-off', enderecosFmt.length ? 'cursor-pointer' : '']"
+                              :title="tituloEndereco()" @click="copiarEnderecos()">
+                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
+                            </svg>
+                        </span>
+                    </div>
+                </template>
+                <div x-show="copied" x-cloak class="text-[10px] text-success mt-1 lg:text-right">Copiado!</div>
+            </div>
+        </div>
 
-                <button class="btn btn-sm btn-warning"
-                        x-show="status === 'running'"
-                        disabled>
-                    <span class="loading loading-spinner loading-xs"></span>
-                    <span x-text="lastAction || 'trabalhando...'"></span>
-                </button>
+        <!-- Info rapida: abertura / status / ultima movimentacao / ultima sync — linha
+             de largura cheia, abaixo de identidade+Contatos (antes ficava só sob a
+             identidade). "Concluir PAJ da Caixa de Entrada" alinhado à direita na
+             mesma linha: atalho pra retirar o trâmite da caixa sem abrir o console
+             "Ações no SISDPU" completo (ver concluirPajCaixa() em app.js). -->
+        <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t border-base-300 text-xs text-base-content/60"
+             x-data="concluirPajModalApp('{{ paj_norm }}', '{{ dados.id_processo }}', '{{ meta.paj }}', '{{ dados.id_tramite }}')">
+            <span>Abertura: <span class="font-semibold text-base-content/80">{{ meta.data_abertura | data_br }}</span></span>
+            <span>Status: <span class="font-semibold text-base-content/80">{{ det.status_paj or 'Ativo' }}</span></span>
+            <span>Últ. movim.: <span class="font-semibold text-base-content/80">{{ dados.ultima_mov_data | data_br }}</span></span>
+            {% if meta.data_mov_caixa %}
+            <span>Última sincronização: <span class="font-semibold text-base-content/80">{{ meta.data_mov_caixa | data_br }}</span></span>
+            {% endif %}
+            {# Só existe quando há trâmite pendente na caixa de entrada — some por
+               completo (não fica desabilitado) quando não há nenhum. `tramitacoes_caixa`
+               (novo, autoritativo) decide quando presente; PAJs ainda não resincronizados
+               com essa lógica caem no fallback antigo (dados.id_tramite). #}
+            {% set _tramitacoes_meta = meta.get('tramitacoes_caixa') %}
+            {% if _tramitacoes_meta is not none %}
+                {% set _tem_tramite_caixa = _tramitacoes_meta | length > 0 %}
+            {% else %}
+                {% set _tem_tramite_caixa = (dados.id_tramite or '') | trim != '' %}
+            {% endif %}
+            {% if _tem_tramite_caixa %}
+            <button type="button" @click="abrir()"
+                    class="btn btn-sm btn-outline btn-concluir-caixa gap-1.5 ml-auto normal-case"
+                    title="Conclui trâmite(s) deste PAJ na caixa de entrada do SISDPU (retira da caixa)">
+                <!-- Ícone provisório (check-circle) — aguardando o ícone do SISDPU que
+                     você vai enviar, pra trocar por esse. -->
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"></path></svg>
+                Concluir PAJ da Caixa de Entrada
+            </button>
+            {% endif %}
 
-                <button class="btn btn-sm btn-success"
-                        x-show="status === 'done'"
-                        @click="verResumo()">
-                    Ver Resumo
-                </button>
-
-                <div x-show="status === 'error' && error" class="alert alert-error text-xs py-2 px-3">
-                    <span x-text="error"></span>
+            <!-- Modal de escolha — só quando há mais de uma tramitação geral
+                 pendente (ver abrir()). Mostra o "trâmite de trabalho" (o
+                 usado por Ações no SISDPU/e-proc) destacado e pré-marcado,
+                 mais os demais disponíveis pra concluir de uma vez. -->
+            <div class="modal" :class="{'modal-open': modalAberto}">
+                <div class="modal-box max-w-md text-left">
+                    <h3 class="font-bold text-base mb-1">Concluir PAJ da Caixa de Entrada</h3>
+                    <p class="text-xs text-base-content/60 mb-3">
+                        Este PAJ tem mais de uma tramitação pendente na caixa. Escolha quais concluir.
+                    </p>
+                    <div class="flex flex-col gap-2 max-h-80 overflow-y-auto">
+                        <template x-for="t in tramitacoes" :key="t.id_tramite">
+                            <label class="flex items-start gap-2 text-sm p-2 rounded-lg border cursor-pointer"
+                                   :class="t.id_tramite === idTramite ? 'border-primary bg-primary/5' : 'border-base-300'">
+                                <input type="checkbox" class="checkbox checkbox-sm mt-0.5" :value="t.id_tramite" x-model="selecionados">
+                                <span class="flex-1 min-w-0">
+                                    <span x-text="t.descricao || '—'"></span>
+                                    <span class="block text-[11px] text-base-content/50"
+                                          x-text="(t.remetente || '') + (t.remetente && t.data_envio ? ' · ' : '') + (t.data_envio || '')"></span>
+                                    <span x-show="t.id_tramite === idTramite" class="badge badge-primary badge-xs mt-1">trâmite de trabalho</span>
+                                </span>
+                            </label>
+                        </template>
+                    </div>
+                    <div class="modal-action">
+                        <button type="button" class="btn btn-sm btn-ghost" @click="modalAberto = false">Cancelar</button>
+                        <button type="button" class="btn btn-sm btn-error" :disabled="!selecionados.length || concluindo"
+                                @click="concluirSelecionados()">
+                            <span x-show="concluindo" class="loading loading-spinner loading-xs"></span>
+                            Concluir selecionados
+                        </button>
+                    </div>
                 </div>
+                <form method="dialog" class="modal-backdrop"><button type="button" @click="modalAberto = false">fechar</button></form>
             </div>
         </div>
     </div>
@@ -344,6 +421,81 @@
 
 {% include "partials/sync_modal.html" %}
 {% include "partials/limpeza_modal.html" %}
+
+<!-- Caixas onde o PAJ está aberto (idêntico ao módulo da Retornos — .ret-caixas
+     em base.html) + badge de "últimas tramitações" no canto direito da mesma
+     linha, no mesmo padrão do badge "N movimentações" do card Resumo IA da
+     Retornos: clique abre modal com a tabela do histórico completo. Uma única
+     chamada a /api/paj/<paj>/tramitacoes traz os dois blocos de dado (evita
+     duas navegações à mesma tela do SISDPU). -->
+<div x-data="caixasAbertasApp('{{ paj_norm }}')" x-init="init()">
+    <div class="ret-caixas mb-4 p-2 flex items-center flex-wrap gap-1">
+        <span class="ret-card-label !mb-0">Caixas onde o PAJ está aberto</span>
+        <span x-show="carregando" class="loading loading-spinner loading-xs ml-2"></span>
+        <template x-for="c in caixas" :key="c.local + c.data">
+            <span class="badge badge-outline ml-1" style="border-color:var(--accent);color:var(--accent)"
+                  :title="(c.remetente ? ('de ' + c.remetente + ' · ') : '') + (c.descricao || '')"
+                  x-text="c.local"></span>
+        </template>
+        <span x-show="!carregando && !falhouVerificacao && caixas.length === 0" class="text-base-content/40 text-xs ml-2">nenhuma tramitação em aberto</span>
+        <span x-show="!carregando && falhouVerificacao" class="text-warning text-xs ml-2 flex items-center gap-1.5" :title="erroVerificacao">
+            ⚠ não foi possível verificar agora
+            <button type="button" class="link link-hover text-[11px]" @click="carregar()">tentar de novo</button>
+        </span>
+
+        <button type="button" class="btn btn-ghost btn-xs ml-auto" @click="abrirHistorico()"
+                :disabled="carregando || falhouVerificacao || !tramitacoes.length"
+                title="Últimas tramitações deste PAJ (histórico completo, concluídas ou não)">
+            <span x-text="carregando ? '...' : (falhouVerificacao ? '—' : (tramitacoes.length + ' tramitações'))"></span>
+        </button>
+    </div>
+
+    <!-- Modal: últimas tramitações (mesmo estilo de tabela da aba Movimentações).
+         Cabeçalho (título + Fechar) FIXO no topo — nunca rola; só a tabela rola,
+         internamente, quando o conteúdo excede a altura do modal (10% menor que
+         o padrão do daisyUI: max-h-[72vh] em vez do ~80vh implícito). -->
+    <div class="modal" :class="{'modal-open': modalHistorico}">
+        <div class="modal-box max-w-[85vw] max-h-[72vh] flex flex-col p-0">
+            <div class="flex items-center justify-between gap-3 px-6 pt-5 pb-3 shrink-0 border-b border-base-300">
+                <h3 class="font-bold text-lg">Últimas tramitações — {{ meta.paj }}</h3>
+                <button type="button" class="btn btn-sm btn-circle btn-ghost"
+                        @click="modalHistorico = false" title="Fechar">✕</button>
+            </div>
+            <div class="overflow-y-auto overflow-x-auto flex-1 px-6 py-3">
+                <table class="table table-sm w-full">
+                    <thead class="bg-base-300 sticky top-0 z-10">
+                        <tr>
+                            <th>Data</th>
+                            <th>Grupo/Destinatário</th>
+                            <th>Remetente</th>
+                            <th>Descrição</th>
+                            <th>Conclusão</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="(t, idx) in tramitacoes" :key="idx">
+                            <tr :style="idx % 2 === 0
+                                    ? 'background-color: color-mix(in srgb, currentColor 3%, transparent);'
+                                    : 'background-color: color-mix(in srgb, currentColor 7%, transparent);'">
+                                <td class="text-xs whitespace-nowrap" x-text="t.data || '-'"></td>
+                                <td class="text-sm" x-text="t.local || '-'"></td>
+                                <td class="text-sm" x-text="t.remetente || '-'"></td>
+                                <td class="text-sm whitespace-normal break-words" x-text="t.descricao || '-'"></td>
+                                <td class="text-xs whitespace-nowrap" x-text="t.conclusao || '—'"></td>
+                            </tr>
+                        </template>
+                        <tr x-show="!tramitacoes.length">
+                            <td colspan="5" class="text-center text-base-content/40 text-sm py-4">
+                                Nenhuma tramitação encontrada.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button type="button" @click="modalHistorico = false">fechar</button></form>
+    </div>
+</div>
 
 <!-- Lembretes (seção própria, sempre visível por padrão) — nos moldes da
      ferramenta "Lembretes" do e-proc: mini-painel de cards coloridos, mais
@@ -443,7 +595,7 @@
      pro Alpine via `window._paj_processos_judiciais_completo` — nunca inline num
      atributo HTML (o JSON tem aspas duplas que quebrariam o atributo). -->
 {% if processos_raw %}
-<div x-data="processoJudicialBlock({ processos: window._paj_processos_judiciais_completo })" x-init="init()" class="mb-4">
+<div x-data="processoJudicialBlock({ processos: window._paj_processos_judiciais_completo, audiencias: window._paj_audiencias })" x-init="init()" class="mb-4">
     {% include "partials/processo_judicial.html" %}
 </div>
 {% endif %}
@@ -477,6 +629,56 @@
         <span class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Ações</span>
     </div>
     <div class="flex flex-wrap items-center gap-2">
+        <!-- Elaborar (skills) — movido do cabeçalho pra cá, pra abrir espaço lá
+             pro módulo "Contatos". Estado próprio via elaborarApp(). O botão
+             "Ver Resumo" foi removido definitivamente: quando há análise de
+             IA, ela já fica visível na seção retrátil "Análise feita pela IA". -->
+        <div class="flex items-center gap-2 flex-wrap" x-data="elaborarApp('{{ paj_norm }}')" x-init="init()">
+            {% if meta.sync_incompleto %}
+            <button class="btn btn-sm btn-disabled gap-1.5"
+                    disabled
+                    title="Re-sincronize este PAJ antes de elaborar — dados parciais.">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
+                Elaborar (sincronize antes)
+            </button>
+            {% else %}
+            <!-- Select de skill + botao Elaborar: disponivel em idle/error/done. -->
+            <template x-if="status !== 'running'">
+                <div class="flex items-center gap-2">
+                    <select class="select select-bordered select-sm w-52"
+                            x-model="skillSlug"
+                            :disabled="skillsLoading">
+                        <option value="">Claude decide (automático)</option>
+                        <template x-for="grupo in grupos" :key="grupo">
+                            <optgroup :label="grupo">
+                                <template x-for="s in skillsDoGrupo(grupo)" :key="s.slug">
+                                    <option :value="s.slug"
+                                            :title="s.descricao"
+                                            x-text="s.destaque ? ('★ ' + s.label) : s.label">
+                                    </option>
+                                </template>
+                            </optgroup>
+                        </template>
+                    </select>
+                    <button class="btn btn-sm btn-primary" @click="iniciar()">
+                        Elaborar
+                    </button>
+                </div>
+            </template>
+            {% endif %}
+
+            <button class="btn btn-sm btn-warning"
+                    x-show="status === 'running'"
+                    disabled>
+                <span class="loading loading-spinner loading-xs"></span>
+                <span x-text="lastAction || 'trabalhando...'"></span>
+            </button>
+
+            <div x-show="status === 'error' && error" class="alert alert-error text-xs py-2 px-3">
+                <span x-text="error"></span>
+            </div>
+        </div>
+
         <!-- Sincronizar PAJ (à direita): split button (com anexos por padrão) -->
         <div class="join order-last ml-auto">
             <button class="join-item btn btn-sm btn-outline btn-primary normal-case gap-1.5"
@@ -602,6 +804,7 @@
         <div x-data="acoesSisdpuBlock({
                  idProcesso: '{{ dados.id_processo }}', paj: '{{ meta.paj }}', pajNorm: '{{ paj_norm }}',
                  idTramite: '{{ dados.id_tramite }}', aberto: true,
+                 onExecutado: (res) => posExecucaoPaj('{{ paj_norm }}', res),
              })" x-init="init()">
             {% include "partials/acoes_sisdpu.html" %}
         </div>
@@ -1158,68 +1361,6 @@
         </div>
         <pre id="txt-modal-content"
              class="whitespace-pre-wrap text-sm bg-base-300 p-4 rounded-lg max-h-[70vh] overflow-y-auto"></pre>
-    </div>
-    <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
-</dialog>
-
-<!-- Modal: Adicionar à watchlist com motivo -->
-<dialog id="modal-watchlist-motivo" class="modal">
-    <div class="modal-box max-w-lg">
-        <div class="flex items-center justify-between mb-4">
-            <h3 class="font-bold text-lg">Adicionar à watchlist</h3>
-            <form method="dialog"><button class="btn btn-sm btn-ghost">X</button></form>
-        </div>
-
-        <p class="text-sm text-base-content/70 mb-4">
-            Adicionar <span class="font-mono font-semibold">{{ meta.paj }}</span> à sua watchlist para acompanhamento prioritário.
-        </p>
-
-        <div x-data="{ motivo: '', salvando: false }">
-            <label class="form-control">
-                <span class="label-text text-xs mb-1">Motivo (opcional)</span>
-                <textarea class="textarea textarea-bordered text-sm"
-                          rows="3"
-                          placeholder="Ex: aguardando decisão do agravo, prazo curto, cliente cobrou..."
-                          x-model="motivo"
-                          maxlength="500"></textarea>
-                <span class="text-[11px] text-base-content/40 mt-1" x-text="`${motivo.length}/500`"></span>
-            </label>
-
-            <div class="flex justify-end gap-2 mt-6">
-                <button type="button" class="btn btn-sm btn-ghost" @click="document.getElementById('modal-watchlist-motivo').close()" :disabled="salvando">Cancelar</button>
-                <button type="button" class="btn btn-sm btn-primary"
-                        @click="(async () => {
-                            salvando = true;
-                            const pajNorm = '{{ paj_norm }}';
-                            try {
-                                const r = await fetch('/api/watchlist', {
-                                    method: 'POST',
-                                    headers: { 'Content-Type': 'application/json' },
-                                    body: JSON.stringify({ paj_norm: pajNorm, motivo: motivo || '' }),
-                                });
-                                if (!r.ok) {
-                                    const err = await r.json().catch(() => ({}));
-                                    showToast('Erro: ' + (err.detail || 'falha ao adicionar'), 'error');
-                                    return;
-                                }
-                                document.getElementById('modal-watchlist-motivo').close();
-                                showToast('Adicionado à watchlist', 'success');
-                                window.dispatchEvent(new CustomEvent('watchlist-updated'));
-                            } catch (e) {
-                                showToast('Falha de rede', 'error');
-                            } finally {
-                                salvando = false;
-                            }
-                        })()"
-                        :disabled="salvando">
-                    <span x-show="!salvando">Adicionar</span>
-                    <span x-show="salvando" class="flex items-center gap-2">
-                        <span class="loading loading-spinner loading-xs"></span>
-                        Salvando…
-                    </span>
-                </button>
-            </div>
-        </div>
     </div>
     <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
 </dialog>

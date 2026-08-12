@@ -14,6 +14,7 @@ from services import historico
 from services.paj_service import IGNORAR as ARQUIVOS_NAO_PECAS
 from services.paj_service import listar_pajs
 from services.skills_catalog import skill_descricao, skill_valida
+from services.valor_causa_service import INSTRUCAO_VALOR_CAUSA
 import contextlib
 
 
@@ -121,9 +122,30 @@ def _montar_instrucao(paj_pasta, prompt_content: str, skill_slug: str | None) ->
         "Me diga o que mudar e eu refaco.\n"
         "```\n\n"
         "Se eu responder com discordancia, refaca conforme instruido.\n\n"
-        "---\n\n"
+        + INSTRUCAO_VALOR_CAUSA
+        + "---\n\n"
         f"{prompt_content}"
     )
+
+
+def _rodar_valor_causa(paj_norm: str) -> None:
+    """Gatilho TRANSVERSAL do cálculo do valor da causa, disparado ao fim de
+    QUALQUER sessão de produto (Elaborar genérico, análise por pretensão, etc.).
+    Se a ação gerou uma petição inicial (a skill emitiu `valor_causa.json`),
+    calcula o valor, gera o PDF na pasta da PI e injeta o total. No-op idempotente
+    caso contrário. Best-effort — nunca quebra o fluxo."""
+    with contextlib.suppress(Exception):
+        from services import valor_causa_service
+
+        res = valor_causa_service.processar_se_pi(paj_norm)
+        if res.get("ok") and not res.get("skip"):
+            with contextlib.suppress(Exception):
+                historico.registrar(
+                    paj_norm,
+                    "valor_causa",
+                    status="done",
+                    resumo=f"Valor da causa {res.get('valor_causa', '')} · {res.get('pdf', '')}",
+                )
 
 
 class ChatSession:
@@ -511,6 +533,15 @@ class ChatSession:
                 self.last_action = "aguardando sua resposta"
             # Persiste em disco pra sobreviver reinicio do servidor
             self._persist()
+            # Cálculo do valor da causa (transversal): se esta ação produziu uma
+            # petição inicial (skill emitiu valor_causa.json), calcula/gera o PDF e
+            # injeta o total. Guardado + idempotente; roda em thread daemon pra não
+            # travar o leitor de stdout. Só em sessões de produto.
+            if self.status == "done" and self.encerrar_ao_concluir:
+                with contextlib.suppress(Exception):
+                    threading.Thread(
+                        target=_rodar_valor_causa, args=(self.paj_norm,), daemon=True
+                    ).start()
             # Estouro de cota numa elaboracao em background (individual/lote):
             # agenda o re-disparo automatico pra apos a renovacao da cota e
             # congela a fila. Chat interativo (encerrar_ao_concluir=False) nao

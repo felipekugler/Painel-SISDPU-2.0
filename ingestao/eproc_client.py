@@ -32,6 +32,33 @@ _log = logging.getLogger("eproc.client")
 
 _PROFILE = Path(config.OFICIO_GERAL) / "_eproc_profile"
 
+# --- TOTP (2FA) automático via a mesma seed já cadastrada pro MCP eproc-trf4 -
+# O MCP (C:\Claude\MCP\eproc-trf4, ver auth.py) guarda uma seed TOTP base32 no
+# Credential Manager do Windows pra resolver o 2FA sozinho no login HTTP dele.
+# É o MESMO usuário do SO, então dá pra ler essa MESMA seed aqui (nunca
+# duplicada/copiada) pra também resolver o 2FA quando ele aparecer no login
+# pela JANELA do navegador — mesma conta, mesmo segredo.
+_TOTP_CRED_KEY = "mcp-eproc-trf4"
+_TOTP_ITEM_KEY = "totp_seed"
+
+
+def _gerar_codigo_totp() -> str | None:
+    """Código TOTP atual (6 dígitos), lido da seed do MCP eproc-trf4. Retorna
+    None se a seed não estiver cadastrada ou keyring/pyotp faltarem — nesse
+    caso o 2FA continua manual, como sempre foi."""
+    try:
+        import keyring
+        import pyotp
+    except ImportError:
+        return None
+    try:
+        seed = keyring.get_password(_TOTP_CRED_KEY, _TOTP_ITEM_KEY)
+        if not seed:
+            return None
+        return pyotp.TOTP(seed).now()
+    except Exception:
+        return None
+
 # Sistema alvo padrão: JFPR (1ª instância / Paraná). SSO é compartilhado com o
 # TRF4, então logar aqui autentica os dois; para alternar, basta navegar.
 EPROC_JFPR = "https://eproc.jfpr.jus.br/eprocV2/"
@@ -102,6 +129,21 @@ async def _pw_start():
     return _pw
 
 
+async def _pw_reiniciar() -> None:
+    """Descarta o processo-driver do Playwright (Node) e força reinício na
+    próxima `_pw_start()`. Necessário porque um diálogo JS nativo do e-proc
+    (alert/confirm) pode, por um bug do próprio driver, derrubar o processo
+    Node inteiro com uma "unhandled promise rejection" — depois disso, o
+    singleton `_pw` fica apontando pra um driver morto e TODA chamada futura
+    de `connect_over_cdp` falha com "Connection closed while reading from the
+    driver", mesmo com o Chromium (a janela do e-proc) saudável na porta CDP."""
+    global _pw
+    if _pw is not None:
+        with contextlib.suppress(Exception):
+            await _pw.stop()
+        _pw = None
+
+
 async def _ensure_chromium(url: str = EPROC_HOME) -> None:
     """Garante um Chromium persistente rodando com remote-debugging (processo
     separado). Lança-o apontando já para o e-proc (o usuário loga na janela)."""
@@ -133,54 +175,40 @@ async def _ensure_chromium(url: str = EPROC_HOME) -> None:
 
 
 
-# Páginas antigas do e-proc (ex.: as listagens de "Citações/Intimações" do
-# Painel do Procurador) não declaram charset (nem header Content-Type, nem
-# <meta charset>) — o Chromium então ADIVINHA a codificação e às vezes erra,
-# renderizando acento como caractere de substituição (U+FFFD) DENTRO do DOM.
-# Como o erro acontece no PRÓPRIO NAVEGADOR (antes de qualquer `innerText`
-# nosso rodar), não tem como corrigir depois — o texto já foi perdido. A
-# correção tem que entrar ANTES do parse: intercepta a resposta e injeta
-# `charset=ISO-8859-1` no Content-Type quando ausente (mesma codificação já
-# confirmada nos documentos do e-proc — ver CLAUDE.md do MCP eproc-trf4).
-# Se a página já declarar um charset, não mexe (defensivo/idempotente).
-_ROUTE_CHARSET_INSTALADO: set[int] = set()
-
-
-async def _fixar_charset_eproc(ctx) -> None:
-    """Instala (uma única vez por contexto) um interceptador que corrige o
-    Content-Type das respostas HTML do e-proc sem charset declarado."""
-    if id(ctx) in _ROUTE_CHARSET_INSTALADO:
-        return
-    _ROUTE_CHARSET_INSTALADO.add(id(ctx))
-
-    async def _handler(route):
-        try:
-            resp = await route.fetch()
-            headers = dict(resp.headers)
-            ct = (headers.get("content-type") or "").lower()
-            if "text/html" in ct and "charset" not in ct:
-                base = (headers.get("content-type") or "text/html").split(";")[0].strip()
-                headers["content-type"] = f"{base}; charset=ISO-8859-1"
-            await route.fulfill(response=resp, headers=headers)
-        except Exception:  # noqa: BLE001 — nunca deixa a navegação travar por causa disto
-            with contextlib.suppress(Exception):
-                await route.continue_()
-
-    with contextlib.suppress(Exception):
-        await ctx.route("**/eproc.jfpr.jus.br/**", _handler)
-        await ctx.route("**/eproc.trf4.jus.br/**", _handler)
-
-
 async def _connect(url: str = EPROC_HOME):
     """Conecta ao Chromium persistente e devolve (browser, page). Chame
     `browser.close()` ao fim — fecha só a CONEXÃO CDP, não o Chromium."""
     await _ensure_chromium(url)
-    pw = await _pw_start()
-    browser = await pw.chromium.connect_over_cdp(f"http://127.0.0.1:{_CDP_PORT}")
+    try:
+        pw = await _pw_start()
+        browser = await pw.chromium.connect_over_cdp(f"http://127.0.0.1:{_CDP_PORT}")
+    except Exception as exc:
+        # Driver Node morto (ex.: crash por diálogo JS não tratado — ver
+        # _pw_reiniciar). Reinicia o driver e tenta mais uma vez antes de
+        # desistir; sem isso, o painel fica falhando em TODA chamada de
+        # e-proc até ser reiniciado manualmente.
+        if "Connection closed while reading from the driver" not in str(exc):
+            raise
+        _log.warning("driver do Playwright (e-proc) morreu — reiniciando: %s", exc)
+        await _pw_reiniciar()
+        pw = await _pw_start()
+        browser = await pw.chromium.connect_over_cdp(f"http://127.0.0.1:{_CDP_PORT}")
     ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
-    await _fixar_charset_eproc(ctx)
     page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+    if not getattr(page, "_eproc_dialog_hook", False):
+        # Handler explícito de diálogo: dispensa qualquer alert/confirm nativo
+        # assim que ele abre. Sem isso, o Playwright cai no fallback "sem
+        # listener" (auto-dismiss por timeout) — e se o diálogo já tiver
+        # fechado por outro caminho nesse meio-tempo, o driver Node crasha
+        # (bug conhecido do driver, "No dialog is showing").
+        page.on("dialog", _dispensar_dialogo)
+        page._eproc_dialog_hook = True
     return browser, page
+
+
+async def _dispensar_dialogo(dialog) -> None:
+    with contextlib.suppress(Exception):
+        await dialog.dismiss()
 
 
 async def _maximizar_janela(page) -> None:
@@ -230,33 +258,64 @@ def _status_dict(url: str) -> dict:
     }
 
 
-# --- Auto-login no SSO Keycloak (eproc-sso) --------------------------------
-# A tela de login do e-proc é um Keycloak: campo #username, senha #password
-# (+ input[name=password]) e botão #kc-login. Sem CAPTCHA. Só cai aqui quando a
-# sessão SSO expirou; com o 2FA memorizado no perfil, após usuário/senha o SSO
-# não repede o 2FA e segue direto para a seleção de perfil.
+# --- Auto-login: SSO Keycloak (eproc-sso) OU tela nativa do eproc ----------
+# Duas telas possíveis quando a sessão expirou:
+#  a) Keycloak (SSO expirado): campo #username, senha #password
+#     (+ input[name=password]) e botão #kc-login.
+#  b) Nativa do eproc (sessão totalmente encerrada / cookie do IdP perdido):
+#     campo #txtUsuario; a senha tem DOIS campos irmãos — #pwdSenha (type=text,
+#     name="", classe "masked", é o que aparece VISÍVEL na tela e o eye-icon
+#     alterna) e o REAL input[name=pwdSenha] (type=password, display:none — é
+#     o único com `name`, logo o único que de fato vai no submit). O visível
+#     tem um listener JS de máscara ligado a digitação REAL (char a char) que
+#     espelha cada tecla no oculto; setar `.value` inteiro de uma vez via script
+#     confunde esse listener (ele substitui o valor inteiro por "●●●" sem
+#     repassar nada pro campo oculto). Por isso a senha nativa exige digitação
+#     simulada de verdade (Playwright `keyboard.type`), não um `.value=`.
+#     Botão "Entrar" não tem id (achado pelo texto do <button>).
+# Nenhuma tem CAPTCHA. Com o 2FA memorizado no perfil, após usuário/senha segue
+# direto (Keycloak → seleção de perfil; nativa → área interna ou pedido de 2FA,
+# que fica para o usuário completar manualmente na janela).
 
-_JS_TEM_LOGIN = "()=>!!document.querySelector('#username, input[name=username]')"
+_JS_TEM_LOGIN = ("()=>!!document.querySelector("
+                 "'#username, input[name=username], #txtUsuario, input[name=txtUsuario]')")
 
-# Preenche usuário/senha via DOM (set value + eventos) — cobre o campo de senha
-# visível (id=password) e o oculto (name=password) do tema do Keycloak.
-_JS_FILL_LOGIN = r"""(a)=>{
-  const [user, pass] = a;
+_JS_FILL_USUARIO = r"""(user)=>{
   const setV=(el,v)=>{ if(!el) return false; try{el.focus();}catch(e){}
     el.value=v;
     el.dispatchEvent(new Event('input',{bubbles:true}));
     el.dispatchEvent(new Event('change',{bubbles:true}));
     el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true})); return true; };
-  const u=document.querySelector('#username, input[name=username]');
-  const oku=setV(u,user);
-  let okp=false;
-  document.querySelectorAll('#password, input[name=password]').forEach(el=>{ if(setV(el,pass)) okp=true; });
-  return oku && okp;
+  const u=document.querySelector('#username, input[name=username], #txtUsuario, input[name=txtUsuario]');
+  return setV(u, user);
 }"""
+
+# Campo de senha "simples" (Keycloak) — value-set direto funciona, sem máscara
+# JS por trás. Não mexe no #pwdSenha nativo do eproc (esse exige digitação real,
+# tratado à parte em `_preencher_login`).
+_JS_FILL_SENHA_SIMPLES = r"""(pass)=>{
+  const setV=(el,v)=>{ if(!el) return false; try{el.focus();}catch(e){}
+    el.value=v;
+    el.dispatchEvent(new Event('input',{bubbles:true}));
+    el.dispatchEvent(new Event('change',{bubbles:true}));
+    el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true})); return true; };
+  let ok=false;
+  document.querySelectorAll('#password, input[name=password]').forEach(el=>{ if(setV(el,pass)) ok=true; });
+  return ok;
+}"""
+
+# Lê de volta o valor do campo REAL de senha (o oculto, name=pwdSenha, ou o do
+# Keycloak) — usado pra CONFERIR se o fill/digitação realmente chegou lá.
+_JS_LER_SENHA_REAL = ("()=>{const el=document.querySelector("
+                      "'#password, input[name=password], input[name=pwdSenha]');"
+                      "return el ? el.value : null;}")
 
 _JS_SUBMIT_LOGIN = r"""()=>{
   const b=document.querySelector('#kc-login');
   if(b){ b.click(); return true; }
+  const entrar=[...document.querySelectorAll('button')]
+    .find(el=>/entrar/i.test((el.innerText||'').trim()));
+  if(entrar){ entrar.click(); return true; }
   const f=document.querySelector('form');
   if(f){ f.submit(); return true; }
   return false;
@@ -264,16 +323,38 @@ _JS_SUBMIT_LOGIN = r"""()=>{
 
 
 async def _preencher_login(page, usuario: str, senha: str) -> bool:
-    """Se a tela de login (Keycloak) está presente, preenche e envia. Retorna True
-    se enviou. No-op (False) se não houver campo de usuário."""
+    """Se a tela de login (Keycloak ou nativa do eproc) está presente, preenche e
+    envia. Retorna True se enviou. No-op (False) se não houver campo de usuário."""
     tem = False
     with contextlib.suppress(Exception):
         tem = await page.evaluate(_JS_TEM_LOGIN)
     if not tem:
         return False
-    ok = False
+
     with contextlib.suppress(Exception):
-        ok = await page.evaluate(_JS_FILL_LOGIN, [usuario or "", senha or ""])
+        await page.evaluate(_JS_FILL_USUARIO, usuario or "")
+
+    ok = False
+    for _ in range(3):
+        # 1) campo "simples" (Keycloak) — value-set direto
+        with contextlib.suppress(Exception):
+            ok = await page.evaluate(_JS_FILL_SENHA_SIMPLES, senha or "")
+        # 2) campo nativo do eproc (mascarado por JS) — precisa de digitação real
+        if not ok:
+            with contextlib.suppress(Exception):
+                campo = page.locator("#pwdSenha")
+                if await campo.count() > 0:
+                    await campo.click()
+                    await campo.press("Control+A")
+                    await campo.press("Delete")
+                    await page.keyboard.type(senha or "", delay=25)
+                    ok = True
+        await page.wait_for_timeout(300)
+        atual = None
+        with contextlib.suppress(Exception):
+            atual = await page.evaluate(_JS_LER_SENHA_REAL)
+        if ok and atual == (senha or ""):
+            break
     if not ok:
         return False
     with contextlib.suppress(Exception):
@@ -285,6 +366,78 @@ async def _preencher_login(page, usuario: str, senha: str) -> bool:
             if not await page.evaluate(_JS_TEM_LOGIN):
                 break
     await page.wait_for_timeout(1200)
+    return True
+
+
+# --- 2FA (TOTP) — campo txtAcessoCodigo, ver auth.py do MCP pros nomes reais -
+_JS_TEM_2FA = ("()=>!!document.querySelector("
+               "'#txtAcessoCodigo, input[name=txtAcessoCodigo]')")
+
+_JS_FILL_2FA = r"""(codigo)=>{
+  const setV=(el,v)=>{ if(!el) return false; try{el.focus();}catch(e){}
+    el.value=v;
+    el.dispatchEvent(new Event('input',{bubbles:true}));
+    el.dispatchEvent(new Event('change',{bubbles:true}));
+    el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true})); return true; };
+  const campo=document.querySelector('#txtAcessoCodigo, input[name=txtAcessoCodigo]');
+  const ok=setV(campo, codigo);
+  // marca "confiar neste dispositivo" — reduz a chance de pedir 2FA de novo
+  const chk=document.querySelector('#chkLiberarDispositivo, input[name=chkLiberarDispositivo]');
+  if(chk && !chk.checked){ chk.checked=true; chk.dispatchEvent(new Event('change',{bubbles:true})); }
+  return ok;
+}"""
+
+_JS_LER_2FA = ("()=>{const el=document.querySelector("
+               "'#txtAcessoCodigo, input[name=txtAcessoCodigo]');"
+               "return el ? el.value : null;}")
+
+_JS_SUBMIT_2FA = r"""()=>{
+  const b=[...document.querySelectorAll('button')]
+    .find(el=>/confirmar|validar|entrar/i.test((el.innerText||'').trim()));
+  if(b){ b.click(); return true; }
+  const f=document.querySelector('form');
+  if(f){ f.submit(); return true; }
+  return false;
+}"""
+
+
+async def _preencher_2fa(page) -> bool:
+    """Se a tela de 2FA (código TOTP) está presente, gera o código a partir da
+    seed do MCP eproc-trf4 e preenche/envia sozinho. Retorna True se enviou.
+    No-op (False) se não houver a tela ou a seed não estiver cadastrada —
+    nesses casos o 2FA continua manual, como sempre foi."""
+    tem = False
+    with contextlib.suppress(Exception):
+        tem = await page.evaluate(_JS_TEM_2FA)
+    if not tem:
+        return False
+    codigo = _gerar_codigo_totp()
+    if not codigo:
+        return False
+
+    ok = False
+    for _ in range(3):
+        with contextlib.suppress(Exception):
+            ok = await page.evaluate(_JS_FILL_2FA, codigo)
+        await page.wait_for_timeout(300)
+        atual = None
+        with contextlib.suppress(Exception):
+            atual = await page.evaluate(_JS_LER_2FA)
+        if ok and atual == codigo:
+            break
+        # código pode ter virado entre tentativas (janela de 30s do TOTP) —
+        # gera de novo antes de reenviar, pra não submeter um código expirado.
+        codigo = _gerar_codigo_totp() or codigo
+    if not ok:
+        return False
+    with contextlib.suppress(Exception):
+        await page.evaluate(_JS_SUBMIT_2FA)
+    for _ in range(20):  # ~10s aguardando sair da tela de 2FA
+        await page.wait_for_timeout(500)
+        with contextlib.suppress(Exception):
+            if not await page.evaluate(_JS_TEM_2FA):
+                break
+    await page.wait_for_timeout(1000)
     return True
 
 
@@ -312,9 +465,11 @@ async def _selecionar_perfil(page, perfil: str = PERFIL_PADRAO) -> bool:
 async def abrir(url: str = EPROC_HOME, usuario: str = "", senha: str = "") -> dict:
     """Abre/traz à frente a janela do e-proc e tenta ENTRAR sozinho, em cadeia:
 
-      1) tela de login (Keycloak) → se `usuario`/`senha` vierem (cofre destrancado),
-         preenche e envia; senão, para aqui (login manual na janela).
-      2) 2FA → pulado quando memorizado no perfil; se pedir, o usuário resolve na janela.
+      1) tela de login (Keycloak ou nativa) → se `usuario`/`senha` vierem (cofre
+         destrancado), preenche e envia; senão, para aqui (login manual na janela).
+      2) 2FA → resolvido sozinho se a seed TOTP do MCP eproc-trf4 estiver
+         cadastrada (ver `_gerar_codigo_totp`); senão, pedido quando não
+         memorizado no perfil — o usuário resolve na janela.
       3) seleção de perfil → escolhe PROCURADOR automaticamente.
 
     Retorna o status final (logado?/url/msg)."""
@@ -343,7 +498,11 @@ async def abrir(url: str = EPROC_HOME, usuario: str = "", senha: str = "") -> di
                     break
                 await page.wait_for_timeout(500)
 
-        # 2) seleção de perfil → PROCURADOR (no-op se já dentro ou na tela de senha)
+        # 2) 2FA — resolve sozinho se a tela aparecer e a seed estiver cadastrada
+        with contextlib.suppress(Exception):
+            await _preencher_2fa(page)
+
+        # 3) seleção de perfil → PROCURADOR (no-op se já dentro ou na tela de senha)
         with contextlib.suppress(Exception):
             await _selecionar_perfil(page)
         return _status_dict(page.url)

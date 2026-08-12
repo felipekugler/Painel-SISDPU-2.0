@@ -1,0 +1,78 @@
+// Fábrica de editor de texto rico (Quill, tema "snow") compartilhada pelos módulos
+// "Ações no SISDPU" e "Ações no Eproc" — negrito/itálico/sublinhado, cor de texto/
+// fundo, citação, listas, recuo e alinhamento. Quill é carregado via CDN em
+// base.html; este arquivo não depende de mais nada, só encapsula a fábrica +
+// leitura/escrita de conteúdo pra não duplicar essa lógica nos dois módulos.
+//
+// criarEditorRico(elId, opts?) -> {quill, getHTML, setHTML, setText, isEmpty, focus} | null
+//   elId               — id de um elemento já existente no DOM e VISÍVEL (não
+//                         display:none — Quill mede o container ao montar).
+//   opts.toolbar        — array de grupos de botões (default: RICH_EDITOR_TOOLBAR_PADRAO).
+//   opts.placeholder    — texto de placeholder.
+//   opts.valorInicial   — HTML inicial (opcional).
+//   opts.valorInicialTexto — TEXTO PURO inicial (opcional; ignorado se valorInicial
+//                         também for passado). Usa quill.setText() em vez de inserir
+//                         como HTML — não precisa escapar nada, e quebras de linha
+//                         (\n) virão certas. É o certo pra semear com texto que não é
+//                         HTML de verdade (ex.: uma sugestão da IA em texto puro).
+// Devolve null se o Quill não carregou (CDN fora do ar, elemento inexistente etc.)
+// — quem chama deve ter um fallback (textarea simples) pronto pra esse caso.
+const RICH_EDITOR_TOOLBAR_PADRAO = [
+    ['bold', 'italic', 'underline'],
+    [{ color: [] }, { background: [] }],
+    ['blockquote'],
+    [{ list: 'ordered' }, { list: 'bullet' }],
+    [{ indent: '-1' }, { indent: '+1' }],
+    [{ align: [] }],
+];
+
+function criarEditorRico(elId, opts) {
+    opts = opts || {};
+    if (!window.Quill) return null;
+    const el = document.getElementById(elId);
+    if (!el) return null;
+    let quill;
+    try {
+        quill = new Quill(el, {
+            theme: 'snow',
+            placeholder: opts.placeholder || '',
+            modules: { toolbar: opts.toolbar || RICH_EDITOR_TOOLBAR_PADRAO },
+        });
+    } catch (e) {
+        return null;
+    }
+    if (opts.valorInicial) quill.clipboard.dangerouslyPasteHTML(opts.valorInicial);
+    else if (opts.valorInicialTexto) quill.setText(opts.valorInicialTexto);
+    return {
+        quill: quill,
+        // Um editor "vazio" no Quill ainda emite '<p><br></p>' — normaliza pra
+        // string vazia (mais limpo pra enviar/checar em cima).
+        getHTML() {
+            const html = quill.root.innerHTML;
+            return html === '<p><br></p>' ? '' : html;
+        },
+        setHTML(html) {
+            quill.setContents([]);
+            if (html) quill.clipboard.dangerouslyPasteHTML(html);
+        },
+        // Substitui TUDO por texto puro (sem HTML) — usado pra "puxar" uma fonte
+        // externa (ex.: botão "Atualizar da Sugestão IA") de forma explícita, a
+        // pedido do usuário — nunca automático depois da primeira carga.
+        setText(texto) { quill.setText(texto || ''); },
+        isEmpty() { return quill.getText().trim().length === 0 && !quill.root.querySelector('img'); },
+        focus() { quill.focus(); },
+    };
+}
+
+// Reduz HTML (de um editor rico) a texto simples com quebras de linha razoáveis.
+// Necessário quando o CAMPO DE DESTINO não é rico (ex.: a tramitação no SISDPU é
+// texto puro — HTML lá apareceria como tags literais, não como formatação).
+function htmlParaTextoSimples(html) {
+    if (!html) return '';
+    const div = document.createElement('div');
+    div.innerHTML = html;
+    div.querySelectorAll('p, div, li, blockquote, br, h1, h2, h3, h4, h5, h6').forEach((elx) => {
+        elx.insertAdjacentText('afterend', '\n');
+    });
+    return (div.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+}

@@ -65,10 +65,23 @@ async def api_prazos_sessao_leve():
 @router.get("/api/prazos/sincronizar", response_class=JSONResponse)
 async def api_prazos_sincronizar():
     """Lê TODAS as categorias de Citações/Intimações do e-proc (clica → lê →
-    agrupa por processo) e persiste. Requer a sessão ativa; o login é feito pelo
-    botão 'Abrir e-proc / Login'."""
-    from ingestao import eproc_intimacoes
+    agrupa por processo) e persiste. Se a sessão não estiver ativa, tenta logar
+    sozinho com as credenciais do cofre (mesmo fluxo do botão 'Abrir e-proc /
+    Login') antes de desistir. Se o cofre estiver TRANCADO, devolve
+    `cofre_trancado: true` — o front-end pede a senha-mestra, destranca e chama
+    esta rota de novo, em vez de mandar o usuário logar manualmente na janela
+    quando as credenciais já estão salvas (só faltou destrancar)."""
+    from ingestao import eproc_client, eproc_intimacoes
     res = await eproc_intimacoes.ler_todos()
+    if not res.get("ok"):
+        if not cofre_service.destrancado():
+            res["cofre_trancado"] = True
+            return JSONResponse(res, status_code=400)
+        creds = cofre_service.get_credenciais("eproc")
+        if creds:
+            usuario, senha = creds
+            await eproc_client.abrir(usuario=usuario, senha=senha)
+            res = await eproc_intimacoes.ler_todos()
     if res.get("ok"):
         eproc_intimacoes.salvar(res)
         return JSONResponse(eproc_intimacoes.carregar())

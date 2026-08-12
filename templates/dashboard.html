@@ -420,65 +420,6 @@
 
       <div class="w-px h-6 bg-base-content/5 hidden sm:block"></div>
 
-      <!-- Ofício -->
-      <label class="flex items-center gap-1.5 px-2.5 h-10 chip-input rounded-lg cursor-pointer shrink-0">
-        <svg class="w-4 h-4 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3.75 21h16.5M4.5 3h15M5.25 3v18M18.75 3v18M9 9h1.5m3 0H15M9 12h1.5m3 0H15M9 15h6"></path></svg>
-        <select x-model="filtroOficio" @change="aplicarFiltros()" class="bg-transparent text-sm focus:outline-none cursor-pointer appearance-none pr-1 w-20 truncate">
-          <option value="">Todos os ofícios</option>
-          <template x-for="o in oficiosUnicos" :key="o">
-            <option :value="o" x-text="o"></option>
-          </template>
-        </select>
-        <svg class="w-3.5 h-3.5 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path></svg>
-      </label>
-
-      <!-- Pretensão -->
-      <label class="flex items-center gap-1.5 px-2.5 h-10 chip-input rounded-lg cursor-pointer shrink-0">
-        <svg class="w-4 h-4 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 6h18M6 12h12M10 18h4"></path></svg>
-        <select x-model="filtroPretensao" @change="aplicarFiltros()" class="bg-transparent text-sm focus:outline-none cursor-pointer appearance-none pr-1 w-28 truncate" title="Pretensão">
-          <option value="">Todas as pretensões</option>
-          <template x-for="c in pretensoesUnicas" :key="c">
-            <option :value="c" :title="c" x-text="formatarPretensao(c)"></option>
-          </template>
-        </select>
-        <svg class="w-3.5 h-3.5 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path></svg>
-      </label>
-
-      <!-- Descrição -->
-      <label class="flex items-center gap-1.5 px-2.5 h-10 chip-input rounded-lg cursor-pointer shrink-0">
-        <svg class="w-4 h-4 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8.25 6.75h12M8.25 12h12m-12 5.25h12M3.75 6.75h.007v.008H3.75V6.75Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0ZM3.75 12h.007v.008H3.75V12Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm-.375 5.25h.007v.008H3.75v-.008Zm.375 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Z"></path></svg>
-        <select x-model="filtroDescricao" @change="aplicarFiltros()" class="bg-transparent text-sm focus:outline-none cursor-pointer appearance-none pr-1 w-28 truncate" title="Descrição">
-          <option value="">Todas as descrições</option>
-          <template x-for="d in descricoesUnicas" :key="d">
-            <option :value="d" x-text="d"></option>
-          </template>
-        </select>
-        <svg class="w-3.5 h-3.5 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path></svg>
-      </label>
-
-      <!-- Data -->
-      <label class="flex items-center gap-1.5 px-2.5 h-10 chip-input rounded-lg cursor-pointer shrink-0">
-        <svg class="w-4 h-4 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0V11.25a2.25 2.25 0 0 1 2.25-2.25h13.5a2.25 2.25 0 0 1 2.25 2.25v7.5"></path></svg>
-        <select x-model="filtroData" @change="aplicarFiltros()" class="bg-transparent text-sm focus:outline-none cursor-pointer appearance-none pr-1 w-20 truncate">
-          <option value="">Todas as datas</option>
-          <template x-for="d in datasUnicas" :key="d">
-            <option :value="d" x-text="formatarData(d)"></option>
-          </template>
-        </select>
-        <svg class="w-3.5 h-3.5 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path></svg>
-      </label>
-
-      <!-- Análise IA -->
-      <label class="flex items-center gap-1.5 px-2.5 h-10 chip-input rounded-lg cursor-pointer shrink-0">
-        <svg class="w-4 h-4 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"></path></svg>
-        <select x-model="filtroAnalise" @change="aplicarFiltros()" class="bg-transparent text-sm focus:outline-none cursor-pointer appearance-none pr-1 w-20 truncate">
-          <option value="">Análise: todas</option>
-          <option value="sim">Com análise</option>
-          <option value="nao">Sem análise</option>
-        </select>
-        <svg class="w-3.5 h-3.5 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m6 9 6 6 6-6"></path></svg>
-      </label>
-
       <!-- Limpar -->
       <button type="button"
               class="btn btn-ghost btn-sm normal-case text-base-content/60 hover:text-base-content gap-1.5 shrink-0"
@@ -533,43 +474,148 @@
     </div>
   </section>
 
-  <!-- Lista de PAJs -->
-  <section class="px-8 pb-8 flex-1 min-h-0 flex flex-col">
+  <!-- Lista de PAJs — sem rolagem interna: a página inteira rola normalmente
+       pelo navegador (sidebar/filtros sobem junto, não ficam fixos). -->
+  <section class="px-8 pb-8 flex flex-col">
 
-    <div class="bg-base-300 rounded-xl border border-base-content/5 flex-1 overflow-hidden flex flex-col">
-      <div class="overflow-y-auto flex-1 min-h-0">
+    <div class="bg-base-300 rounded-xl border border-base-content/5 flex flex-col">
+      <div>
 
-        <table class="w-full border-collapse text-sm table-fixed">
+        <table class="w-full border-collapse text-sm table-fixed divide-y divide-base-content/5">
           <thead class="sticky top-0 z-10 bg-base-100">
             <tr class="text-[11px] text-base-content/40 font-semibold border-b border-base-content/10">
-              <th class="px-4 py-2 text-left w-[175px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('paj')">PAJ <span x-text="iconOrdem('paj')"></span></button></th>
-              <th class="px-4 py-2 text-left w-[240px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('assistido')">Assistido <span x-text="iconOrdem('assistido')"></span></button></th>
-              <th class="px-4 py-2 text-left w-[95px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('oficio')">Ofício <span x-text="iconOrdem('oficio')"></span></button></th>
-              <th class="px-4 py-2 text-left w-[378px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('classificacao')">Pretensão <span x-text="iconOrdem('classificacao')"></span></button></th>
-              <th class="px-4 py-2 text-left w-full min-w-[360px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('desc_caixa')">Descrição <span x-text="iconOrdem('desc_caixa')"></span></button></th>
-              <th class="px-4 py-2 text-left w-[88px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('data_caixa')">Data <span x-text="iconOrdem('data_caixa')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[235px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('paj')">PAJ <span x-text="iconOrdem('paj')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[205px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('assistido')">Assistido <span x-text="iconOrdem('assistido')"></span></button></th>
+              <th class="px-4 py-2 text-left w-[95px]">
+                <div class="flex items-center gap-1">
+                  <button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('oficio')">Ofício <span x-text="iconOrdem('oficio')"></span></button>
+                  <div class="dropdown" @click.stop>
+                    <div tabindex="0" role="button" class="p-0.5" :class="filtroOficio ? 'text-primary' : 'text-base-content/40 hover:text-base-content/70'" title="Filtrar por Ofício">
+                      <svg class="w-3.5 h-3.5" :fill="filtroOficio ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z"></path></svg>
+                    </div>
+                    <ul tabindex="0" class="dropdown-content menu menu-sm bg-base-100 rounded-box z-20 w-48 p-1 shadow border border-base-300 normal-case font-normal max-h-72 overflow-y-auto flex-nowrap">
+                      <li><a :class="!filtroOficio ? 'active' : ''" @click="filtroOficio=''; aplicarFiltros()">Todos os ofícios</a></li>
+                      <template x-for="o in oficiosUnicos" :key="o">
+                        <li><a :class="filtroOficio===o ? 'active' : ''" @click="filtroOficio=o; aplicarFiltros()" x-text="o"></a></li>
+                      </template>
+                    </ul>
+                  </div>
+                </div>
+              </th>
+              <th class="px-4 py-2 text-left w-[378px]">
+                <div class="flex items-center gap-1">
+                  <button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('classificacao')">Pretensão <span x-text="iconOrdem('classificacao')"></span></button>
+                  <div class="dropdown" @click.stop>
+                    <div tabindex="0" role="button" class="p-0.5" :class="filtroPretensao ? 'text-primary' : 'text-base-content/40 hover:text-base-content/70'" title="Filtrar por Pretensão">
+                      <svg class="w-3.5 h-3.5" :fill="filtroPretensao ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z"></path></svg>
+                    </div>
+                    <ul tabindex="0" class="dropdown-content menu menu-sm bg-base-100 rounded-box z-20 w-64 p-1 shadow border border-base-300 normal-case font-normal max-h-72 overflow-y-auto flex-nowrap">
+                      <li><a :class="!filtroPretensao ? 'active' : ''" @click="filtroPretensao=''; aplicarFiltros()">Todas as pretensões</a></li>
+                      <template x-for="c in pretensoesUnicas" :key="c">
+                        <li><a :class="filtroPretensao===c ? 'active' : ''" @click="filtroPretensao=c; aplicarFiltros()" :title="c" x-text="formatarPretensao(c)"></a></li>
+                      </template>
+                    </ul>
+                  </div>
+                </div>
+              </th>
+              <th class="px-4 py-2 text-left w-full min-w-[360px]">
+                <div class="flex items-center gap-1">
+                  <button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('desc_caixa')">Descrição <span x-text="iconOrdem('desc_caixa')"></span></button>
+                  <div class="dropdown" @click.stop>
+                    <div tabindex="0" role="button" class="p-0.5" :class="filtroDescricao ? 'text-primary' : 'text-base-content/40 hover:text-base-content/70'" title="Filtrar por Descrição">
+                      <svg class="w-3.5 h-3.5" :fill="filtroDescricao ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z"></path></svg>
+                    </div>
+                    <ul tabindex="0" class="dropdown-content menu menu-sm bg-base-100 rounded-box z-20 w-64 p-1 shadow border border-base-300 normal-case font-normal max-h-72 overflow-y-auto flex-nowrap">
+                      <li><a :class="!filtroDescricao ? 'active' : ''" @click="filtroDescricao=''; aplicarFiltros()">Todas as descrições</a></li>
+                      <template x-for="d in descricoesUnicas" :key="d">
+                        <li><a :class="filtroDescricao===d ? 'active' : ''" @click="filtroDescricao=d; aplicarFiltros()" x-text="d"></a></li>
+                      </template>
+                    </ul>
+                  </div>
+                </div>
+              </th>
+              <th class="px-4 py-2 text-left w-[88px]">
+                <div class="flex items-center gap-1">
+                  <button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('data_caixa')">Data <span x-text="iconOrdem('data_caixa')"></span></button>
+                  <div class="dropdown dropdown-end" @click.stop>
+                    <div tabindex="0" role="button" class="p-0.5" :class="filtroData ? 'text-primary' : 'text-base-content/40 hover:text-base-content/70'" title="Filtrar por Data">
+                      <svg class="w-3.5 h-3.5" :fill="filtroData ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z"></path></svg>
+                    </div>
+                    <ul tabindex="0" class="dropdown-content menu menu-sm bg-base-100 rounded-box z-20 w-40 p-1 shadow border border-base-300 normal-case font-normal max-h-72 overflow-y-auto flex-nowrap">
+                      <li><a :class="!filtroData ? 'active' : ''" @click="filtroData=''; aplicarFiltros()">Todas as datas</a></li>
+                      <template x-for="d in datasUnicas" :key="d">
+                        <li><a :class="filtroData===d ? 'active' : ''" @click="filtroData=d; aplicarFiltros()" x-text="formatarData(d)"></a></li>
+                      </template>
+                    </ul>
+                  </div>
+                </div>
+              </th>
               <th class="px-4 py-2 text-left w-[100px]"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('n_documentos_indexados')">Anexos</button></th>
               <th class="px-4 py-2 text-left w-[110px]">
-                <button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('tem_analise_ia')">
-                  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"></path></svg>
-                  Análise <span x-text="iconOrdem('tem_analise_ia')"></span>
-                </button>
+                <div class="flex items-center gap-1">
+                  <button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('tem_analise_ia')">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09Z"></path><path stroke-linecap="round" stroke-linejoin="round" d="M18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z"></path></svg>
+                    Análise <span x-text="iconOrdem('tem_analise_ia')"></span>
+                  </button>
+                  <div class="dropdown dropdown-end" @click.stop>
+                    <div tabindex="0" role="button" class="p-0.5" :class="filtroAnalise ? 'text-primary' : 'text-base-content/40 hover:text-base-content/70'" title="Filtrar por Análise">
+                      <svg class="w-3.5 h-3.5" :fill="filtroAnalise ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z"></path></svg>
+                    </div>
+                    <ul tabindex="0" class="dropdown-content menu menu-sm bg-base-100 rounded-box z-20 w-40 p-1 shadow border border-base-300 normal-case font-normal">
+                      <li><a :class="!filtroAnalise ? 'active' : ''" @click="filtroAnalise=''; aplicarFiltros()">Análise: todas</a></li>
+                      <li><a :class="filtroAnalise==='sim' ? 'active' : ''" @click="filtroAnalise='sim'; aplicarFiltros()">Com análise</a></li>
+                      <li><a :class="filtroAnalise==='nao' ? 'active' : ''" @click="filtroAnalise='nao'; aplicarFiltros()">Sem análise</a></li>
+                    </ul>
+                  </div>
+                </div>
               </th>
             </tr>
           </thead>
-          <tbody class="divide-y divide-base-content/5">
-            <template x-for="paj in pajsFiltrados" :key="paj.paj_norm">
+          <template x-for="paj in pajsFiltrados" :key="paj.paj_norm">
+            <tbody>
               <tr class="paj-row group cursor-pointer hover:bg-base-200/50 transition-colors"
                   @click="window.location.href = '/paj/' + paj.paj_norm">
 
               <!-- PAJ -->
               <td class="px-4 py-3 align-top whitespace-nowrap">
-                <!-- 1ª linha: número do PAJ (ponto azul = PAJ novo, ainda não visitado) -->
+                <!-- 1ª linha: número do PAJ -->
                 <div class="font-mono text-sm font-semibold tracking-tight flex items-center gap-1.5">
-                  <template x-if="novidadesDe(paj).novo">
-                    <span class="w-2 h-2 rounded-full bg-info shrink-0" title="PAJ novo — ainda não visitado"></span>
-                  </template>
-                  <span x-text="paj.paj"></span>
+                  <div class="dropdown" @click.stop>
+                      <div tabindex="0" role="button" class="link" title="Escolher onde abrir o PAJ" x-text="paj.paj"></div>
+                      <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-44 p-1 shadow border border-base-300">
+                          <li><a @click.stop="abrirPajPainel(paj.paj_norm)">Abrir no Painel</a></li>
+                          <li><a @click.stop="abrirPajNavegador(paj.paj)">Abrir no navegador</a></li>
+                      </ul>
+                  </div>
+                  <button type="button" class="btn btn-ghost btn-xs p-1 h-auto min-h-0 shrink-0"
+                          @click.stop="copiarPaj(paj)"
+                          :title="paj._pajCopiado ? 'Copiado!' : 'Copiar número do PAJ'">
+                    <svg x-show="!paj._pajCopiado" class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                    </svg>
+                    <span x-show="paj._pajCopiado" class="text-success">✓</span>
+                  </button>
+                  <button type="button" class="btn btn-ghost btn-xs p-1 h-auto min-h-0 shrink-0"
+                          @click.stop="toggleWatchlistStar(paj)"
+                          :title="paj._watched ? 'Remover da watchlist' : 'Adicionar à watchlist'">
+                    <svg class="w-3.5 h-3.5" :class="paj._watched ? 'text-warning' : 'text-base-content/40'"
+                         :fill="paj._watched ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
+                    </svg>
+                  </button>
+                  <!-- Pill "N trâmites" — mais de uma tramitação GERAL pendente
+                       do mesmo PAJ na caixa (comum no SISDPU: tramitado pra
+                       grupos/pessoas diferentes em momentos diferentes). So'
+                       aparece quando N>1 (com 1 so', o botao "Concluir PAJ da
+                       Caixa de Entrada" do cabecalho ja resolve sem esse
+                       passo extra). Clique expande a linha com cada uma. -->
+                  <button type="button" x-show="(paj.tramitacoes_caixa || []).length > 1"
+                          class="badge badge-error text-white border-0 text-[10px] font-bold h-5 min-h-0 px-1.5 shrink-0"
+                          style="border-radius: 999px;"
+                          @click.stop="toggleTramites(paj)"
+                          :title="paj.tramitacoes_caixa.length + ' tramitações pendentes na caixa — clique para ver'"
+                          x-text="paj.tramitacoes_caixa ? paj.tramitacoes_caixa.length : ''">
+                  </button>
                   <template x-if="(paj.lembrete_itens || []).length">
                     <svg class="lembrete-icon inline-block shrink-0" width="15" height="15" viewBox="0 0 16 16"
                          @mouseenter="mostrarLembrete($event, paj)" @mouseleave="lembreteTip.show = false"
@@ -655,9 +701,34 @@
                       :class="paj.tem_analise_ia ? 'badge-success' : 'badge-ghost text-base-content/40'"
                       x-text="paj.tem_analise_ia ? 'SIM' : 'NÃO'"></span>
               </td>
+            </tr><tr x-show="expandidoTramites[paj.paj_norm] && (paj.tramitacoes_caixa || []).length > 1" @click.stop
+                class="bg-base-200/40">
+              <td></td>
+              <td colspan="7" class="px-4 py-2">
+                <div class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 mb-1.5">
+                  Tramitações pendentes na caixa de entrada
+                </div>
+                <div class="flex flex-col gap-1.5">
+                  <template x-for="t in (paj.tramitacoes_caixa || [])" :key="t.id_tramite">
+                    <div class="flex items-center gap-2 text-xs bg-base-100 rounded-lg px-3 py-1.5 border border-base-300">
+                      <span class="flex-1 min-w-0 truncate" :title="t.descricao">
+                        <span x-text="t.descricao || '—'"></span>
+                        <span class="text-base-content/40" x-show="t.remetente"> — de <span x-text="t.remetente"></span></span>
+                      </span>
+                      <span class="text-base-content/40 whitespace-nowrap" x-text="t.data_envio || ''"></span>
+                      <button type="button" class="btn btn-outline btn-error btn-xs"
+                              :disabled="concluindoTramite[t.id_tramite]"
+                              @click="concluirTramite(paj, t)">
+                        <span x-show="concluindoTramite[t.id_tramite]" class="loading loading-spinner loading-xs"></span>
+                        Concluir
+                      </button>
+                    </div>
+                  </template>
+                </div>
+              </td>
             </tr>
+            </tbody>
           </template>
-        </tbody>
         </table>
 
         <!-- Estado vazio -->
@@ -721,6 +792,10 @@ function dashboardApp() {
         stats: {running: 0, queued: 0, max_parallel: 5},
         cota: {ativo: false, n_pendentes: 0, redisparo_em: '', pausado: false, ciclo: 0, max_ciclos: 12, ultimo_log: ''},
         lembreteTip: { show: false, x: 0, y: 0, itens: [] },
+        // Expansão do pill "N trâmites" (mais de uma tramitação geral pendente
+        // do mesmo PAJ na caixa — comum no SISDPU) — ver toggleTramites().
+        expandidoTramites: {},
+        concluindoTramite: {},
 
         // Estado do modal "Elaborar todos" (lote)
         loteSkills: [],
@@ -745,6 +820,62 @@ function dashboardApp() {
             this.ultimaExecucao = data.ultima_execucao || '';
             this.totalConcluidos = data.total_concluidos || 0;
             this.aplicarFiltros();
+            await this.carregarWatchlist();
+        },
+
+        // Estrela da watchlist ao lado do número do PAJ — busca em LOTE (1 fetch
+        // pra tabela inteira) em vez de 1 fetch por linha (ver toggleWatchlistStar).
+        async carregarWatchlist() {
+            try {
+                const wl = await (await fetch('/api/watchlist')).json();
+                const watched = new Set((wl.itens || []).map((i) => i.paj_norm));
+                this.pajs.forEach((p) => { p._watched = watched.has(p.paj_norm); });
+            } catch (e) { /* silencioso — estrela so' fica sem estado inicial */ }
+        },
+        async toggleWatchlistStar(paj) {
+            paj._watched = await toggleWatchlist(paj.paj_norm, paj._watched);
+        },
+        copiarPaj(paj) {
+            navigator.clipboard.writeText(paj.paj);
+            paj._pajCopiado = true;
+            setTimeout(() => { paj._pajCopiado = false; }, 1500);
+        },
+
+        // Pill "N trâmites" — mais de uma tramitação geral pendente do mesmo
+        // PAJ na caixa (comum no SISDPU: tramitado pra grupos/pessoas
+        // diferentes em momentos diferentes). Expande uma linha com cada
+        // tramitação e seu próprio botão Concluir (id_tramite individualizado
+        // — ver services/paj_service.registrar_pos_execucao_sisdpu).
+        toggleTramites(paj) {
+            this.expandidoTramites[paj.paj_norm] = !this.expandidoTramites[paj.paj_norm];
+        },
+        async concluirTramite(paj, tramite) {
+            if (!confirm('Concluir esta tramitação de ' + paj.paj + ' na caixa de entrada?\n\n'
+                + (tramite.descricao || '') + (tramite.remetente ? ('\nDe: ' + tramite.remetente) : ''))) return;
+            if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
+            this.concluindoTramite[tramite.id_tramite] = true;
+            try {
+                const r = await fetch('/api/paj/' + encodeURIComponent(paj.paj_norm) + '/concluir-tramites', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id_tramites: [tramite.id_tramite] }),
+                });
+                const data = await r.json();
+                if (!data.ok) {
+                    showToast(data.detalhe || 'Falha ao concluir trâmite', 'error');
+                    return;
+                }
+                paj.tramitacoes_caixa = (paj.tramitacoes_caixa || []).filter((t) => t.id_tramite !== tramite.id_tramite);
+                showToast('Trâmite concluído', 'success');
+                if (!paj.tramitacoes_caixa.length) {
+                    // Sem tramitação geral restante — some da lista (mesma regra do dashboard).
+                    this.pajs = this.pajs.filter((p) => p.paj_norm !== paj.paj_norm);
+                    this.aplicarFiltros();
+                }
+            } catch (e) {
+                showToast('Falha ao concluir trâmite', 'error');
+            } finally {
+                this.concluindoTramite[tramite.id_tramite] = false;
+            }
         },
 
         limparFiltros() {

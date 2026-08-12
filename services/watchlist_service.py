@@ -39,11 +39,39 @@ def _salvar(wl: dict) -> None:
 
 
 def listar() -> list[dict]:
-    """Retorna lista plana de itens, com `paj_norm` embutido em cada um."""
+    """Retorna lista plana de itens, com `paj_norm` embutido em cada um.
+    Também enriquece cada item com assistido, oficio e pretensaopura do metadata.json do PAJ."""
+    from .paj_service import ler_paj
+
+    _sigla_of = None
+    try:
+        from services.config_painel_service import sigla_de_oficio as _sigla_of
+    except Exception:
+        pass
+
+    if not _sigla_of:
+        def _sigla_of(x):
+            return x
+
     wl = _carregar()
     itens = []
     for paj_norm, item in wl.get("itens", {}).items():
-        itens.append({"paj_norm": paj_norm, **item})
+        wl_item = {"paj_norm": paj_norm, **item}
+
+        # Enriquece com dados do PAJ (assistido, oficio, pretensaopura)
+        try:
+            paj_data = ler_paj(paj_norm)
+            if paj_data and "metadata" in paj_data:
+                meta = paj_data["metadata"]
+                wl_item["assistido"] = meta.get("assistido_caixa", "")
+                wl_item["oficio"] = meta.get("oficio_caixa", "")
+                wl_item["oficio_sigla"] = _sigla_of(meta.get("oficio_caixa", ""))
+                wl_item["pretensaopura"] = meta.get("pretensaopura", "")
+        except Exception:
+            # Se algo der errado, mantém valores vazios
+            pass
+
+        itens.append(wl_item)
 
     # Ordem: ativos primeiro (mais recentes no topo), encerrados depois.
     def _ord(x: dict) -> tuple:

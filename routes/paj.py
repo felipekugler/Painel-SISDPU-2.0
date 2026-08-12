@@ -3,15 +3,19 @@
 from fastapi import APIRouter, Body, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
+from ingestao import sisdpu_movtram
 from services import lembretes_service
 from services.download_completo_service import gerar_pdf_consolidado, verificar_sincronizacao_completa
 from services.paj_service import (
     PajNorm,
     abrir_pasta_paj,
+    concluir_tramites_caixa,
+    definir_whatsapp_numeros,
     invalidar_cache_listagem,
     ler_paj,
     ler_notas,
     limpar_anexos_paj,
+    registrar_pos_execucao_sisdpu,
     salvar_notas,
 )
 
@@ -52,6 +56,49 @@ async def api_paj_movimentacoes(paj_norm: PajNorm):
         "anexos_sisdpu": dados.get("anexos_sisdpu", []),
         "max_seq": dados.get("max_seq_mov", 0),
     }
+
+
+@router.post("/api/paj/{paj_norm}/pos-execucao-sisdpu", response_class=JSONResponse)
+async def api_pos_execucao_sisdpu(paj_norm: PajNorm, request: Request):
+    """Chamado pelo frontend logo após o console genérico "Ações no SISDPU"
+    (ou o atalho "Concluir PAJ da Caixa de Entrada" do cabeçalho) terminar de
+    executar NA PÁGINA DO PAJ: registra no Histórico do painel e marca o PAJ
+    como fora da caixa quando o trâmite foi concluído — mesmo efeito que
+    `retornos_service.registrar_pos_execucao` tem pra Retornos. Body:
+    {"resultado": {...payload do onExecutado...}}."""
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 — corpo vazio/malformado: nada a registrar
+        body = {}
+    resultado = body.get("resultado") or {}
+    return JSONResponse(await registrar_pos_execucao_sisdpu(paj_norm, resultado))
+
+
+@router.post("/api/paj/{paj_norm}/concluir-tramites", response_class=JSONResponse)
+async def api_concluir_tramites(paj_norm: PajNorm, payload: dict = Body(...)):
+    """Conclui um ou mais trâmites específicos da caixa de entrada deste PAJ
+    (id_tramite individualizado — permite escolher exatamente quais, quando
+    há mais de um pendente). Body: {"id_tramites": ["123", "456"]}."""
+    ids = payload.get("id_tramites") if isinstance(payload, dict) else None
+    resultado = await concluir_tramites_caixa(paj_norm, ids if isinstance(ids, list) else [])
+    if not resultado.get("ok") and not resultado.get("concluidos"):
+        return JSONResponse(resultado, status_code=400)
+    return resultado
+
+
+@router.get("/api/paj/{paj_norm}/tramitacoes", response_class=JSONResponse)
+async def api_paj_tramitacoes(paj_norm: PajNorm, limite: int = 10):
+    """Caixas onde o PAJ está aberto agora (mesma fonte usada pela Retornos —
+    services/retornos_service.caixas_abertas) + últimas `limite` tramitações
+    (histórico completo, concluídas ou não) — numa ÚNICA navegação ao SISDPU."""
+    dados = ler_paj(paj_norm)
+    id_processo = (dados or {}).get("id_processo") or ""
+    if not id_processo:
+        return {"ok": False, "abertas": [], "tramitacoes": [], "erro": "id_processo ausente (sincronize)."}
+    # `ok=False` aqui significa "não foi possível confirmar" (conflito de sessão,
+    # timeout...) — NUNCA interpretar abertas/tramitacoes vazias como "sem
+    # tramitação" nesse caso (ver docstring de caixas_e_historico_paj).
+    return await sisdpu_movtram.caixas_e_historico_paj(id_processo, limite)
 
 
 @router.get("/api/paj/{paj_norm}/limpar-anexos/preview", response_class=JSONResponse)
@@ -121,6 +168,17 @@ async def api_abrir_pasta(paj_norm: PajNorm):
     if not resultado.get("ok"):
         return JSONResponse(resultado, status_code=404)
     return resultado
+
+
+@router.post("/api/paj/{paj_norm}/whatsapp", response_class=JSONResponse)
+async def api_definir_whatsapp(paj_norm: PajNorm, payload: dict = Body(...)):
+    """Escolha manual de quais telefones (já extraídos do SISDPU) valem como
+    WhatsApp — o SISDPU não tem esse dado. Body: {"numeros": ["(41)999...", ...]}."""
+    numeros = payload.get("numeros") if isinstance(payload, dict) else None
+    contatos = definir_whatsapp_numeros(paj_norm, numeros if isinstance(numeros, list) else [])
+    if contatos is None:
+        return JSONResponse({"ok": False, "erro": "PAJ não encontrado"}, status_code=404)
+    return {"ok": True, "contatos": contatos}
 
 
 @router.get("/api/paj/{paj_norm}/notas", response_class=JSONResponse)

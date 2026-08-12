@@ -69,21 +69,16 @@ _browser: Browser | None = None
 _page: Page | None = None
 
 
-# JS que espera o PrimeFaces terminar todos os AJAX pendentes.
+# JS que checa se o PrimeFaces terminou todos os AJAX pendentes — usado via
+# `page.wait_for_function` (que ja' faz o polling com timeout), entao so'
+# precisa devolver um booleano, sem Promise/setTimeout proprio.
 _WAIT_PF_AJAX = """
-() => new Promise((resolve) => {
-    const check = () => {
-        if (typeof PrimeFaces === 'undefined'
-            || !PrimeFaces.ajax
-            || !PrimeFaces.ajax.Queue
-            || PrimeFaces.ajax.Queue.isEmpty()) {
-            resolve(true);
-        } else {
-            setTimeout(check, 100);
-        }
-    };
-    check();
-})
+() => (
+    typeof PrimeFaces === 'undefined'
+    || !PrimeFaces.ajax
+    || !PrimeFaces.ajax.Queue
+    || PrimeFaces.ajax.Queue.isEmpty()
+)
 """
 
 
@@ -129,9 +124,36 @@ async def _get_page() -> Page:
 
 
 async def _wait_pf_ajax(page: Page, timeout: int = 10000) -> None:
-    """Espera o PrimeFaces terminar AJAX pendente, com timeout de seguranca."""
+    """Espera o PrimeFaces terminar AJAX pendente, com timeout de seguranca.
+
+    BUG HISTORICO (corrigido aqui): a versao anterior chamava
+    `page.evaluate(_WAIT_PF_AJAX, timeout=timeout)` — mas `Page.evaluate()`
+    do Playwright NAO tem parametro `timeout` (a assinatura e' so'
+    `evaluate(expression, arg=None)`). Isso levantava `TypeError` em TODA
+    chamada, sempre engolido pelo `except` abaixo, que sempre caia no
+    fallback fixo de 1 segundo — ou seja, esta funcao NUNCA de fato
+    consultava `PrimeFaces.ajax.Queue.isEmpty()`; so' esperava 1s cego,
+    independente do `timeout` pedido (5000/10000/15000ms nos varios call
+    sites).
+
+    Na pratica isso corrompia silenciosamente a "segunda passagem" que
+    extrai `descricao_retorno` de PAJs com "Atendimento de retorno": o
+    passo 1 clica em TODOS os togglers de expansao de uma vez (AJAX em
+    paralelo do PrimeFaces), o passo 2 deveria dar tempo de todos
+    assentarem antes do passo 3 varrer o DOM — mas so' esperava 1s fixo.
+    Em PAJs com varios retornos, os ultimos cliques disparados no loop
+    (que caem nos seqs mais antigos, mais abaixo na tabela) muitas vezes
+    ainda estavam pendentes quando o DOM era lido — o campo ficava vazio
+    (`descricao_retorno: ''`) sem erro nenhum, sem log nenhum. Confirmado
+    empiricamente: num PAJ com 13 "Atendimento de retorno", os 2 ultimos
+    da lista ficaram vazios, os outros 11 vieram certos.
+
+    `page.wait_for_function` e' a API correta do Playwright pra isso: ela
+    mesma faz o polling (com timeout de verdade), entao `_WAIT_PF_AJAX`
+    virou uma funcao booleana simples em vez de uma Promise com
+    setTimeout proprio."""
     try:
-        await page.evaluate(_WAIT_PF_AJAX, timeout=timeout)
+        await page.wait_for_function(_WAIT_PF_AJAX, timeout=timeout)
     except Exception:
         await page.wait_for_timeout(1000)
 
@@ -315,6 +337,135 @@ def parse_item_caixa(item_raw: str) -> dict | None:
     }
 
 
+# JS extraido do CADASTRO DE PESSOA FISICA de cada assistido (pagina separada
+# do detalhamento — cadastroAssistidoPessoaFisicaCombotoes.xhtml): telefones
+# (com observacao), emails e enderecos. Os valores ficam em <input>/<select>
+# (formulario), entao lemos .value / opcao selecionada — nao textContent.
+#  - Contatos: em #tabelaContatos. Cada contato tem um input `pessoaContatoDescricao`
+#    (o numero/email) cujo label ("Telefone:"/"Email:"/"Fax:") indica o tipo; a
+#    observacao e' o input irmao `...pessoaContatoDescricaoTelefone` de mesmo indice.
+#  - Enderecos: inputs/selects `pessoaEnderecoTipo/Logradouro/Numero/Complemento/
+#    Bairro/Cep` + selects `enderecoUF`/`enderecoMunicipio`, agrupados pelo indice `:N:`.
+_JS_CADASTRO_PF = r"""
+() => {
+    const val = (el) => el.tagName === "SELECT"
+        ? (((el.options[el.selectedIndex] || {}).text) || "").replace(/\s+/g, " ").trim()
+        : (el.value || "").replace(/\s+/g, " ").trim();
+
+    const telefones = [], emails = [], enderecos = [];
+
+    const tc = document.getElementById("tabelaContatos");
+    if (tc) {
+        const inputs = Array.from(tc.querySelectorAll("input"));
+        for (const el of inputs) {
+            const name = el.name || el.id || "";
+            const m = name.match(/:(\d+):pessoaContatoDescricao$/);
+            if (!m) continue;
+            const valor = val(el);
+            if (!valor) continue;
+            let tipo = "";
+            if (el.id) {
+                const l = document.querySelector('label[for="' + CSS.escape(el.id) + '"]');
+                if (l) tipo = l.textContent.trim();
+            }
+            const idx = m[1];
+            let obs = "";
+            const o = inputs.find(x =>
+                new RegExp(":" + idx + ":pessoaContatoDescricaoTelefone$").test(x.name || x.id || ""));
+            if (o) obs = val(o);
+            if (/email/i.test(tipo)) emails.push(valor);
+            else if (/telefone/i.test(tipo)) telefones.push({ numero: valor, obs: obs });
+            // Fax e outros tipos sao ignorados
+        }
+    }
+
+    const chaves = ["pessoaEnderecoTipo","pessoaEnderecoLogradouro","pessoaEnderecoNumero",
+                    "pessoaEnderecoComplemento","pessoaEnderecoBairro","enderecoMunicipio",
+                    "enderecoUF","pessoaEnderecoCep"];
+    const porIdx = {};
+    for (const el of document.querySelectorAll("input,select")) {
+        const name = el.name || el.id || "";
+        for (const k of chaves) {
+            const mm = name.match(new RegExp(":(\\d+):" + k + "$"));
+            if (mm) { (porIdx[mm[1]] = porIdx[mm[1]] || {})[k] = val(el); break; }
+        }
+    }
+    for (const idx of Object.keys(porIdx)) {
+        const e = porIdx[idx];
+        if (!(e.pessoaEnderecoLogradouro || e.pessoaEnderecoBairro || e.pessoaEnderecoCep)) continue;
+        enderecos.push({
+            tipo: e.pessoaEnderecoTipo || "", logradouro: e.pessoaEnderecoLogradouro || "",
+            numero: e.pessoaEnderecoNumero || "", complemento: e.pessoaEnderecoComplemento || "",
+            bairro: e.pessoaEnderecoBairro || "", municipio: e.enderecoMunicipio || "",
+            uf: e.enderecoUF || "", cep: e.pessoaEnderecoCep || ""
+        });
+    }
+
+    return { telefones, emails, enderecos };
+}
+"""
+
+
+async def _extrair_contatos_pf(page: Page, id_processo: str, assistidos_pf: list[dict]) -> dict:
+    """Visita o Cadastro de Pessoa Fisica de cada assistido PF vinculado ao PAJ
+    (pagina separada do detalhamento) e extrai telefones/emails/enderecos.
+
+    ATENCAO: navega a `page` pra fora do detalhamento — quem chama e' responsavel
+    por trazer a `page` de volta pro detalhamento depois (anexos/documentos,
+    chamados logo apos movimentacoes_paj/buscar_paj_global retornarem, dependem
+    da page estar la).
+    """
+    telefones: list[dict] = []
+    emails: list[str] = []
+    enderecos: list[dict] = []
+    for a in assistidos_pf or []:
+        idp = a.get("idPessoa")
+        if not idp:
+            continue
+        try:
+            await page.goto(
+                f"{SISDPU_URL}/pages/atendimento/cadastroAssistidoPessoaFisicaCombotoes.xhtml"
+                f"?idProcesso={id_processo}&idPessoa={idp}",
+                wait_until="domcontentloaded",
+            )
+            await _wait_pf_ajax(page, timeout=10000)
+            await page.wait_for_timeout(600)
+            cad = await page.evaluate(_JS_CADASTRO_PF)
+        except Exception as e:  # noqa: BLE001
+            _log.warning("contatos: cadastro PF idPessoa=%s falhou: %s", idp, e)
+            continue
+        telefones.extend(cad.get("telefones", []) or [])
+        emails.extend(cad.get("emails", []) or [])
+        enderecos.extend(cad.get("enderecos", []) or [])
+    return {"telefones": telefones, "emails": emails, "enderecos": enderecos}
+
+
+async def _extrair_contatos_e_voltar(page: Page, dados: dict) -> None:
+    """Roda `_extrair_contatos_pf` (se houver assistidos_pf) e SEMPRE traz a
+    `page` de volta pro detalhamento antes de retornar — passo final de
+    movimentacoes_paj/buscar_paj_global, chamado so' depois de toda a extracao
+    que depende do detalhamento ja ter terminado.
+
+    Modifica `dados` in-place (telefones/emails/enderecos).
+    """
+    assistidos_pf = dados.get("assistidos_pf") or []
+    url_detalhe = dados.get("url", "")
+    if not assistidos_pf or not url_detalhe:
+        return
+    id_match = re.search(r"[?&]id=(\d+)", url_detalhe)
+    if not id_match:
+        return
+    try:
+        cad = await _extrair_contatos_pf(page, id_match.group(1), assistidos_pf)
+        dados["telefones"] = cad["telefones"]
+        dados["emails"] = cad["emails"]
+        dados["enderecos"] = cad["enderecos"]
+    finally:
+        with contextlib.suppress(Exception):
+            await page.goto(url_detalhe, wait_until="domcontentloaded")
+            await _wait_pf_ajax(page, timeout=10000)
+
+
 async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
                             esperas_curtas: bool = False) -> dict:
     """Retorna dados completos do PAJ incluindo MOVIMENTACOES com URLs de peca.
@@ -403,6 +554,28 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
                 r.foto_assistido_src = fotoImg.src;
             }
 
+            // App SISDPU — o cabecalho tem o <span id="detalhamentoForm:lnkNotificarAssistido">
+            // que fica VAZIO quando o assistido nao aderiu ao app, e contem um <a>
+            // (icone, title "Este PAJ possui acompanhamento pelo App") quando aderiu.
+            // Reforcamos com a frase de adesao que aparece nas movimentacoes.
+            const spanApp = document.getElementById('detalhamentoForm:lnkNotificarAssistido');
+            const temLinkApp = !!(spanApp && spanApp.querySelector('a'));
+            const temFraseApp = /Ades[aã]o ao Termo de Responsabilidade do Aplicativo do SISDPU/i.test(body);
+            r.contato_app_sisdpu = temLinkApp || temFraseApp;
+
+            // Assistidos PF (idPessoa) — links pro Cadastro de Pessoa Fisica de cada
+            // um; usado depois pra extrair telefone/email/endereco (pagina separada).
+            const tblPF = document.getElementById('detalhamentoForm:dataTableListaAssistidosPF');
+            if (tblPF) {
+                const assistidosPf = [];
+                for (const a of tblPF.querySelectorAll('a[href*="cadastroAssistidoPessoaFisica"]')) {
+                    const href = a.getAttribute('href') || '';
+                    const mp = href.match(/idPessoa=(\\d+)/);
+                    if (mp) assistidosPf.push({ idPessoa: mp[1] });
+                }
+                if (assistidosPf.length) r.assistidos_pf = assistidosPf;
+            }
+
             const pajMatch = body.match(/(\\d{4}\\/\\d{3}-\\d+)\\s*-\\s*PAJ\\s+([^\\n]+)/);
             if (pajMatch) {
                 r.paj = pajMatch[1];
@@ -480,6 +653,43 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
               }
 
               return processos;
+            };
+
+            // Audiências cadastradas no PAJ — tabela dedicada (mesmas classes visuais
+            // da tabela "Processo Judicial"), identificada pelo container fixo
+            // `#detalhamentoForm:listaAudiencias`. Estrutura observada: 1ª linha =
+            // título "Audiências" + link "Inserir Nova"; 2ª linha = cabeçalho de
+            // colunas "Data / Hora | Local | Observação"; da 3ª linha em diante, uma
+            // linha por audiência (última célula é o ícone de excluir — não é dado).
+            // PAJ sem NENHUMA audiência cadastrada não tem nem a linha de cabeçalho
+            // de colunas — só a linha de título (por isso o corte em `linhas.length < 3`).
+            const extrairAudiencias = () => {
+              const audiencias = [];
+              const container = document.querySelector('#detalhamentoForm\\\\:listaAudiencias');
+              if (!container) return audiencias;
+              const tabela = container.querySelector('table');
+              if (!tabela) return audiencias;
+              const linhas = tabela.querySelectorAll('tbody tr');
+              if (linhas.length < 3) return audiencias;
+
+              // Local/Observação vêm como texto livre (às vezes com o link da sala
+              // virtual colado como texto puro, não como <a href>) — normaliza a
+              // indentação/whitespace da formatação do SISDPU, preservando as
+              // quebras de linha reais (relevante pra distinguir sala/descrição/link).
+              const limpa = (txt) => (txt || '').split('\\n').map((l) => l.trim()).filter(Boolean).join('\\n');
+
+              for (let i = 2; i < linhas.length; i++) {
+                const celulas = linhas[i].querySelectorAll('td');
+                if (celulas.length < 3) continue;
+                const dataHora = (celulas[0]?.textContent || '').trim();
+                if (!dataHora) continue;
+                audiencias.push({
+                  data_hora: dataHora,
+                  local: limpa(celulas[1]?.textContent),
+                  observacao: limpa(celulas[2]?.textContent),
+                });
+              }
+              return audiencias;
             };
 
             // Tabela de movimentacoes do SISDPU (EXTRAIR ANTES da validação cruzada)
@@ -598,6 +808,7 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
             r.observacoes_processo = ultimoProcesso ? ultimoProcesso.observacoes_processo : null;
             r.validacao_processo = ultimoProcesso ? ultimoProcesso.validacao : { sucesso: false, motivo: '' };
             r.processos_judiciais = processosJudiciais;
+            r.audiencias = extrairAudiencias();
 
             // Extração da Narrativa
             const extrairNarrativa = () => {
@@ -747,6 +958,16 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
             # Fallback: tentar direto
             if not encontrou and seq in mapa_conteudos:
                 mov["descricao_retorno"] = mapa_conteudos[seq]
+
+    # Contatos (telefone/email/endereco) — ultimo passo: exige navegar pro
+    # Cadastro de Pessoa Fisica de cada assistido (pagina separada) e volta
+    # pro detalhamento em seguida (anexos/documentos, chamados logo apos esta
+    # funcao retornar, dependem da page estar de volta la). Pulado no caminho
+    # rapido da aba Retornos (esperas_curtas) — so' le pra exibicao, nao grava
+    # metadata.json, e o custo extra de navegacao nao compensa ali.
+    if not esperas_curtas:
+        with contextlib.suppress(Exception):
+            await _extrair_contatos_e_voltar(page, dados)
 
     return dados
 
@@ -1349,6 +1570,24 @@ async def buscar_paj_global(
                 r.foto_assistido_src = fotoImg.src;
             }
 
+            // App SISDPU / Assistidos PF — mesma logica de movimentacoes_paj (ver lá
+            // o comentário completo).
+            const spanApp = document.getElementById('detalhamentoForm:lnkNotificarAssistido');
+            const temLinkApp = !!(spanApp && spanApp.querySelector('a'));
+            const temFraseApp = /Ades[aã]o ao Termo de Responsabilidade do Aplicativo do SISDPU/i.test(body);
+            r.contato_app_sisdpu = temLinkApp || temFraseApp;
+
+            const tblPF = document.getElementById('detalhamentoForm:dataTableListaAssistidosPF');
+            if (tblPF) {
+                const assistidosPf = [];
+                for (const a of tblPF.querySelectorAll('a[href*="cadastroAssistidoPessoaFisica"]')) {
+                    const href = a.getAttribute('href') || '';
+                    const mp = href.match(/idPessoa=(\\d+)/);
+                    if (mp) assistidosPf.push({ idPessoa: mp[1] });
+                }
+                if (assistidosPf.length) r.assistidos_pf = assistidosPf;
+            }
+
             r.pretensao = valorParaLabel(['Pretensão', 'Pretensao']);
             r.data_abertura = valorParaLabel([
                 'Data de Abertura', 'Dt. Abertura', 'Dt Abertura', 'Dt.Abertura', 'Abertura'
@@ -1427,6 +1666,29 @@ async def buscar_paj_global(
                 }
             }
             if (movs.length > 0) r.movimentacoes = movs.slice(0, 500);
+
+            // ---------- Audiências (mesma logica de movimentacoes_paj — ver lá o
+            // comentário completo sobre a estrutura da tabela) ----------
+            (() => {
+                const container = document.querySelector('#detalhamentoForm\\\\:listaAudiencias');
+                const tabela = container ? container.querySelector('table') : null;
+                const linhas = tabela ? tabela.querySelectorAll('tbody tr') : [];
+                if (linhas.length < 3) return;
+                const limpa = (txt) => (txt || '').split('\\n').map((l) => l.trim()).filter(Boolean).join('\\n');
+                const audiencias = [];
+                for (let i = 2; i < linhas.length; i++) {
+                    const celulas = linhas[i].querySelectorAll('td');
+                    if (celulas.length < 3) continue;
+                    const dataHora = (celulas[0]?.textContent || '').trim();
+                    if (!dataHora) continue;
+                    audiencias.push({
+                        data_hora: dataHora,
+                        local: limpa(celulas[1]?.textContent),
+                        observacao: limpa(celulas[2]?.textContent),
+                    });
+                }
+                if (audiencias.length > 0) r.audiencias = audiencias;
+            })();
 
             // ---------- Filtro final: descarta qualquer campo que tenha vazado lixo ----------
             for (const k of ['assistido', 'pretensao', 'oficio', 'juizo', 'foro_detalhado', 'decurso', 'data_abertura']) {
@@ -1578,6 +1840,13 @@ async def buscar_paj_global(
                 },
             )
             _log.info("dump de sucesso salvo em: %s", pasta)
+
+    # Contatos (telefone/email/endereco) — mesma logica de movimentacoes_paj
+    # (ver lá o comentário completo); pulado no caminho rapido (esperas_curtas).
+    if not esperas_curtas:
+        with contextlib.suppress(Exception):
+            await _extrair_contatos_e_voltar(page, dados)
+
     _log.info("FIM(ok) %s", paj_texto)
     return dados
 

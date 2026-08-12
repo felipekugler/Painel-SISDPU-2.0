@@ -40,10 +40,15 @@
                             <tr class="hover align-top">
                                 <td class="whitespace-nowrap text-xs" x-text="fmtDataHora(r.ts)"></td>
                                 <td class="font-mono whitespace-nowrap">
-                                    <a x-show="r.url_detalhe" :href="r.url_detalhe" target="_blank" rel="noopener"
-                                       class="link link-hover" style="color:var(--accent)"
-                                       title="Abrir o PAJ no SISDPU" x-text="r.paj"></a>
-                                    <span x-show="!r.url_detalhe" x-text="r.paj"></span>
+                                    <button class="link" style="color:var(--accent)"
+                                            title="Escolher onde abrir o PAJ"
+                                            @click.stop="menuAbertoPaj = (menuAbertoPaj === r.paj_norm ? null : r.paj_norm);
+                                                        menuAbertoPajLabel = r.paj;
+                                                        if (menuAbertoPaj === r.paj_norm) {
+                                                          const rect = $el.getBoundingClientRect();
+                                                          posMenu = { top: rect.bottom + window.scrollY, left: rect.left + window.scrollX };
+                                                        }"
+                                            x-text="r.paj"></button>
                                 </td>
                                 <td class="text-sm" x-text="r.assistido || '—'"></td>
                                 <td>
@@ -67,12 +72,26 @@
             </div>
         </div>
     </div>
+
+    <!-- Menu global único (PAJ): sempre o mesmo elemento, reposicionado por clique. -->
+    <template x-teleport="body">
+        <ul x-show="menuAbertoPaj !== null" x-cloak
+            @click.outside="menuAbertoPaj = null"
+            :style="'position:fixed; top:' + posMenu.top + 'px; left:' + posMenu.left + 'px;'"
+            class="menu menu-xs bg-base-100 rounded-box z-[1000] w-44 p-1 shadow border border-base-300">
+            <li><a @click.stop="abrirPajPainel(menuAbertoPaj); menuAbertoPaj = null">Abrir no Painel</a></li>
+            <li><a @click.stop="abrirPajNavegador(menuAbertoPajLabel); menuAbertoPaj = null">Abrir no navegador</a></li>
+        </ul>
+    </template>
 </div>
 
 <script>
 function historicoPage() {
     return {
         registros: [], carregando: false,
+        menuAbertoPaj: null,
+        menuAbertoPajLabel: '',
+        posMenu: { top: 0, left: 0 },
         async init() { await this.carregar(); },
         async carregar() {
             this.carregando = true;

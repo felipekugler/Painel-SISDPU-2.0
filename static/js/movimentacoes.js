@@ -68,9 +68,12 @@ function tabelaMovimentacoes() {
                 const bg = style.getPropertyValue('--cor-defensor-bg').trim();
                 return `background-color: ${bg}; border-left: 4px solid ${cor};`;
             }
+            // color-mix com currentColor (não branco fixo) — se auto-ajusta ao tema:
+            // escurece um pouco no claro (texto escuro) e clareia no escuro (texto
+            // claro). Branco fixo era invisível no tema claro (fundo já quase branco).
             return idx % 2 === 0
-                ? 'background-color: rgba(255, 255, 255, 0.025);'
-                : 'background-color: rgba(255, 255, 255, 0.055);';
+                ? 'background-color: color-mix(in srgb, currentColor 3%, transparent);'
+                : 'background-color: color-mix(in srgb, currentColor 7%, transparent);';
         },
 
         // Mapa {id_do_arquivo -> caminho local} dos anexos já baixados em Arquivos/

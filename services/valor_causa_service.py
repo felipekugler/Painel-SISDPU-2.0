@@ -47,6 +47,39 @@ _RUNNER = Path(__file__).parent / "valor_causa_runner.py"
 # Qualquer outra pretensão previdenciária -> INPC, com 13º.
 _PALAVRAS_ASSISTENCIAL = ("BPC", "LOAS", "ASSISTENCIAL", "PRESTACAO CONTINUADA")
 
+# Instrução TRANSVERSAL anexada a QUALQUER ação do painel que possa redigir uma
+# petição inicial (Elaborar genérico, análise por pretensão, etc.). Manda a skill
+# (1) emitir `valor_causa.json` com os PARÂMETROS das parcelas e (2) deixar o
+# marcador {{VALOR_CAUSA}} no lugar do valor — o painel calcula deterministicamente,
+# gera o PDF e substitui o marcador. A skill NÃO faz a aritmética (evita erro do LLM).
+INSTRUCAO_VALOR_CAUSA = (
+    "CÁLCULO DO VALOR DA CAUSA (automático pelo painel): se — agora ou depois — "
+    "você redigir uma **petição inicial** que pleiteia benefício com parcelas "
+    "devidas (BPC/LOAS, benefício por incapacidade, aposentadoria, "
+    "restabelecimento etc.), faça DUAS coisas além da petição:\n"
+    "  1. No corpo da petição, no ponto em que se atribui o valor da causa, "
+    "escreva o marcador literal `{{VALOR_CAUSA}}` em vez de um número "
+    "(ex.: \"Dá-se à causa o valor de {{VALOR_CAUSA}}.\") — tanto no `.txt` "
+    "quanto no `.docx`, se você gerar o `.docx`. NÃO calcule o valor você mesmo; "
+    "o painel calcula e substitui o marcador.\n"
+    "  2. Salve, NA MESMA PASTA da petição, um arquivo `valor_causa.json` com os "
+    "parâmetros que você extraiu dos documentos (é o painel que fará a conta):\n"
+    "     {\n"
+    "       \"nb\": \"NNN.NNN.NNN-N\",\n"
+    "       \"especie\": \"ex.: BPC Deficiente (87) | Auxílio por Incapacidade (31)\",\n"
+    "       \"nome\": \"nome do assistido\",\n"
+    "       \"tipo\": \"assistencial | previdenciario  (opcional; o painel deriva da pretensão)\",\n"
+    "       \"valor_mensal\": 0.00,  (RMI/último pagamento da mesma espécie; deixe null se BPC ou se nunca recebeu — o painel usa o salário mínimo)\n"
+    "       \"valor_mensal_origem\": \"de onde tirou (ex.: Declaração de Benefícios; salário mínimo)\",\n"
+    "       \"marco\": \"DER  (concessão)  |  DCB+1  (restabelecimento)\",\n"
+    "       \"data_marco\": \"DD/MM/AAAA  (a DER, ou a DCB no restabelecimento)\",\n"
+    "       \"meses_vincendos\": 12\n"
+    "     }\n"
+    "  Regras: valores em ponto decimal (1518.00), datas DD/MM/AAAA. Se algum "
+    "dado não constar dos documentos, use null e explique em `valor_mensal_origem` "
+    "ou num campo `observacao`. Não invente valores.\n\n"
+)
+
 
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -161,10 +194,19 @@ def _montar_dados_calc(paj_norm: str, params: dict) -> tuple[dict, dict]:
 
     valor_mensal = params.get("valor_mensal")
     origem_valor = params.get("valor_mensal_origem") or ""
+    # piso_sm: benefício de 1 salário mínimo (BPC/assistencial, ou previdenciário
+    # que nunca recebeu). Nesse caso o calc usa o mínimo VIGENTE em cada competência
+    # (tabela salario_minimo.py), não um valor achatado. valor_mensal vira só um
+    # fallback (usado se a tabela não carregar).
+    piso_sm = False
     if not valor_mensal:
+        piso_sm = True
         valor_mensal = SALARIO_MINIMO
-        origem_valor = origem_valor or f"salário mínimo (R$ {SALARIO_MINIMO:.2f})"
-        avisos.append("Valor mensal presumido como salário mínimo — confira se há RMI própria.")
+        origem_valor = origem_valor or "1 salário mínimo por competência (tabela oficial)"
+        avisos.append(
+            "Benefício presumido = 1 salário mínimo (mínimo vigente por competência) — "
+            "confira se há RMI própria."
+        )
     valor_mensal = float(valor_mensal)
 
     data_inicio = _data_inicio_atrasados(params)
@@ -189,9 +231,27 @@ def _montar_dados_calc(paj_norm: str, params: dict) -> tuple[dict, dict]:
         "dias_mes": dias_mes,
         "data_ajuizamento": data_ajuizamento,
         "meses_vincendos": int(params.get("meses_vincendos", 12)),
+        "piso_sm": piso_sm,
     }
     if params.get("data_fim_vincendos"):
         dados["data_fim_vincendos"] = params["data_fim_vincendos"]
+
+    # aviso de manutenção da tabela de salário mínimo: se o cálculo alcança um
+    # ano além do último mínimo cadastrado, as parcelas desse ano usam o último
+    # valor conhecido (pode estar defasado).
+    if piso_sm:
+        with contextlib.suppress(Exception):
+            if str(VALOR_CAUSA_DIR) not in sys.path:
+                sys.path.insert(0, str(VALOR_CAUSA_DIR))
+            from salario_minimo import ultimo_ano
+
+            ano_alcance = _dt.datetime.strptime(data_ajuizamento, "%d/%m/%Y").year + 1  # vincendos
+            if ano_alcance > ultimo_ano():
+                avisos.append(
+                    f"Tabela de salário mínimo vai até {ultimo_ano()}; competências de "
+                    f"{ultimo_ano() + 1} em diante usam o último mínimo conhecido. "
+                    "Atualize salario_minimo.py quando sair o novo decreto."
+                )
 
     # aviso de índice pendente — indices_cm é pure-python (sem docx), seguro importar aqui
     with contextlib.suppress(Exception):
@@ -211,7 +271,8 @@ def _montar_dados_calc(paj_norm: str, params: dict) -> tuple[dict, dict]:
 
     premissas = {
         "tipo": tipo,
-        "valor_mensal": valor_mensal,
+        "piso_sm": piso_sm,
+        "valor_mensal": valor_mensal if not piso_sm else "salário mínimo vigente por competência",
         "valor_mensal_origem": origem_valor,
         "marco": params.get("marco", ""),
         "data_inicio_atrasados": data_inicio,
@@ -284,6 +345,14 @@ def processar(paj_norm: str, params: dict | None = None) -> dict:
     if not paj_dir.exists():
         return {"ok": False, "erro": f"PAJ não encontrado: {paj_norm}"}
 
+    # Atualiza os índices de CM do IBGE antes de calcular (best-effort, TTL-gated:
+    # só vai à rede se o cache passou de 12h). Assim os atrasados recentes já saem
+    # corrigidos. Falha de rede não bloqueia — cai no que houver em cache/tabela.
+    with contextlib.suppress(Exception):
+        from services import indices_service
+
+        indices_service.atualizar()
+
     if params is not None:
         pasta_pi = paj_dir / "Peças IA" if (paj_dir / "Peças IA").exists() else paj_dir
     else:
@@ -329,9 +398,19 @@ def processar(paj_norm: str, params: dict | None = None) -> dict:
 
 
 def processar_se_pi(paj_norm: str) -> dict:
-    """Hook automático: só age se a skill emitiu valor_causa.json; senão retorna
-    {'ok': True, 'skip': True} (sessão parou no diagnóstico, sem PI)."""
+    """Hook automático (transversal): só age se a skill emitiu valor_causa.json;
+    senão retorna {'ok': True, 'skip': True} (ação que não gerou PI). Idempotente:
+    se o resultado já é mais novo que os parâmetros, não recalcula."""
     paj_dir = PAJS_DIR / paj_norm
-    if not paj_dir.exists() or not _localizar_params(paj_dir):
+    if not paj_dir.exists():
         return {"ok": True, "skip": True}
+    achado = _localizar_params(paj_dir)
+    if not achado:
+        return {"ok": True, "skip": True}
+    _, pasta = achado
+    with contextlib.suppress(Exception):
+        pj = pasta / _JSON_SKILL
+        rj = pasta / _JSON_RESULT
+        if rj.exists() and rj.stat().st_mtime >= pj.stat().st_mtime:
+            return {"ok": True, "skip": "já processado"}
     return processar(paj_norm)

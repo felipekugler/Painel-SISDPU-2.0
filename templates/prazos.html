@@ -189,15 +189,14 @@
                 <tr :class="c.cor ? 'linha-eproc' : ''" :style="c.cor ? ('background-color:' + c.cor) : ''">
                   <td class="max-w-[15rem]">
                     <div class="font-mono text-xs whitespace-nowrap">
-                      <div class="dropdown inline-block">
-                        <div tabindex="0" role="button" class="link" title="Escolher onde abrir o processo" x-text="c.processo"></div>
-                        <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-44 p-1 shadow border border-base-300">
-                          <li><a @click="verNoPainel(c)">Ver no Painel</a></li>
-                          <template x-if="c.processo_url">
-                            <li><a @click="abrirProcesso(c)">Ver no navegador</a></li>
-                          </template>
-                        </ul>
-                      </div>
+                      <button class="link" title="Escolher onde abrir o processo"
+                              @click.stop="menuAbertoProc = (menuAbertoProc === c.processo ? null : c.processo);
+                                          menuAbertoProcObj = c;
+                                          if (menuAbertoProc === c.processo) {
+                                            const rect = $el.getBoundingClientRect();
+                                            posMenu = { top: rect.bottom + window.scrollY, left: rect.left + window.scrollX };
+                                          }"
+                              x-text="c.processo"></button>
                       <template x-if="c.novo">
                         <span class="badge badge-success badge-sm ml-1" title="Nova desde a última sincronização">novo</span>
                       </template>
@@ -231,8 +230,13 @@
                   </td>
                   <td class="font-mono text-xs whitespace-nowrap">
                     <template x-if="c.paj">
-                      <a :href="'/api/prazos/abrir-paj?paj=' + encodeURIComponent(c.paj)" target="_blank"
-                         class="link link-primary" title="Abrir o PAJ no SISDPU (nova aba)" x-text="c.paj"></a>
+                      <div class="dropdown">
+                        <div tabindex="0" role="button" class="link link-primary" title="Escolher onde abrir o PAJ" x-text="c.paj"></div>
+                        <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-44 p-1 shadow border border-base-300">
+                          <li><a @click="abrirPajPainel(pajExibicaoParaNorm(c.paj))">Abrir no Painel</a></li>
+                          <li><a @click="abrirPajNavegador(c.paj)">Abrir no navegador</a></li>
+                        </ul>
+                      </div>
                     </template>
                     <template x-if="!c.paj"><span class="text-base-content/30">—</span></template>
                   </td>
@@ -287,6 +291,19 @@
     </tbody></table>
   </div>
 
+  <!-- Menu global único (processo): sempre o mesmo elemento, reposicionado por clique. -->
+  <template x-teleport="body">
+    <ul x-show="menuAbertoProc !== null" x-cloak
+        @click.outside="menuAbertoProc = null"
+        :style="'position:fixed; top:' + posMenu.top + 'px; left:' + posMenu.left + 'px;'"
+        class="menu menu-xs bg-base-100 rounded-box z-[1000] w-44 p-1 shadow border border-base-300">
+      <li><a @click.stop="verNoPainel(menuAbertoProcObj); menuAbertoProc = null">Ver no Painel</a></li>
+      <template x-if="menuAbertoProcObj && menuAbertoProcObj.processo_url">
+        <li><a @click.stop="abrirProcesso(menuAbertoProcObj); menuAbertoProc = null">Ver no navegador</a></li>
+      </template>
+    </ul>
+  </template>
+
 </div>
 
 <script>
@@ -299,6 +316,9 @@ function prazosEprocApp() {
     sincronizando: false, syncErro: '',
     sortCampo: '', sortDir: 1,
     lembreteTip: { show: false, x: 0, y: 0, itens: [] },
+    menuAbertoProc: null,
+    menuAbertoProcObj: null,
+    posMenu: { top: 0, left: 0 },
 
     async init() {
       this.verificarSessao();
@@ -344,7 +364,16 @@ function prazosEprocApp() {
       try {
         const resp = await fetch('/api/prazos/sincronizar');
         const r = await resp.json();
-        if (!resp.ok || r.ok === false) { this.syncErro = r.erro || 'Falha ao sincronizar.'; }
+        if (!resp.ok || r.ok === false) {
+          // Cofre trancado: usa o modal global de senha-mestra (base.html) — se o
+          // usuário destrancar, retenta a sincronização sozinho.
+          if (r.cofre_trancado && typeof window.garantirCofre === 'function') {
+            this.sincronizando = false;
+            if (await window.garantirCofre()) { await this.sincronizar(); }
+            return;
+          }
+          this.syncErro = r.erro || 'Falha ao sincronizar.';
+        }
         else { this.aplicar(r); }
       } catch (e) { this.syncErro = 'Falha de rede na sincronização.'; }
       finally { this.sincronizando = false; }
