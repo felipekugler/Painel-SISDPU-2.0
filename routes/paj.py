@@ -11,6 +11,7 @@ from services.paj_service import (
     abrir_pasta_paj,
     concluir_tramites_caixa,
     definir_whatsapp_numeros,
+    excluir_arquivo_paj,
     invalidar_cache_listagem,
     ler_paj,
     ler_notas,
@@ -116,6 +117,20 @@ async def limpar_anexos_executar(paj_norm: PajNorm, forcar: bool = False):
     resultado = limpar_anexos_paj(paj_norm, dry_run=False, forcar=forcar)
     if not resultado.get("ok"):
         return JSONResponse(resultado, status_code=400)
+    return resultado
+
+
+@router.delete("/api/paj/{paj_norm}/arquivo", response_class=JSONResponse)
+async def api_excluir_arquivo(paj_norm: PajNorm, caminho: str):
+    """Exclui UM arquivo de peça/despacho da pasta do PAJ (ícone de lixeira
+    das abas Outros > Peças/Despachos). `caminho` é relativo à pasta do PAJ
+    (ex: 'peticao_inicial.docx' ou 'Peças IA/diagnostico.md') — vem direto do
+    campo `caminho` que a própria listagem devolveu, então não precisa
+    normalização no front."""
+    resultado = excluir_arquivo_paj(paj_norm, caminho)
+    if not resultado.get("ok"):
+        status = 404 if "não encontrado" in resultado.get("erro", "") else 400
+        return JSONResponse(resultado, status_code=status)
     return resultado
 
 

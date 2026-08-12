@@ -304,7 +304,18 @@
     <!-- Modal de movimentações (usa a MESMA tabela da aba do PAJ) -->
     <div class="modal" :class="{'modal-open': movModal}">
         <div class="modal-box max-w-[85vw]">
-            <h3 class="font-bold text-lg mb-2" x-text="movTitulo"></h3>
+            <div class="flex items-center gap-2 mb-2"
+                 x-data="{ atualizandoMovs: false }"
+                 @mov-tabela-atualizando.window="atualizandoMovs = $event.detail.atualizando">
+                <h3 class="font-bold text-lg flex-1" x-text="movTitulo"></h3>
+                <button type="button"
+                        @click="window.dispatchEvent(new CustomEvent('mov-tabela-atualizar'))"
+                        :disabled="atualizandoMovs"
+                        class="btn btn-ghost btn-square btn-xs"
+                        title="Atualizar movimentações">
+                    <svg class="w-3.5 h-3.5" :class="atualizandoMovs ? 'animate-spin' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12a7.5 7.5 0 0 1-13.05 5.07M4.5 12A7.5 7.5 0 0 1 17.55 6.93M4.5 4.5v4.5h4.5M19.5 19.5V15h-4.5"></path></svg>
+                </button>
+            </div>
             <div class="max-h-[70vh] overflow-y-auto">
                 {% include "partials/movimentacoes_tabela.html" %}
             </div>

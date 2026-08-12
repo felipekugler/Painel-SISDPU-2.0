@@ -194,7 +194,7 @@
                                           menuAbertoProcObj = c;
                                           if (menuAbertoProc === c.processo) {
                                             const rect = $el.getBoundingClientRect();
-                                            posMenu = { top: rect.bottom + window.scrollY, left: rect.left + window.scrollX };
+                                            posMenu = { top: rect.bottom, left: rect.left };
                                           }"
                               x-text="c.processo"></button>
                       <template x-if="c.novo">

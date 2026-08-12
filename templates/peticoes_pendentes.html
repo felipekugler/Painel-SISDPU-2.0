@@ -1,0 +1,87 @@
+{% extends "base.html" %}
+{% block title %}Petições pendentes{% endblock %}
+
+{% block content_class %}flex flex-col flex-1 p-0{% endblock %}
+
+{% block content %}
+<div x-data="peticoesPendentesApp()" x-init="init()" x-cloak class="flex flex-col flex-1">
+
+  <div class="px-8 pt-6 pb-2">
+    <h1 class="text-3xl font-semibold tracking-tight">Petições pendentes</h1>
+    <div class="text-xs text-base-content/50 mt-1">
+      Rascunhos gravados no módulo "Ações no Eproc" de cada PAJ — evento, petição e anexos ficam
+      guardados aqui até você voltar pra concluir e protocolar.
+    </div>
+  </div>
+
+  <div class="px-8 py-4">
+    <div x-show="carregando" class="text-xs text-base-content/50">
+      <span class="loading loading-spinner loading-xs"></span> Carregando…
+    </div>
+    <div x-show="!carregando && !itens.length" class="text-sm text-base-content/40 py-6 text-center">
+      Nenhuma petição pendente no momento.
+    </div>
+    <div class="overflow-x-auto" x-show="!carregando && itens.length">
+      <table class="table table-sm">
+        <thead>
+          <tr class="text-xs font-bold">
+            <th>Assistido</th>
+            <th>PAJ</th>
+            <th>Processo</th>
+            <th>Evento</th>
+            <th>Gravado em</th>
+            <th></th>
+          </tr>
+        </thead>
+        <tbody>
+          <template x-for="it in itens" :key="it.paj_norm">
+            <tr class="hover:bg-base-300/30">
+              <td x-text="it.assistido || '—'"></td>
+              <td>
+                <a :href="'/paj/' + it.paj_norm" target="_blank" class="link font-mono text-xs" x-text="it.paj_label || it.paj_norm"></a>
+              </td>
+              <td class="font-mono text-xs" x-text="it.processo || '—'"></td>
+              <td x-text="it.evento || '—'"></td>
+              <td class="text-xs whitespace-nowrap" x-text="formatarDataHora(it.salvo_em)"></td>
+              <td class="text-right">
+                <button type="button" class="btn btn-ghost btn-xs text-error" @click="descartar(it.paj_norm)">Descartar</button>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function peticoesPendentesApp() {
+  return {
+    itens: [], carregando: false,
+    async init() { await this.carregar(); },
+    async carregar() {
+      this.carregando = true;
+      try {
+        const j = await (await fetch('/api/acoes-eproc/rascunhos')).json();
+        this.itens = j.itens || [];
+      } catch (e) { this.itens = []; }
+      finally { this.carregando = false; }
+    },
+    async descartar(pajNorm) {
+      if (!confirm('Descartar este rascunho de petição? Não pode ser desfeito.')) return;
+      try {
+        await fetch('/api/acoes-eproc/rascunho/' + encodeURIComponent(pajNorm), { method: 'DELETE' });
+        this.itens = this.itens.filter((it) => it.paj_norm !== pajNorm);
+      } catch (e) { alert('Falha ao descartar: ' + e); }
+    },
+    formatarDataHora(iso) {
+      if (!iso) return '—';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return iso;
+      return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    },
+  };
+}
+</script>
+{% endblock %}

@@ -210,15 +210,87 @@
 
             <!-- Identidade: nome do assistido em destaque + PAJ/CPF/badges -->
             <div class="flex-1 min-w-0">
-                <div class="flex items-start gap-1.5 flex-wrap">
+                <div class="flex items-center gap-1.5 flex-wrap">
                     <h1 class="text-2xl sm:text-3xl font-bold leading-tight break-words">{{ meta.assistido_caixa or '—' }}</h1>
                     <button @click="navigator.clipboard.writeText('{{ meta.assistido_caixa }}'); copied = 'assistido'; setTimeout(() => copied = null, 2000)"
                             :title="copied === 'assistido' ? 'Copiado!' : 'Copiar nome do assistido'"
-                            class="btn btn-ghost btn-xs p-1 h-auto hover:bg-base-200 mt-1">
+                            class="btn btn-ghost btn-xs p-1 h-auto hover:bg-base-200">
                         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
                         </svg>
                     </button>
+
+                    <!-- Contatos: só os ícones (App SISDPU, Telefone, WhatsApp, E-mail,
+                         Correio), na mesma linha e do mesmo tamanho do nome do assistido
+                         — não é mais um bloco separado do cabeçalho. App/Telefone/E-mail/
+                         Endereço vêm DIRETO do SISDPU a cada sincronização (painel
+                         autônomo, sem depender de nenhum outro sistema — ver
+                         ingestao/sisdpu_client.py). WhatsApp é a única exceção: o SISDPU
+                         não distingue "este telefone é WhatsApp" de um telefone comum,
+                         então é escolha manual (clique no ícone → escolhe entre os
+                         telefones extraídos), persistida em metadata.json. Clique nos
+                         demais ícones copia o valor. -->
+                    <div class="card bg-base-200/60 border border-base-300 rounded-lg px-2 py-1"
+                         x-data="contatosApp('{{ paj_norm }}')">
+                        <template x-if="!temDados">
+                            <span class="text-[11px] text-base-content/40" title="A extração de contatos foi adicionada depois da última sincronização deste PAJ.">
+                                Sincronize p/ contatos
+                            </span>
+                        </template>
+                        <template x-if="temDados">
+                            <div class="flex items-center gap-1">
+                                <span class="contato-ic contato-ic-sm c-app" :class="contatos.app_sisdpu ? 'contato-on' : 'contato-off'"
+                                      :title="'App SISDPU' + (contatos.app_sisdpu ? '' : ' — não cadastrado')">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 0 0 6 3.75v16.5a2.25 2.25 0 0 0 2.25 2.25h7.5A2.25 2.25 0 0 0 18 20.25V3.75a2.25 2.25 0 0 0-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" />
+                                    </svg>
+                                </span>
+                                <span class="contato-ic contato-ic-sm c-tel" :class="[contatos.telefone ? 'contato-on' : 'contato-off', telefones.length ? 'cursor-pointer' : '']"
+                                      :title="tituloTelefone()" @click="copiarTelefones()">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 4.5v2.25Z" />
+                                    </svg>
+                                </span>
+                                <div class="relative">
+                                    <span class="contato-ic contato-ic-sm c-zap" :class="[whatsappNumeros.length ? 'contato-on' : 'contato-off', telefones.length ? 'cursor-pointer' : '']"
+                                          :title="tituloWhatsapp()" @click="abrirWhatsapp()">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M8.625 9.75a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" />
+                                        </svg>
+                                    </span>
+                                    <div x-show="popoverWhatsapp" x-cloak @click.outside="popoverWhatsapp = false"
+                                         class="absolute left-0 top-full mt-1 z-30 w-56 bg-base-100 border border-base-300 rounded-lg shadow-lg p-3 text-left">
+                                        <div class="text-xs font-semibold mb-2">Quais são WhatsApp?</div>
+                                        <template x-for="t in telefones" :key="t.numero">
+                                            <label class="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
+                                                <input type="checkbox" class="checkbox checkbox-xs checkbox-success"
+                                                       :checked="selecaoWhatsapp.includes(t.numero)"
+                                                       @change="toggleSelecao(t.numero)">
+                                                <span x-text="t.numero"></span>
+                                            </label>
+                                        </template>
+                                        <div class="flex justify-end gap-2 mt-2">
+                                            <button type="button" class="btn btn-ghost btn-xs" @click="popoverWhatsapp = false">Cancelar</button>
+                                            <button type="button" class="btn btn-success btn-xs" :disabled="salvandoWhatsapp" @click="salvarWhatsapp()">Salvar</button>
+                                        </div>
+                                    </div>
+                                </div>
+                                <span class="contato-ic contato-ic-sm c-mail" :class="[contatos.email ? 'contato-on' : 'contato-off', emails.length ? 'cursor-pointer' : '']"
+                                      :title="tituloEmail()" @click="copiarEmails()">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 12a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Zm0 0c0 1.657 1.007 3 2.25 3S21 13.657 21 12a9 9 0 1 0-2.636 6.364M16.5 12V8.25" />
+                                    </svg>
+                                </span>
+                                <span class="contato-ic contato-ic-sm c-addr" :class="[contatos.endereco ? 'contato-on' : 'contato-off', enderecosFmt.length ? 'cursor-pointer' : '']"
+                                      :title="tituloEndereco()" @click="copiarEnderecos()">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
+                                    </svg>
+                                </span>
+                            </div>
+                        </template>
+                        <div x-show="copied" x-cloak class="text-[10px] text-success">Copiado!</div>
+                    </div>
                 </div>
 
                 <div class="flex flex-wrap items-center gap-2 mt-1.5">
@@ -270,87 +342,93 @@
                         {{ (meta.pretensaopura or meta.classificacao or '—') | formatar_pretensao }}
                     </span>
                     {% if meta.oficio_caixa %}
-                    <span class="text-base-content/60 text-xs" title="{{ meta.oficio_caixa }}">{{ meta.oficio_caixa | oficio_sigla }}</span>
+                    <span class="oficio-badge" title="{{ meta.oficio_caixa }}">{{ meta.oficio_caixa | oficio_sigla }}</span>
                     {% endif %}
                 </div>
             </div>
 
-            <!-- Contatos: quais meios de contato (App SISDPU, Telefone, WhatsApp,
-                 E-mail, Correio) o assistido tem cadastrados. App/Telefone/E-mail/
-                 Endereço vêm DIRETO do SISDPU a cada sincronização (painel autônomo,
-                 sem depender de nenhum outro sistema — ver ingestao/sisdpu_client.py).
-                 WhatsApp é a única exceção: o SISDPU não distingue "este telefone é
-                 WhatsApp" de um telefone comum, então é escolha manual (clique no
-                 ícone → escolhe entre os telefones extraídos), persistida em
-                 metadata.json. Clique nos demais ícones copia o valor. -->
-            <div class="shrink-0 lg:w-52" x-data="contatosApp('{{ paj_norm }}')">
-                <div class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 mb-1.5 lg:text-right">Contatos</div>
-                <template x-if="!temDados">
-                    <div class="text-[11px] text-base-content/40 lg:text-right" title="A extração de contatos foi adicionada depois da última sincronização deste PAJ.">
-                        Sincronize novamente para carregar
-                    </div>
-                </template>
-                <template x-if="temDados">
-                    <div class="flex items-center gap-1.5 lg:justify-end">
-                        <span class="contato-ic c-app" :class="contatos.app_sisdpu ? 'contato-on' : 'contato-off'"
-                              :title="'App SISDPU' + (contatos.app_sisdpu ? '' : ' — não cadastrado')">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M10.5 1.5H8.25A2.25 2.25 0 0 0 6 3.75v16.5a2.25 2.25 0 0 0 2.25 2.25h7.5A2.25 2.25 0 0 0 18 20.25V3.75a2.25 2.25 0 0 0-2.25-2.25H13.5m-3 0V3h3V1.5m-3 0h3m-3 18.75h3" />
-                            </svg>
-                        </span>
-                        <span class="contato-ic c-tel" :class="[contatos.telefone ? 'contato-on' : 'contato-off', telefones.length ? 'cursor-pointer' : '']"
-                              :title="tituloTelefone()" @click="copiarTelefones()">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 6.75c0 8.284 6.716 15 15 15h2.25a2.25 2.25 0 0 0 2.25-2.25v-1.372c0-.516-.351-.966-.852-1.091l-4.423-1.106c-.44-.11-.902.055-1.173.417l-.97 1.293c-.282.376-.769.542-1.21.38a12.035 12.035 0 0 1-7.143-7.143c-.162-.441.004-.928.38-1.21l1.293-.97c.363-.271.527-.734.417-1.173L6.963 3.102a1.125 1.125 0 0 0-1.091-.852H4.5A2.25 2.25 0 0 0 2.25 4.5v2.25Z" />
-                            </svg>
-                        </span>
-                        <div class="relative">
-                            <span class="contato-ic c-zap" :class="[whatsappNumeros.length ? 'contato-on' : 'contato-off', telefones.length ? 'cursor-pointer' : '']"
-                                  :title="tituloWhatsapp()" @click="abrirWhatsapp()">
-                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
-                                    <path stroke-linecap="round" stroke-linejoin="round" d="M8.625 9.75a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H8.25m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0H12m4.125 0a.375.375 0 1 1-.75 0 .375.375 0 0 1 .75 0Zm0 0h-.375M21 12c0 4.556-4.03 8.25-9 8.25a9.764 9.764 0 0 1-2.555-.337A5.972 5.972 0 0 1 5.41 20.97a5.969 5.969 0 0 1-.474-.065 4.48 4.48 0 0 0 .978-2.025c.09-.457-.133-.901-.467-1.226C3.93 16.178 3 14.189 3 12c0-4.556 4.03-8.25 9-8.25s9 3.694 9 8.25Z" />
-                                </svg>
-                            </span>
-                            <div x-show="popoverWhatsapp" x-cloak @click.outside="popoverWhatsapp = false"
-                                 class="absolute right-0 top-full mt-1 z-30 w-56 bg-base-100 border border-base-300 rounded-lg shadow-lg p-3 text-left">
-                                <div class="text-xs font-semibold mb-2">Quais são WhatsApp?</div>
-                                <template x-for="t in telefones" :key="t.numero">
-                                    <label class="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
-                                        <input type="checkbox" class="checkbox checkbox-xs checkbox-success"
-                                               :checked="selecaoWhatsapp.includes(t.numero)"
-                                               @change="toggleSelecao(t.numero)">
-                                        <span x-text="t.numero"></span>
-                                    </label>
-                                </template>
-                                <div class="flex justify-end gap-2 mt-2">
-                                    <button type="button" class="btn btn-ghost btn-xs" @click="popoverWhatsapp = false">Cancelar</button>
-                                    <button type="button" class="btn btn-success btn-xs" :disabled="salvandoWhatsapp" @click="salvarWhatsapp()">Salvar</button>
-                                </div>
-                            </div>
+            <!-- Coluna de ações rápidas do cabeçalho — Sincronizar PAJ, Baixar PAJ
+                 Completo e Baixar Arquivos SAT, empilhados à direita, sempre visíveis
+                 sem precisar rolar até a barra de "Ações" (mais abaixo), de onde
+                 vieram. "Concluir PAJ da Caixa de Entrada" NÃO fica aqui — continua
+                 na linha "Abertura/Status/..." logo abaixo deste card (posição
+                 original). Sem largura fixa — cada botão fica do tamanho do próprio
+                 texto (whitespace-nowrap: nunca quebra linha), a coluna toda se
+                 ajusta ao mais largo deles. -->
+            <div class="shrink-0 flex flex-col items-stretch gap-2">
+                <!-- Sincronizar PAJ: split button (com anexos por padrão) -->
+                <div class="join w-full">
+                    <button class="join-item btn btn-sm btn-outline btn-primary normal-case gap-1.5 whitespace-nowrap flex-1"
+                            onclick="sincronizarPaj('{{ paj_norm }}', true)"
+                            title="Sincroniza este PAJ com o SISDPU (movimentações, metadata e anexos)">
+                        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12a7.5 7.5 0 0 1-13.05 5.07M4.5 12A7.5 7.5 0 0 1 17.55 6.93M4.5 4.5v4.5h4.5M19.5 19.5V15h-4.5"></path></svg>
+                        Sincronizar PAJ
+                    </button>
+                    <div class="dropdown dropdown-end">
+                        <div tabindex="0" role="button"
+                             class="join-item btn btn-sm btn-outline btn-primary px-2"
+                             title="Mais opções de sincronização">
+                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"></path></svg>
                         </div>
-                        <span class="contato-ic c-mail" :class="[contatos.email ? 'contato-on' : 'contato-off', emails.length ? 'cursor-pointer' : '']"
-                              :title="tituloEmail()" @click="copiarEmails()">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M16.5 12a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0Zm0 0c0 1.657 1.007 3 2.25 3S21 13.657 21 12a9 9 0 1 0-2.636 6.364M16.5 12V8.25" />
-                            </svg>
-                        </span>
-                        <span class="contato-ic c-addr" :class="[contatos.endereco ? 'contato-on' : 'contato-off', enderecosFmt.length ? 'cursor-pointer' : '']"
-                              :title="tituloEndereco()" @click="copiarEnderecos()">
-                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.7" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M21.75 6.75v10.5a2.25 2.25 0 0 1-2.25 2.25h-15a2.25 2.25 0 0 1-2.25-2.25V6.75m19.5 0A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25m19.5 0v.243a2.25 2.25 0 0 1-1.07 1.916l-7.5 4.615a2.25 2.25 0 0 1-2.36 0L3.32 8.91a2.25 2.25 0 0 1-1.07-1.916V6.75" />
-                            </svg>
-                        </span>
+                        <ul tabindex="0" class="dropdown-content menu bg-base-200 rounded-box z-[1] w-64 p-2 shadow border border-base-content/10 mt-1">
+                            <li>
+                                <a onclick="sincronizarPaj('{{ paj_norm }}', true)" class="text-sm">
+                                    <div class="flex flex-col">
+                                        <span class="font-semibold">Sincronizar (com anexos)</span>
+                                        <span class="text-xs text-base-content/60">baixa os PDFs</span>
+                                    </div>
+                                </a>
+                            </li>
+                            <li>
+                                <a onclick="sincronizarPaj('{{ paj_norm }}', false)" class="text-sm">
+                                    <div class="flex flex-col">
+                                        <span class="font-semibold">Sincronizar rápido (sem anexos)</span>
+                                        <span class="text-xs text-base-content/60">só movimentações e metadata</span>
+                                    </div>
+                                </a>
+                            </li>
+                            <li class="border-t border-base-content/10 mt-1 pt-1">
+                                <label class="flex items-center justify-between gap-2 text-sm cursor-pointer">
+                                    <div class="flex flex-col">
+                                        <span class="font-semibold">OCR simples</span>
+                                        <span class="text-xs text-base-content/60">roda OCR rápido/fraco ao baixar — use "Melhorar OCR" depois se precisar</span>
+                                    </div>
+                                    <input type="checkbox" class="toggle toggle-xs toggle-primary ocr-simples-checkbox">
+                                </label>
+                            </li>
+                        </ul>
                     </div>
-                </template>
-                <div x-show="copied" x-cloak class="text-[10px] text-success mt-1 lg:text-right">Copiado!</div>
+                </div>
+
+                <!-- Baixar PAJ Completo: PDF único com capa, narrativa, histórico e anexos.
+                     Enquanto a geração está em andamento, o ícone vira um spinner amarelo
+                     (ver trocarIconePorSpinner() em app.js) — o PDF pode levar alguns segundos
+                     num PAJ com muitos anexos, e sem isso nao ha' nenhuma pista visual de
+                     que o clique registrou. -->
+                <button onclick="baixarPajCompleto('{{ paj_norm }}', this)"
+                        class="btn btn-sm btn-outline btn-secondary gap-1.5 whitespace-nowrap w-full"
+                        title="Gera um único PDF com capa, narrativa, histórico de movimentações e todos os anexos deste PAJ, em ordem cronológica">
+                    <span class="btn-icone">
+                        <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 12m0 0 4.5-4.5M12 12V3"></path></svg>
+                    </span>
+                    Baixar PAJ Completo
+                </button>
+
+                <!-- Baixar Arquivos SAT: inclui este PAJ (manualmente) na página Arquivos SAT -->
+                <button onclick="baixarArquivosSat('{{ paj_norm }}', this)"
+                        class="btn btn-sm btn-outline btn-accent gap-1.5 whitespace-nowrap w-full"
+                        title="Inclui este PAJ na página Arquivos SAT para baixar os documentos do SAT Central (INSS/Dataprev) e anexá-los ao PAJ">
+                    <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"></path></svg>
+                    Baixar Arquivos SAT
+                </button>
             </div>
         </div>
 
         <!-- Info rapida: abertura / status / ultima movimentacao / ultima sync — linha
-             de largura cheia, abaixo de identidade+Contatos (antes ficava só sob a
-             identidade). "Concluir PAJ da Caixa de Entrada" alinhado à direita na
-             mesma linha: atalho pra retirar o trâmite da caixa sem abrir o console
-             "Ações no SISDPU" completo (ver concluirPajCaixa() em app.js). -->
+             de largura cheia, abaixo de identidade+Contatos+ações. "Concluir PAJ da
+             Caixa de Entrada" alinhado à direita na mesma linha (voltou pra cá — é
+             onde estava originalmente): atalho pra retirar o trâmite da caixa sem
+             abrir o console "Ações no SISDPU" completo. -->
         <div class="flex flex-wrap items-center gap-x-4 gap-y-1 mt-3 pt-3 border-t border-base-300 text-xs text-base-content/60"
              x-data="concluirPajModalApp('{{ paj_norm }}', '{{ dados.id_processo }}', '{{ meta.paj }}', '{{ dados.id_tramite }}')">
             <span>Abertura: <span class="font-semibold text-base-content/80">{{ meta.data_abertura | data_br }}</span></span>
@@ -371,11 +449,11 @@
             {% endif %}
             {% if _tem_tramite_caixa %}
             <button type="button" @click="abrir()"
-                    class="btn btn-sm btn-outline btn-concluir-caixa gap-1.5 ml-auto normal-case"
+                    class="btn btn-sm btn-outline btn-concluir-caixa gap-1.5 ml-auto normal-case whitespace-nowrap"
                     title="Conclui trâmite(s) deste PAJ na caixa de entrada do SISDPU (retira da caixa)">
                 <!-- Ícone provisório (check-circle) — aguardando o ícone do SISDPU que
                      você vai enviar, pra trocar por esse. -->
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"></path></svg>
+                <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"></path></svg>
                 Concluir PAJ da Caixa de Entrada
             </button>
             {% endif %}
@@ -621,7 +699,8 @@
 
 <!-- Barra de ações (estilo e-proc) — ações rápidas deste PAJ -->
 <div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3 mb-4"
-     x-data="{ mostrarAcoesSisdpu: false, mostrarAcoesEproc: false }">
+     x-data="{ mostrarAcoesSisdpu: false, mostrarAcoesEproc: false }"
+     @eproc-peticionado.window="mostrarAcoesSisdpu = true">
     <div class="flex items-center gap-2 mb-2.5">
         <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-base-content/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
@@ -679,72 +758,6 @@
             </div>
         </div>
 
-        <!-- Sincronizar PAJ (à direita): split button (com anexos por padrão) -->
-        <div class="join order-last ml-auto">
-            <button class="join-item btn btn-sm btn-outline btn-primary normal-case gap-1.5"
-                    onclick="sincronizarPaj('{{ paj_norm }}', true)"
-                    title="Sincroniza este PAJ com o SISDPU (movimentações, metadata e anexos)">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12a7.5 7.5 0 0 1-13.05 5.07M4.5 12A7.5 7.5 0 0 1 17.55 6.93M4.5 4.5v4.5h4.5M19.5 19.5V15h-4.5"></path></svg>
-                Sincronizar PAJ
-            </button>
-            <div class="dropdown dropdown-end">
-                <div tabindex="0" role="button"
-                     class="join-item btn btn-sm btn-outline btn-primary px-2"
-                     title="Mais opções de sincronização">
-                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5"></path></svg>
-                </div>
-                <ul tabindex="0" class="dropdown-content menu bg-base-200 rounded-box z-[1] w-64 p-2 shadow border border-base-content/10 mt-1">
-                    <li>
-                        <a onclick="sincronizarPaj('{{ paj_norm }}', true)" class="text-sm">
-                            <div class="flex flex-col">
-                                <span class="font-semibold">Sincronizar (com anexos)</span>
-                                <span class="text-xs text-base-content/60">baixa os PDFs</span>
-                            </div>
-                        </a>
-                    </li>
-                    <li>
-                        <a onclick="sincronizarPaj('{{ paj_norm }}', false)" class="text-sm">
-                            <div class="flex flex-col">
-                                <span class="font-semibold">Sincronizar rápido (sem anexos)</span>
-                                <span class="text-xs text-base-content/60">só movimentações e metadata</span>
-                            </div>
-                        </a>
-                    </li>
-                    <li class="border-t border-base-content/10 mt-1 pt-1">
-                        <label class="flex items-center justify-between gap-2 text-sm cursor-pointer">
-                            <div class="flex flex-col">
-                                <span class="font-semibold">OCR simples</span>
-                                <span class="text-xs text-base-content/60">roda OCR rápido/fraco ao baixar — use "Melhorar OCR" depois se precisar</span>
-                            </div>
-                            <input type="checkbox" class="toggle toggle-xs toggle-primary ocr-simples-checkbox">
-                        </label>
-                    </li>
-                </ul>
-            </div>
-        </div>
-
-        <!-- Baixar PAJ Completo: PDF único com capa, narrativa, histórico e anexos.
-             Enquanto a geração está em andamento, o ícone vira um spinner amarelo
-             (ver trocarIconePorSpinner() em app.js) — o PDF pode levar alguns segundos
-             num PAJ com muitos anexos, e sem isso nao ha' nenhuma pista visual de
-             que o clique registrou. -->
-        <button onclick="baixarPajCompleto('{{ paj_norm }}', this)"
-                class="btn btn-sm btn-outline btn-secondary gap-1.5"
-                title="Gera um único PDF com capa, narrativa, histórico de movimentações e todos os anexos deste PAJ, em ordem cronológica">
-            <span class="btn-icone">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 12m0 0 4.5-4.5M12 12V3"></path></svg>
-            </span>
-            Baixar PAJ Completo
-        </button>
-
-        <!-- Baixar Arquivos SAT: inclui este PAJ (manualmente) na página Arquivos SAT -->
-        <button onclick="baixarArquivosSat('{{ paj_norm }}', this)"
-                class="btn btn-sm btn-outline btn-accent gap-1.5"
-                title="Inclui este PAJ na página Arquivos SAT para baixar os documentos do SAT Central (INSS/Dataprev) e anexá-los ao PAJ">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"></path></svg>
-            Baixar Arquivos SAT
-        </button>
-
         <!-- Ações no SISDPU: abre o console de movimentar/tramitar/concluir (módulo
              compartilhado com a aba Retornos — static/js/acoes_sisdpu.js) -->
         <button type="button" @click="mostrarAcoesSisdpu = !mostrarAcoesSisdpu"
@@ -776,8 +789,7 @@
              do PAJ é BPC/LOAS (filtro tipo_analise_pretensao). -->
         {% if tipo_pretensao_ia == 'bpc' %}
         <button type="button"
-                onclick="document.getElementById('analise-ia-checkbox').checked = true;
-                         document.getElementById('secao-analise-ia').scrollIntoView({behavior:'smooth'});
+                onclick="document.getElementById('secao-analise-ia').scrollIntoView({behavior:'smooth'});
                          window.dispatchEvent(new CustomEvent('iniciar-analise-ia', {detail:{tipo:'bpc'}}));"
                 class="btn btn-sm btn-outline btn-warning gap-1.5"
                 title="Diagnostica o caso de BPC/LOAS aplicando o playbook de teses (skill /SISDPU-AnalisarPAJ-BPC)">
@@ -835,23 +847,28 @@
 <!-- Análise feita pela IA (diagnóstico por pretensão + reenvio p/ ajuste ou
      pedido de petição inicial) — recolhida por padrão, exceto quando o botão
      "Analisar PAJ de <tipo>" da barra de ações a abre/dispara. -->
-<div id="secao-analise-ia" class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg mb-4"
-     x-data="analiseIaApp('{{ paj_norm }}', '{{ tipo_pretensao_ia }}')" x-init="init()"
-     @iniciar-analise-ia.window="iniciar($event.detail && $event.detail.tipo)">
-    <input type="checkbox" id="analise-ia-checkbox" aria-label="Expandir/recolher Análise feita pela IA" />
-    <div class="collapse-title text-lg font-semibold flex items-center gap-2">
-        Análise feita pela IA
-        <span class="loading loading-spinner loading-sm text-warning" x-show="status === 'running'"></span>
-        <span class="badge badge-sm"
-              :class="{
-                  'badge-warning': status === 'running',
-                  'badge-success': status === 'done',
-                  'badge-error': status === 'error',
-                  'badge-ghost': status === 'idle',
-              }"
-              x-text="status === 'running' ? 'em andamento' : (status === 'done' ? 'concluída' : (status === 'error' ? 'erro' : 'não iniciada'))"></span>
+<div id="secao-analise-ia" class="bg-base-200 border border-base-300 rounded-lg mb-4"
+     x-data="{...analiseIaApp('{{ paj_norm }}', '{{ tipo_pretensao_ia }}'), aberto: false}" x-init="init()"
+     @iniciar-analise-ia.window="aberto = true; iniciar($event.detail && $event.detail.tipo)">
+    <div class="flex items-center gap-2 px-4 py-3">
+        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
+            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
+                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+            </svg>
+            <span class="text-lg font-semibold">Análise feita pela IA</span>
+            <span class="loading loading-spinner loading-sm text-warning" x-show="status === 'running'"></span>
+            <span class="badge badge-sm"
+                  :class="{
+                      'badge-warning': status === 'running',
+                      'badge-success': status === 'done',
+                      'badge-error': status === 'error',
+                      'badge-ghost': status === 'idle',
+                  }"
+                  x-text="status === 'running' ? 'em andamento' : (status === 'done' ? 'concluída' : (status === 'error' ? 'erro' : 'não iniciada'))"></span>
+        </button>
     </div>
-    <div class="collapse-content">
+    <div x-show="aberto" x-cloak class="px-4 pb-4">
         <template x-if="status === 'idle'">
             <div class="alert text-sm">
                 Nenhuma análise realizada ainda. Clique em
@@ -902,10 +919,17 @@
 {% endif %}
 
 <!-- Narrativa (seção retrátil) — recolhida por padrão -->
-<div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg mb-4">
-    <input type="checkbox" aria-label="Expandir/recolher Narrativa" />
-    <div class="collapse-title text-lg font-semibold">Narrativa</div>
-    <div class="collapse-content">
+<div class="bg-base-200 border border-base-300 rounded-lg mb-4" x-data="{ aberto: false }">
+    <div class="flex items-center gap-2 px-4 py-3">
+        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
+            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
+                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+            </svg>
+            <span class="text-lg font-semibold">Narrativa</span>
+        </button>
+    </div>
+    <div x-show="aberto" x-cloak class="px-4 pb-4">
         {% if dados.narrativa %}
         <div class="text-sm text-base-content/80 leading-relaxed break-words bg-base-100 p-4 rounded border border-base-300/50 prose prose-sm max-w-none">{{ dados.narrativa|safe }}</div>
         {% else %}
@@ -914,26 +938,50 @@
     </div>
 </div>
 
-<!-- Movimentações (seção retrátil) — recolhida por padrão -->
-<div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg mb-6">
-    <input type="checkbox" aria-label="Expandir/recolher Movimentações" />
-    <div class="collapse-title text-lg font-semibold flex items-center gap-2">
-        Movimentações
-        <span class="badge badge-ghost badge-sm">{{ dados.movimentacoes|length }}</span>
+<!-- Movimentações (seção retrátil) — recolhida por padrão. Cabeçalho "na mão"
+     (sem o checkbox-hack do DaisyUI), mesmo motivo do bloco de Lembretes acima:
+     o checkbox do collapse padrão cobre TODA a área do collapse-title, então o
+     ícone de atualizar aninhado ali nunca receberia o clique — só alternaria
+     expandir/recolher. Com dois controles separados (toggle | atualizar), cada
+     um funciona de forma independente. -->
+<div class="bg-base-200 border border-base-300 rounded-lg mb-6"
+     x-data="{ abertoMovs: false, atualizandoMovs: false }"
+     @mov-tabela-atualizando.window="atualizandoMovs = $event.detail.atualizando">
+    <div class="flex items-center gap-2 px-4 py-3">
+        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="abertoMovs = !abertoMovs">
+            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="abertoMovs ? 'rotate-90' : ''"
+                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+            </svg>
+            <span class="text-lg font-semibold">Movimentações</span>
+            <span class="badge badge-ghost badge-sm">{{ dados.movimentacoes|length }}</span>
+        </button>
+        <button type="button"
+                @click="window.dispatchEvent(new CustomEvent('mov-tabela-atualizar'))"
+                :disabled="atualizandoMovs"
+                class="btn btn-ghost btn-square btn-xs"
+                title="Atualizar movimentações">
+            <svg class="w-3.5 h-3.5" :class="atualizandoMovs ? 'animate-spin' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12a7.5 7.5 0 0 1-13.05 5.07M4.5 12A7.5 7.5 0 0 1 17.55 6.93M4.5 4.5v4.5h4.5M19.5 19.5V15h-4.5"></path></svg>
+        </button>
     </div>
-    <div class="collapse-content">
+    <div x-show="abertoMovs" x-cloak class="px-4 pb-4">
         {% include "partials/movimentacoes_tabela.html" %}
     </div>
 </div>
 
 <!-- Anexos SISDPU (seção retrátil) — recolhida por padrão -->
-<div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg mb-4">
-    <input type="checkbox" aria-label="Expandir/recolher Anexos SISDPU" />
-    <div class="collapse-title text-lg font-semibold flex items-center gap-2">
-        Anexos SISDPU
-        <span class="badge badge-primary badge-sm">{{ dados.anexos_sisdpu|length }}</span>
+<div class="bg-base-200 border border-base-300 rounded-lg mb-4" x-data="{ aberto: false }">
+    <div class="flex items-center gap-2 px-4 py-3">
+        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
+            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
+                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+            </svg>
+            <span class="text-lg font-semibold">Anexos SISDPU</span>
+            <span class="badge badge-primary badge-sm">{{ dados.anexos_sisdpu|length }}</span>
+        </button>
     </div>
-    <div class="collapse-content">
+    <div x-show="aberto" x-cloak class="px-4 pb-4">
         <!-- Ações da seção -->
         <div class="flex items-center justify-end gap-2 mb-3 flex-wrap">
             <button class="btn btn-sm btn-outline btn-primary gap-1.5"
@@ -1068,20 +1116,27 @@
 </div>
 
 <!-- Outros (seção retrátil): Peças, Despachos, Notas, Discutir, PROMPT_MAX — recolhida por padrão -->
-<div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg mb-6">
-    <input type="checkbox" aria-label="Expandir/recolher Outros" />
-    <div class="collapse-title text-lg font-semibold">Outros</div>
-    <div class="collapse-content">
+<div class="bg-base-200 border border-base-300 rounded-lg mb-6" x-data="{ aberto: false }">
+    <div class="flex items-center gap-2 px-4 py-3">
+        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
+            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
+                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+            </svg>
+            <span class="text-lg font-semibold">Outros</span>
+        </button>
+    </div>
+    <div x-show="aberto" x-cloak class="px-4 pb-4">
 <!-- Tabs -->
 <div x-data="{ tab: 'pecas_jud' }" class="mt-2">
     <div role="tablist" class="tabs tabs-bordered mb-4">
         <a role="tab" class="tab" :class="tab === 'pecas_jud' && 'tab-active'" @click="tab = 'pecas_jud'"
            title="Peças judiciais geradas pelo Claude (recursos, agravos, embargos, memoriais, petições...)">
-            Peças <span class="badge badge-ghost badge-xs ml-1">{{ dados.pecas_judiciais|length }}</span>
+            Peças <span id="badge-pecas-count" class="badge badge-ghost badge-xs ml-1">{{ dados.pecas_judiciais|length }}</span>
         </a>
         <a role="tab" class="tab" :class="tab === 'despachos' && 'tab-active'" @click="tab = 'despachos'"
            title="Despachos administrativos para lançamento no SISDPU">
-            Despachos <span class="badge badge-ghost badge-xs ml-1">{{ dados.despachos|length }}</span>
+            Despachos <span id="badge-despachos-count" class="badge badge-ghost badge-xs ml-1">{{ dados.despachos|length }}</span>
         </a>
         <a role="tab" class="tab" :class="tab === 'notas' && 'tab-active'" @click="tab = 'notas'; carregarNotas('{{ paj_norm }}')"
            title="Anotações pessoais do defensor (NOTAS.md)">
@@ -1211,7 +1266,7 @@
             <table class="table table-sm">
                 <thead>
                     <tr class="bg-base-300/50">
-                        <th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>Ações</th>
+                        <th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>Criado em</th><th>Ações</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1224,6 +1279,7 @@
                             </span>
                         </td>
                         <td class="text-sm">{{ (p.tamanho / 1024)|round(1) }} KB</td>
+                        <td class="text-xs text-base-content/60 whitespace-nowrap">{{ p.criado | data_hora_arquivo }}</td>
                         <td>
                             <div class="flex flex-wrap gap-1">
                                 {% if p.tipo in ('pdf', 'docx', 'doc') %}
@@ -1244,6 +1300,11 @@
                                 <a href="/files/{{ paj_norm }}/{{ p.caminho }}" target="_blank"
                                    class="btn btn-ghost btn-xs">Baixar</a>
                                 {% endif %}
+                                <button type="button" class="btn btn-ghost btn-xs text-error"
+                                        onclick="excluirArquivoPaj('{{ paj_norm }}', '{{ p.caminho|e }}', '{{ p.nome|e }}', this, 'badge-pecas-count')"
+                                        title="Excluir arquivo">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"></path></svg>
+                                </button>
                             </div>
                         </td>
                     </tr>
@@ -1273,7 +1334,7 @@
             <table class="table table-sm">
                 <thead>
                     <tr class="bg-base-300/50">
-                        <th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>Ações</th>
+                        <th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>Criado em</th><th>Ações</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1286,6 +1347,7 @@
                             </span>
                         </td>
                         <td class="text-sm">{{ (p.tamanho / 1024)|round(1) }} KB</td>
+                        <td class="text-xs text-base-content/60 whitespace-nowrap">{{ p.criado | data_hora_arquivo }}</td>
                         <td>
                             <div class="flex flex-wrap gap-1">
                                 {% if p.tipo in ('pdf', 'docx', 'doc') %}
@@ -1316,6 +1378,11 @@
                                 <a href="/files/{{ paj_norm }}/{{ p.caminho }}" target="_blank"
                                    class="btn btn-ghost btn-xs">Baixar</a>
                                 {% endif %}
+                                <button type="button" class="btn btn-ghost btn-xs text-error"
+                                        onclick="excluirArquivoPaj('{{ paj_norm }}', '{{ p.caminho|e }}', '{{ p.nome|e }}', this, 'badge-despachos-count')"
+                                        title="Excluir arquivo">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"></path></svg>
+                                </button>
                             </div>
                         </td>
                     </tr>

@@ -91,14 +91,9 @@
                     <button type="button" class="btn btn-ghost btn-xs ml-2" @click="carregarIntimacoes(idx)">Tentar de novo</button>
                 </div>
                 <!-- Sem prazo confirmado no MEU Painel do Procurador pra este processo —
-                     não mostramos a triagem crua (poderia trazer INSS/perito/etc.), só
-                     avisamos e orientamos a sincronizar a aba Prazos pra conferir. -->
-                <div class="mt-3 pt-3 border-t border-base-300" x-show="!carregando[idx] && !erro[idx] && temInfoIncompleta(idx)">
-                    <span class="text-xs text-base-content/50">
-                        Sem confirmação do <a href="/prazos" class="link">Painel do Procurador</a> pra este processo —
-                        sincronize a aba Prazos pra conferir se há intimação pendente da DPU.
-                    </span>
-                </div>
+                     não mostramos a triagem crua (poderia trazer INSS/perito/etc.) NEM
+                     nenhum aviso: só os dados do processo mesmo, sem a seção de
+                     intimações. Ela só aparece quando há prazo confirmado no Painel. -->
                 <div class="mt-3 pt-3 border-t border-base-300" x-show="!carregando[idx] && !erro[idx] && intimacoesAtivas(idx).length">
                     <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-2">
                         Intimações pendentes
@@ -126,7 +121,14 @@
                                                  x-text="it.dias_restantes + ' dia(s) restante(s)'"></div>
                                         </td>
                                         <td class="text-xs tnum whitespace-nowrap">
-                                            <div x-show="it.enviado_em" x-text="'Enviado: ' + it.enviado_em"></div>
+                                            <!-- Expedição da PRÓPRIA intimação (data/hora + nº do evento) — NUNCA o
+                                                 sub-dado "Domicílio Judicial Eletrônico: Enviado em..." (momento da
+                                                 entrega eletrônica, distinto e sempre um pouco posterior à expedição;
+                                                 usado só na previsão de ciência ficta abaixo). `it.data_hora` falta
+                                                 só no fallback sem correspondência na triagem MCP — cai pra
+                                                 `enviado_em` (única data que o Painel do Procurador dá nesse caso). -->
+                                            <div x-show="it.data_hora || it.enviado_em"
+                                                 x-text="'Expedida: ' + (it.data_hora || it.enviado_em) + (it.evento_intimacao ? ' (Evento ' + it.evento_intimacao + ')' : '')"></div>
                                             <div x-show="it.data_inicial_prazo" x-text="'Início: ' + it.data_inicial_prazo"></div>
                                             <div x-show="it.data_final_prazo" x-text="'Final: ' + it.data_final_prazo"></div>
                                             <div class="text-[10px] text-base-content/40" x-show="it.previsao && it.previsao_ciencia_ficta"

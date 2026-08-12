@@ -199,6 +199,57 @@ async def rodar_sync_paj(
         yield linha
 
 
+async def rodar_sync_movimentacoes(paj_identificador: str) -> AsyncGenerator[str, None]:
+    """Sincroniza SÓ as movimentações de UM PAJ via SSE, de forma INCREMENTAL —
+    sem baixar anexos (PDFs) e sem metadata/narrativa alem do que ja vem junto
+    do detalhamento. Usado pelo ícone de atualizar da tabela de movimentações
+    (one-click, disponível em qualquer lugar do painel onde a tabela aparece).
+
+    "Incremental" aqui significa: a tabela de movimentações em si e' sempre
+    relida por inteiro (o SISDPU nao expoe uma consulta de delta), mas o
+    trabalho caro — abrir o popup de anexo de cada movimentação para listar
+    seus documentos — só roda para as seqs que AINDA NÃO tinham `documentos`
+    no metadata anterior (`extrair_documentos=True` + `sisdpu_client.
+    extrair_documentos_por_seq` já filtra as seqs conhecidas). Ou seja, o
+    custo do clique fica proporcional só ao que mudou desde a última
+    sincronização, não ao tamanho total da tabela.
+
+    Reusa o mesmo despacho de `rodar_sync_paj` (caixa -> busca global via
+    watchlist ou fallback automatico), so' fixando `baixar_anexos=False,
+    esperas_curtas=True`.
+    """
+    paj_norm = _paj_identificador_para_norm(paj_identificador)
+    na_watchlist = bool(paj_norm) and watchlist_service.is_watched(paj_norm)
+
+    if na_watchlist:
+        async for linha in _rodar_com_cancel(
+            lambda emit: sincronizador.rodar_paj_via_busca_global(
+                paj_identificador,
+                emit,
+                deve_cancelar=deve_cancelar,
+                baixar_anexos=False,
+                extrair_documentos=True,
+                esperas_curtas=True,
+            ),
+            None,
+        ):
+            yield linha
+        return
+
+    async for linha in _rodar_com_cancel(
+        lambda emit: sincronizador.rodar_paj_unico(
+            paj_identificador,
+            emit,
+            deve_cancelar=deve_cancelar,
+            baixar_anexos=False,
+            extrair_documentos=True,
+            esperas_curtas=True,
+        ),
+        None,
+    ):
+        yield linha
+
+
 async def rodar_sync_watchlist(
     baixar_anexos: bool = True,
     rodar_ocr: bool = False,

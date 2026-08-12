@@ -15,9 +15,10 @@
         <div class="ret-acao-bloco">
             <div class="ret-acao-titulo">Movimentar</div>
             <div class="flex items-center gap-2 flex-wrap">
-                <select class="select select-bordered select-sm min-w-[18rem]" x-model="fase">
+                <select class="select select-bordered select-sm min-w-[18rem]" x-model="fase"
+                        x-init="$nextTick(() => { $el.value = fase; })">
                     <option value="">Sem movimentação</option>
-                    <template x-for="f in fasesDropdown()" :key="f"><option :value="f" x-text="f"></option></template>
+                    <template x-for="f in fasesDropdownEfetiva()" :key="f"><option :value="f" x-text="f"></option></template>
                 </select>
                 <template x-for="f in fasesFreq" :key="f">
                     <button type="button" class="btn btn-xs" :class="fase===f ? 'btn-primary' : 'btn-outline'" @click="fase=f" x-text="f"></button>
@@ -44,9 +45,10 @@
                 </div>
             </template>
             <!-- Anexos da movimentação — só relevante quando há uma fase selecionada
-                 (anexo acompanha a movimentação). Ação principal: enviar arquivo(s) do
-                 computador (o caso comum). Ação secundária, discreta: reanexar algo que
-                 já está no PAJ (raro) — abre modal com a tabela de documentos baixados. -->
+                 (anexo acompanha a movimentação). Mesma estética/rótulos do "Ações no
+                 Eproc": "Adicionar do SISDPU" abre modal com a tabela de documentos já
+                 baixados do PAJ (uso raro — reanexar algo que já está lá); "Adicionar
+                 Externo" sobe um arquivo do computador (o caso comum). -->
             <div class="mt-2" x-show="fase">
                 <div class="flex items-center gap-2 flex-wrap mb-1.5">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
@@ -55,17 +57,25 @@
                     </svg>
                     <span class="text-[13.5px] font-medium text-base-content/70">Anexos da movimentação</span>
                     <span class="badge badge-sm badge-error" x-show="anexosStaged.length" x-text="anexosStaged.length"></span>
+                    <button type="button" class="btn btn-xs btn-outline gap-1" @click="abrirModalAnexosPaj()">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                        </svg>
+                        Adicionar do SISDPU
+                    </button>
                     <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="enviandoAnexo" @click="adicionarAnexoExterno()">
                         <span x-show="enviandoAnexo" class="loading loading-spinner loading-xs"></span>
-                        <span x-show="!enviandoAnexo">+ Adicionar arquivo(s)</span>
+                        <template x-if="!enviandoAnexo">
+                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                            </svg>
+                        </template>
+                        <span x-show="!enviandoAnexo">Adicionar Externo</span>
                         <span x-show="enviandoAnexo">Enviando…</span>
                     </button>
                     <input type="file" multiple class="hidden" x-ref="inputAnexoExterno"
                            accept=".doc,.docx,.odt,.png,.jpg,.jpeg,.gif,.pdf"
                            @change="onArquivosExternosEscolhidos($event)">
-                    <button type="button" class="btn btn-xs btn-ghost text-[11px]" @click="abrirModalAnexosPaj()">
-                        Anexar do PAJ
-                    </button>
                 </div>
                 <div class="text-[11px] text-base-content/40 mb-1" x-show="!anexosStaged.length">
                     Nenhum anexo adicionado. Aceitos: DOC, DOCX, ODT, PNG, JPEG, GIF, PDF.
@@ -79,7 +89,7 @@
                                 <th class="w-44">Tipo de Arquivo</th>
                                 <th class="w-16">Tam.</th>
                                 <th class="w-14">Origem</th>
-                                <th class="w-8"></th>
+                                <th class="w-20"></th>
                             </tr>
                         </thead>
                         <tbody>
@@ -104,8 +114,22 @@
                                               :title="a.origem === 'paj' ? 'Já estava no PAJ' : 'Enviado do computador'"
                                               x-text="a.origem === 'paj' ? 'PAJ' : 'Env.'"></span>
                                     </td>
-                                    <td>
-                                        <button type="button" class="btn btn-ghost btn-xs text-error" @click="removerAnexoStaged(a)" title="Remover anexo">✕</button>
+                                    <td class="whitespace-nowrap">
+                                        <div class="flex items-center gap-0.5">
+                                            <button type="button" class="btn btn-ghost btn-xs px-1" :disabled="i === 0"
+                                                    @click="moverAnexoStaged(i, -1)" title="Mover para cima">
+                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:12px;height:12px">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 15.75 7.5-7.5 7.5 7.5" />
+                                                </svg>
+                                            </button>
+                                            <button type="button" class="btn btn-ghost btn-xs px-1" :disabled="i === anexosStaged.length - 1"
+                                                    @click="moverAnexoStaged(i, 1)" title="Mover para baixo">
+                                                <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:12px;height:12px">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                                                </svg>
+                                            </button>
+                                            <button type="button" class="btn btn-ghost btn-xs text-error" @click="removerAnexoStaged(a)" title="Remover anexo">✕</button>
+                                        </div>
                                     </td>
                                 </tr>
                             </template>
@@ -115,14 +139,14 @@
             </div>
         </div>
 
-        <!-- Modal: "Anexar do PAJ" — mesma tabela/estilo do "Adicionar do SISDPU" do
-             módulo Ações no Eproc. Uso raro: reanexar algo que já está na pasta do PAJ. -->
+        <!-- Modal: "Adicionar do SISDPU" — mesma tabela/estilo do módulo Ações no Eproc.
+             Uso raro: reanexar algo que já está na pasta do PAJ. -->
         <div class="modal" :class="{'modal-open': modalPajAberto}" @click.self="fecharModalAnexosPaj()">
             <div class="modal-box max-w-3xl">
-                <h3 class="font-bold text-lg mb-1">Anexar do PAJ</h3>
+                <h3 class="font-bold text-lg mb-1">Adicionar do SISDPU</h3>
                 <p class="text-xs text-base-content/50 mb-3">
                     Documentos já baixados do SISDPU para este PAJ. Uso raro — o comum é
-                    "Adicionar arquivo(s)" (enviar do seu computador).
+                    "Adicionar Externo" (enviar do seu computador).
                 </p>
                 <div x-show="!docsPaj.length" class="text-sm text-base-content/40 py-4 text-center">
                     Nenhum documento do PAJ carregado (ou o PAJ ainda não tem anexos do SISDPU baixados).
@@ -212,7 +236,16 @@
                     <span class="text-[11px] text-base-content/50">(retira o PAJ da caixa)</span>
                 </div>
             </template>
-            <button type="button" class="btn btn-sm btn-success ml-auto ret-btn-exec" @click="executar()"
+            <span class="text-[11px] text-base-content/40 ml-auto" x-show="rascunhoSalvoEm">
+                Rascunho gravado
+            </span>
+            <button type="button" class="btn btn-sm btn-outline" :class="!rascunhoSalvoEm ? 'ml-auto' : ''"
+                    @click="gravarRascunho()" :disabled="gravando"
+                    title="Grava fase, despachos e anexos pra executar depois, sem perder o que já foi preenchido.">
+                <span x-show="gravando" class="loading loading-spinner loading-xs"></span>
+                Gravar
+            </button>
+            <button type="button" class="btn btn-sm btn-success ret-btn-exec" @click="executar()"
                     :disabled="(!fase && !grupo && !(idTramite && concluir)) || exec">
                 <span x-show="exec" class="loading loading-spinner loading-xs"></span>
                 Executar no SISDPU

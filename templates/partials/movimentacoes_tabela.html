@@ -1,9 +1,18 @@
 {# Tabela de movimentações COMPARTILHADA (aba Movimentações do PAJ + modal da Retornos).
    Componente Alpine `tabelaMovimentacoes()` (static/js/movimentacoes.js). Recebe os
    dados por carregar() — na carga inicial (window.__movInicial, página do PAJ) ou pelo
-   evento global `mov-tabela-carregar` (modal da Retornos). #}
+   evento global `mov-tabela-carregar` (modal da Retornos).
+
+   O ícone de "Atualizar movimentações" NÃO mora aqui dentro — cada consumidor da
+   tabela (cabeçalho retrátil do PAJ, título do modal da Retornos) tem seu próprio
+   botão, ao lado do pill/título de cada tela, fora do escopo Alpine deste
+   componente. A ponte é por eventos globais: o botão externo dispara
+   `mov-tabela-atualizar` (ouvido abaixo) e este componente devolve o estado
+   `atualizando` via `mov-tabela-atualizando` (ver init() em movimentacoes.js) —
+   assim o ícone externo pode girar/desabilitar durante a sincronização. #}
 <div x-data="tabelaMovimentacoes()" x-init="bootstrap()"
-     @mov-tabela-carregar.window="carregar($event.detail)">
+     @mov-tabela-carregar.window="carregar($event.detail)"
+     @mov-tabela-atualizar.window="atualizarMovimentacoes()">
     <div class="mb-4 space-y-4">
         <!-- Filtros -->
         <div class="grid grid-cols-1 md:grid-cols-2 gap-4 bg-base-300/50 rounded-lg p-4">

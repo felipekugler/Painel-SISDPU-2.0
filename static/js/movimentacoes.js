@@ -38,6 +38,24 @@ function tabelaMovimentacoes() {
         selecionados: new Set(),
         baixando: false,
 
+        // Atualizacao exclusiva das movimentacoes (icone de refresh no
+        // cabecalho da tabela) — ver atualizarMovimentacoes() abaixo.
+        atualizando: false,
+
+        // Hook de ciclo de vida do Alpine (chamado automaticamente ao
+        // inicializar o componente, antes de x-init). O icone de atualizar
+        // fica FORA deste componente (no cabecalho retratil do PAJ, no
+        // titulo do modal da Retornos) — nao tem acesso direto a `atualizando`.
+        // Retransmite toda mudanca via evento global pro icone externo
+        // girar/desabilitar durante a sincronizacao (ver movimentacoes_tabela.html).
+        init() {
+            this.$watch('atualizando', (v) => {
+                window.dispatchEvent(new CustomEvent('mov-tabela-atualizando', {
+                    detail: { pajNorm: this.pajNorm, atualizando: v },
+                }));
+            });
+        },
+
         bootstrap() {
             // Carga inicial (página do PAJ passa window.__movInicial).
             if (window.__movInicial) this.carregar(window.__movInicial);
@@ -158,6 +176,29 @@ function tabelaMovimentacoes() {
                 ids.forEach(id => this.selecionados.delete(id));
             } finally {
                 this.baixando = false;
+            }
+        },
+
+        // Sincronizacao EXCLUSIVA e INCREMENTAL das movimentacoes deste PAJ
+        // com o SISDPU — releitura completa da tabela, mas so' extrai
+        // documentos das movimentacoes que ainda nao eram conhecidas (custo
+        // proporcional so' ao que mudou desde a ultima sync); sem baixar
+        // PDF, sem metadata extra. Ao concluir, substitui movs/anexos no
+        // lugar (sem recarregar a pagina) — funciona tanto na aba do PAJ
+        // quanto no modal da Retornos, pois os dois usam este mesmo
+        // componente.
+        async atualizarMovimentacoes() {
+            if (this.atualizando || !this.pajNorm) return;
+            this.atualizando = true;
+            try {
+                const dados = await atualizarMovimentacoesPaj(this.pajNorm);
+                if (dados) {
+                    this.movs = dados.movimentacoes || [];
+                    this.anexos = dados.anexos_sisdpu || [];
+                    this.__mapaArquivoLocal = null;
+                }
+            } finally {
+                this.atualizando = false;
             }
         },
 

@@ -151,7 +151,7 @@
                                                         menuAbertoPajLabel = p.paj;
                                                         if (menuAbertoPaj === p.paj_norm) {
                                                           const rect = $el.getBoundingClientRect();
-                                                          posMenu = { top: rect.bottom + window.scrollY, left: rect.left + window.scrollX };
+                                                          posMenu = { top: rect.bottom, left: rect.left };
                                                         }"
                                             x-text="p.paj"></button>
                                     <span x-show="p.manual" class="badge badge-outline badge-xs ml-1" title="Adicionado manualmente — sem trâmite na caixa (não conclui)">manual</span>

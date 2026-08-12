@@ -236,7 +236,12 @@
                              x-text="it.dias_restantes + ' dia(s) restante(s)'"></div>
                       </td>
                       <td class="text-xs tnum whitespace-nowrap">
-                        <div x-show="it.enviado_em" x-text="'Enviado: ' + it.enviado_em"></div>
+                        <!-- Expedição da PRÓPRIA intimação (data/hora + nº do evento) — NUNCA o
+                             sub-dado "Domicílio Judicial Eletrônico: Enviado em..." (momento da
+                             entrega eletrônica, distinto e sempre um pouco posterior à expedição;
+                             usado só na previsão de ciência ficta abaixo). -->
+                        <div x-show="it.data_hora || it.enviado_em"
+                             x-text="'Expedida: ' + (it.data_hora || it.enviado_em) + (it.evento_intimacao ? ' (Evento ' + it.evento_intimacao + ')' : '')"></div>
                         <div x-show="it.data_inicial_prazo" x-text="'Início: ' + it.data_inicial_prazo"></div>
                         <div x-show="it.data_final_prazo" x-text="'Final: ' + it.data_final_prazo"></div>
                         <div class="text-[10px] text-base-content/40" x-show="it.previsao && it.previsao_ciencia_ficta"

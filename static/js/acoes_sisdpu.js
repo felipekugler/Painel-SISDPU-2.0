@@ -78,7 +78,7 @@ function acoesSisdpuBlock(cfg) {
         // criarEditorRico() de fato falhar (Quill não carregou), revelando a textarea
         // simples como fallback.
         uidMov: 'qmov-' + Math.random().toString(36).slice(2, 9),
-        _editorMov: null, quillMovOk: true,
+        _editorMov: null, quillMovOk: true, _montandoEditorMov: false,
         prazo: 0, prazoData: '', concluir: true, exec: false,
 
         // Anexos da MOVIMENTAÇÃO — lista staged única, misturando origem 'externo'
@@ -87,14 +87,22 @@ function acoesSisdpuBlock(cfg) {
         // {origem, ref, nome, tamanho, tipo, descricao, tipoArquivo}. `descricao` nasce
         // igual ao nome do arquivo (editável); `tipoArquivo` nasce "Não informado"
         // (editável) — catálogo real do SISDPU, ver TIPOS_ARQUIVO_ANEXO abaixo.
-        // `docsPaj` é só o catálogo pro MODAL de seleção "Anexar do PAJ" — mesma
-        // fonte/rota/helpers do "Ações no Eproc".
+        // `docsPaj` é só o catálogo pro MODAL de seleção "Adicionar do SISDPU" — mesma
+        // fonte/rota/helpers/rótulo do "Ações no Eproc".
         anexosStaged: [], enviandoAnexo: false,
         tiposArquivoAnexo: TIPOS_ARQUIVO_ANEXO,  // exposto p/ o <select> no HTML (x-for)
         docsPaj: [], docsCarregados: false,
         modalPajAberto: false, modalPajSelecionados: {},
 
         sseAberto: false, sseLog: [], sseStatus: '', sseTitulo: '',
+
+        // Rascunho ("Gravar" p/ executar mais tarde) — mesmo padrão do "Ações no
+        // Eproc": 1 por PAJ, auto-restaurado ao abrir. Também gravado
+        // AUTOMATICAMENTE por "Ações no Eproc" depois de um "Peticionar" real
+        // confirmado (ver _receberPeticaoEproc) — o usuário não precisa estar
+        // com este console aberto no momento pra não perder o registro.
+        rascunhoCarregado: false, rascunhoSalvoEm: '', gravando: false,
+        _descMovHtmlRascunho: '',
 
         async init() {
             try {
@@ -109,11 +117,79 @@ function acoesSisdpuBlock(cfg) {
                 if (!this.grupo) this.grupo = j.caixa_padrao || '';
             } catch (e) {}
             await this.carregarDocsPaj();
+            // Antes de montar o editor — precisa do HTML salvo (se houver) pra passar
+            // como valorInicial já na criação do Quill (mesmo padrão do "Ações no Eproc").
+            if (!this.rascunhoCarregado) await this.carregarRascunho();
             // O Quill só é montado quando o painel está de fato ABERTO (senão o
             // container fica dentro de um ancestral display:none — o x-show="aberto"
             // do painel inteiro — e o Quill mede a largura errado ao montar). Ver
             // abrir() abaixo, que faz a mesma chamada quando o usuário expande depois.
             if (this.aberto) await this._montarEditorMov();
+            // "Ações no Eproc" (sibling na página do PAJ) dispara este evento depois
+            // de um "Peticionar" real confirmado, perguntando ao usuário se quer
+            // registrar o mesmo ato aqui — ver acoes_eproc.js:_prepararMovimentacaoSisdpu.
+            window.addEventListener('eproc-peticionado', (ev) => this._receberPeticaoEproc(ev.detail || {}));
+        },
+        // Carrega o rascunho salvo do PAJ (se houver) — fase, despachos, anexos,
+        // grupo/prazo. Roda uma vez por instância; silencioso se não houver
+        // rascunho ou a chamada falhar. Mesmo padrão de "Ações no Eproc".
+        async carregarRascunho() {
+            this.rascunhoCarregado = true;
+            if (!this.pajNorm) return;
+            try {
+                const j = await (await fetch('/api/acoes-sisdpu/rascunho/' + encodeURIComponent(this.pajNorm))).json();
+                const r = j.rascunho;
+                if (!r) return;
+                if (r.fase) this.fase = r.fase;
+                if (r.grupo) this.grupo = r.grupo;
+                if (r.prazo) this.prazo = r.prazo;
+                if (r.prazo_data) this.prazoData = r.prazo_data;
+                if (typeof r.concluir === 'boolean') this.concluir = r.concluir;
+                this._descMovHtmlRascunho = r.descricao_mov_html || '';
+                if (!this.getDescricaoTram) this.descTram = r.descricao_tram || this.descTram;
+                this.anexosStaged = r.anexos || [];
+                this.rascunhoSalvoEm = r.salvo_em || '';
+            } catch (e) {}
+        },
+        // "Gravar" — persiste o estado atual do console pra executar mais tarde
+        // (ver botão ao lado de "Executar no SISDPU"). Mesmo padrão de "Ações no
+        // Eproc": o HTML da movimentação (Quill) é salvo como está, sem reformatar.
+        async gravarRascunho() {
+            this.gravando = true;
+            try {
+                const resp = await fetch('/api/acoes-sisdpu/rascunho/' + encodeURIComponent(this.pajNorm), {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        paj_label: this.paj,
+                        fase: this.fase, grupo: this.grupo,
+                        prazo: this.prazo, prazo_data: this.prazoData, concluir: this.concluir,
+                        descricao_mov_html: this.getDescricaoMov ? '' : this.descMovEfetiva(),
+                        descricao_tram: this.getDescricaoTram ? '' : this.descTramEfetiva(),
+                        anexos: this.anexosStaged,
+                    }),
+                });
+                const j = await resp.json();
+                if (!j.ok) { alert('Falha ao gravar rascunho: ' + (j.erro || 'erro desconhecido')); return; }
+                this.rascunhoSalvoEm = j.salvo_em;
+            } catch (e) {
+                alert('Erro ao gravar rascunho: ' + e);
+            } finally {
+                this.gravando = false;
+            }
+        },
+        // "Ações no Eproc" (sibling na página) já GRAVOU o rascunho no disco (fase +
+        // descrição + a petição pré-anexada) depois de um "Peticionar" real
+        // confirmado — este evento é só o aviso pra reagir AO VIVO se este console
+        // já estiver montado: reabre e relê do disco (fonte única de verdade, sem
+        // duplicar o payload no próprio evento). Se o Quill já estava montado,
+        // `carregarRascunho()` só atualiza os campos simples — precisa empurrar o
+        // HTML pra dentro dele também aqui.
+        async _receberPeticaoEproc(d) {
+            if (!d.pajNorm || d.pajNorm !== this.pajNorm) return;
+            if (!this.aberto) await this.abrir();
+            this.rascunhoCarregado = false;
+            await this.carregarRascunho();
+            if (this._editorMov && this._descMovHtmlRascunho) this._editorMov.setHTML(this._descMovHtmlRascunho);
         },
         // Alterna o painel e, na primeira vez que abre, monta o Quill da movimentação
         // (mesmo padrão "carrega só quando abre" do módulo "Ações no Eproc").
@@ -122,15 +198,24 @@ function acoesSisdpuBlock(cfg) {
             if (this.aberto) await this._montarEditorMov();
         },
         async _montarEditorMov() {
-            // Guarda com `!this._editorMov`: init() pode ser chamado DUAS vezes por
-            // instância (x-init="init()" no HTML + o auto-init do próprio Alpine pra
-            // métodos chamados "init" — redundância antiga do projeto, inofensiva pros
-            // outros fetches idempotentes, mas que aqui duplicaria a toolbar do Quill
-            // a cada montagem sem esta guarda).
-            if (this.getDescricaoMov || this._editorMov) return;
+            // init() pode ser chamado DUAS VEZES por instância (x-init="init()" no HTML
+            // + o auto-init do próprio Alpine pra métodos chamados "init" — redundância
+            // antiga do projeto, inofensiva pros outros fetches idempotentes) — e como
+            // esta função tem um `await` antes de criar o Quill, as duas chamadas podem
+            // passar pela guarda `!this._editorMov` ANTES de qualquer uma delas montar
+            // (nenhuma ainda setou `_editorMov`), duplicando a toolbar. Por isso a
+            // trava (`_montandoEditorMov`) é setada de forma SÍNCRONA, antes do
+            // primeiro `await` — a segunda chamada, seja qual for a ordem real de
+            // execução, sempre vê a trava já ligada e desiste.
+            if (this.getDescricaoMov || this._editorMov || this._montandoEditorMov) return;
+            this._montandoEditorMov = true;
             await this.$nextTick();
             const opts = { placeholder: 'Descrição da movimentação (opcional)' };
-            if (this.getValorInicialMov) opts.valorInicialTexto = this.getValorInicialMov() || '';
+            // Rascunho salvo (HTML) tem prioridade sobre a fonte externa (Sugestão
+            // IA etc.) — é uma escolha explícita mais recente (Gravar, ou o que
+            // "Ações no Eproc" gravou automaticamente).
+            if (this._descMovHtmlRascunho) opts.valorInicial = this._descMovHtmlRascunho;
+            else if (this.getValorInicialMov) opts.valorInicialTexto = this.getValorInicialMov() || '';
             this._editorMov = criarEditorRico(this.uidMov, opts);
             this.quillMovOk = !!this._editorMov;
         },
@@ -141,6 +226,14 @@ function acoesSisdpuBlock(cfg) {
             if (this._editorMov && this.getValorInicialMov) this._editorMov.setText(this.getValorInicialMov() || '');
         },
         fasesDropdown() { return this.fasesFav.length ? this.fasesFav : this.fasesTodas; },
+        // Garante que a fase ATUAL sempre apareça como opção do <select>, favorita
+        // ou não — sem isso, uma fase pré-preenchida de fora (ver
+        // _receberPeticaoEproc) que não esteja entre as favoritas/frequentes some do
+        // dropdown (mesmo padrão de opcoesTipoPara/opcoesSigiloPara em acoes_eproc.js).
+        fasesDropdownEfetiva() {
+            const base = this.fasesDropdown();
+            return (this.fase && !base.includes(this.fase)) ? [this.fase, ...base] : base;
+        },
         caixasDropdown() { return this.caixasFav.length ? this.caixasFav : this.caixasTodas; },
         // "Urgente": tramita para o MESMO DIA da movimentação — reaproveita o campo de
         // data explícita (prazoData), que já tem precedência sobre o prazo em dias.
@@ -183,7 +276,7 @@ function acoesSisdpuBlock(cfg) {
         semExtensao(nome) {
             return (nome || '').replace(/\.[a-z0-9]+$/i, '');
         },
-        // "Adicionar arquivo(s)" — ação principal: abre o seletor de arquivo do sistema.
+        // "Adicionar Externo" — abre o seletor de arquivo do sistema (o caso comum).
         adicionarAnexoExterno() {
             if (this.$refs.inputAnexoExterno) this.$refs.inputAnexoExterno.click();
         },
@@ -221,7 +314,7 @@ function acoesSisdpuBlock(cfg) {
                     + '\n\nAceitos: ' + this._tiposAnexoOk.join(', ').toUpperCase());
             }
         },
-        // "Anexar do PAJ" — ação secundária (raro): documentos já baixados do SISDPU.
+        // "Adicionar do SISDPU" (raro): documentos já baixados do SISDPU pra este PAJ.
         async carregarDocsPaj() {
             this.docsCarregados = true;
             if (!this.pajNorm) return;
@@ -276,6 +369,17 @@ function acoesSisdpuBlock(cfg) {
                 fetch('/api/acoes-sisdpu/anexo-externo/remover', { method: 'POST', body: fd }).catch(() => {});
             }
         },
+        // Reordena a tabela de anexos staged (setas ▲/▼) — a ordem da lista é a ordem
+        // em que os documentos são anexados na movimentação real. `direcao` é -1 (sobe)
+        // ou +1 (desce); splice+splice (em vez de troca por índice) garante que o
+        // Alpine detecte a mudança de posição — mesmo padrão de "Ações no Eproc".
+        moverAnexoStaged(i, direcao) {
+            const j = i + direcao;
+            if (j < 0 || j >= this.anexosStaged.length) return;
+            const item = this.anexosStaged[i];
+            this.anexosStaged.splice(i, 1);
+            this.anexosStaged.splice(j, 0, item);
+        },
         anexosStagedParaEnviar() {
             return this.anexosStaged.map((a) => ({
                 origem: a.origem, ref: a.ref,
@@ -321,7 +425,14 @@ function acoesSisdpuBlock(cfg) {
                 this.sseStatus = res.status === 'ja_ausente' ? '— já estava concluído (nada foi feito agora)'
                                 : (res.ok ? '— executado ✓' : '— com aviso');
                 this.exec = false; es.close();
-                if (res.ok) this.anexosStaged = [];  // limpa a lista após êxito (externos já foram removidos no backend)
+                if (res.ok) {
+                    this.anexosStaged = [];  // limpa a lista após êxito (externos já foram removidos no backend)
+                    // Rascunho (se havia) já foi executado — não há mais o que retomar.
+                    if (this.rascunhoSalvoEm) {
+                        this.rascunhoSalvoEm = '';
+                        fetch('/api/acoes-sisdpu/rascunho/' + encodeURIComponent(this.pajNorm), { method: 'DELETE' }).catch(() => {});
+                    }
+                }
                 // Enriquece o resultado com o que FOI de fato executado (fase/grupo/despachos) —
                 // o chamador (onExecutado) não tem acesso ao estado interno deste bloco, e páginas
                 // como a Retornos precisam disso para registrar no Histórico do painel.

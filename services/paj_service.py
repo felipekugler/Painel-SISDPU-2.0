@@ -468,12 +468,17 @@ def ler_paj(paj_norm: str) -> dict | None:
         if not f.is_file() or f.name in IGNORAR:
             continue
 
+        _stat = f.stat()
         item = {
             "nome": f.name,
             "caminho": f.name,
             "tipo": f.suffix.lstrip(".").lower(),
-            "tamanho": f.stat().st_size,
-            "modificado": f.stat().st_mtime,
+            "tamanho": _stat.st_size,
+            "modificado": _stat.st_mtime,
+            # st_ctime no Windows e' a data de CRIACAO do arquivo (diferente de
+            # Unix, onde e' so' a ultima mudanca de metadado) — coluna "Criado
+            # em" das abas Peças/Despachos.
+            "criado": _stat.st_ctime,
         }
 
         nome_norm = _normalizar(f.name)
@@ -492,12 +497,14 @@ def ler_paj(paj_norm: str) -> dict | None:
         for f in sorted(pasta_pecas_ia.iterdir()):
             if not f.is_file() or f.name in IGNORAR:
                 continue
+            _stat = f.stat()
             item = {
                 "nome": f.name,
                 "caminho": f"Peças IA/{f.name}",
                 "tipo": f.suffix.lstrip(".").lower(),
-                "tamanho": f.stat().st_size,
-                "modificado": f.stat().st_mtime,
+                "tamanho": _stat.st_size,
+                "modificado": _stat.st_mtime,
+                "criado": _stat.st_ctime,
             }
             nome_norm = _normalizar(f.name)
             if nome_norm.startswith(PREFIXOS_DESPACHO):
@@ -892,6 +899,46 @@ def abrir_pasta_paj(paj_norm: str) -> dict:
     except Exception as e:
         return {"ok": False, "erro": f"{type(e).__name__}: {e}"}
     return {"ok": True}
+
+
+def excluir_arquivo_paj(paj_norm: str, caminho: str) -> dict:
+    """Exclui UM arquivo de peça/despacho da pasta do PAJ (aba Outros > Peças/
+    Despachos — ícone de lixeira). `caminho` é relativo à pasta do PAJ, igual
+    ao campo `item["caminho"]` que `ler_paj` devolve (arquivo na raiz ou em
+    "Peças IA/...").
+
+    Bloqueia: caminho fora da pasta do PAJ (path traversal), arquivos de
+    sistema (`IGNORAR`) e qualquer coisa dentro de `Arquivos/` — os anexos do
+    SISDPU têm fluxo próprio de limpeza (`limpar_anexos_paj`), com safeguards
+    específicos (PAJ ativo na caixa, etc.) que não fazem sentido aqui.
+    """
+    pasta = (PAJS_DIR / paj_norm).resolve()
+    if not pasta.exists() or not _e_pasta_paj(pasta):
+        return {"ok": False, "erro": "PAJ não encontrado"}
+
+    if not caminho or not caminho.strip():
+        return {"ok": False, "erro": "caminho obrigatório"}
+
+    alvo = (pasta / caminho).resolve()
+    try:
+        alvo.relative_to(pasta)
+    except ValueError:
+        return {"ok": False, "erro": "caminho inválido"}
+
+    if not alvo.is_file():
+        return {"ok": False, "erro": "arquivo não encontrado"}
+    if alvo.name in IGNORAR:
+        return {"ok": False, "erro": "arquivo protegido — não pode ser excluído por aqui"}
+    if alvo.parent.name == "Arquivos":
+        return {"ok": False, "erro": "anexos do SISDPU têm fluxo próprio (botão \"Limpar anexos\")"}
+
+    try:
+        alvo.unlink()
+    except Exception as e:
+        return {"ok": False, "erro": f"falha ao excluir: {type(e).__name__}: {e}"}
+
+    invalidar_cache_listagem()
+    return {"ok": True, "excluido": caminho}
 
 
 def limpar_anexos_paj(

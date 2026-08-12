@@ -195,20 +195,63 @@ async def _connect(url: str = EPROC_HOME):
         browser = await pw.chromium.connect_over_cdp(f"http://127.0.0.1:{_CDP_PORT}")
     ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
     page = ctx.pages[0] if ctx.pages else await ctx.new_page()
-    if not getattr(page, "_eproc_dialog_hook", False):
-        # Handler explícito de diálogo: dispensa qualquer alert/confirm nativo
-        # assim que ele abre. Sem isso, o Playwright cai no fallback "sem
-        # listener" (auto-dismiss por timeout) — e se o diálogo já tiver
-        # fechado por outro caminho nesse meio-tempo, o driver Node crasha
-        # (bug conhecido do driver, "No dialog is showing").
-        page.on("dialog", _dispensar_dialogo)
-        page._eproc_dialog_hook = True
+    _garantir_hook_dialogo(ctx)
     return browser, page
 
 
+def _garantir_hook_dialogo(ctx) -> None:
+    """Handler explícito de diálogo em TODAS as páginas de `ctx` — a atual e
+    qualquer uma futura (`ctx.on("page", ...)`), inclusive abas novas abertas
+    via `ctx.new_page()` por outras funções (ex.: `_abrir_tela_peticionamento`,
+    `listar_eventos_movimentacao`) que não passam pelo `_connect()` de novo.
+    Sem isso, um alert/confirm nativo do e-proc numa dessas abas cai no
+    fallback "sem listener" do Playwright (auto-dismiss por timeout) — e se o
+    diálogo já tiver fechado por outro caminho nesse meio-tempo, o driver Node
+    inteiro crasha (bug do driver, "No dialog is showing"), derrubando a sessão
+    CDP de TODAS as abas, não só a que tinha o diálogo."""
+    if getattr(ctx, "_eproc_dialog_hook", False):
+        return
+    ctx._eproc_dialog_hook = True
+    for p in ctx.pages:
+        with contextlib.suppress(Exception):
+            p.on("dialog", _dispensar_dialogo)
+    ctx.on("page", lambda p: p.on("dialog", _dispensar_dialogo))
+
+
 async def _dispensar_dialogo(dialog) -> None:
+    """Handler ÚNICO de diálogo de cada página (ver `_garantir_hook_dialogo`) —
+    por padrão DISPENSA (mais seguro; sempre foi assim). Ações que precisam
+    mesmo CONFIRMAR um diálogo nativo (excluir documento anexado, Peticionar)
+    marcam a página com `_eproc_aceitar_dialogo=True` antes do clique que o
+    dispara — ver `_com_dialogo_aceito`. Registrar um SEGUNDO listener de
+    'dialog' que aceita (`page.on`/`.once`) NÃO FUNCIONA: os dois disparam pro
+    MESMO diálogo e o dismiss deste hook (registrado primeiro, na criação da
+    página) ganha a corrida — descoberto testando ao vivo "Excluir Documento"
+    (diálogo apareceu, foi capturado, mas nada foi removido)."""
+    pagina = dialog.page
+    with contextlib.suppress(Exception):
+        pagina._eproc_ultimo_dialogo = dialog.message
+    if getattr(pagina, "_eproc_aceitar_dialogo", False):
+        with contextlib.suppress(Exception):
+            await dialog.accept()
+        return
     with contextlib.suppress(Exception):
         await dialog.dismiss()
+
+
+@contextlib.asynccontextmanager
+async def _com_dialogo_aceito(page):
+    """Dentro do bloco, o diálogo nativo (confirm/alert) que aparecer na
+    `page` é ACEITO pelo hook único (ver `_dispensar_dialogo`) em vez de
+    dispensado — fora do bloco, volta ao padrão de sempre DISPENSAR. Só usar
+    em ações destrutivas/irreversíveis que o usuário já decidiu tomar
+    (excluir documento anexado, Peticionar)."""
+    page._eproc_ultimo_dialogo = ""
+    page._eproc_aceitar_dialogo = True
+    try:
+        yield
+    finally:
+        page._eproc_aceitar_dialogo = False
 
 
 async def _maximizar_janela(page) -> None:
@@ -692,6 +735,293 @@ async def listar_tipos_documento(numero_processo: str) -> dict:
     if res.get("ok"):
         res["tipos"] = res.pop("itens")
     return res
+
+
+# --- Peticionamento real: selecionar evento, anexar documentos, confirmar ----
+# Descoberto na inspeção ao vivo da tela "Movimentar/Peticionar" (2026-08-12).
+# Dois widgets de autocomplete no MESMO padrão ("infraAutoCompletar"): o campo
+# de Evento (`#txtEvento` → popup `#divInfraAjaxtxtEvento`) e o Tipo de cada
+# documento (`#txtTipo_<n>` → popup `#divInfraAjaxtxtTipo_<n>`, 1-based, um por
+# bloco "Documento N"). Upload é via Fine Uploader (`input.qq-upload-input`,
+# oculto por opacidade): setar o arquivo já dispara o envio AJAX pro servidor
+# sozinho; sucesso/falha aparece como classe CSS na `<li>` da lista de upload
+# daquele bloco. Sigilo é um `<select>` comum (`#selIdSigilo_<n>`).
+#
+# O input aceita `multiple` e mandar VÁRIOS arquivos de uma vez faz o e-proc
+# criar um bloco por arquivo automaticamente (testado) — MAS o Playwright
+# transfere os bytes pro Chromium via CDP antes de sequer disparar o evento de
+# input, e isso trava/demora desproporcionalmente (minutos, sem progresso
+# visível) mesmo bem abaixo do limite de 50MB que ele recusa explicitamente —
+# achado testando ao vivo com os anexos reais deste PAJ (~43MB num lote só
+# nunca terminou em 4+ minutos). Por isso aqui é SEMPRE um arquivo por chamada
+# (`_upload_documento`), com "Adicionar mais Documentos" entre um e outro —
+# mais lento que o lote em teoria, mas o único caminho comprovado confiável.
+#
+# IMPORTANTE (achado na prática, não documentado): a seleção do item exato no
+# popup do autocomplete só "pega" (preenche o campo oculto que o backend lê,
+# `#hdnEvento`/`#selTipoArquivo_<n>`) com um clique de MOUSE REAL do Playwright
+# (`locator.click()`) — clicar o mesmo elemento via `element.click()` do próprio
+# JS do navegador não é o bastante (o widget deve escutar mousedown/mouseup, não
+# só o evento `click`).
+
+async def _selecionar_autocomplete(page, campo_id: str, box_id: str, texto: str) -> bool:
+    """Seleciona `texto` (rótulo idêntico ao do catálogo do e-proc) num campo de
+    autocomplete "infraAutoCompletar" (`campo_id`) — digita o próprio `texto`
+    completo (garante que o item exato esteja entre os resultados filtrados,
+    já que ele é substring de si mesmo) e clica, com um clique de mouse real,
+    no `<li>` do popup (`box_id`) cujo texto normalizado bate EXATO. Falso se
+    `texto` não aparecer entre as opções (catálogo desatualizado/rótulo
+    incorreto) — a chamada NÃO falha sozinha, quem chamou decide o que fazer."""
+    campo = page.locator(f"#{campo_id}")
+    await campo.click()
+    await campo.fill("")
+    await campo.type(texto, delay=15)
+    await page.wait_for_timeout(900)
+    item = page.locator(f"#{box_id} li").filter(has_text=re.compile(f"^{re.escape(texto)}$")).first
+    if await item.count() == 0:
+        return False
+    await item.click()
+    await page.wait_for_timeout(400)
+    return True
+
+
+async def _upload_documento(page, numero_processo: str, indice: int, caminho: Path,
+                             timeout_ms: int = 180000) -> dict:
+    """Faz upload de `caminho` no bloco "Documento `indice`" (1-based) — a `indice`ª
+    ocorrência do input oculto do Fine Uploader na página — e espera o envio AJAX
+    confirmar (classe `qq-upload-success` na `<li>` da lista daquele bloco).
+    Documentos grandes demoram; poll em vez de espera fixa, com timeout generoso."""
+    campo = page.locator("input.qq-upload-input").nth(indice - 1)
+    await campo.set_input_files(str(caminho))
+    container = page.locator(f'xpath=//*[@id="{numero_processo}_{indice}"]')
+    decorrido = 0
+    passo = 500
+    while decorrido < timeout_ms:
+        classe = await container.evaluate(
+            "(el) => { const li = el.querySelector('.qq-upload-list li'); return li ? li.className : ''; }")
+        if "qq-upload-success" in classe:
+            return {"ok": True}
+        if "qq-upload-fail" in classe:
+            return {"ok": False, "erro": f'Falha no envio de "{caminho.name}" (rejeitado pelo e-proc).'}
+        await page.wait_for_timeout(passo)
+        decorrido += passo
+    return {"ok": False, "erro": f'Tempo excedido enviando "{caminho.name}" ({timeout_ms // 1000}s).'}
+
+
+# Cada chamada de `preparar_peticionamento` abre uma aba NOVA (`ctx.new_page()`)
+# — repetir a chamada pro MESMO processo (reprocessar depois de limpar, tentar
+# de novo após erro, etc.) deixa a aba ANTERIOR aberta e ambígua: a tela de
+# "Movimentar/Peticionar" compartilha o estado dos documentos NO SERVIDOR por
+# processo (visível de qualquer aba que a abra), mas cada aba mantém seu próprio
+# DOM RENDERIZADO congelado no que era verdade quando ELA carregou — uma aba
+# antiga esquecida aberta continua mostrando dados velhos pra sempre, mesmo que
+# o servidor já tenha mudado. Reencontrar "a aba" por URL (`confirmar_
+# peticionamento`, `limpar_documentos_confirmados`) fica não-determinístico com
+# mais de uma aba casando — achado na prática (uma tentativa que travou no meio
+# do upload deixou uma 2ª aba aberta, e uma reconexão pegou a errada, mostrando
+# 12 documentos com timestamp de HORAS atrás como se fosse o estado atual).
+# `_fechar_abas_peticionamento` garante NO MÁXIMO 1 aba por processo antes de
+# abrir uma nova; `_aba_peticionamento_unica` recusa agir se achar mais de uma.
+
+async def _fechar_abas_peticionamento(ctx, numero: str) -> None:
+    for p in list(ctx.pages):
+        if "acao=processo_movimento_consultar" in p.url and numero in p.url:
+            with contextlib.suppress(Exception):
+                await p.close()
+
+
+def _aba_peticionamento_unica(ctx, numero: str):
+    candidatas = [p for p in ctx.pages
+                  if "acao=processo_movimento_consultar" in p.url and numero in p.url]
+    if not candidatas:
+        return None, "Aba de peticionamento não encontrada — rode \"preparar\" de novo antes de confirmar."
+    if len(candidatas) > 1:
+        return None, (f"{len(candidatas)} abas de peticionamento abertas pra este processo — "
+                       f"ambíguo pra saber qual usar. Feche as abas extras do e-proc e prepare de novo.")
+    return candidatas[0], None
+
+
+async def preparar_peticionamento(numero_processo: str, evento: str, documentos: list[dict]) -> dict:
+    """Abre a tela "Movimentar/Peticionar" do processo numa ABA NOVA, seleciona o
+    EVENTO e anexa, NA ORDEM, cada item de `documentos`
+    (`[{"caminho": Path|str, "tipo": str, "sigilo": str}, ...]`), terminando com
+    UM clique em "Confirmar seleção de documentos". `documentos` vazio (evento
+    que não aceita anexo) só seleciona o evento, sem tocar na área de Documentos.
+
+    Fecha qualquer aba de peticionamento JÁ ABERTA pro mesmo processo antes de
+    abrir a nova (ver nota acima) — garante que sobra EXATAMENTE uma.
+
+    NÃO clica em "Peticionar"/"Assinar com Certificado Digital" — protocolar de
+    fato é IRREVERSÍVEL (é o processo real na vara) e fica por conta exclusiva de
+    `confirmar_peticionamento`, chamada só depois que o usuário revisar o que foi
+    preenchido aqui (evento + tabela de anexos) e confirmar explicitamente.
+
+    A aba fica ABERTA ao final, sucesso ou erro (só a conexão CDP é fechada) —
+    pra o usuário revisar visualmente no e-proc, e pra `confirmar_peticionamento`
+    reencontrá-la pela URL (mesmo `numero_processo`) sem repetir os passos."""
+    numero = re.sub(r"\D", "", numero_processo or "")
+    if not numero:
+        return {"ok": False, "erro": "Número de processo vazio."}
+    browser, pagina_ref = await _connect()
+    ctx = pagina_ref.context
+    await _fechar_abas_peticionamento(ctx, numero)
+    page = await ctx.new_page()
+    try:
+        erro = await _abrir_tela_peticionamento(page, numero)
+        if erro:
+            return {"ok": False, "erro": erro}
+
+        if not await _selecionar_autocomplete(page, "txtEvento", "divInfraAjaxtxtEvento", evento):
+            return {"ok": False, "erro": f'Evento "{evento}" não encontrado no catálogo deste processo.'}
+
+        total = len(documentos)
+        for i, doc in enumerate(documentos, start=1):
+            caminho = Path(doc["caminho"])
+            if not caminho.exists():
+                return {"ok": False, "erro": f"Arquivo não encontrado: {caminho}"}
+            res = await _upload_documento(page, numero, i, caminho)
+            if not res.get("ok"):
+                return {"ok": False, "erro": res.get("erro"), "documento_falhou": i}
+            if not await _selecionar_autocomplete(page, f"txtTipo_{i}", f"divInfraAjaxtxtTipo_{i}", doc["tipo"]):
+                return {"ok": False, "erro": f'Tipo "{doc["tipo"]}" não encontrado (documento {i}: {caminho.name}).',
+                        "documento_falhou": i}
+            try:
+                await page.locator(f"#selIdSigilo_{i}").select_option(label=doc["sigilo"])
+            except Exception:
+                return {"ok": False, "erro": f'Sigilo "{doc["sigilo"]}" não encontrado (documento {i}).',
+                        "documento_falhou": i}
+            if i < total:
+                await page.locator("#lblAdicionarDocumento").click()
+                await page.wait_for_timeout(700)
+
+        if documentos:
+            await page.locator("#btnEnviarArquivos").click()
+            await page.wait_for_timeout(1500)
+
+        with contextlib.suppress(Exception):
+            await page.bring_to_front()
+            await _maximizar_janela(page)
+        return {"ok": True, "numero_processo": numero, "evento": evento, "n_documentos": total}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:400]}
+    finally:
+        with contextlib.suppress(Exception):
+            await browser.close()
+
+
+async def confirmar_peticionamento(numero_processo: str) -> dict:
+    """Clica "Peticionar" na aba já preparada por `preparar_peticionamento` pro
+    mesmo processo (reencontrada pela URL — precisa estar aberta; erro claro se
+    não achar). PROTOCOLA DE FATO — irreversível — só chamar depois que o
+    usuário confirmar explicitamente o resumo do que seria enviado.
+
+    O clique dispara `validarMovimentacaoESubmit()` do e-proc, que pode abrir um
+    `confirm()` nativo do navegador antes de enviar — o diálogo é ACEITO (ver
+    `_com_dialogo_aceito`), guardando o texto pra devolver no resultado.
+
+    Em caso de sucesso, o e-proc redireciona pra "Consulta Processual" — a
+    tabela de eventos (`#tblEventos`, linhas `id="trEvento<N>"`, mais recente
+    primeiro) tem o evento recém-criado na PRIMEIRA linha; devolve
+    `numero_evento`/`evento_data_hora`/`evento_descricao` dali (best-effort —
+    `numero_evento` fica vazio se não conseguir raspar, sem quebrar o resultado
+    principal). Usado por quem chama pra referenciar o evento real do e-proc
+    (ex.: registrar o mesmo ato no SISDPU)."""
+    numero = re.sub(r"\D", "", numero_processo or "")
+    if not numero:
+        return {"ok": False, "erro": "Número de processo vazio."}
+    browser, pagina_ref = await _connect()
+    ctx = pagina_ref.context
+    try:
+        pagina, erro_aba = _aba_peticionamento_unica(ctx, numero)
+        if erro_aba:
+            return {"ok": False, "erro": erro_aba}
+
+        botao = pagina.locator("#sbmMovimentar").first
+        async with _com_dialogo_aceito(pagina):
+            await botao.click()
+            await pagina.wait_for_timeout(3000)
+        await pagina.wait_for_load_state("domcontentloaded", timeout=30000)
+        await pagina.wait_for_timeout(1000)
+
+        protocolado = "processo_movimento_consultar" not in pagina.url or "sucesso" in pagina.url.lower()
+        evento_info = {"numero_evento": "", "evento_data_hora": "", "evento_descricao": ""}
+        if protocolado:
+            with contextlib.suppress(Exception):
+                raspado = await pagina.evaluate(
+                    """() => {
+                        const linha = document.querySelector('#tblEventos tr[id^="trEvento"]');
+                        if (!linha) return null;
+                        const m = /trEvento(\\d+)/.exec(linha.id || '');
+                        const cel = linha.querySelectorAll('td');
+                        return {
+                            numero_evento: m ? m[1] : '',
+                            evento_data_hora: cel[1] ? cel[1].innerText.trim() : '',
+                            evento_descricao: cel[2] ? cel[2].innerText.trim() : '',
+                        };
+                    }""")
+                if raspado:
+                    evento_info = raspado
+        return {"ok": True, "url_final": pagina.url,
+                "dialogo": getattr(pagina, "_eproc_ultimo_dialogo", ""),
+                "provavel_sucesso": protocolado, **evento_info}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:400]}
+    finally:
+        with contextlib.suppress(Exception):
+            await browser.close()
+
+
+async def limpar_documentos_confirmados(numero_processo: str) -> dict:
+    """Remove TODOS os documentos já confirmados ("Confirmar seleção de
+    documentos") na aba de peticionamento já aberta pra `numero_processo`
+    (reencontrada pela URL, mesmo padrão de `confirmar_peticionamento`) — um
+    clique em "Excluir" (`a.btnExcluirDocumento`) por linha da tabela
+    "Documentos selecionados e ainda não utilizados em movimentação", cada um
+    seguido do `confirm()` nativo do e-proc ("Confirma exclusão do Documento
+    ...?"), que precisa ser ACEITO (ver `_com_dialogo_aceito`) — sem isso o
+    diálogo é dispensado pelo hook padrão e a linha nem sai da tabela. NÃO
+    protocola nem toca no evento selecionado — só limpa os anexos, pra
+    preparar de novo do zero (ex.: revalidar `preparar_peticionamento`)."""
+    numero = re.sub(r"\D", "", numero_processo or "")
+    if not numero:
+        return {"ok": False, "erro": "Número de processo vazio."}
+    browser, pagina_ref = await _connect()
+    ctx = pagina_ref.context
+    try:
+        pagina, erro_aba = _aba_peticionamento_unica(ctx, numero)
+        if erro_aba:
+            return {"ok": False, "erro": erro_aba}
+
+        removidos = 0
+        async with _com_dialogo_aceito(pagina):
+            while removidos < 100:  # guarda-corpo — nunca há tantos documentos numa petição real
+                links = pagina.locator("a.btnExcluirDocumento")
+                antes = await links.count()
+                if antes == 0:
+                    break
+                await links.first.click()
+                # a remoção é assíncrona (confirm() nativo + requisição ao servidor)
+                # — poll em vez de checagem única, senão lê a contagem ainda ANTES
+                # de o servidor confirmar (achado na prática: 700ms fixo é cedo
+                # demais e faz a função desistir com o documento removido segundos
+                # depois, mesmo).
+                decorrido = 0
+                passo = 400
+                while decorrido < 8000:
+                    await pagina.wait_for_timeout(passo)
+                    decorrido += passo
+                    if await pagina.locator("a.btnExcluirDocumento").count() < antes:
+                        break
+                else:
+                    return {"ok": False, "erro": "Exclusão não teve efeito (documento continua na tabela após 8s).",
+                             "removidos": removidos}
+                removidos += 1
+        return {"ok": True, "removidos": removidos}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:400]}
+    finally:
+        with contextlib.suppress(Exception):
+            await browser.close()
 
 
 async def abrir_processo(url: str) -> dict:

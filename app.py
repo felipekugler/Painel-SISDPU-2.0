@@ -9,6 +9,7 @@ import logging
 import os
 import re
 import subprocess
+from datetime import datetime
 from logging.handlers import TimedRotatingFileHandler
 from pathlib import Path
 
@@ -74,7 +75,7 @@ _configurar_logging()
 # Versao do painel — fonte unica. Usada pelo FastAPI (OpenAPI/docs) e tambem
 # exposta a todos os templates via Jinja globals (renderizada no rodape da
 # sidebar). Para incrementar: mude aqui e so aqui.
-APP_VERSION = "0.4.37"
+APP_VERSION = "0.4.48"
 
 app = FastAPI(title="oficio-geral-ui", version=APP_VERSION)
 app.state.jinja = jinja2.Environment(
@@ -179,6 +180,18 @@ def _data_hora_br(valor) -> str:
     return _data_br(s)
 
 
+def _data_hora_arquivo(valor) -> str:
+    """Formata um timestamp Unix (float, ex: `Path.stat().st_ctime`) como
+    'DD/MM/AAAA HH:MM' — usado nas colunas "Criado em" das abas Peças/
+    Despachos (metadado do sistema de arquivos, não string ISO/BR)."""
+    if not valor:
+        return "—"
+    try:
+        return datetime.fromtimestamp(float(valor)).strftime("%d/%m/%Y %H:%M")
+    except (TypeError, ValueError, OSError):
+        return "—"
+
+
 def _oficio_sigla(valor) -> str:
     """Converte um nome de ofício na sigla padronizada (Tabela de Ofícios das
     Configurações). Tolerante a falhas — devolve o valor original se algo der errado."""
@@ -207,6 +220,7 @@ app.state.jinja.filters["formatar_pretensao"] = _formatar_pretensao
 app.state.jinja.filters["formatar_endereco_contato"] = _formatar_endereco_contato
 app.state.jinja.filters["data_br"] = _data_br
 app.state.jinja.filters["data_hora_br"] = _data_hora_br
+app.state.jinja.filters["data_hora_arquivo"] = _data_hora_arquivo
 app.state.jinja.filters["oficio_sigla"] = _oficio_sigla
 app.state.jinja.filters["tipo_analise_pretensao"] = _tipo_analise_pretensao
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")

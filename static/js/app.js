@@ -493,6 +493,81 @@ function baixarDocumentosPaj(pajNorm, ids) {
     });
 }
 
+/* Sincronizacao EXCLUSIVA e INCREMENTAL das movimentacoes (icone de atualizar
+ * da tabela compartilhada, static/js/movimentacoes.js) — relê a lista de
+ * movimentacoes no SISDPU, mas so' abre popup de anexo pras movimentacoes
+ * REALMENTE novas (as ja conhecidas mantem os documentos ja indexados); nao
+ * baixa PDF, nao recarrega a pagina. Mesmo padrao de baixarDocumentosPaj:
+ * reusa o #sync-modal e devolve os dados frescos pro componente Alpine
+ * trocar so' o conteudo da tabela. Resolve {movimentacoes, anexos_sisdpu,
+ * max_seq} ou null se deu erro/cancelou. */
+function atualizarMovimentacoesPaj(pajNorm) {
+    return new Promise(function(resolve) {
+        let modal = document.getElementById('sync-modal');
+        let logEl = document.getElementById('sync-log');
+        let statusEl = document.getElementById('sync-status');
+        let closeBtn = document.getElementById('sync-close-btn');
+        let titleEl = document.getElementById('sync-title');
+        if (!modal || !logEl) {
+            showToast('Modal de sync não encontrado na página', 'error');
+            resolve(null);
+            return;
+        }
+
+        if (titleEl) titleEl.textContent = 'Atualizar movimentações';
+        logEl.textContent = '';
+        statusEl.textContent = 'atualizando movimentações de ' + pajNorm + '...';
+        statusEl.className = 'badge badge-sm badge-warning';
+        closeBtn.disabled = true;
+        const cancelBtn = document.getElementById('sync-cancel-btn');
+        if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.textContent = 'Cancelar'; }
+        _syncBtnCancel(true);
+        modal.showModal();
+
+        if (_syncSource) {
+            _syncSource.close();
+            _syncSource = null;
+        }
+
+        let url = '/api/sync/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes';
+        _syncSource = new EventSource(url);
+
+        function buscarMovsEResolver() {
+            fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes')
+                .then(function(r) { return r.json(); })
+                .then(function(data) { resolve(data.ok === false ? null : data); })
+                .catch(function() { resolve(null); });
+        }
+
+        _syncSource.addEventListener('log', function(e) {
+            logEl.textContent += e.data + '\n';
+            logEl.scrollTop = logEl.scrollHeight;
+        });
+
+        _syncSource.addEventListener('done', function(e) {
+            logEl.textContent += '\n' + e.data + '\n';
+            logEl.scrollTop = logEl.scrollHeight;
+            statusEl.textContent = 'concluído';
+            statusEl.className = 'badge badge-sm badge-success';
+            closeBtn.disabled = false;
+            _syncBtnCancel(false);
+            if (_syncSource) { _syncSource.close(); _syncSource = null; }
+            showToast('Movimentações atualizadas', 'success');
+            buscarMovsEResolver();
+        });
+
+        _syncSource.onerror = function() {
+            statusEl.textContent = 'erro/desconectado';
+            statusEl.className = 'badge badge-sm badge-error';
+            closeBtn.disabled = false;
+            _syncBtnCancel(false);
+            if (_syncSource) { _syncSource.close(); _syncSource = null; }
+            showToast('Falha ao atualizar movimentações', 'error');
+            resolve(null);
+        };
+    });
+}
+
 /* Troca o icone de um botao por um spinner amarelo (padrao "loading
    loading-spinner ... text-warning" ja usado no badge de Analise IA desta
    mesma pagina) enquanto uma tarefa roda, e devolve uma funcao pra restaurar
@@ -1410,6 +1485,35 @@ async function executarLimpeza() {
 function fecharLimpezaModal() {
     const m = document.getElementById('limpeza-modal');
     if (m) m.close();
+}
+
+/* Exclui UM arquivo de peça/despacho da pasta do PAJ (ícone de lixeira das
+ * abas Outros > Peças/Despachos). Diferente de "Limpar anexos" (que apaga em
+ * massa e tem safeguards de PAJ ativo): aqui é exclusão pontual de um
+ * arquivo especifico, sem safeguard algum além de confirmar com o usuário —
+ * remove a linha da tabela e decrementa o badge de contagem da aba na hora,
+ * sem recarregar a página. `badgeId` é o id do <span> de contagem da aba
+ * (ver templates/paj_detail.html). */
+async function excluirArquivoPaj(pajNorm, caminho, nome, btnEl, badgeId) {
+    if (!confirm('Excluir "' + nome + '"? Esta ação não pode ser desfeita.')) return;
+    try {
+        const r = await fetch(
+            '/api/paj/' + encodeURIComponent(pajNorm) + '/arquivo?caminho=' + encodeURIComponent(caminho),
+            { method: 'DELETE' }
+        );
+        const data = await r.json();
+        if (!r.ok || !data.ok) {
+            showToast(data.erro || 'Falha ao excluir arquivo', 'error');
+            return;
+        }
+        const row = btnEl && btnEl.closest('tr');
+        if (row) row.remove();
+        const badge = badgeId && document.getElementById(badgeId);
+        if (badge) badge.textContent = String(Math.max(0, (parseInt(badge.textContent, 10) || 0) - 1));
+        showToast('Arquivo excluído', 'success');
+    } catch (e) {
+        showToast('Erro de rede ao excluir arquivo', 'error');
+    }
 }
 
 /* =========================================================

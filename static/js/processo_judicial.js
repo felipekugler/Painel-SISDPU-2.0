@@ -122,14 +122,10 @@ function processoJudicialBlock(cfg) {
         // SEM fail-open (removido — era o problema real): sem prazo confirmado
         // no Painel pra este processo, o universo é VAZIO. Nunca cai pra
         // mostrar a triagem MCP crua (que pode trazer INSS, perito, etc.) só
-        // porque o Painel não tem dado — nesse caso `temInfoIncompleta(idx)`
-        // sinaliza a situação na tela (ver partials/processo_judicial.html),
-        // orientando a sincronizar a aba Prazos, em vez de arriscar mostrar
-        // algo que nunca esteve confirmado como sendo da DPU.
-        temInfoIncompleta(idx) {
-            const lista = this.prazosProcurador[idx];
-            return !lista || !lista.length;
-        },
+        // porque o Painel não tem dado — a seção de intimações simplesmente
+        // não aparece (ver `intimacoesAtivas` abaixo e o x-show no partial),
+        // em vez de arriscar mostrar algo que nunca esteve confirmado como
+        // sendo da DPU.
         intimacoesAtivas(idx) {
             const lista = this.prazosProcurador[idx];
             if (!lista || !lista.length) return [];
@@ -143,7 +139,11 @@ function processoJudicialBlock(cfg) {
                 const diasP = parseInt(p.prazo_dias, 10);
                 const iMatch = triagem.findIndex((it, i) => {
                     if (usadas.has(i)) return false;
-                    const diaIt = this._soData(it.enviado_em);
+                    // data_hora = expedição da PRÓPRIA intimação (o que casa com o
+                    // "data_envio" do Painel do Procurador) — NÃO enviado_em (sub-dado
+                    // "Domicílio Judicial Eletrônico: Enviado em...", momento distinto
+                    // da entrega eletrônica, sempre um pouco posterior).
+                    const diaIt = this._soData(it.data_hora);
                     if (!diaP || !diaIt || diaP !== diaIt) return false;
                     const diasIt = parseInt(it.prazo_dias, 10);
                     if (!isNaN(diasP) && !isNaN(diasIt) && diasP !== diasIt) return false;

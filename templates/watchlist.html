@@ -154,7 +154,7 @@
                           @click.stop="menuAbertoPaj = (menuAbertoPaj === item.paj_norm ? null : item.paj_norm);
                                       if (menuAbertoPaj === item.paj_norm) {
                                         const rect = $el.getBoundingClientRect();
-                                        posMenu = { top: rect.bottom + window.scrollY, left: rect.left + window.scrollX };
+                                        posMenu = { top: rect.bottom, left: rect.left };
                                       }"
                           x-text="formatPaj(item.paj_norm)"></button>
                 </td>

@@ -1844,6 +1844,8 @@ async def rodar_paj_unico(
     deve_cancelar: Callable[[], bool] | None = None,
     baixar_anexos: bool = True,
     rodar_ocr: bool = False,
+    extrair_documentos: bool = True,
+    esperas_curtas: bool = False,
 ) -> dict:
     """Sincroniza UM unico PAJ (util pra teste/re-sync pontual sem rodar a caixa inteira).
 
@@ -1856,6 +1858,15 @@ async def rodar_paj_unico(
     global do SIS-DPU (`rodar_paj_via_busca_global`), reaproveitando a sessao
     ja aberta. Ou seja, sincronizar um PAJ avulso nunca fica preso ao escopo
     da caixa — esse escopo e' exclusivo da sync da caixa (`rodar`).
+
+    `esperas_curtas=True` reduz as esperas fixas pos-navegacao. Combinado com
+    `baixar_anexos=False` e' o modo "so movimentacoes" (icone de atualizar da
+    tabela de movimentacoes): re-le a tabela inteira (o SISDPU nao oferece
+    delta), mas mantem `extrair_documentos=True` para so' abrir o popup de
+    anexo das movimentacoes REALMENTE novas — `extrair_documentos_por_seq`
+    ja exclui da fila as seqs que ja tinham `documentos` no metadata anterior,
+    entao o custo por clique fica proporcional so' ao que mudou desde a
+    ultima sincronizacao.
     """
 
     def log(msg: str) -> None:
@@ -1907,6 +1918,8 @@ async def rodar_paj_unico(
             baixar_anexos=baixar_anexos,
             rodar_ocr=rodar_ocr,
             forcar_sessao=False,
+            extrair_documentos=extrair_documentos,
+            esperas_curtas=esperas_curtas,
         )
 
     if not baixar_anexos:
@@ -1919,6 +1932,8 @@ async def rodar_paj_unico(
             deve_cancelar=deve_cancelar,
             baixar_anexos=baixar_anexos,
             rodar_ocr=rodar_ocr,
+            extrair_documentos=extrair_documentos,
+            esperas_curtas=esperas_curtas,
         )
         if ok:
             resumo["processado"] = True
@@ -1959,6 +1974,8 @@ async def rodar_paj_via_busca_global(
     baixar_anexos: bool = True,
     rodar_ocr: bool = False,
     forcar_sessao: bool = True,
+    extrair_documentos: bool = True,
+    esperas_curtas: bool = False,
 ) -> dict:
     """Sincroniza UM PAJ via o campo de pesquisa global do SIS-DPU.
 
@@ -2009,7 +2026,7 @@ async def rodar_paj_via_busca_global(
 
     try:
         det = await sisdpu_client.buscar_paj_global(
-            numero, ano, unidade, forcar_sessao=forcar_sessao)
+            numero, ano, unidade, forcar_sessao=forcar_sessao, esperas_curtas=esperas_curtas)
     except Exception as e:
         log(f"[FATAL] falha na busca global: {type(e).__name__}: {e}")
         resumo["erros"].append(f"busca: {e}")
@@ -2040,6 +2057,7 @@ async def rodar_paj_via_busca_global(
             deve_cancelar=deve_cancelar,
             baixar_anexos=baixar_anexos,
             rodar_ocr=rodar_ocr,
+            extrair_documentos=extrair_documentos,
             via_busca_global=True,
         )
         if ok:

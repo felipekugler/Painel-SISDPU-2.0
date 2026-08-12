@@ -11,9 +11,6 @@
         </svg>
     </button>
     <div x-show="aberto" class="flex flex-col gap-3 text-[12.5px] mt-3">
-        <div class="text-[11px] text-base-content/50 -mt-1">
-            Módulo em construção — a movimentação real no e-proc (evento, anexos, protocolo) ainda não está implementada.
-        </div>
         <!-- Seleção do processo judicial — só aparece quando o PAJ tem MAIS DE UM
              processo vinculado, para não movimentar/peticionar no processo errado. -->
         <div class="ret-acao-bloco" x-show="processos.length > 1">
@@ -66,7 +63,25 @@
              citação, listas, recuo, alinhamento). Cai pra textarea simples se o Quill
              não montar (ex.: CDN fora do ar — ver quillPeticaoOk no JS). -->
         <div class="ret-acao-bloco">
-            <div class="ret-acao-titulo">Petição</div>
+            <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
+                <div class="ret-acao-titulo mb-0">Petição</div>
+                <div class="flex items-center gap-2">
+                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="gerandoIA" @click="gerarPeticaoIA()"
+                            title="Redige uma petição respondendo ao(s) ato(s) referenciado(s) do(s) prazo(s) marcados acima, e a anexa como 1º documento (tipo Petição, sem sigilo).">
+                        <span x-show="gerandoIA" class="loading loading-spinner loading-xs"></span>
+                        <span x-show="!gerandoIA">✨ Gerar petição com IA</span>
+                        <span x-show="gerandoIA">Aguardando resposta da IA…</span>
+                    </button>
+                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="incluindoAnexo" @click="incluirPeticaoAnexo()"
+                            title="Formata o texto ATUAL desta caixa (útil depois de ajustar manualmente) no padrão de petição da DPU, salva em PDF e anexa/atualiza como 1º documento — sem chamar IA.">
+                        <span x-show="incluindoAnexo" class="loading loading-spinner loading-xs"></span>
+                        <span x-show="!incluindoAnexo">Incluir petição nos anexos</span>
+                        <span x-show="incluindoAnexo">Formatando…</span>
+                    </button>
+                </div>
+            </div>
+            <div class="text-[11px] text-error mb-1" x-show="erroGerarIA" x-text="erroGerarIA"></div>
+            <div class="text-[11px] text-error mb-1" x-show="erroIncluirAnexo" x-text="erroIncluirAnexo"></div>
             <div :id="uidPeticao" x-show="quillPeticaoOk"></div>
             <textarea x-show="!quillPeticaoOk" class="textarea textarea-bordered w-full text-[12.5px] leading-[1.6]" rows="4"
                       x-model="peticaoTexto"
@@ -113,7 +128,7 @@
                             <th class="w-20">Tamanho</th>
                             <th class="w-56">Tipo</th>
                             <th class="w-56">Sigilo</th>
-                            <th class="w-8"></th>
+                            <th class="w-20"></th>
                         </tr>
                     </thead>
                     <tbody>
@@ -139,6 +154,12 @@
                                             <span class="font-mono text-xs break-all" x-text="a.arquivo ? a.arquivo.name : ''"></span>
                                         </div>
                                     </template>
+                                    <template x-if="a.origem === 'rascunho'">
+                                        <div class="flex items-center gap-2 flex-wrap">
+                                            <span class="badge badge-ghost badge-xs">Externo</span>
+                                            <span class="font-mono text-xs break-all" x-text="a.docLabelCache"></span>
+                                        </div>
+                                    </template>
                                     <div class="mt-0.5" x-show="validarAnexo(a) && !validarAnexo(a).ok">
                                         <div class="text-[10.5px] text-error" x-text="validarAnexo(a) ? validarAnexo(a).msg : ''"></div>
                                         <div class="text-[10.5px] text-base-content/50 mt-1" x-show="a.origem === 'upload' && validarAnexo(a) && !validarAnexo(a).ok && extensaoDe(nomeAnexo(a)) === 'pdf'">
@@ -158,18 +179,34 @@
                                 </td>
                                 <td class="text-xs whitespace-nowrap" x-text="formatarTamanho(tamanhoAnexo(a))"></td>
                                 <td>
-                                    <select class="select select-bordered select-xs w-full" :class="!a.tipo ? 'select-error' : ''" x-model="a.tipo">
+                                    <select class="select select-bordered select-xs w-full" :class="!a.tipo ? 'select-error' : ''" x-model="a.tipo"
+                                            x-init="$nextTick(() => { $el.value = a.tipo; })">
                                         <option value="">Tipo…</option>
-                                        <template x-for="t in tiposDropdown()" :key="t"><option :value="t" x-text="t"></option></template>
+                                        <template x-for="t in opcoesTipoPara(a)" :key="t"><option :value="t" x-text="t"></option></template>
                                     </select>
                                 </td>
                                 <td>
-                                    <select class="select select-bordered select-xs w-full" x-model="a.sigilo">
-                                        <template x-for="s in sigilosTodos" :key="s"><option :value="s" x-text="s"></option></template>
+                                    <select class="select select-bordered select-xs w-full" x-model="a.sigilo"
+                                            x-init="$nextTick(() => { $el.value = a.sigilo; })">
+                                        <template x-for="s in opcoesSigiloPara(a)" :key="s"><option :value="s" x-text="s"></option></template>
                                     </select>
                                 </td>
-                                <td>
-                                    <button type="button" class="btn btn-ghost btn-xs text-error" @click="removerAnexo(i)" title="Remover anexo">✕</button>
+                                <td class="whitespace-nowrap">
+                                    <div class="flex items-center gap-0.5">
+                                        <button type="button" class="btn btn-ghost btn-xs px-1" :disabled="i === 0"
+                                                @click="moverAnexo(i, -1)" title="Mover para cima">
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:12px;height:12px">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="m4.5 15.75 7.5-7.5 7.5 7.5" />
+                                            </svg>
+                                        </button>
+                                        <button type="button" class="btn btn-ghost btn-xs px-1" :disabled="i === anexos.length - 1"
+                                                @click="moverAnexo(i, 1)" title="Mover para baixo">
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="width:12px;height:12px">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="m19.5 8.25-7.5 7.5-7.5-7.5" />
+                                            </svg>
+                                        </button>
+                                        <button type="button" class="btn btn-ghost btn-xs text-error" @click="removerAnexo(i)" title="Remover anexo">✕</button>
+                                    </div>
                                 </td>
                             </tr>
                         </template>
@@ -239,13 +276,125 @@
             <span class="text-[11px] text-error font-medium" x-show="temAnexoInvalido()">
                 Há anexo(s) com formato/tamanho não aceito pelo e-proc ou sem Tipo selecionado — corrija antes de executar.
             </span>
-            <span class="text-[11px] text-base-content/50" x-show="!temAnexoInvalido()">Peticionamento real ainda não implementado.</span>
-            <button type="button" class="btn btn-sm btn-success ml-auto ret-btn-exec" disabled
+            <span class="text-[11px] text-base-content/40 ml-auto" x-show="rascunhoSalvoEm">
+                Rascunho gravado — <a href="/peticoes-pendentes" class="link">ver Petições pendentes</a>
+            </span>
+            <button type="button" class="btn btn-sm btn-outline" :class="!rascunhoSalvoEm ? 'ml-auto' : ''"
+                    @click="gravarRascunho()" :disabled="gravando"
+                    title="Grava evento, petição e anexos pra continuar depois, sem perder o que já foi preenchido — ver 'Petições pendentes' no menu.">
+                <span x-show="gravando" class="loading loading-spinner loading-xs"></span>
+                Gravar
+            </button>
+            <button type="button" class="btn btn-sm btn-success ret-btn-exec"
+                    :disabled="temAnexoInvalido() || !evento" @click="abrirModalExecutar()"
                     :title="temAnexoInvalido()
                         ? 'Bloqueado: há anexo(s) inválido(s) (formato, tamanho ou Tipo não selecionado) — o e-proc rejeitaria o peticionamento.'
-                        : 'Em desenvolvimento — disponível após inspeção da tela de peticionamento do e-proc'">
+                        : (!evento ? 'Selecione o evento a ser lançado antes.' : 'Revisa e protocola no e-proc — abre um resumo de confirmação antes de qualquer envio real.')">
                 Executar no e-proc
             </button>
+        </div>
+
+        <!-- Modal: revisão + execução real (2 etapas — preparar, depois peticionar) -->
+        <div class="modal" :class="{'modal-open': modalExecutarAberto}" @click.self="fecharModalExecutar()">
+            <div class="modal-box max-w-2xl">
+                <h3 class="font-bold text-lg mb-1">Executar no e-proc</h3>
+
+                <div class="text-[11px] text-error mb-2" x-show="execErro" x-text="execErro"></div>
+
+                <!-- Etapa: resumo (carregando ou pronto pra revisão) -->
+                <template x-if="execEtapa === 'resumo'">
+                    <div>
+                        <div x-show="!execResumo && !execErro" class="text-sm text-base-content/50 py-6 text-center">
+                            <span class="loading loading-spinner loading-sm"></span> Montando resumo…
+                        </div>
+                        <template x-if="execResumo">
+                            <div class="flex flex-col gap-2">
+                                <p class="text-xs text-base-content/60">
+                                    Confira abaixo o que será preenchido na tela "Movimentar/Peticionar" do e-proc.
+                                    Este passo ainda NÃO protocola nada — só depois de revisar o resultado você confirma o peticionamento de fato.
+                                </p>
+                                <div class="text-sm"><strong>Processo:</strong> <span class="font-mono" x-text="execResumo.processo"></span></div>
+                                <div class="text-sm"><strong>Evento:</strong> <span x-text="execResumo.evento"></span></div>
+                                <div class="text-xs text-warning" x-show="execResumo.evento_sem_anexo">
+                                    Este evento não aceita anexos — nenhum documento será enviado.
+                                </div>
+                                <div class="overflow-x-auto max-h-[40vh] overflow-y-auto" x-show="!execResumo.evento_sem_anexo && execResumo.documentos.length">
+                                    <table class="table table-xs w-full">
+                                        <thead><tr><th class="w-8">#</th><th>Arquivo</th><th>Tipo</th><th>Sigilo</th></tr></thead>
+                                        <tbody>
+                                            <template x-for="(d, i) in execResumo.documentos" :key="i">
+                                                <tr>
+                                                    <td x-text="i + 1"></td>
+                                                    <td class="font-mono text-xs break-all" x-text="d.nome"></td>
+                                                    <td x-text="d.tipo"></td>
+                                                    <td x-text="d.sigilo"></td>
+                                                </tr>
+                                            </template>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </template>
+
+                <!-- Etapa: preparando (upload real em andamento) -->
+                <template x-if="execEtapa === 'preparando'">
+                    <div class="text-sm text-base-content/60 py-6 text-center">
+                        <span class="loading loading-spinner loading-sm"></span>
+                        Preenchendo evento e enviando os anexos ao e-proc — pode demorar dependendo do tamanho dos arquivos…
+                    </div>
+                </template>
+
+                <!-- Etapa: preparado — aba do e-proc já preenchida, falta só confirmar -->
+                <template x-if="execEtapa === 'preparado'">
+                    <div class="flex flex-col gap-2">
+                        <div class="text-sm text-success">
+                            Preenchido no e-proc: evento "<strong x-text="execResultado.evento"></strong>"
+                            <span x-show="execResultado.n_documentos">+ <strong x-text="execResultado.n_documentos"></strong> anexo(s)</span> confirmados na tela.
+                        </div>
+                        <div class="text-xs text-base-content/60">
+                            A aba do e-proc está aberta — confira lá se quiser, antes de decidir.
+                        </div>
+                        <div class="text-[11px] text-warning font-medium border border-warning/40 rounded p-2 mt-1">
+                            "Peticionar de verdade" clica o botão real "Peticionar" no e-proc — protocola a petição na vara.
+                            É IRREVERSÍVEL.
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Etapa: confirmando (clique real em Peticionar em andamento) -->
+                <template x-if="execEtapa === 'confirmando'">
+                    <div class="text-sm text-base-content/60 py-6 text-center">
+                        <span class="loading loading-spinner loading-sm"></span> Protocolando no e-proc…
+                    </div>
+                </template>
+
+                <!-- Etapa: confirmado — resultado final do clique em Peticionar -->
+                <template x-if="execEtapa === 'confirmado'">
+                    <div class="flex flex-col gap-2">
+                        <div :class="execResultado.provavel_sucesso ? 'text-success' : 'text-warning'" class="text-sm font-medium">
+                            <span x-show="execResultado.provavel_sucesso">Peticionamento enviado — confira a aba do e-proc para ver o número do evento/protocolo.</span>
+                            <span x-show="!execResultado.provavel_sucesso">Peticionar foi clicado, mas o resultado não pôde ser confirmado automaticamente — confira a aba do e-proc.</span>
+                        </div>
+                        <div class="text-[11px] text-base-content/50" x-show="execResultado.dialogo" x-text="'Diálogo do e-proc: ' + execResultado.dialogo"></div>
+                    </div>
+                </template>
+
+                <div class="modal-action">
+                    <button type="button" class="btn btn-sm" @click="fecharModalExecutar()"
+                            x-show="execEtapa !== 'preparando' && execEtapa !== 'confirmando'"
+                            x-text="execEtapa === 'confirmado' ? 'Fechar' : 'Cancelar'"></button>
+                    <button type="button" class="btn btn-sm btn-success" @click="prepararNoEproc()"
+                            x-show="execEtapa === 'resumo'" :disabled="!execResumo">
+                        Preparar no e-proc
+                    </button>
+                    <button type="button" class="btn btn-sm btn-error" @click="confirmarPeticionamentoReal()"
+                            x-show="execEtapa === 'preparado'">
+                        Peticionar de verdade
+                    </button>
+                </div>
+            </div>
         </div>
     </div>
 </div>

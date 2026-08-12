@@ -15,6 +15,7 @@ from services.sync_service import (
     rodar_sync_paj,
     rodar_sync_anexos_desde_data,
     rodar_sync_baixar_documentos,
+    rodar_sync_movimentacoes,
     rodar_sync_watchlist,
     solicitar_cancelamento,
 )
@@ -53,6 +54,12 @@ async def _stream_baixar_documentos(paj_norm: str, ids: list[str]):
     yield {"event": "done", "data": "Download de documentos finalizado"}
 
 
+async def _stream_movimentacoes(paj_identificador: str):
+    async for linha in rodar_sync_movimentacoes(paj_identificador):
+        yield {"event": "log", "data": linha.rstrip("\n")}
+    yield {"event": "done", "data": "Movimentações atualizadas"}
+
+
 @router.get("/sync")
 async def sync(anexos: int = 1, ocr: int = 0):
     """Sincroniza a caixa SISDPU.
@@ -73,6 +80,21 @@ async def sync_paj(paj_norm: str, anexos: int = 1, ocr: int = 0):
     ?ocr=1 => roda o OCR simples nos PDFs baixados (padrao: desabilitado).
     """
     return EventSourceResponse(_stream_paj(paj_norm, baixar_anexos=bool(anexos), rodar_ocr=bool(ocr)))
+
+
+@router.get("/sync/paj/{paj_norm}/movimentacoes")
+async def sync_paj_movimentacoes(paj_norm: str):
+    """Sincronização EXCLUSIVA e INCREMENTAL das movimentações de um PAJ —
+    sem baixar anexos (PDFs). Disparada pelo ícone de atualizar da tabela de
+    movimentações (aba do PAJ ou modal da Retornos). Bem mais rápida que
+    /api/sync/paj/{paj_norm}: relê a tabela de movimentações inteira (o
+    SISDPU não expõe delta), mas só extrai os documentos anexados das
+    movimentações que ainda não eram conhecidas — as demais mantêm os
+    documentos já indexados em syncs anteriores, sem reabrir popup nenhum.
+
+    `paj_norm` aceita 'PAJ-2021-044-00635' ou '2021/044-00635' (URL-encoded).
+    """
+    return EventSourceResponse(_stream_movimentacoes(paj_norm))
 
 
 @router.get("/sync/paj/{paj_norm}/anexos-desde")

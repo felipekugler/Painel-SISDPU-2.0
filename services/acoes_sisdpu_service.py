@@ -13,6 +13,7 @@ store). Futuras páginas (PAJ detail, Watchlist etc.) podem chamar este módulo 
 from __future__ import annotations
 
 import contextlib
+import json
 import re
 import unicodedata
 import uuid
@@ -29,6 +30,85 @@ from services import paj_service
 # _TIPOS_ANEXO_OK) — fora disso, o anexo seria silenciosamente pulado lá dentro;
 # validamos aqui pra avisar o usuário na hora, em vez de deixar sumir sem aviso.
 TIPOS_ANEXO_MOV_OK = {"doc", "docx", "odt", "png", "jpg", "jpeg", "gif", "pdf"}
+
+# Rascunhos de movimentação ("Gravar" p/ executar mais tarde) — MESMA convenção
+# de `dados/` na raiz do PAINEL SISDPU usada por `acoes_eproc_service.
+# RASCUNHOS_DIR` (cache/estado do painel, fora do workspace do Ofício Geral).
+# Um JSON por PAJ (no máx. 1 rascunho de cada vez). Além do "Gravar" manual,
+# `acoes_eproc.js` grava um rascunho AQUI automaticamente depois de um
+# "Peticionar" real confirmado no e-proc (se o usuário topar) — ver
+# `_receberPeticaoEproc` em `static/js/acoes_sisdpu.js`.
+RASCUNHOS_DIR = Path(__file__).resolve().parents[1].parent / "dados" / "acoes_sisdpu_rascunhos"
+
+
+def _rascunho_json(paj_norm: str) -> Path:
+    return RASCUNHOS_DIR / f"{paj_norm}.json"
+
+
+def salvar_rascunho(paj_norm: str, dados: dict) -> dict:
+    """Grava/sobrescreve o rascunho de movimentação do PAJ (1 por PAJ) — fase,
+    despachos (HTML da movimentação, texto puro da tramitação), anexos staged,
+    prazo/grupo, conclusão. Mesmo padrão de `acoes_eproc_service.salvar_rascunho`."""
+    from datetime import datetime
+
+    if not paj_norm:
+        return {"ok": False, "erro": "paj_norm vazio."}
+    RASCUNHOS_DIR.mkdir(parents=True, exist_ok=True)
+    doc = dict(dados)
+    doc["paj_norm"] = paj_norm
+    doc["salvo_em"] = datetime.now().isoformat(timespec="seconds")
+    _rascunho_json(paj_norm).write_text(
+        json.dumps(doc, ensure_ascii=False, indent=2), encoding="utf-8")
+    return {"ok": True, "salvo_em": doc["salvo_em"]}
+
+
+def obter_rascunho(paj_norm: str) -> dict | None:
+    p = _rascunho_json(paj_norm)
+    if not p.exists():
+        return None
+    try:
+        return json.loads(p.read_text(encoding="utf-8"))
+    except Exception:
+        return None
+
+
+def excluir_rascunho(paj_norm: str) -> dict:
+    """Descarta o rascunho — chamado depois que a movimentação for de fato
+    executada com sucesso (nada mais a retomar), ou quando o usuário desistir."""
+    p = _rascunho_json(paj_norm)
+    if p.exists():
+        p.unlink()
+    return {"ok": True}
+
+
+def listar_rascunhos() -> list[dict]:
+    """Todos os rascunhos salvos — alimenta a página "Movimentações pendentes".
+    Enriquece com o nome do assistido lido do metadata.json do PAJ (não fica
+    salvo no rascunho em si, pra não ficar desatualizado se o PAJ mudar) — mesmo
+    padrão de `acoes_eproc_service.listar_rascunhos`."""
+    if not RASCUNHOS_DIR.exists():
+        return []
+    itens = []
+    for f in RASCUNHOS_DIR.glob("*.json"):
+        try:
+            doc = json.loads(f.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        doc["assistido"] = _assistido_do_paj(doc.get("paj_norm", ""))
+        itens.append(doc)
+    itens.sort(key=lambda d: d.get("salvo_em", ""), reverse=True)
+    return itens
+
+
+def _assistido_do_paj(paj_norm: str) -> str:
+    if not paj_norm:
+        return ""
+    meta_path = PAJS_DIR / paj_norm / "metadata.json"
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        return meta.get("assistido_caixa") or meta.get("assistido") or ""
+    except Exception:
+        return ""
 
 
 def _ev(level: str, msg: str) -> dict:

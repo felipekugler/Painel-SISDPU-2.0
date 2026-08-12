@@ -1,9 +1,12 @@
 """Rotas do módulo genérico "Ações no SISDPU" (movimentar/tramitar/concluir),
 reutilizável em qualquer página do painel — não depende da Retornos.
 
+- GET  /movimentacoes-pendentes          — página: lista os rascunhos salvos.
 - GET  /api/acoes-sisdpu/preferencias    — favoritas/frequentes de fases e caixas.
 - POST /api/acoes-sisdpu/anexo-externo   — upload de um anexo externo (staging).
 - POST /api/acoes-sisdpu/anexo-externo/remover — descarta um anexo externo staged.
+- GET/POST/DELETE /api/acoes-sisdpu/rascunho/{paj_norm} — rascunho de movimentação.
+- GET  /api/acoes-sisdpu/rascunhos       — todos os rascunhos salvos.
 - GET  /api/acoes-sisdpu/executar        — SSE: executa mov→tram→conclui em um PAJ.
 """
 
@@ -11,13 +14,21 @@ from __future__ import annotations
 
 import json
 
-from fastapi import APIRouter, Form, UploadFile
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Form, Request, UploadFile
+from fastapi.responses import HTMLResponse, JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 from services import acoes_sisdpu_service, config_painel_service
 
 router = APIRouter()
+
+
+@router.get("/movimentacoes-pendentes", response_class=HTMLResponse)
+async def pagina_movimentacoes_pendentes(request: Request):
+    template = request.app.state.jinja.get_template("movimentacoes_pendentes.html")
+    ambiente = getattr(request.app.state, "ambiente", {})
+    html = template.render(request=request, ambiente=ambiente)
+    return HTMLResponse(html)
 
 
 @router.get("/api/acoes-sisdpu/preferencias", response_class=JSONResponse)
@@ -43,6 +54,37 @@ async def api_anexo_externo_remover(paj_norm: str = Form(...), ref: str = Form(.
     """Descarta um anexo externo staged ANTES de executar (usuário desistiu dele) —
     evita lixo acumulando na pasta temporária."""
     return JSONResponse(acoes_sisdpu_service.remover_anexo_externo(paj_norm, ref))
+
+
+# --- Rascunhos de movimentação ("Gravar" p/ executar mais tarde) --------------
+
+@router.get("/api/acoes-sisdpu/rascunhos", response_class=JSONResponse)
+async def api_listar_rascunhos():
+    """Todos os rascunhos salvos — alimenta a página "Movimentações pendentes"."""
+    return JSONResponse({"ok": True, "itens": acoes_sisdpu_service.listar_rascunhos()})
+
+
+@router.get("/api/acoes-sisdpu/rascunho/{paj_norm}", response_class=JSONResponse)
+async def api_obter_rascunho(paj_norm: str):
+    """Rascunho salvo do PAJ, se houver — carregado automaticamente ao abrir o
+    console "Ações no SISDPU" (inclusive o gravado automaticamente por "Ações no
+    Eproc" depois de um Peticionar real confirmado)."""
+    return JSONResponse({"ok": True, "rascunho": acoes_sisdpu_service.obter_rascunho(paj_norm)})
+
+
+@router.post("/api/acoes-sisdpu/rascunho/{paj_norm}", response_class=JSONResponse)
+async def api_salvar_rascunho(paj_norm: str, request: Request):
+    """Grava/sobrescreve o rascunho de movimentação do PAJ."""
+    body = await request.json()
+    res = acoes_sisdpu_service.salvar_rascunho(paj_norm, body)
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
+
+
+@router.delete("/api/acoes-sisdpu/rascunho/{paj_norm}", response_class=JSONResponse)
+async def api_excluir_rascunho(paj_norm: str):
+    """Descarta o rascunho — usado depois que a movimentação for de fato executada
+    com sucesso, ou quando o usuário desistir manualmente."""
+    return JSONResponse(acoes_sisdpu_service.excluir_rascunho(paj_norm))
 
 
 async def _stream_executar(id_processo: str, paj: str, paj_norm: str, fase: str, descricao_mov: str,

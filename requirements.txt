@@ -19,3 +19,10 @@ beautifulsoup4>=4.12,<5.0
 mcp>=1.2,<2.0
 keyring>=25.0,<26.0
 pyotp>=2.9,<3.0
+
+# Geração de petição via IA (Ações no Eproc) — services/peticao_ia_service.py.
+# python-docx lê o .docx gerado (pra popular a caixa de texto da Petição);
+# pywin32 (win32com/pythoncom) converte .docx -> PDF via Word (exige Word
+# instalado — mesmo requisito já usado por calc_valor_causa.py).
+python-docx>=1.1,<2.0
+pywin32>=306; sys_platform == "win32"
