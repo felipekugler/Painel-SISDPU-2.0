@@ -921,12 +921,18 @@ async def processar_paj_stream(
             if not id_tramite:
                 _partes.append("sem trâmite para concluir")
             _nota = f" ({' — '.join(_partes)})" if _partes else ""
+            # Atividade reflete se houve CONCLUSÃO de fato do trâmite originário —
+            # mesmo padrão de paj_service/retornos_service, pra "Conclusão" ficar
+            # visível no Histórico e não só implícita no campo booleano `concluido`.
+            _atividade = "Juntada de documentos do SAT Central"
+            if concluiu:
+                _atividade = f"Conclusão do PAJ na Caixa de Entrada ({_atividade})"
             historico_painel.registrar({
                 "paj": num, "paj_norm": paj_norm,
                 "url_detalhe": item.get("url_detalhe", ""),
                 "assistido": item.get("assistido", ""),
                 "origem": "sat",
-                "atividade": "Juntada de documentos do SAT Central" + _nota,
+                "atividade": _atividade + _nota,
                 "movimentacao": FASE_MOV, "tramitado_para": grupo_hist,
                 "concluido": concluiu,
                 "detalhe": f"{len(anexos)} arquivo(s) juntado(s).",

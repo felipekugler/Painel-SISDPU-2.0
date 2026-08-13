@@ -317,10 +317,15 @@
                             <tr class="hover">
                                 <td class="whitespace-nowrap text-xs" x-text="fmtDataHora(r.ts)"></td>
                                 <td class="font-mono whitespace-nowrap">
-                                    <a x-show="r.url_detalhe" :href="r.url_detalhe" target="_blank" rel="noopener"
-                                       class="link link-hover" style="color:var(--accent)"
-                                       title="Abrir o PAJ no SISDPU (conferir a anexação)" x-text="r.paj"></a>
-                                    <span x-show="!r.url_detalhe" x-text="r.paj"></span>
+                                    <button class="link" style="color:var(--accent)"
+                                            title="Escolher onde abrir o PAJ"
+                                            @click.stop="menuAbertoPaj = (menuAbertoPaj === r.paj_norm ? null : r.paj_norm);
+                                                        menuAbertoPajLabel = r.paj;
+                                                        if (menuAbertoPaj === r.paj_norm) {
+                                                          const rect = $el.getBoundingClientRect();
+                                                          posMenu = { top: rect.bottom, left: rect.left };
+                                                        }"
+                                            x-text="r.paj"></button>
                                 </td>
                                 <td>
                                     <span x-text="r.assistido"></span>

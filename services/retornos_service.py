@@ -548,6 +548,52 @@ async def sincronizar_stream() -> AsyncIterator[dict]:
     yield {"done": True, "resultado": {"ok": True, "n_caixa": len(pendentes), "n_saidos": saidos}}
 
 
+async def atualizar_caixa() -> dict:
+    """Reconciliação RÁPIDA (sem SSE, poucos segundos): lê só a listagem da caixa de
+    entrada (1 página, sem abrir cada PAJ nem tocar na IA) e remove do painel os
+    retornos cujo trâmite já não está mais lá — concluídos/tramitados por fora (pelo
+    SISDPU direto, ou por outra aba do painel). NÃO adiciona retornos novos nem
+    reanalisa nada — isso continua sendo papel do botão "Sincronizar". Mesmo espírito
+    do botão "Atualizar" do dashboard (`sync_service.atualizar_caixa`), adaptado ao
+    filtro de "atendimento de retorno" da Retornos.
+
+    Reusa o `esta_rodando()` do `sync_service` (mesmo browser Playwright do dashboard)
+    como uma trava leve — evita disputar a mesma aba com uma sincronização do
+    dashboard em andamento; a fila de verdade entre todos os subsistemas fica p/
+    depois (ver [[project_painel_retornos]])."""
+    from services import sync_service
+    if sync_service.esta_rodando():
+        return {"ok": False, "total_caixa": 0, "removidos": 0,
+                "mensagem": "Já existe uma sincronização do dashboard em andamento — tente novamente em alguns segundos."}
+
+    caixa, exc, eventos = await _com_auto_reconexao(movtram.listar_caixa_estruturada)
+    log = [ev.get("msg", "") for ev in eventos]
+    if exc is not None:
+        return {"ok": False, "total_caixa": 0, "removidos": 0, "log": log,
+                "mensagem": f"Falha ao ler a caixa ({type(exc).__name__}): {str(exc)[:200]}"}
+    if not caixa.get("ok"):
+        return {"ok": False, "total_caixa": 0, "removidos": 0, "log": log,
+                "mensagem": caixa.get("detalhe", "Falha ao ler a caixa.")}
+
+    alvo = DESCRICAO_ALVO
+    ids_caixa: set[str] = set()
+    for it in caixa.get("itens", []):
+        texto = _norm(it.get("descricao", "") + " | " + it.get("linha_texto", ""))
+        if alvo in texto:
+            ids_caixa.add(it.get("id_tramite", ""))
+
+    store = _ler_store()
+    removidos = 0
+    for idt in list(store.keys()):
+        if idt not in ids_caixa:
+            store.pop(idt, None)
+            removidos += 1
+    if removidos:
+        _gravar_store(store)
+
+    return {"ok": True, "total_caixa": len(ids_caixa), "removidos": removidos, "mensagem": "", "log": log}
+
+
 async def ressincronizar_paj_stream(id_tramite: str, completo: bool = False,
                                     ia: bool = False) -> AsyncIterator[dict]:
     """Ressincroniza UM retorno já conhecido — modo e IA são escolhas INDEPENDENTES no

@@ -188,10 +188,27 @@ window.__extracaoProximo = async function () {
       descricao = docCells[1]?.textContent.trim() || '';
       nomeArquivo = docCells[2]?.textContent.trim() || '';
     }
-    const urlDownload = docRow.querySelector('a')?.href || '';
+    // A maioria dos documentos (PDFs) tem um <a href="/rest/download/pdf/ID/nome">
+    // de verdade. MAS alguns anexos (imagens jpeg/png "Documentos do Assistido")
+    // vem como <p:commandLink> do PrimeFaces: href="#" e um onclick que faz
+    // PrimeFaces.addSubmitParam(...).submit('detalhamentoForm') — um POST do
+    // formulario inteiro, sem URL de download nenhuma pra seguir. O .href
+    // desses resolve pra URL da PROPRIA pagina (sempre a mesma pra varios
+    // documentos da mesma seq), o que quebrava tanto a extracao de ID quanto
+    // a unicidade no x-for da tabela. Detectamos esse padrao e guardamos, em
+    // vez da URL (inexistente), o id ESTAVEL do elemento — unico por
+    // documento dentro do popup — como um marcador sintetico reconhecido por
+    // extrair_id_arquivo()/_idDocumento() (nunca deve ser usado num GET).
+    const aTag = docRow.querySelector('a');
+    let urlDownload = aTag?.href || '';
+    let commandLinkId = null;
+    if (aTag && aTag.getAttribute('href') === '#' && aTag.hasAttribute('onclick')) {
+      commandLinkId = aTag.id || '';
+      urlDownload = commandLinkId ? ('sisdpu-commandlink:' + commandLinkId) : '';
+    }
 
     if (nomeArquivo && nomeArquivo !== 'Nenhum arquivo encontrado.') {
-      documentos.push({ tipoArquivo, descricao, nomeArquivo, urlDownload });
+      documentos.push({ tipoArquivo, descricao, nomeArquivo, urlDownload, commandLinkId });
     }
   }
 

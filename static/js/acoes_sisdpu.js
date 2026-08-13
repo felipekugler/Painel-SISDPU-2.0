@@ -128,7 +128,16 @@ function acoesSisdpuBlock(cfg) {
             // "Ações no Eproc" (sibling na página do PAJ) dispara este evento depois
             // de um "Peticionar" real confirmado, perguntando ao usuário se quer
             // registrar o mesmo ato aqui — ver acoes_eproc.js:_prepararMovimentacaoSisdpu.
-            window.addEventListener('eproc-peticionado', (ev) => this._receberPeticaoEproc(ev.detail || {}));
+            // GUARD: Alpine chama init() DUAS VEZES por instância (x-init + auto-init —
+            // ver nota em _montarEditorMov). Sem esta trava, o listener era registrado
+            // 2x, e as duas execuções concorrentes de _receberPeticaoEproc podiam montar
+            // o Quill com o valor ANTIGO de _descMovHtmlRascunho antes do carregarRascunho()
+            // (buscando o valor certo) terminar — bug real 2026-08-13: a descrição não
+            // aparecia na movimentação após "Peticionar", só os anexos.
+            if (!this._listenerEprocLigado) {
+                this._listenerEprocLigado = true;
+                window.addEventListener('eproc-peticionado', (ev) => this._receberPeticaoEproc(ev.detail || {}));
+            }
         },
         // Carrega o rascunho salvo do PAJ (se houver) — fase, despachos, anexos,
         // grupo/prazo. Roda uma vez por instância; silencioso se não houver
@@ -180,16 +189,20 @@ function acoesSisdpuBlock(cfg) {
         // "Ações no Eproc" (sibling na página) já GRAVOU o rascunho no disco (fase +
         // descrição + a petição pré-anexada) depois de um "Peticionar" real
         // confirmado — este evento é só o aviso pra reagir AO VIVO se este console
-        // já estiver montado: reabre e relê do disco (fonte única de verdade, sem
-        // duplicar o payload no próprio evento). Se o Quill já estava montado,
-        // `carregarRascunho()` só atualiza os campos simples — precisa empurrar o
-        // HTML pra dentro dele também aqui.
+        // já estiver montado: relê do disco (fonte única de verdade, sem duplicar o
+        // payload no próprio evento) e só DEPOIS abre/atualiza o editor.
+        // ORDEM IMPORTA: `carregarRascunho()` roda ANTES de abrir()/montar o Quill —
+        // assim `_descMovHtmlRascunho` já está com o valor CERTO quando o editor for
+        // criado (via opts.valorInicial em _montarEditorMov), em vez de montar vazio
+        // e torcer pra corrigir depois com setHTML() (dependia de timing — bug real
+        // 2026-08-13, descrição não aparecia, só os anexos). Se o painel já estava
+        // aberto (editor já existe), ainda assim empurra o HTML pra dentro dele.
         async _receberPeticaoEproc(d) {
             if (!d.pajNorm || d.pajNorm !== this.pajNorm) return;
-            if (!this.aberto) await this.abrir();
             this.rascunhoCarregado = false;
             await this.carregarRascunho();
-            if (this._editorMov && this._descMovHtmlRascunho) this._editorMov.setHTML(this._descMovHtmlRascunho);
+            if (!this.aberto) { await this.abrir(); return; }
+            if (this._editorMov) this._editorMov.setHTML(this._descMovHtmlRascunho || '');
         },
         // Alterna o painel e, na primeira vez que abre, monta o Quill da movimentação
         // (mesmo padrão "carrega só quando abre" do módulo "Ações no Eproc").
@@ -420,7 +433,7 @@ function acoesSisdpuBlock(cfg) {
                 try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {}
                 this.$nextTick(() => { const b = this.$refs.acoesSisdpuSseBox; if (b) b.scrollTop = b.scrollHeight; });
             });
-            es.addEventListener('done', (ev) => {
+            es.addEventListener('done', async (ev) => {
                 let res = {}; try { res = JSON.parse(ev.data); } catch (e) {}
                 this.sseStatus = res.status === 'ja_ausente' ? '— já estava concluído (nada foi feito agora)'
                                 : (res.ok ? '— executado ✓' : '— com aviso');
@@ -439,9 +452,26 @@ function acoesSisdpuBlock(cfg) {
                 // `descricao_mov_texto`: versão em texto puro (sem tags) — o Histórico do
                 // painel guarda um resumo textual, não HTML.
                 const descMovHtml = this.descMovEfetiva();
-                this.onExecutado({...res, fase: this.fase, grupo: this.grupo, idTramite: this.idTramite,
+                const resultadoEnriquecido = {...res, fase: this.fase, grupo: this.grupo, idTramite: this.idTramite,
                                    descricao_mov: descMovHtml, descricao_tram: this.descTramEfetiva(),
-                                   descricao_mov_texto: this.descMovEhHtml() ? htmlParaTextoSimples(descMovHtml) : descMovHtml});
+                                   descricao_mov_texto: this.descMovEhHtml() ? htmlParaTextoSimples(descMovHtml) : descMovHtml};
+                if (res.ok) {
+                    // Pequeno atraso só pra deixar a mensagem final ("— executado ✓")
+                    // visível antes de fechar este modal (o de sincronização, se houver,
+                    // abre em seguida — ver posExecucaoPaj() em app.js).
+                    await new Promise((r) => setTimeout(r, 1200));
+                    this.sseAberto = false;
+                }
+                // ESPERA onExecutado() terminar ANTES de recarregar — na página do PAJ,
+                // onExecutado (posExecucaoPaj em app.js) já inclui esperar a
+                // sincronização LEVE das movimentações. Atualiza a página INTEIRA depois
+                // (pedido do usuário 2026-08-13): garante que qualquer aba/seção que
+                // dependa do estado do PAJ (prazos, badges, caixa) reflita o que acabou
+                // de ser feito no SISDPU, sem depender do usuário lembrar de dar F5.
+                // SEM esperar onExecutado, o reload derrubava a sincronização de
+                // movimentações no meio do caminho e a tabela continuava desatualizada.
+                await this.onExecutado(resultadoEnriquecido);
+                if (res.ok) window.location.reload();
             });
             es.onerror = () => {
                 this.exec = false; es.close();

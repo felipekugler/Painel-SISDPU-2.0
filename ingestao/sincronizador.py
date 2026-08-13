@@ -765,11 +765,30 @@ async def _processar_paj(
             numero, ano, unidade, esperas_curtas=esperas_curtas)
     except Exception as e:
         log(f"  [ERRO] movimentacoes_paj {paj}: {type(e).__name__}: {e}")
-        return (paj_norm, False)
+        det = {"erro": f"{type(e).__name__}: {e}"}
 
     if det.get("erro"):
-        log(f"  [ERRO] {det['erro']}")
-        return (paj_norm, False)
+        # Este item veio da PROPRIA listagem da caixa (lida ha poucos segundos
+        # no mesmo `rodar()`) — "nao encontrado"/erro aqui e' sinal de sessao
+        # ou pagina quebrada (ex.: erro de navegacao no PAJ anterior deixou a
+        # page num estado inconsistente), nao de o PAJ ter realmente saido da
+        # caixa. Forca reconexao (fecha navegador + refaz login do zero) e
+        # tenta mais UMA vez antes de desistir deste PAJ — sem isso, um unico
+        # erro de timing num PAJ cascateava "nao encontrado" pro resto inteiro
+        # da rodada (visto em produção: item 1 falhou e os 47 seguintes
+        # falharam em sequência, 0/48 processados).
+        log(f"  [ERRO] {det['erro']} — reconectando e tentando novamente...")
+        with contextlib.suppress(Exception):
+            await sisdpu_client.reconectar()
+        try:
+            det = await sisdpu_client.movimentacoes_paj(
+                numero, ano, unidade, esperas_curtas=esperas_curtas)
+        except Exception as e2:
+            log(f"  [ERRO] retry movimentacoes_paj {paj}: {type(e2).__name__}: {e2}")
+            return (paj_norm, False)
+        if det.get("erro"):
+            log(f"  [ERRO] {det['erro']} (persistiu após reconexão)")
+            return (paj_norm, False)
 
     return await _processar_paj_pos_detalhamento(
         item,
@@ -1795,6 +1814,10 @@ async def rodar_baixar_documentos(
                     "seq": seq,
                     "nomeArq": doc.get("nomeArquivo", "arquivo"),
                     "href": doc.get("urlDownload", ""),
+                    # so' presente pra documentos sem link direto (imagens via
+                    # <p:commandLink> — ver extrair_documentos_movimentacoes.js);
+                    # exige reabrir o detalhamento do PAJ pra clicar de verdade.
+                    "commandLinkId": doc.get("commandLinkId"),
                 })
 
     nao_encontrados = [i for i in ids if i not in ids_encontrados]
@@ -1811,6 +1834,23 @@ async def rodar_baixar_documentos(
     except Exception as e:
         log(f"[ERRO] login: {type(e).__name__}: {e}")
         return {"baixados": 0, "erros": [str(e)], "total": len(lista_arquivos), "nao_encontrados": nao_encontrados}
+
+    # Documentos sem link direto (imagens via <p:commandLink> do PrimeFaces)
+    # precisam clicar de verdade dentro do popup de documentos da seq — o que
+    # exige estar no detalhamento do PAJ (nao so' logado). O fluxo normal
+    # (URLs reais) nao precisa disso — so' abre o detalhamento quando ha' pelo
+    # menos um item desse tipo no lote pedido.
+    if any(item.get("commandLinkId") for item in lista_arquivos):
+        dec = _decompor_paj(metadata.get("paj", ""))
+        if dec:
+            ano, unidade, numero = dec
+            log("[baixar-docs] há documento(s) sem link direto — abrindo detalhamento do PAJ...")
+            try:
+                det = await sisdpu_client.movimentacoes_paj(numero, ano, unidade, esperas_curtas=True)
+                if det.get("erro"):
+                    log(f"[baixar-docs] aviso: falha ao abrir detalhamento ({det['erro']}) — esses documentos vão falhar")
+            except Exception as e:
+                log(f"[baixar-docs] aviso: falha ao abrir detalhamento ({type(e).__name__}: {e}) — esses documentos vão falhar")
 
     if deve_cancelar is not None and deve_cancelar():
         log("[baixar-docs] cancelado antes do download")

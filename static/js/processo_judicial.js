@@ -114,11 +114,24 @@ function processoJudicialBlock(cfg) {
         // Sem isso, quando o Painel não tem dado nenhum pro processo (fail-
         // open) e a única intimação ativa na janela é a de um perito (ex.:
         // prazo pra entregar laudo), ela aparecia como se fosse da DPU.
-        _ehTerceiroNuncaDpu(it) {
-            const papel = (it.parte_intimada || '').split(/[-–]/)[0].trim().toUpperCase();
-            return ['PERITO', 'PERITA', 'TESTEMUNHA', 'TERCEIRO', 'ASSISTENTE TÉCNICO', 'ASSISTENTE TECNICO']
-                .includes(papel);
+        _papelDe(it) {
+            return (it.parte_intimada || '').split(/[-–]/)[0].trim().toUpperCase();
         },
+        _ehTerceiroNuncaDpu(it) {
+            return ['PERITO', 'PERITA', 'TESTEMUNHA', 'TERCEIRO', 'ASSISTENTE TÉCNICO', 'ASSISTENTE TECNICO']
+                .includes(this._papelDe(it));
+        },
+        // Polos que a DPU tipicamente representa no Previdenciário (o segurado,
+        // contra o INSS — sempre réu/requerido/executado/impetrado). A triagem MCP
+        // traz uma intimação por PARTE do processo (autor E réu, com mesmo dia/
+        // prazo quando saem juntas — ex. sentença) — sem esta preferência, casar só
+        // por dia+dias podia pegar a intimação do INSS em vez da do assistido,
+        // mesmo o prazo do Painel sendo garantidamente da DPU (o Painel só lista
+        // prazos onde EU sou procurador — só faltava desempatar QUAL parte da
+        // triagem corresponde). Mesma heurística de
+        // `acoes_eproc_service._PAPEL_POLO_ATIVO` (Python). Bug real corrigido
+        // 2026-08-13 (PAJ 2026/029-01734: o prazo mostrado era o do INSS).
+        _PAPEL_POLO_ATIVO: ['AUTOR', 'REQUERENTE', 'IMPETRANTE', 'EXEQUENTE', 'RECLAMANTE', 'RECORRENTE'],
         // SEM fail-open (removido — era o problema real): sem prazo confirmado
         // no Painel pra este processo, o universo é VAZIO. Nunca cai pra
         // mostrar a triagem MCP crua (que pode trazer INSS, perito, etc.) só
@@ -137,19 +150,30 @@ function processoJudicialBlock(cfg) {
             return lista.map((p) => {
                 const diaP = this._soData(p.data_envio);
                 const diasP = parseInt(p.prazo_dias, 10);
-                const iMatch = triagem.findIndex((it, i) => {
-                    if (usadas.has(i)) return false;
+                // Junta TODOS os candidatos do mesmo dia+dias (pode haver mais de um —
+                // ex. sentença intima autor E réu no mesmo evento/dia) e prefere o
+                // polo ativo (ver _PAPEL_POLO_ATIVO) — nunca escolhe o primeiro que
+                // aparecer na triagem (podia ser o do INSS).
+                const candidatos = [];
+                triagem.forEach((it, i) => {
+                    if (usadas.has(i)) return;
                     // data_hora = expedição da PRÓPRIA intimação (o que casa com o
                     // "data_envio" do Painel do Procurador) — NÃO enviado_em (sub-dado
                     // "Domicílio Judicial Eletrônico: Enviado em...", momento distinto
                     // da entrega eletrônica, sempre um pouco posterior).
                     const diaIt = this._soData(it.data_hora);
-                    if (!diaP || !diaIt || diaP !== diaIt) return false;
+                    if (!diaP || !diaIt || diaP !== diaIt) return;
                     const diasIt = parseInt(it.prazo_dias, 10);
-                    if (!isNaN(diasP) && !isNaN(diasIt) && diasP !== diasIt) return false;
-                    return true;
+                    if (!isNaN(diasP) && !isNaN(diasIt) && diasP !== diasIt) return;
+                    candidatos.push(i);
                 });
-                if (iMatch !== -1) {
+                if (candidatos.length) {
+                    candidatos.sort((a, b) => {
+                        const prioA = this._PAPEL_POLO_ATIVO.includes(this._papelDe(triagem[a])) ? 0 : 1;
+                        const prioB = this._PAPEL_POLO_ATIVO.includes(this._papelDe(triagem[b])) ? 0 : 1;
+                        return prioA - prioB;
+                    });
+                    const iMatch = candidatos[0];
                     usadas.add(iMatch);
                     return triagem[iMatch]; // item da triagem: já tem evento_referenciado/docs
                 }

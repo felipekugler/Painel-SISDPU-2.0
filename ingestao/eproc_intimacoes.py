@@ -453,6 +453,50 @@ def buscar_lembretes(numero: str) -> dict:
     return {"encontrado": False, "lembrete_itens": [], "sincronizado_em": dados.get("sincronizado_em") or ""}
 
 
+def caso_e_prazos_mesclados(numero: str) -> dict:
+    """Mescla os PRAZOS de um processo entre TODAS as categorias do Painel do
+    Procurador em que ele aparece — dedupe por (evento, data_envio,
+    prazo_dias). Necessário porque uma mesma intimação pode estar listada em
+    mais de uma categoria SIMULTANEAMENTE (ex.: "pendente" e "pendente_urgente"
+    ao mesmo tempo — "urgente" é uma VISÃO FILTRADA de "pendente", não uma
+    categoria mutuamente exclusiva no e-proc). Sem esta mescla, pegar só a
+    PRIMEIRA categoria encontrada (comportamento antigo) tanto podia DUPLICAR
+    (se o chamador somasse todas as categorias, como `acoes_eproc_service.
+    listar_prazos` fazia) quanto OMITIR prazos reais (se dependesse de qual
+    categoria o dict de secoes lista primeiro) — bug real confirmado 2026-08-13
+    no PAJ 2026/029-01734 (3 prazos mostrados pra fechamento quando só 2
+    existiam de fato, a Requisição de Pagamento duplicada entre "pendente" e
+    "pendente_urgente").
+
+    Retorna {"encontrado": bool, "caso": {processo,juizo,classe,assunto,
+    partes,urgente,...} | None, "prazos": [{parte,evento,prazo_dias,
+    data_envio,inicio_prazo,final_prazo,...}, ...]}. `caso` traz os campos de
+    NÍVEL DE PROCESSO (mesmo valor em qualquer categoria em que apareça,
+    exceto `urgente` — que vira True se QUALQUER categoria/caso encontrado
+    indicar urgência)."""
+    dados = carregar()
+    alvo = re.sub(r"\D", "", numero or "")
+    if not alvo:
+        return {"encontrado": False, "caso": None, "prazos": []}
+    caso_repr: dict | None = None
+    urgente = False
+    vistos: dict[tuple, dict] = {}
+    for categoria, casos in (dados.get("secoes") or {}).items():
+        for c in casos:
+            if re.sub(r"\D", "", c.get("processo") or "") != alvo:
+                continue
+            if caso_repr is None:
+                caso_repr = c
+            if "urgente" in categoria or c.get("urgente"):
+                urgente = True
+            for p in c.get("prazos") or []:
+                chave = (p.get("evento", ""), p.get("data_envio", ""), str(p.get("prazo_dias") or ""))
+                vistos.setdefault(chave, p)
+    if caso_repr is None:
+        return {"encontrado": False, "caso": None, "prazos": []}
+    return {"encontrado": True, "caso": {**caso_repr, "urgente": urgente}, "prazos": list(vistos.values())}
+
+
 def prazos_processo(numero: str) -> dict:
     """Prazos do MEU Painel do Procurador (cache já sincronizado) para este
     NPU — usado pra confirmar quais intimações da triagem MCP (que lê o
@@ -465,22 +509,19 @@ def prazos_processo(numero: str) -> dict:
     omissão por divergência de nome cadastrado entre SISDPU e e-proc.
 
     Retorna {"encontrado": bool, "prazos": [{parte,evento,prazo_dias,
-    data_envio,inicio_prazo,final_prazo,...}, ...], "sincronizado_em": "..."}.
-    `encontrado=False` (processo não sincronizado ainda, ou sem prazo atual no
-    Painel) — o chamador deve tratar como "sem informação" e NÃO filtrar
-    (fail-open: melhor mostrar demais do que omitir uma intimação real)."""
+    data_envio,inicio_prazo,final_prazo,...}, ...], "sincronizado_em": "..."}
+    — `prazos` já vem MESCLADO/deduplicado entre categorias (ver
+    `caso_e_prazos_mesclados`). `encontrado=False` (processo não sincronizado
+    ainda, ou sem prazo atual no Painel) — o chamador deve tratar como "sem
+    informação" e NÃO filtrar (fail-open: melhor mostrar demais do que omitir
+    uma intimação real)."""
     dados = carregar()
-    alvo = re.sub(r"\D", "", numero or "")
-    if alvo:
-        for casos in (dados.get("secoes") or {}).values():
-            for c in casos:
-                if re.sub(r"\D", "", c.get("processo") or "") == alvo:
-                    return {
-                        "encontrado": True,
-                        "prazos": c.get("prazos") or [],
-                        "sincronizado_em": dados.get("sincronizado_em") or "",
-                    }
-    return {"encontrado": False, "prazos": [], "sincronizado_em": dados.get("sincronizado_em") or ""}
+    m = caso_e_prazos_mesclados(numero)
+    return {
+        "encontrado": m["encontrado"],
+        "prazos": m["prazos"],
+        "sincronizado_em": dados.get("sincronizado_em") or "",
+    }
 
 
 # ---- leitura ----------------------------------------------------------------

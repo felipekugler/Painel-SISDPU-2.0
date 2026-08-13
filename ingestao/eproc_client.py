@@ -909,7 +909,7 @@ async def preparar_peticionamento(numero_processo: str, evento: str, documentos:
             await browser.close()
 
 
-async def confirmar_peticionamento(numero_processo: str) -> dict:
+async def confirmar_peticionamento(numero_processo: str, evento: str = "") -> dict:
     """Clica "Peticionar" na aba já preparada por `preparar_peticionamento` pro
     mesmo processo (reencontrada pela URL — precisa estar aberta; erro claro se
     não achar). PROTOCOLA DE FATO — irreversível — só chamar depois que o
@@ -921,11 +921,21 @@ async def confirmar_peticionamento(numero_processo: str) -> dict:
 
     Em caso de sucesso, o e-proc redireciona pra "Consulta Processual" — a
     tabela de eventos (`#tblEventos`, linhas `id="trEvento<N>"`, mais recente
-    primeiro) tem o evento recém-criado na PRIMEIRA linha; devolve
-    `numero_evento`/`evento_data_hora`/`evento_descricao` dali (best-effort —
-    `numero_evento` fica vazio se não conseguir raspar, sem quebrar o resultado
-    principal). Usado por quem chama pra referenciar o evento real do e-proc
-    (ex.: registrar o mesmo ato no SISDPU)."""
+    primeiro) devolve `numero_evento`/`evento_data_hora`/`evento_descricao`
+    (best-effort — `numero_evento` fica vazio se não conseguir raspar, sem
+    quebrar o resultado principal). Usado por quem chama pra referenciar o
+    evento real do e-proc (ex.: registrar o mesmo ato no SISDPU).
+
+    `evento` (o texto do "Evento a ser lançado", ex. "RECURSO INOMINADO") — usado
+    pra escolher a linha CERTA. **BUG real corrigido (2026-08-13)**: alguns
+    eventos disparam, em cascata, um evento AUTOMÁTICO do próprio e-proc (ex.:
+    Recurso Inominado gera sozinho uma "intimação da contraparte para
+    contrarrazões" logo em seguida) — esse automático fica ACIMA na tabela (nº
+    maior, criado depois na mesma transação), então "pegar a 1ª linha" pegava o
+    automático em vez do evento que o usuário de fato lançou. Corrigido:
+    procura a primeira linha cuja descrição COMECE com `evento` (comparação
+    tolerante a acento/caixa); só cai pra "1ª linha" (comportamento antigo) se
+    `evento` vier vazio ou nenhuma linha bater."""
     numero = re.sub(r"\D", "", numero_processo or "")
     if not numero:
         return {"ok": False, "erro": "Número de processo vazio."}
@@ -948,8 +958,18 @@ async def confirmar_peticionamento(numero_processo: str) -> dict:
         if protocolado:
             with contextlib.suppress(Exception):
                 raspado = await pagina.evaluate(
-                    """() => {
-                        const linha = document.querySelector('#tblEventos tr[id^="trEvento"]');
+                    """(eventoEsperado) => {
+                        const norm = s => (s || '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().trim();
+                        const alvo = norm(eventoEsperado);
+                        const linhas = [...document.querySelectorAll('#tblEventos tr[id^="trEvento"]')];
+                        let linha = null;
+                        if (alvo) {
+                            linha = linhas.find(tr => {
+                                const cel = tr.querySelectorAll('td');
+                                return norm(cel[2] ? cel[2].innerText : '').startsWith(alvo);
+                            }) || null;
+                        }
+                        if (!linha) linha = linhas[0] || null;  // fallback: 1ª linha (mais recente)
                         if (!linha) return null;
                         const m = /trEvento(\\d+)/.exec(linha.id || '');
                         const cel = linha.querySelectorAll('td');
@@ -958,7 +978,7 @@ async def confirmar_peticionamento(numero_processo: str) -> dict:
                             evento_data_hora: cel[1] ? cel[1].innerText.trim() : '',
                             evento_descricao: cel[2] ? cel[2].innerText.trim() : '',
                         };
-                    }""")
+                    }""", evento)
                 if raspado:
                     evento_info = raspado
         return {"ok": True, "url_final": pagina.url,

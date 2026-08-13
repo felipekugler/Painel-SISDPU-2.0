@@ -5,6 +5,11 @@
 {% set meta = dados.metadata %}
 {% set det = meta.detalhes_sisdpu or {} %}
 {% set tipo_pretensao_ia = (meta.pretensaopura or meta.classificacao or '') | tipo_analise_pretensao %}
+{# Pré-seleção do dropdown "Analisar": BPC quando a pretensão registrada no
+   SISDPU bate com as palavras-chave; "Análise ampla" (genérica, sem playbook
+   de área) em qualquer outro caso — inclusive quando a pretensão está
+   cadastrada errada no SISDPU (o Defensor escolhe a rota certa na hora). #}
+{% set tipo_ia_padrao = 'bpc' if tipo_pretensao_ia == 'bpc' else 'generica' %}
 
 {# Processos judiciais (dados completos: juízo/observações/validação) — usado pela
    seção "Processo Judicial" mais abaixo. Compat: PAJs sincronizados antes da
@@ -111,9 +116,7 @@
   /* Lembretes — mini-painel de cards coloridos, nos moldes do post-it do
      e-proc (mesma paleta do modal "Cadastro de Lembretes Externos"). */
   .lembrete-card {
-    min-width: 230px;
-    max-width: 260px;
-    flex-shrink: 0;
+    min-width: 0;
     border-radius: 4px;
     padding: 10px 12px 8px;
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.15), 0 1px 3px rgba(0, 0, 0, 0.10);
@@ -497,6 +500,46 @@
     </div>
 </div>
 
+{# PAJ com mais de um assistido vinculado (coletivo/familiar) — o cabeçalho
+   acima só mostra o nome/CPF do PRINCIPAL (via "NOME e outros (as)"). Esta
+   seção lista todos, principal sempre primeiro (ordenado explicitamente, não
+   por ordem de chegada do SISDPU — já vimos PAJ real onde o principal não é
+   a primeira linha da tabela de origem). Seção própria (não dentro do card
+   do cabeçalho) — só aparece quando há mais de um assistido. #}
+{% set assistidos = dados.assistidos_pf or [] %}
+{% if assistidos|length > 1 %}
+<div class="bg-base-200 border border-base-300 rounded-lg mb-6">
+    <div class="px-4 py-3">
+        <span class="text-lg font-semibold">Assistidos neste PAJ</span>
+        <span class="badge badge-ghost badge-sm ml-1">{{ assistidos|length }}</span>
+    </div>
+    <div class="px-4 pb-4">
+        <div class="overflow-x-auto rounded-lg border border-base-300">
+            <table class="table table-sm w-full">
+                <thead>
+                    <tr class="bg-base-300/50"><th>Nome</th><th>CPF</th><th></th></tr>
+                </thead>
+                <tbody>
+                    {% for a in assistidos|sort(attribute='principal', reverse=true) %}
+                    <tr class="hover:bg-base-300/30">
+                        <td class="text-sm">{{ a.nome or '—' }}</td>
+                        <td class="text-sm font-mono whitespace-nowrap">{{ a.cpf or '—' }}</td>
+                        <td>
+                            {% if a.principal %}
+                            <span class="badge badge-primary badge-sm">Principal</span>
+                            {% else %}
+                            <span class="badge badge-ghost badge-sm">Secundário</span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endif %}
+
 {% include "partials/sync_modal.html" %}
 {% include "partials/limpeza_modal.html" %}
 
@@ -611,7 +654,7 @@
             <p class="text-sm text-base-content/50 italic">Nenhum lembrete cadastrado para este PAJ.</p>
         </template>
 
-        <div class="flex gap-3 overflow-x-auto pb-1" x-show="!carregando && lembretes.length">
+        <div class="grid grid-cols-4 gap-3" x-show="!carregando && lembretes.length">
             <template x-for="l in lembretes" :key="l.id">
                 <div class="lembrete-card" :style="'background-color:' + corHex(l.cor)">
                     <div class="lembrete-texto" x-text="l.descricao"></div>
@@ -712,7 +755,7 @@
              pro módulo "Contatos". Estado próprio via elaborarApp(). O botão
              "Ver Resumo" foi removido definitivamente: quando há análise de
              IA, ela já fica visível na seção retrátil "Análise feita pela IA". -->
-        <div class="flex items-center gap-2 flex-wrap" x-data="elaborarApp('{{ paj_norm }}')" x-init="init()">
+        <div class="flex items-center gap-2 flex-wrap order-3 ml-auto" x-data="elaborarApp('{{ paj_norm }}')" x-init="init()">
             {% if meta.sync_incompleto %}
             <button class="btn btn-sm btn-disabled gap-1.5"
                     disabled
@@ -721,10 +764,11 @@
                 Elaborar (sincronize antes)
             </button>
             {% else %}
-            <!-- Select de skill + botao Elaborar: disponivel em idle/error/done. -->
+            <!-- Select de skill + botao Elaborar, contiguo (join) com icone de IA
+                 — mesmo estilo do "Analisar" logo abaixo. Disponivel em idle/error/done. -->
             <template x-if="status !== 'running'">
-                <div class="flex items-center gap-2">
-                    <select class="select select-bordered select-sm w-52"
+                <div class="join">
+                    <select class="select select-bordered select-sm join-item w-52"
                             x-model="skillSlug"
                             :disabled="skillsLoading">
                         <option value="">Claude decide (automático)</option>
@@ -739,7 +783,9 @@
                             </optgroup>
                         </template>
                     </select>
-                    <button class="btn btn-sm btn-primary" @click="iniciar()">
+                    <button type="button" class="btn btn-sm btn-outline btn-primary join-item gap-1.5" @click="iniciar()"
+                            title="Elabora a peça/documento escolhido no dropdown para este PAJ">
+                        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z"></path></svg>
                         Elaborar
                     </button>
                 </div>
@@ -761,7 +807,7 @@
         <!-- Ações no SISDPU: abre o console de movimentar/tramitar/concluir (módulo
              compartilhado com a aba Retornos — static/js/acoes_sisdpu.js) -->
         <button type="button" @click="mostrarAcoesSisdpu = !mostrarAcoesSisdpu"
-                class="btn btn-sm btn-outline btn-success gap-1.5"
+                class="btn btn-sm btn-outline btn-success gap-1.5 order-1"
                 title="Movimentar, tramitar ou concluir este PAJ diretamente no SISDPU">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5"></path></svg>
             Ações no SISDPU
@@ -773,7 +819,7 @@
              processo judicial vinculado — sem processo não há o que peticionar. -->
         {% if dados.processos_judiciais %}
         <button type="button" @click="mostrarAcoesEproc = !mostrarAcoesEproc"
-                class="btn btn-sm btn-outline btn-info gap-1.5"
+                class="btn btn-sm btn-outline btn-info gap-1.5 order-2"
                 title="Peticionar ou lançar evento no processo judicial (e-proc) vinculado a este PAJ">
             <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
                 <circle cx="8.5" cy="9" r="6.5" fill-opacity="1"></circle>
@@ -784,25 +830,39 @@
         </button>
         {% endif %}
 
-        <!-- Analisar BPC: dispara o diagnóstico (skill /SISDPU-AnalisarPAJ-BPC)
-             na seção "Análise feita pela IA" abaixo. Só aparece quando a pretensão
-             do PAJ é BPC/LOAS (filtro tipo_analise_pretensao). -->
-        {% if tipo_pretensao_ia == 'bpc' %}
-        <button type="button"
-                onclick="document.getElementById('secao-analise-ia').scrollIntoView({behavior:'smooth'});
-                         window.dispatchEvent(new CustomEvent('iniciar-analise-ia', {detail:{tipo:'bpc'}}));"
-                class="btn btn-sm btn-outline btn-warning gap-1.5"
-                title="Diagnostica o caso de BPC/LOAS aplicando o playbook de teses (skill /SISDPU-AnalisarPAJ-BPC)">
-            <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z"></path></svg>
-            Analisar BPC
-        </button>
-        {% endif %}
+        <!-- Analisar (IA): dropdown de pretensão/rota + botão único. Dispara o
+             diagnóstico na seção "Análise feita pela IA" abaixo, no tipo
+             escolhido no dropdown — SEMPRE visível (não depende mais da
+             pretensão cadastrada no SISDPU bater com alguma skill): "BPC/LOAS"
+             roda o playbook de teses dedicado (skill /SISDPU-AnalisarPAJ-BPC);
+             "Análise ampla" é diagnóstico direto via PROMPT_MAX, sem playbook
+             de área. Isso permite escolher a rota certa mesmo quando o PAJ
+             está cadastrado no SISDPU com a pretensão errada. Pré-seleciona
+             `tipo_ia_padrao` (calculado no topo do arquivo). -->
+        <div class="join order-4" x-data="{ tipoAnalise: '{{ tipo_ia_padrao }}' }">
+            <select class="select select-bordered select-sm join-item"
+                    x-model="tipoAnalise"
+                    title="Escolha a pretensão/rota do diagnóstico por IA">
+                <option value="bpc">BPC/LOAS</option>
+                <option value="generica">Análise ampla</option>
+            </select>
+            <button type="button"
+                    class="btn btn-sm btn-outline btn-warning join-item gap-1.5"
+                    @click="
+                        document.getElementById('secao-analise-ia').scrollIntoView({behavior:'smooth'});
+                        window.dispatchEvent(new CustomEvent('iniciar-analise-ia', {detail:{tipo: tipoAnalise}}));
+                    "
+                    title="Diagnostica este PAJ por IA — BPC/LOAS aplica o playbook de teses (skill /SISDPU-AnalisarPAJ-BPC); Análise ampla é um diagnóstico jurídico geral via PROMPT_MAX, sem playbook de área específica">
+                <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z"></path></svg>
+                Analisar
+            </button>
+        </div>
 
         <!-- Organizar Documentos para Ajuizamento (skill /SISDPU-OrganizarArquivos):
              habilitado só depois que uma petição inicial existir na pasta do PAJ. -->
         <button type="button"
                 onclick="organizarAjuizamento('{{ paj_norm }}', this)"
-                class="btn btn-sm btn-outline gap-1.5"
+                class="btn btn-sm btn-outline gap-1.5 order-5"
                 {% if not dados.tem_peticao_inicial %}disabled{% endif %}
                 title="{% if dados.tem_peticao_inicial %}{% if dados.tem_pasta_ajuizamento %}Reorganiza{% else %}Organiza{% endif %} os documentos deste PAJ numa subpasta 'Ajuizamento', prontos para peticionamento (skill /SISDPU-OrganizarArquivos){% else %}Disponível depois que uma petição inicial for gerada para este PAJ{% endif %}">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0v6a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-6m-19.5 0h19.5M5.25 9.75V6a2.25 2.25 0 0 1 2.25-2.25h4.5a2.25 2.25 0 0 1 1.591.659l1.409 1.409a2.25 2.25 0 0 0 1.591.659H18a2.25 2.25 0 0 1 2.25 2.25v3.75"></path></svg>
@@ -843,12 +903,14 @@
     {% endif %}
 </div>
 
-{% if tipo_pretensao_ia %}
 <!-- Análise feita pela IA (diagnóstico por pretensão + reenvio p/ ajuste ou
      pedido de petição inicial) — recolhida por padrão, exceto quando o botão
-     "Analisar PAJ de <tipo>" da barra de ações a abre/dispara. -->
+     "Analisar" da barra de ações a abre/dispara. Sempre presente (não só em
+     PAJs de BPC/LOAS): a rota "Análise ampla" do dropdown cobre qualquer
+     pretensão. Estado inicial usa `tipo_ia_padrao` (mesma pré-seleção do
+     dropdown), sobrescrito pelo tipo escolhido a cada disparo. -->
 <div id="secao-analise-ia" class="bg-base-200 border border-base-300 rounded-lg mb-4"
-     x-data="{...analiseIaApp('{{ paj_norm }}', '{{ tipo_pretensao_ia }}'), aberto: false}" x-init="init()"
+     x-data="{...analiseIaApp('{{ paj_norm }}', '{{ tipo_ia_padrao }}'), aberto: false}" x-init="init()"
      @iniciar-analise-ia.window="aberto = true; iniciar($event.detail && $event.detail.tipo)">
     <div class="flex items-center gap-2 px-4 py-3">
         <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
@@ -871,9 +933,10 @@
     <div x-show="aberto" x-cloak class="px-4 pb-4">
         <template x-if="status === 'idle'">
             <div class="alert text-sm">
-                Nenhuma análise realizada ainda. Clique em
-                <strong>"Analisar {{ tipo_pretensao_ia|upper }}"</strong> na barra de ações
-                para diagnosticar este caso.
+                Nenhuma análise realizada ainda. Escolha o tipo de análise no
+                dropdown ao lado do botão <strong>"Analisar"</strong> na barra de
+                ações (BPC/LOAS ou Análise ampla) e clique nele para diagnosticar
+                este caso.
             </div>
         </template>
 
@@ -916,7 +979,6 @@
         </template>
     </div>
 </div>
-{% endif %}
 
 <!-- Narrativa (seção retrátil) — recolhida por padrão -->
 <div class="bg-base-200 border border-base-300 rounded-lg mb-4" x-data="{ aberto: false }">

@@ -708,8 +708,27 @@ function baixarAnexosDesde(pajNorm) {
  * atividade no Histórico do painel e, se o trâmite foi concluído, marca o PAJ
  * como fora da caixa (some do dashboard sem esperar a próxima sincronização).
  * Mesmo efeito que posExecucaoRetorno() tem na Retornos — ver
- * services/paj_service.registrar_pos_execucao_sisdpu(). */
+ * services/paj_service.registrar_pos_execucao_sisdpu().
+ *
+ * Também roda aqui, e ESPERA terminar, a sincronização LEVE (só movimentações,
+ * sem anexos) da tabela de Movimentações — reusa a MESMA função do ícone de
+ * atualizar (`atualizarMovimentacoesPaj()`, com seu modal de progresso), só
+ * quando uma MOVIMENTAÇÃO de fato foi registrada com sucesso (`resultado.fase`
+ * truthy e a etapa de movimentação não falhou: `status` só vem "falha" quando
+ * é exatamente essa etapa que não deu certo — tramitação/conclusão que
+ * falharem DEPOIS ainda deixam a movimentação valendo, por isso "parcial"/
+ * "ja_ausente" também disparam a atualização).
+ *
+ * IMPORTANTE: isto precisa ser ESPERADO (não só disparado) por quem chama —
+ * static/js/acoes_sisdpu.js recarrega a página inteira logo depois de chamar
+ * onExecutado(); se a sincronização real no SISDPU (que leva alguns segundos)
+ * não tivesse terminado de escrever em metadata.json ANTES do reload, a
+ * página recarregava mostrando as movimentações ainda desatualizadas — foi
+ * exatamente o bug relatado em 2026-08-13 com o disparo por evento antigo. */
 async function posExecucaoPaj(pajNorm, resultado) {
+    if (resultado && resultado.fase && resultado.status !== 'falha') {
+        try { await atualizarMovimentacoesPaj(pajNorm); } catch (e) {}
+    }
     try {
         const r = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/pos-execucao-sisdpu', {
             method: 'POST', headers: { 'Content-Type': 'application/json' },

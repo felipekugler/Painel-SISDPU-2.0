@@ -96,11 +96,14 @@ function tabelaMovimentacoes() {
 
         // Mapa {id_do_arquivo -> caminho local} dos anexos já baixados em Arquivos/
         // (nome: "seqNNN - ID - nome.ext"). Vazio quando não há anexos (ex.: Retornos).
+        // ID aceita [A-Za-z0-9_-] (não só dígitos) — documentos sem link direto
+        // (ver _idDocumento) usam o id do elemento sanitizado como ID, que tem
+        // letras e underscore (ex: "detalhamentoForm_j_idt945_0_j_idt957_0_...").
         get _mapaArquivoLocalPorId() {
             if (!this.__mapaArquivoLocal) {
                 const mapa = {};
                 (this.anexos || []).forEach(a => {
-                    const m = (a.nome || '').match(/^seq\d+\s*-\s*(\d+)\s*-/);
+                    const m = (a.nome || '').match(/^seq\d+\s*-\s*([A-Za-z0-9_-]+)\s*-/);
                     if (m) mapa[m[1]] = a.caminho;
                 });
                 this.__mapaArquivoLocal = mapa;
@@ -108,8 +111,17 @@ function tabelaMovimentacoes() {
             return this.__mapaArquivoLocal;
         },
 
+        // Espelha ingestao/sisdpu_client.py::extrair_id_arquivo() — documentos
+        // sem link de download direto (imagens via <p:commandLink> do
+        // PrimeFaces) chegam como o marcador 'sisdpu-commandlink:<id>' em vez
+        // de uma URL de verdade (ver extrair_documentos_movimentacoes.js).
         _idDocumento(doc) {
-            const m = (doc.urlDownload || '').match(/\/(\d+)\/[^/]*$/);
+            const url = doc.urlDownload || '';
+            if (url.startsWith('sisdpu-commandlink:')) {
+                const bruto = url.slice('sisdpu-commandlink:'.length);
+                return bruto ? bruto.replace(/[^A-Za-z0-9_-]/g, '_') : null;
+            }
+            const m = url.match(/\/(\d+)\/[^/]*$/);
             return m ? m[1] : null;
         },
 

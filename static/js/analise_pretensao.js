@@ -1,15 +1,18 @@
-// Componente Alpine "Análise feita pela IA" — diagnóstico de PAJ por skill
-// dedicada de pretensão (SISDPU-AnalisarPAJ-BPC, futura -BI) + reenvio
+// Componente Alpine "Análise feita pela IA" — diagnóstico de PAJ por rota de
+// pretensão escolhida no dropdown da barra de ações: "bpc" (skill dedicada
+// SISDPU-AnalisarPAJ-BPC, playbook teses-dpu) ou "generica" (diagnóstico
+// direto via PROMPT_MAX, sem playbook de área — cobre pretensões sem skill
+// dedicada, ou PAJs cadastrados no SISDPU com a pretensão errada) + reenvio
 // (ajustes na análise, ou pedido de redação da petição inicial).
 //
 // Uso:
-//   <div x-data="analiseIaApp('{{ paj_norm }}', '{{ tipo_pretensao_ia }}')" x-init="init()"
+//   <div x-data="analiseIaApp('{{ paj_norm }}', '{{ tipo_ia_padrao }}')" x-init="init()"
 //        @iniciar-analise-ia.window="iniciar($event.detail && $event.detail.tipo)">
 //     ...
 //   </div>
 //
-// O botão "Analisar PAJ de <tipo>" na barra de ações dispara
-// `window.dispatchEvent(new CustomEvent('iniciar-analise-ia', {detail:{tipo:'bpc'}}))`
+// O botão "Analisar" (+ dropdown de tipo) na barra de ações dispara
+// `window.dispatchEvent(new CustomEvent('iniciar-analise-ia', {detail:{tipo: tipoEscolhido}}))`
 // — assim o componente não precisa ficar acoplado à barra de ações.
 function analiseIaApp(pajNorm, tipoPadrao) {
     return {

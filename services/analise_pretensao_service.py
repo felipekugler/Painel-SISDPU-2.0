@@ -38,10 +38,22 @@ from pathlib import Path
 from config import PAJS_DIR
 from services import historico
 from services.chat_service import ChatSession
+from services.estilo_pecas_service import INSTRUCAO_ESTILO_PECA_DPU
 from services.valor_causa_service import INSTRUCAO_VALOR_CAUSA
 
-# tipo -> {skill, label, palavras-chave da pretensão que habilitam o botão}.
-# Adicionar "bi" aqui (mesmo padrão) quando a versão BPC estiver validada.
+# tipo -> {skill, label, palavras-chave da pretensão que pré-selecionam esse
+# tipo no dropdown "Analisar" da página do PAJ}.
+# Adicionar "bi" aqui (mesmo padrão) quando existir um playbook teses-dpu
+# dedicado a Benefício por Incapacidade (hoje só existe a área bpc-loas).
+#
+# "generica" (sem skill/palavras-chave): rota de diagnóstico SEM playbook de
+# área — usada quando a pretensão do PAJ não tem skill dedicada, OU quando o
+# PAJ está cadastrado no SISDPU com pretensão ERRADA (ex.: um caso de BPC
+# cadastrado como "Aposentadoria por Idade") e o Defensor escolhe manualmente
+# a rota certa no dropdown em vez de depender do auto-match por palavra-chave.
+# `palavras_pretensao` vazio garante que `tipo_aplicavel()` NUNCA a escolhe
+# sozinha — só entra por escolha explícita no dropdown (ver template
+# `paj_detail.html`, variável `tipo_ia_padrao`).
 CONFIG_TIPOS: dict[str, dict] = {
     "bpc": {
         "skill": "SISDPU-AnalisarPAJ-BPC",
@@ -52,6 +64,11 @@ CONFIG_TIPOS: dict[str, dict] = {
             "BENEFICIO ASSISTENCIAL",
             "PRESTACAO CONTINUADA",
         ),
+    },
+    "generica": {
+        "skill": "",
+        "label": "Análise ampla",
+        "palavras_pretensao": (),
     },
 }
 
@@ -67,8 +84,10 @@ def _sem_acento(s: str) -> str:
 
 def tipo_aplicavel(pretensao: str) -> str:
     """'bpc' (ou o tipo cabível) se a pretensão bater com alguma skill de
-    diagnóstico cadastrada; '' se nenhuma bater. Usado pelo filtro Jinja
-    `tipo_analise_pretensao` para decidir se mostra o botão na página do PAJ."""
+    diagnóstico cadastrada; '' se nenhuma bater (nunca retorna "generica" —
+    ela não tem palavras-chave, é só escolha manual). Usado pelo filtro Jinja
+    `tipo_analise_pretensao` só para PRÉ-SELECIONAR o dropdown "Analisar" na
+    página do PAJ (`tipo_ia_padrao`) — o botão em si é sempre visível."""
     p = _sem_acento(pretensao or "")
     for tipo, cfg in CONFIG_TIPOS.items():
         if any(_sem_acento(kw) in p for kw in cfg["palavras_pretensao"]):
@@ -196,10 +215,9 @@ _TRAILER_GENERICO_PROMPT_MAX = (
 # mesmo depois de corrigido isso (reenvio do usuário), a peça ainda saiu fora
 # do padrão de redação pessoal do Defensor (travessão, mistura de
 # miserabilidade/deficiência nos Fatos, colchete de conferência sem fonte
-# vermelha) — porque esse padrão vive só na memória privada desta conversa
-# (projeto C:\Claude), inacessível ao subprocesso `claude -p` que o painel
-# dispara (cwd = OFICIO_GERAL, sessão sem esse histórico). Por isso o padrão
-# do Defensor precisa vir EXPLÍCITO aqui, e não só "a skill decide".
+# vermelha) — o item 2 (estilo pessoal) agora vem de `estilo_pecas_service`,
+# COMPARTILHADO com `chat_service.py` (botão "Elaborar"), pra não depender de
+# qual botão o Defensor clicou.
 _INSTRUCAO_PIPELINE_E_ESTILO_PECA = (
     "SE avançar para a redação de uma petição (ou outra peça) — agora ou numa "
     "mensagem futura minha —, siga ESTRITAMENTE o seguinte:\n\n"
@@ -220,35 +238,7 @@ _INSTRUCAO_PIPELINE_E_ESTILO_PECA = (
     "python-docx improvisado.\n"
     "   d. Rode a `checagem-final` (`teses-dpu/comum/skills/checagem-final/"
     "CHECKLIST.md`) antes de dar a peça por pronta.\n\n"
-    "2. PADRÃO DE REDAÇÃO PESSOAL DESTE DEFENSOR (regras que NÃO estão no "
-    "playbook público do teses-dpu — são específicas deste Defensor, sigam à "
-    "risca mesmo que o modelo/pipeline sugira algo diferente):\n"
-    "   a. PROIBIDO usar travessão (—) como pontuação de aposto/parêntese em "
-    "qualquer frase (ex.: \"o requisito — que é incontroverso —, não foi...\"). "
-    "Reescreva com vírgula ou parênteses. Travessão só é aceitável como "
-    "numeração de tópico (\"I — DOS FATOS\") ou traço de citação bibliográfica, "
-    "nunca dentro de uma frase corrida.\n"
-    "   b. Tópico \"Dos Fatos\": contém SOMENTE a causa de pedir objetiva "
-    "(requerimento/decisão do INSS ou CRAS e a cronologia do processo "
-    "administrativo). NÃO inclua dados de renda/composição familiar "
-    "(miserabilidade) nem de saúde/contexto social (deficiência) nos Fatos — "
-    "esses dados ficam 100% concentrados no respectivo tópico de Direito "
-    "(Miserabilidade / Deficiência), onde podem cruzar com dados pessoais e "
-    "sociais para a análise biopsicossocial.\n"
-    "   c. Cada tópico de Direito segue o padrão: tese abstrata primeiro "
-    "(doutrina/lei/jurisprudência em termos gerais), seguida da transição "
-    "explícita 'No caso concreto, ...' aplicando a tese aos fatos deste "
-    "assistido — não pule direto para o caso concreto sem antes assentar a "
-    "tese em abstrato.\n"
-    "   d. Todo trecho que precise de CONFERÊNCIA MANUAL do Defensor antes do "
-    "protocolo (nome do(a) Defensor(a) assinante, dado presumido/não "
-    "confirmado, qualquer placeholder) vai entre colchetes `[ ]` E deve sair "
-    "em FONTE VERMELHA no `.docx` final — não basta o colchete em preto. "
-    "Aplique um pós-processamento no `Document` (varrer os runs, colorir de "
-    "vermelho `RGBColor(0xFF,0,0)` só o trecho entre colchetes, preservando "
-    "fonte/tamanho/negrito do resto do run) ANTES de salvar — inclusive "
-    "quando o `.docx` vier do `formatar_peca.py`, que não tem esse marcador "
-    "de cor nativo.\n\n"
+    "2. " + INSTRUCAO_ESTILO_PECA_DPU +
     "Se o modelo do teses-dpu ou o engine de formatação conflitarem com as "
     "regras do item 2, as regras do item 2 prevalecem — são o padrão pessoal "
     "deste Defensor, mais específico que o padrão genérico do repositório "
@@ -256,25 +246,62 @@ _INSTRUCAO_PIPELINE_E_ESTILO_PECA = (
 )
 
 
+# Instrução de diagnóstico para a rota "generica" (sem skill de playbook
+# dedicada) — mesma função de uma skill como a de BPC (chegar a um diagnóstico
+# estruturado e PARAR), só que raciocinando direto sobre o PROMPT_MAX em vez
+# de seguir os passos fixos de um playbook de área. Usada quando `skill_slug`
+# vem vazio em `_montar_instrucao_diagnostico` (tipo "generica" ou qualquer
+# tipo futuro sem skill cadastrada).
+_INSTRUCAO_DIAGNOSTICO_GENERICO = (
+    "Faça um DIAGNÓSTICO JURÍDICO deste PAJ. Não há uma skill de playbook "
+    "dedicada à pretensão deste caso (ou o PAJ pode estar cadastrado no "
+    "SISDPU com a pretensão errada) — analise diretamente com base no "
+    "CONTEXTO DO PAJ anexado abaixo (cabeçalho, narrativa, movimentações e "
+    "anexos OCR já transcritos).\n\n"
+    "Produza o diagnóstico neste formato:\n\n"
+    "## Diagnóstico — <identificação do caso: nome do assistido / PAJ>\n\n"
+    "### Situação\n"
+    "[1-2 parágrafos: qual é a pretensão real deste caso (mesmo que diferente "
+    "da pretensão cadastrada no SISDPU — sinalize se notar divergência), "
+    "fase/via (administrativa ou judicial) e o fundamento do indeferimento ou "
+    "da questão controvertida]\n\n"
+    "### Teses cabíveis\n"
+    "| Tese | Fundamento (lei/jurisprudência) | Aplicação a este caso |\n"
+    "|---|---|---|\n\n"
+    "### Documentação ainda faltante\n"
+    "- [ ] <documento> — <para qual tese serve>\n\n"
+    "### Lacunas para fechar o diagnóstico\n"
+    "[perguntas objetivas, se faltar dado para confirmar alguma tese]\n\n"
+    "Termine no diagnóstico — só avance para redigir petição/despacho/recurso "
+    "se eu pedir explicitamente numa mensagem seguinte.\n\n"
+)
+
+
 def _montar_instrucao_diagnostico(paj_norm: str, skill_slug: str, prompt_max: str) -> str:
     pasta = PAJS_DIR / paj_norm
     prompt_max_limpo = prompt_max.replace(_TRAILER_GENERICO_PROMPT_MAX, "").rstrip()
+    if skill_slug:
+        abertura = (
+            f"Use a skill `/{skill_slug}` para diagnosticar este PAJ.\n\n"
+            "Siga integralmente as instruções e o formato de saída definidos pela "
+            "própria skill — inclusive quanto a QUANDO parar (ela decide se deve "
+            "terminar no diagnóstico ou seguir para outra etapa). Não me pergunte "
+            "nada antes de produzir o diagnóstico; use a melhor hipótese razoável e "
+            "sinalize lacunas no próprio relatório, como a skill já orienta.\n\n"
+        )
+    else:
+        abertura = _INSTRUCAO_DIAGNOSTICO_GENERICO
     return (
-        f"Use a skill `/{skill_slug}` para diagnosticar este PAJ.\n\n"
-        "IMPORTANTE sobre a fonte dos dados: use o CONTEXTO DO PAJ anexado abaixo "
-        "(é a opção de dados colados diretamente, prevista na própria skill) — "
-        "NÃO abra o SISDPU no navegador nem procure 'Referencia PAJ.md' em "
-        "C:\\Claude\\DPU\\PREV4\\; os dados já estão completos no contexto anexado.\n\n"
-        "Siga integralmente as instruções e o formato de saída definidos pela "
-        "própria skill — inclusive quanto a QUANDO parar (ela decide se deve "
-        "terminar no diagnóstico ou seguir para outra etapa). Não me pergunte "
-        "nada antes de produzir o diagnóstico; use a melhor hipótese razoável e "
-        "sinalize lacunas no próprio relatório, como a skill já orienta.\n\n"
+        abertura
+        + "IMPORTANTE sobre a fonte dos dados: use o CONTEXTO DO PAJ anexado abaixo "
+        "(dados colados diretamente) — NÃO abra o SISDPU no navegador nem procure "
+        "'Referencia PAJ.md' em C:\\Claude\\DPU\\PREV4\\; os dados já estão "
+        "completos no contexto anexado.\n\n"
         "IGNORE qualquer instrução genérica de 'produzir o texto da peça/despacho "
         "ao final' que apareça no contexto do PAJ anexado abaixo — é um trecho "
         "padrão reaproveitado de outro fluxo do painel (o botão 'Elaborar'), não "
         "se aplica aqui. Para esta tarefa, a ÚNICA regra de quando produzir peça "
-        "e parar é a da própria skill de diagnóstico citada acima.\n\n"
+        "e parar é a definida acima.\n\n"
         f"Se em algum momento — agora ou numa mensagem futura minha — você "
         f"avançar para a redação de uma petição inicial (ou qualquer outra "
         f"peça), **salve o arquivo em `{pasta}\\Peças IA\\`** (crie essa subpasta "

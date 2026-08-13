@@ -10,13 +10,21 @@
             Retornos
             <span class="text-base-content/50 text-lg" x-show="itens.length" x-text="'(' + itens.length + ')'"></span>
         </h2>
-        <button class="btn btn-sm btn-primary" @click="sincronizar()" :disabled="sincronizando">
-            <span x-show="sincronizando" class="loading loading-spinner loading-xs"></span>
-            <svg x-show="!sincronizando" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
-            </svg>
-            Sincronizar
-        </button>
+        <div class="flex items-center gap-2">
+            <button class="btn btn-ghost btn-sm gap-2 normal-case" @click="atualizar()" :disabled="atualizando || sincronizando"
+                    title="Lê a caixa de entrada e remove do painel os retornos que já saíram dela (rápido — não sincroniza PAJs novos)">
+                <span x-show="atualizando" class="loading loading-spinner loading-xs"></span>
+                <svg x-show="!atualizando" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"></path></svg>
+                Atualizar
+            </button>
+            <button class="btn btn-sm btn-primary" @click="sincronizar()" :disabled="sincronizando">
+                <span x-show="sincronizando" class="loading loading-spinner loading-xs"></span>
+                <svg x-show="!sincronizando" xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                </svg>
+                Sincronizar
+            </button>
+        </div>
     </div>
 
     <div class="text-sm text-base-content/60 mb-4">
@@ -410,7 +418,7 @@
 function retornosPage() {
     return {
         itens: [], expandido: {},
-        carregando: false, sincronizando: false, ressincronizando: false,
+        carregando: false, sincronizando: false, ressincronizando: false, atualizando: false,
         sseAberto: false, sseLog: [], sseStatus: '', sseTitulo: 'Sincronizando retornos', _es: null,
         movModal: false, movTitulo: '',
 
@@ -452,6 +460,14 @@ function retornosPage() {
                     body: JSON.stringify({resultado}),
                 });
             } catch (e) {}
+            // Sincronização LEVE da tabela de Movimentações (mesmo evento do ícone de
+            // atualizar — ver static/js/movimentacoes.js) — só quando uma MOVIMENTAÇÃO
+            // de fato foi registrada com sucesso (mesma regra de posExecucaoPaj() em
+            // app.js). Sem efeito se o modal de movimentações não estiver aberto pra
+            // este PAJ agora — só deixa os dados prontos pra quando for aberto.
+            if (resultado && resultado.fase && resultado.status !== 'falha') {
+                window.dispatchEvent(new CustomEvent('mov-tabela-atualizar'));
+            }
             await this.carregarLista();
         },
         toggle(r) {
@@ -624,6 +640,32 @@ function retornosPage() {
                 this.sincronizando = false;
                 es.close(); this._es = null;
             };
+        },
+        // "Atualizar" (mesmo padrão do dashboard): reconciliação RÁPIDA, sem SSE — só
+        // remove da lista quem já saiu da caixa (concluído/tramitado por fora). Não
+        // sincroniza PAJs novos nem reanalisa; isso continua sendo papel do "Sincronizar".
+        async atualizar() {
+            if (this.atualizando || this.sincronizando) return;
+            if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
+            this.atualizando = true;
+            try {
+                const resp = await fetch('/api/retornos/atualizar', { method: 'POST' });
+                const j = await resp.json();
+                if (!j.ok) {
+                    if (typeof showToast === 'function') showToast('Erro ao atualizar: ' + (j.mensagem || 'falha desconhecida'), 'error');
+                    return;
+                }
+                if (j.removidos > 0) {
+                    if (typeof showToast === 'function') showToast(j.removidos + ' retorno(s) saíram da caixa e foram removidos do painel', 'success');
+                    await this.carregarLista();
+                } else if (typeof showToast === 'function') {
+                    showToast('Nenhum retorno saiu da caixa — tudo em dia', 'info');
+                }
+            } catch (e) {
+                if (typeof showToast === 'function') showToast('Falha de rede: ' + e.message, 'error');
+            } finally {
+                this.atualizando = false;
+            }
         },
     };
 }

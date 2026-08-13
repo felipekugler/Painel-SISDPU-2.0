@@ -125,10 +125,16 @@
                         <td class="text-xs">
                             <template x-if="mov.documentos && mov.documentos.length > 0">
                                 <div class="flex flex-col gap-1" :class="mostrarNomeArquivo ? 'max-w-[220px]' : ''">
-                                    <!-- Modo "Só tipo de arquivo": badge com a extensão -->
+                                    <!-- Modo "Só tipo de arquivo": badge com a extensão. Chave do x-for
+                                         inclui o índice: algumas imagens ("Documentos do Assistido"
+                                         anexadas como jpeg/png) vêm do SISDPU com o MESMO urlDownload
+                                         pra vários documentos da mesma seq (não têm link de download
+                                         individual, só um visualizador genérico) — usar só urlDownload
+                                         como chave faz o Alpine colapsar tudo num badge só e sumir com
+                                         os demais. -->
                                     <template x-if="!mostrarNomeArquivo">
                                         <div class="flex flex-wrap items-center gap-1">
-                                            <template x-for="doc in mov.documentos" :key="doc.urlDownload">
+                                            <template x-for="(doc, idx) in mov.documentos" :key="mov.seq + '-' + idx + '-' + doc.urlDownload">
                                                 <a :href="temArquivoLocal(doc) ? linkDocumento(doc) : null" target="_blank"
                                                    @click="temArquivoLocal(doc) ? null : ($event.preventDefault(), toggleSelecao(doc))"
                                                    class="badge badge-sm gap-1 border border-black/15"
@@ -140,10 +146,12 @@
                                             </template>
                                         </div>
                                     </template>
-                                    <!-- Modo "Nome do arquivo": um documento por linha, badge com o nome truncado -->
+                                    <!-- Modo "Nome do arquivo": um documento por linha, badge com o nome
+                                         truncado. Mesmo motivo do bloco acima pra chave do x-for incluir
+                                         o índice (urlDownload sozinho pode se repetir). -->
                                     <template x-if="mostrarNomeArquivo">
                                         <div class="flex flex-col gap-0.5">
-                                            <template x-for="doc in mov.documentos" :key="doc.urlDownload">
+                                            <template x-for="(doc, idx) in mov.documentos" :key="mov.seq + '-' + idx + '-' + doc.urlDownload">
                                                 <a :href="temArquivoLocal(doc) ? linkDocumento(doc) : null" target="_blank"
                                                    @click="temArquivoLocal(doc) ? null : ($event.preventDefault(), toggleSelecao(doc))"
                                                    class="badge badge-sm gap-1 max-w-full justify-start border border-black/15"

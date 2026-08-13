@@ -13,6 +13,7 @@ from config import ELABORACAO_EFFORT, ELABORACAO_MODELO, OFICIO_GERAL, PAJS_DIR
 from services import historico
 from services.paj_service import IGNORAR as ARQUIVOS_NAO_PECAS
 from services.paj_service import listar_pajs
+from services.estilo_pecas_service import INSTRUCAO_ESTILO_PECA_DPU
 from services.skills_catalog import skill_descricao, skill_valida
 from services.valor_causa_service import INSTRUCAO_VALOR_CAUSA
 import contextlib
@@ -122,6 +123,7 @@ def _montar_instrucao(paj_pasta, prompt_content: str, skill_slug: str | None) ->
         "Me diga o que mudar e eu refaco.\n"
         "```\n\n"
         "Se eu responder com discordancia, refaca conforme instruido.\n\n"
+        + INSTRUCAO_ESTILO_PECA_DPU
         + INSTRUCAO_VALOR_CAUSA
         + "---\n\n"
         f"{prompt_content}"
@@ -376,7 +378,8 @@ class ChatSession:
             f"3. Salve a versao atualizada sobrescrevendo o arquivo anterior\n"
             f"4. Apresente o **RESUMO ESTRUTURADO** ao final no mesmo formato padrao\n\n"
             f"Siga o `CLAUDE.md` do workspace Oficio Geral (terminologia DPU, estilo, "
-            f"assinatura etc). Nao pergunte nada — refaca diretamente."
+            f"assinatura etc). Nao pergunte nada — refaca diretamente.\n\n"
+            + INSTRUCAO_ESTILO_PECA_DPU
         )
         self.status = "running"
         self.last_action = "aplicando correção..."

@@ -563,17 +563,41 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
             const temFraseApp = /Ades[aã]o ao Termo de Responsabilidade do Aplicativo do SISDPU/i.test(body);
             r.contato_app_sisdpu = temLinkApp || temFraseApp;
 
-            // Assistidos PF (idPessoa) — links pro Cadastro de Pessoa Fisica de cada
-            // um; usado depois pra extrair telefone/email/endereco (pagina separada).
+            // Assistidos PF — uma linha por pessoa vinculada ao PAJ (tabela
+            // "Assistido(s) Pessoa(s) Física:"). Colunas: [toggle, Nome, CPF, RG,
+            // ações]. O assistido PRINCIPAL é o ÚNICO sem o ícone "Excluir este
+            // assistido" na última célula (os secundários têm esse ícone; o
+            // principal só tem "Criar um novo PAJ para esse assistido") — não dá
+            // pra assumir que é sempre a primeira linha do DOM (já vimos PAJ real
+            // onde o principal aparece na 2ª linha). idPessoa tambem sai daqui —
+            // usado depois pra extrair telefone/email/endereco (pagina separada).
             const tblPF = document.getElementById('detalhamentoForm:dataTableListaAssistidosPF');
             if (tblPF) {
                 const assistidosPf = [];
-                for (const a of tblPF.querySelectorAll('a[href*="cadastroAssistidoPessoaFisica"]')) {
-                    const href = a.getAttribute('href') || '';
+                for (const tr of tblPF.querySelectorAll('tbody tr')) {
+                    const cells = tr.querySelectorAll('td');
+                    if (cells.length < 3) continue;
+                    const linkPessoa = cells[1]?.querySelector('a[href*="cadastroAssistidoPessoaFisica"]');
+                    const href = linkPessoa?.getAttribute('href') || '';
                     const mp = href.match(/idPessoa=(\\d+)/);
-                    if (mp) assistidosPf.push({ idPessoa: mp[1] });
+                    if (!mp) continue;
+                    // "(N PAJ'S)" e' um contador de outros PAJs da mesma pessoa
+                    // que o SISDPU concatena no link — nao faz parte do nome.
+                    let nome = (linkPessoa.textContent || '').trim();
+                    nome = nome.replace(/\\s*\\(\\d+\\s*PAJ'?S\\)\\s*$/i, '').trim();
+                    const cpfTexto = (cells[2]?.textContent || '').trim().split('\\n')[0].trim();
+                    const cpf = /\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}/.test(cpfTexto) ? cpfTexto : '';
+                    const ultimaCel = cells[cells.length - 1];
+                    const temExcluir = !!(ultimaCel && ultimaCel.querySelector('a[title*="Excluir"], img[alt="Excluir"]'));
+                    assistidosPf.push({ idPessoa: mp[1], nome, cpf, principal: !temExcluir });
                 }
-                if (assistidosPf.length) r.assistidos_pf = assistidosPf;
+                if (assistidosPf.length) {
+                    r.assistidos_pf = assistidosPf;
+                    // Corrige r.cpf_assistido (abaixo, so' olhava a 1a linha do DOM,
+                    // nem sempre o principal) pelo CPF do assistido principal de fato.
+                    const principalPf = assistidosPf.find(a => a.principal) || assistidosPf[0];
+                    if (principalPf.cpf) r.cpf_assistido = principalPf.cpf;
+                }
             }
 
             const pajMatch = body.match(/(\\d{4}\\/\\d{3}-\\d+)\\s*-\\s*PAJ\\s+([^\\n]+)/);
@@ -1577,15 +1601,32 @@ async def buscar_paj_global(
             const temFraseApp = /Ades[aã]o ao Termo de Responsabilidade do Aplicativo do SISDPU/i.test(body);
             r.contato_app_sisdpu = temLinkApp || temFraseApp;
 
+            // Mesma logica enriquecida de movimentacoes_paj (ver lá o comentário
+            // completo) — nome/CPF por linha + deteccao do principal pelo icone
+            // de excluir ausente, nao so o idPessoa.
             const tblPF = document.getElementById('detalhamentoForm:dataTableListaAssistidosPF');
             if (tblPF) {
                 const assistidosPf = [];
-                for (const a of tblPF.querySelectorAll('a[href*="cadastroAssistidoPessoaFisica"]')) {
-                    const href = a.getAttribute('href') || '';
+                for (const tr of tblPF.querySelectorAll('tbody tr')) {
+                    const cells = tr.querySelectorAll('td');
+                    if (cells.length < 3) continue;
+                    const linkPessoa = cells[1]?.querySelector('a[href*="cadastroAssistidoPessoaFisica"]');
+                    const href = linkPessoa?.getAttribute('href') || '';
                     const mp = href.match(/idPessoa=(\\d+)/);
-                    if (mp) assistidosPf.push({ idPessoa: mp[1] });
+                    if (!mp) continue;
+                    let nome = (linkPessoa.textContent || '').trim();
+                    nome = nome.replace(/\\s*\\(\\d+\\s*PAJ'?S\\)\\s*$/i, '').trim();
+                    const cpfTexto = (cells[2]?.textContent || '').trim().split('\\n')[0].trim();
+                    const cpf = /\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}/.test(cpfTexto) ? cpfTexto : '';
+                    const ultimaCel = cells[cells.length - 1];
+                    const temExcluir = !!(ultimaCel && ultimaCel.querySelector('a[title*="Excluir"], img[alt="Excluir"]'));
+                    assistidosPf.push({ idPessoa: mp[1], nome, cpf, principal: !temExcluir });
                 }
-                if (assistidosPf.length) r.assistidos_pf = assistidosPf;
+                if (assistidosPf.length) {
+                    r.assistidos_pf = assistidosPf;
+                    const principalPf = assistidosPf.find(a => a.principal) || assistidosPf[0];
+                    if (principalPf.cpf) r.cpf_assistido = principalPf.cpf;
+                }
             }
 
             r.pretensao = valorParaLabel(['Pretensão', 'Pretensao']);
@@ -2429,7 +2470,7 @@ _EXTS_ARQUIVO = {
 
 
 def extrair_id_arquivo(url: str) -> str:
-    """Extrai o ID numerico do documento a partir da URL de download do SISDPU.
+    """Extrai o ID do documento a partir da URL/marcador de download do SISDPU.
 
     Ex: '.../rest/download/pdf/42296157/Nome.pdf' -> '42296157'.
     Esse ID pertence ao ARQUIVO (nao a seq/listagem) e e' o mesmo em qualquer
@@ -2438,7 +2479,16 @@ def extrair_id_arquivo(url: str) -> str:
     baixados de forma que o frontend consiga casar o link da coluna
     "Documentos" com a copia local ja baixada, sem depender do nome do
     arquivo (que pode se repetir, ex: "email.pdf").
+
+    Documentos sem link de download direto (anexos tipo imagem servidos via
+    <p:commandLink> do PrimeFaces — ver extrair_documentos_movimentacoes.js)
+    chegam aqui como o marcador sintetico 'sisdpu-commandlink:<id-do-elemento>'
+    em vez de uma URL — devolve o id do elemento sanitizado (':' nao e' valido
+    em nome de arquivo do Windows) em vez de tentar casar a regex de URL.
     """
+    if url and url.startswith("sisdpu-commandlink:"):
+        bruto = url[len("sisdpu-commandlink:"):]
+        return re.sub(r"[^A-Za-z0-9_-]", "_", bruto) if bruto else ""
     m = re.search(r"/(\d+)/[^/]*$", url or "")
     return m.group(1) if m else ""
 
@@ -2553,6 +2603,106 @@ async def extrair_lista_arquivos_paj() -> list[dict]:
     return resultado or []
 
 
+async def _abrir_popup_documentos_seq(page: Page, seq: str) -> bool:
+    """Clica no icone de anexo da linha `seq` da tabela de movimentacoes e
+    espera o popup de documentos ('Arquivo' no cabecalho) abrir e ficar
+    visivel. PRE-CONDICAO: a page ja esta no detalhamento do PAJ
+    (movimentacoes_paj ja rodou). Retorna True se o popup abriu."""
+    clicou = await page.evaluate(
+        """
+        (seqAlvo) => {
+            const tables = document.querySelectorAll('table');
+            let tableMov = null;
+            for (const t of tables) {
+                const headers = Array.from(t.querySelectorAll('thead th, tbody tr:first-child td'))
+                    .map(h => h.textContent.trim()).filter(Boolean);
+                if (headers.includes('Seq.') && headers.includes('Data/Hora')) { tableMov = t; break; }
+            }
+            if (!tableMov) return false;
+            const rows = tableMov.querySelectorAll('tbody tr');
+            for (const row of rows) {
+                const cells = row.querySelectorAll('td');
+                if (!cells.length) continue;
+                if ((cells[0]?.textContent || '').trim() !== String(seqAlvo)) continue;
+                const clickable = cells[1]?.querySelector('a, button, [role="button"], [onclick], img[onclick], span[onclick]');
+                if (!clickable) return false;
+                clickable.click();
+                return true;
+            }
+            return false;
+        }
+        """,
+        seq,
+    )
+    if not clicou:
+        return False
+    try:
+        await page.wait_for_function(
+            """
+            () => {
+                const tables = document.querySelectorAll('table');
+                for (let j = tables.length - 1; j >= Math.max(0, tables.length - 40); j--) {
+                    const headers = Array.from(tables[j].querySelectorAll('thead th, tbody tr:first-child td'))
+                        .map(h => h.textContent.trim()).filter(Boolean);
+                    if (headers.includes('Arquivo') && tables[j].offsetParent !== null) return true;
+                }
+                return false;
+            }
+            """,
+            timeout=10000,
+        )
+    except PWTimeoutError:
+        return False
+    return True
+
+
+async def _fechar_popup_documentos(page: Page) -> None:
+    with contextlib.suppress(Exception):
+        await page.keyboard.press("Escape")
+        await page.wait_for_timeout(400)
+
+
+async def baixar_documento_via_commandlink(
+    seq: str,
+    command_link_id: str,
+    destino: Path,
+) -> Path | None:
+    """Baixa UM documento que nao tem link de download direto — os anexos
+    tipo imagem (jpeg/png) "Documentos do Assistido" vem como <p:commandLink>
+    do PrimeFaces (href="#" + onclick que faz um POST do formulario inteiro),
+    entao um `httpx.get(href)` simples nao funciona (baixa a propria pagina,
+    nao o arquivo). Aqui clicamos DE VERDADE no elemento (via id, ver
+    extrair_documentos_movimentacoes.js) e capturamos o evento `download` do
+    Playwright — mesmo padrao ja usado por `baixar_anexo_por_indice`
+    (deprecado), so' que localizando o elemento pelo id em vez de por indice
+    de linha.
+
+    PRE-CONDICAO: a page ja esta no detalhamento do PAJ (movimentacoes_paj
+    ja rodou) — abre e fecha o popup da seq sozinho.
+    """
+    page = await _get_page()
+    destino = Path(destino)
+    destino.parent.mkdir(parents=True, exist_ok=True)
+
+    if not await _abrir_popup_documentos_seq(page, seq):
+        return None
+
+    try:
+        async with page.expect_event("download", timeout=30000) as dl_info:
+            await page.click(_sel(command_link_id))
+        download = await dl_info.value
+        await download.save_as(str(destino))
+    except Exception:
+        await _fechar_popup_documentos(page)
+        return None
+
+    await _fechar_popup_documentos(page)
+
+    if destino.exists() and destino.stat().st_size > 0:
+        return destino
+    return None
+
+
 async def baixar_todos_arquivos(
     pasta_destino: Path,
     lista_arquivos: list[dict] | None = None,
@@ -2615,6 +2765,10 @@ async def baixar_todos_arquivos(
             "data": data,
             "nomeArq": nome_arq,
             "href": href,
+            # so' presente quando href e' o marcador sintetico 'sisdpu-commandlink:...'
+            # (ver extrair_documentos_movimentacoes.js) — usado pra clicar de
+            # verdade no elemento em vez de tentar um GET que nao existe.
+            "commandLinkId": doc.get("commandLinkId"),
         })
 
     docs = docs_normalizados
@@ -2691,6 +2845,30 @@ async def baixar_todos_arquivos(
 
             _log(f"[{idx}/{len(docs)}]   {nomeArq}")
 
+            # Documentos sem link de download direto (imagens via <p:commandLink>
+            # do PrimeFaces — ver extrair_documentos_movimentacoes.js) precisam
+            # de um clique de verdade + captura do evento `download`, nao um
+            # GET simples (que so' baixaria a propria pagina). Bifurca ANTES do
+            # fluxo httpx+servidor local de baixo, que so' serve pra URLs reais.
+            command_link_id = doc.get("commandLinkId")
+            if href.startswith("sisdpu-commandlink:") and command_link_id:
+                destino_path = pasta_destino / nome_para_post
+                resultado_click = await baixar_documento_via_commandlink(
+                    str(seq_real), command_link_id, destino_path
+                )
+                if resultado_click:
+                    tamanho = resultado_click.stat().st_size
+                    tam_str = (
+                        f"{tamanho / 1024:.1f} KB" if tamanho < 1024 * 1024
+                        else f"{tamanho / (1024 * 1024):.1f} MB"
+                    )
+                    _log(f"               ... Concluído    ✓ {tam_str} (clique)")
+                    baixados += 1
+                else:
+                    _log(f"               ... ERRO     ✗ falha ao clicar/capturar download")
+                    erros.append(f"{nomeArq}: falha no download via clique (sem link direto)")
+                continue
+
             # Se href estiver vazio, trata como erro
             if not href:
                 _log(f"               ... ERRO     ✗ href vazio")
@@ -2716,6 +2894,26 @@ async def baixar_todos_arquivos(
                     if tamanho == 0:
                         _log(f"               ... ERRO     ✗ vazio")
                         erros.append(f"{nomeArq}: arquivo vazio")
+                        continue
+
+                    # Proteção: alguns anexos (imagens via <p:commandLink> do
+                    # PrimeFaces, sem link de download direto — ver
+                    # extrair_documentos_movimentacoes.js) tem `href` quebrado
+                    # que aponta pra propria PAGINA do SISDPU em vez do
+                    # arquivo; um GET nela devolve HTTP 200 com HTML (a tela
+                    # de shell/login), nao o binario esperado — sem essa
+                    # checagem isso era salvo silenciosamente com a extensão
+                    # do nome esperado (ex: .jpeg), virando um arquivo
+                    # corrompido no disco. Detecta pelo Content-Type OU pela
+                    # assinatura dos primeiros bytes e recusa a gravar.
+                    ext_esperada = Path(nomeArq).suffix.lower()
+                    content_type = resp.headers.get("content-type", "").lower()
+                    parece_html = "text/html" in content_type or conteudo[:100].lstrip().lower().startswith(
+                        (b"<!doctype", b"<html", b"<?xml")
+                    )
+                    if parece_html and ext_esperada not in (".html", ".htm", ".xml"):
+                        _log(f"               ... ERRO     ✗ recebeu HTML em vez do arquivo (sem link de download direto)")
+                        erros.append(f"{nomeArq}: href não é um link de download direto (recebeu página HTML)")
                         continue
 
                     # Formata tamanho em KB/MB

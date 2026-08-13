@@ -561,6 +561,14 @@ def ler_paj(paj_norm: str) -> dict | None:
     sisdpu_raw = metadata.get("sisdpu_raw", {}) or {}
     narrativa = sisdpu_raw.get("narrativa", "")
 
+    # Assistidos PF vinculados ao PAJ — normalmente 1 (o titular), mas PAJs
+    # coletivos/familiares podem ter vários (ver sisdpu_client.py, extração da
+    # tabela "Assistido(s) Pessoa(s) Física:"). Cada item já vem com
+    # {idPessoa, nome, cpf, principal} — o principal é o único sem o ícone
+    # "Excluir este assistido" no SISDPU. Usado pela seção "Assistidos" da
+    # página do PAJ, que só aparece quando há mais de um.
+    assistidos_pf = sisdpu_raw.get("assistidos_pf") or []
+
     # id_processo / id_tramite: extraidos da URL de detalhamento gravada pelo sync
     # (sisdpu_client.movimentacoes_paj grava "url" em sisdpu_raw), no formato
     # ".../detalhamentoProcesso.xhtml?idTramite=NNN&caixaEntrada=true&id=NNN&tp=D".
@@ -604,6 +612,7 @@ def ler_paj(paj_norm: str) -> dict | None:
         "pecas_judiciais": pecas_judiciais,
         "pecas_geradas": despachos + pecas_judiciais,
         "anexos_sisdpu": anexos_sisdpu,
+        "assistidos_pf": assistidos_pf,
         "movimentacoes": movs_sorted,
         "max_seq_mov": max_seq_mov,
         "ultima_mov_data": ultima_mov.get("data", ""),

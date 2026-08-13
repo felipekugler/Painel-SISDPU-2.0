@@ -4,6 +4,8 @@
 - GET  /api/retornos/lista              — registros já sincronizados (store local).
 - GET  /api/retornos/sincronizar        — SSE: lê a caixa, filtra os retornos,
                                           detalha e analisa com a IA leve.
+- POST /api/retornos/atualizar          — reconciliação rápida (sem SSE): só remove
+                                          da lista quem já saiu da caixa.
 - POST /api/retornos/{id_tramite}/sugestao — salva a edição manual da sugestão.
 - GET  /api/retornos/{id_tramite}/ressincronizar-paj — refaz a leitura de UM PAJ
                                           no SISDPU (modo rápido) e atualiza o metadata.
@@ -59,6 +61,15 @@ async def sincronizar():
     Retorno', detalha cada um (movimentações + descrição integral) e dispara a IA
     leve (resumo + sugestão)."""
     return EventSourceResponse(_stream_sincronizar())
+
+
+@router.post("/api/retornos/atualizar", response_class=JSONResponse)
+async def api_atualizar():
+    """Reconciliação rápida (sem SSE, poucos segundos): remove do painel os retornos
+    cujo trâmite já saiu da caixa de entrada (concluídos/tramitados por fora). Não
+    sincroniza PAJs novos nem reanalisa — isso é papel do botão "Sincronizar". Mesmo
+    padrão do botão "Atualizar" do dashboard."""
+    return JSONResponse(await retornos_service.atualizar_caixa())
 
 
 @router.post("/api/retornos/{id_tramite}/sugestao", response_class=JSONResponse)

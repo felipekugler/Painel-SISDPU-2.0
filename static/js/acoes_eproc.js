@@ -363,7 +363,13 @@ function acoesEprocBlock(cfg) {
             } catch (e) { this.prazos = []; }
             finally { this.carregandoPrazos = false; }
         },
+        // Prioriza o rótulo OFICIAL do e-proc (`label`, montado no backend a partir
+        // da triagem MCP — mesmo texto que aparece na tela de peticionamento, ex.:
+        // "Expedida/certificada a intimação eletrônica - Sentença (21/07/2026
+        // 13:58:05) - Ref. Evento 22 - EVERALDO COLACO"). Sem casamento (processo
+        // sem triagem disponível), cai no formato aproximado antigo.
         prazoLabel(p) {
+            if (p.label) return p.label;
             return (p.evento || 'Evento não identificado')
                  + (p.prazo_dias ? (' — ' + p.prazo_dias + ' dias') : '')
                  + (p.data_final ? (' — final ' + p.data_final + (p.estimado ? ' (estim.)' : '')) : '');
@@ -661,34 +667,44 @@ function acoesEprocBlock(cfg) {
                         await this._prepararMovimentacaoSisdpu(refEvento);
                     }
                 }
+                // Atualiza a página INTEIRA depois de executar (pedido do usuário
+                // 2026-08-13) — garante que esta seção e qualquer outra aba do PAJ
+                // (movimentações, prazos, badges) reflitam o que acabou de ser feito,
+                // sem depender do usuário lembrar de dar F5. Pequeno atraso só pra
+                // deixar a mensagem final visível antes do reload.
+                setTimeout(() => window.location.reload(), 1200);
             } catch (e) {
                 this.execErro = 'Erro de rede: ' + e;
                 this.execEtapa = 'preparado';
             }
         },
-        // Monta o texto (IA, resumo curto) + anexo (a própria petição) e GRAVA
-        // direto como rascunho do "Ações no SISDPU" (mesma persistência do botão
-        // "Gravar" de lá — sobrevive a reload/fechar a aba, não depende do console
-        // do SISDPU estar montado agora). Só depois avisa via evento — pra reagir
-        // AO VIVO se o console já estiver na página (abrir e reler do disco), sem
-        // duplicar o formato dos dados em dois lugares. Best-effort: se a IA falhar
-        // no resumo, cai num texto determinístico (fase e anexo sempre entram).
+        // Monta a descrição da movimentação SÓ com dados OBJETIVOS do peticionamento
+        // — SEM IA (removida a pedido do usuário 2026-08-13: a geração por IA
+        // dependia do campo Petição estar preenchido com TEXTO, e falhava
+        // silenciosamente — caindo num texto genérico, sem avisar — sempre que a
+        // peça era um PDF pronto anexado em vez de texto digitado ali, como no caso
+        // real que motivou a troca). Nº do evento do protocolo + nome do evento
+        // lançado + conteúdo da Petição (se houver, convertido pra texto puro) +
+        // nome dos anexos (se houver).
+        _montarDescricaoPosPeticionamento(refEvento, nomesAnexos) {
+            const conteudoPeticao = htmlParaTextoSimples(this.peticaoEfetiva());
+            const linhas = ['Petição protocolada no e-proc'
+                + (refEvento ? (' — ' + refEvento) : '')
+                + (this.evento ? (' (' + this.evento + ')') : '') + '.'];
+            if (conteudoPeticao) linhas.push(conteudoPeticao);
+            if (nomesAnexos.length) linhas.push('Documentos anexados: ' + nomesAnexos.join(', ') + '.');
+            return linhas.join('\n\n');
+        },
+        // Monta a descrição (ver acima) + anexo (a própria petição) e GRAVA direto
+        // como rascunho do "Ações no SISDPU" (mesma persistência do botão "Gravar"
+        // de lá — sobrevive a reload/fechar a aba, não depende do console do SISDPU
+        // estar montado agora). Só depois avisa via evento — pra reagir AO VIVO se o
+        // console já estiver na página (abrir e reler do disco), sem duplicar o
+        // formato dos dados em dois lugares.
         async _prepararMovimentacaoSisdpu(refEvento) {
             const docs = (this.execResumo && this.execResumo.documentos) || [];
             const nomesAnexos = docs.map((d) => d.nome);
-            let descricaoTexto = 'Protocolada petição no e-proc' + (refEvento ? ' (' + refEvento + ')' : '') + '.'
-                + (nomesAnexos.length ? ' Documentos anexados: ' + nomesAnexos.join(', ') + '.' : '');
-            try {
-                const resp = await fetch('/api/acoes-eproc/resumo-pos-peticionamento', {
-                    method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({
-                        peticao_html: this.peticaoEfetiva(), anexos_nomes: nomesAnexos,
-                        evento_referencia: refEvento,
-                    }),
-                });
-                const j = await resp.json();
-                if (j.ok && j.resumo) descricaoTexto = j.resumo;
-            } catch (e) { /* mantém o texto determinístico */ }
+            const descricaoTexto = this._montarDescricaoPosPeticionamento(refEvento, nomesAnexos);
 
             // A petição em si (o documento cujo Tipo lembra "petição" — normalmente
             // o 1º, mas resolvido pelo Tipo pra não depender só da ordem) vem

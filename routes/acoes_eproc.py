@@ -35,9 +35,10 @@ async def api_preferencias():
 
 @router.get("/api/acoes-eproc/prazos", response_class=JSONResponse)
 async def api_prazos(processo: list[str] = Query(default=[])):
-    """Prazos abertos/pendentes (cache local de Prazos e-proc) dos processos
-    informados — alimenta o checkbox "Selecione o(s) prazo(s) a ser(em) fechado(s)"."""
-    return JSONResponse({"ok": True, "itens": acoes_eproc_service.listar_prazos(processo)})
+    """Prazos abertos/pendentes (cache local de Prazos e-proc, enriquecidos com o
+    rótulo oficial do e-proc via triagem MCP) dos processos informados — alimenta
+    o checkbox "Selecione o(s) prazo(s) a ser(em) fechado(s)"."""
+    return JSONResponse({"ok": True, "itens": await acoes_eproc_service.listar_prazos(processo)})
 
 
 @router.post("/api/acoes-eproc/comprimir-anexo", response_class=JSONResponse)
@@ -173,21 +174,4 @@ async def api_confirmar_peticionamento(paj_norm: str, request: Request):
     if not processo:
         return JSONResponse({"ok": False, "erro": "processo é obrigatório."}, status_code=400)
     res = await acoes_eproc_service.confirmar_peticionamento_real(paj_norm, processo)
-    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
-
-
-@router.post("/api/acoes-eproc/resumo-pos-peticionamento", response_class=JSONResponse)
-async def api_resumo_pos_peticionamento(request: Request):
-    """Depois de "Peticionar" confirmado com sucesso: gera (IA, rápido) o texto
-    de descrição pra pré-preencher a movimentação no "Ações no SISDPU" — resumo
-    objetivo da petição + documentos anexados + referência ao evento do e-proc.
-    Não toca em arquivo nem no e-proc/SISDPU — só texto."""
-    import asyncio
-
-    body = await request.json()
-    peticao_html = body.get("peticao_html") or ""
-    anexos_nomes = body.get("anexos_nomes") or []
-    evento_referencia = (body.get("evento_referencia") or "").strip()
-    res = await asyncio.to_thread(
-        peticao_ia_service.gerar_resumo_pos_peticionamento, peticao_html, anexos_nomes, evento_referencia)
     return JSONResponse(res, status_code=200 if res.get("ok") else 400)

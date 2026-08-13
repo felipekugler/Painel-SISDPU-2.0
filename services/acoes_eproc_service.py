@@ -248,38 +248,139 @@ async def comprimir_anexo(paj_norm: str, caminho: str) -> dict:
     return {"ok": True, "novos": novos}
 
 
-def listar_prazos(numeros_processo: list[str]) -> list[dict]:
-    """Prazos abertos/pendentes (cache de Prazos e-proc) para os processos informados —
-    alimenta o checkbox "Selecione o(s) prazo(s) a ser(em) fechado(s)" da seção Ações no
-    Eproc. Cada prazo vira um item com `id` estável (chave do checkbox), o processo a
-    que pertence, o evento que o gerou e a data final (real ou estimada). Vazio quando
-    nenhum dos processos aparece nas intimações já sincronizadas (ou a sincronização de
-    Prazos e-proc nunca rodou)."""
-    from ingestao import eproc_intimacoes
+def _so_data(s: str) -> str:
+    """Só o "dd/mm/aaaa" no início da string (ignora hora, se houver) — mesmo
+    recorte usado por `_soData()` em `processo_judicial.js` pra casar prazo do
+    Painel do Procurador com intimação da triagem MCP."""
+    m = re.match(r"(\d{2}/\d{2}/\d{4})", s or "")
+    return m.group(1) if m else ""
 
-    alvo = {_normalizar_num_processo(n) for n in (numeros_processo or []) if n}
+
+# Papéis que NUNCA são a parte representada pela DPU (perito, testemunha, terceiro)
+# — mesma lista de `_ehTerceiroNuncaDpu` em processo_judicial.js. Excluir é seguro
+# em qualquer caso (não é uma adivinhação de polo).
+_PAPEL_TERCEIRO = {"PERITO", "PERITA", "TESTEMUNHA", "TERCEIRO", "ASSISTENTE TECNICO", "ASSISTENTE TÉCNICO"}
+# Polos que a DPU tipicamente representa no Previdenciário (o segurado, contra o
+# INSS — sempre réu/requerido/executado/impetrado). A triagem MCP traz uma
+# intimação por PARTE do processo (autor E réu, com mesmo dia/prazo quando saem
+# juntas — ex. sentença) — sem essa preferência, casar só por dia+dias poderia
+# pegar a intimação do INSS em vez da do assistido. Usado só como DESEMPATE
+# quando há mais de um candidato pro mesmo dia+dias; não temos garantia de que a
+# DPU nunca representa o polo passivo, mas é a heurística certa pra este módulo.
+_PAPEL_POLO_ATIVO = {"AUTOR", "REQUERENTE", "IMPETRANTE", "EXEQUENTE", "RECLAMANTE", "RECORRENTE"}
+
+
+def _papel_de(parte_intimada: str) -> str:
+    return (parte_intimada or "").split(" - ", 1)[0].strip().upper()
+
+
+async def listar_prazos(numeros_processo: list[str]) -> list[dict]:
+    """Prazos abertos/pendentes (cache de Prazos e-proc, escopado ao MEU Painel do
+    Procurador — só intimações da DPU, nunca da parte contrária) para os processos
+    informados — alimenta o checkbox "Selecione o(s) prazo(s) a ser(em) fechado(s)"
+    da seção Ações no Eproc. Vazio quando nenhum dos processos aparece nas
+    intimações já sincronizadas (ou a sincronização de Prazos e-proc nunca rodou).
+
+    Usa `eproc_intimacoes.caso_e_prazos_mesclados()` — os prazos já vêm MESCLADOS/
+    deduplicados entre categorias do Painel (uma mesma intimação pode estar listada
+    em mais de uma categoria simultaneamente, ex. "pendente" e "pendente_urgente" ao
+    mesmo tempo). **Bug real corrigido 2026-08-13** (PAJ 2026/029-01734): antes,
+    somar prazos de TODAS as categorias sem dedup mostrava a MESMA intimação
+    duas vezes (3 prazos exibidos pra fechar quando só 2 existiam de fato).
+
+    Cada item ganha um `label` com o TEXTO OFICIAL do e-proc — mesmo padrão que
+    aparece na própria tela de peticionamento (usuário 2026-08-12), ex.:
+    "Expedida/certificada a intimação eletrônica - Sentença (21/07/2026 13:58:05)
+    - Ref. Evento 22 - EVERALDO COLACO". Isso vem da triagem MCP (`eproc_mcp_client
+    .triagem_processo`), que devolve por INTIMAÇÃO (não por processo) o `rotulo`
+    exato, o nº do próprio evento de intimação (`evento_intimacao` — não confundir
+    com o evento REFERENCIADO, ex. a Sentença) e a parte intimada com o papel na
+    frente ("AUTOR - Fulano"). A triagem traz TODAS as partes (inclusive a
+    contrária, ex. INSS) — por isso o casamento continua ancorado no Painel do
+    Procurador (só o que é da DPU), igual a `processo_judicial.js`: por processo,
+    casa cada prazo do Painel com a intimação da triagem de MESMO DIA de envio e
+    MESMO nº de dias (um-para-um, via `usadas`, evita casar duas vezes o mesmo
+    evento). Sem casamento (processo sem triagem disponível, ou nenhum evento
+    bate — ex. cache desatualizado), `label` fica vazio e o front cai no formato
+    aproximado antigo (evento + prazo + final)."""
+    from ingestao import eproc_intimacoes, eproc_mcp_client
+
+    alvo = [n for n in (numeros_processo or []) if n]
     if not alvo:
         return []
 
-    dados = eproc_intimacoes.carregar()
+    # 1 chamada por processo distinto, já mesclada/deduplicada entre categorias
+    # (mesma fonte usada por "Intimações pendentes" na página do PAJ).
+    por_processo: dict[str, dict] = {}  # num -> {"processo": str, "prazos": [...]}
+    for numero in alvo:
+        num = _normalizar_num_processo(numero)
+        if num in por_processo:
+            continue
+        m = eproc_intimacoes.caso_e_prazos_mesclados(numero)
+        if m.get("encontrado"):
+            por_processo[num] = {
+                "processo": (m.get("caso") or {}).get("processo") or numero,
+                "prazos": m.get("prazos") or [],
+            }
+    if not por_processo:
+        return []
+
+    # 1 triagem por PROCESSO distinto (não por prazo) — barata o bastante (só os
+    # processos deste PAJ, tipicamente 1).
+    triagens: dict[str, list[dict]] = {}
+    for num, entry in por_processo.items():
+        intimacoes: list[dict] = []
+        for instancia in (1, 2):
+            try:
+                res = await eproc_mcp_client.triagem_processo(entry["processo"], instancia=instancia)
+            except Exception:
+                res = None
+            if res and not res.get("erro"):
+                intimacoes = res.get("intimacoes") or []
+                break
+        triagens[num] = intimacoes
+
     itens: list[dict] = []
-    for categoria, casos in (dados.get("secoes") or {}).items():
-        for caso in casos:
-            num = _normalizar_num_processo(caso.get("processo", ""))
-            if num not in alvo:
-                continue
-            for idx, p in enumerate(caso.get("prazos") or []):
-                final_real = p.get("final_prazo") or ""
-                itens.append({
-                    "id": f"{num}:{categoria}:{idx}",
-                    "processo": caso.get("processo", ""),
-                    "categoria": categoria,
-                    "evento": p.get("evento", ""),
-                    "prazo_dias": p.get("prazo_dias", ""),
-                    "data_final": final_real or p.get("final_estimado") or "",
-                    "estimado": not bool(final_real),
-                    "urgente": bool(caso.get("urgente")),
-                })
+    for num, entry in por_processo.items():
+        intimacoes = triagens.get(num) or []
+        usadas: set[int] = set()
+        for idx, p in enumerate(entry["prazos"]):
+            dia_p = _so_data(p.get("data_envio", ""))
+            dias_p = str(p.get("prazo_dias") or "")
+            # Junta TODOS os candidatos do mesmo dia+dias (pode haver mais de um —
+            # ex. sentença intima autor E réu no mesmo evento/dia) e prefere o polo
+            # ativo (ver _PAPEL_POLO_ATIVO) — nunca escolhe pelo primeiro da lista.
+            candidatos = []
+            for i, it in enumerate(intimacoes):
+                if i in usadas or not it.get("ativa"):
+                    continue
+                papel = _papel_de(it.get("parte_intimada", ""))
+                if papel in _PAPEL_TERCEIRO:
+                    continue
+                if _so_data(it.get("data_hora", "")) != dia_p:
+                    continue
+                if dias_p and str(it.get("prazo_dias") or "") != dias_p:
+                    continue
+                candidatos.append((i, it, papel))
+            label = ""
+            if candidatos:
+                candidatos.sort(key=lambda c: 0 if c[2] in _PAPEL_POLO_ATIVO else 1)
+                i, it, _papel = candidatos[0]
+                usadas.add(i)
+                nome = (it.get("parte_intimada") or "").split(" - ", 1)
+                nome = nome[1] if len(nome) > 1 else nome[0]
+                label = (f'{it.get("rotulo", "")} ({it.get("data_hora", "")}) '
+                         f'- Ref. Evento {it.get("evento_intimacao", "")} - {nome}').strip()
+            final_real = p.get("final_prazo") or ""
+            itens.append({
+                "id": f"{num}:{idx}",
+                "processo": entry["processo"],
+                "evento": p.get("evento", ""),
+                "prazo_dias": p.get("prazo_dias", ""),
+                "data_final": final_real or p.get("final_estimado") or "",
+                "estimado": not bool(final_real),
+                "label": label,
+            })
     return itens
 
 
@@ -287,27 +388,27 @@ def resolver_prazo_por_id(prazo_id: str) -> dict | None:
     """Devolve o registro CRU do prazo (com `data_envio`, usado pra casar contra
     a triagem MCP — ver `peticao_ia_service`) + o `caso` (processo/assunto/
     partes) a que pertence. `prazo_id` é o formato de `listar_prazos`
-    (`"<numero_sem_pontuacao>:<categoria>:<indice>"`). None se não achar (cache
-    desatualizado desde a seleção do prazo na tela, p.ex.)."""
+    (`"<numero_sem_pontuacao>:<indice>"` — índice da lista MESCLADA/deduplicada
+    entre categorias, ver `eproc_intimacoes.caso_e_prazos_mesclados`). None se
+    não achar (cache desatualizado desde a seleção do prazo na tela, p.ex.)."""
     from ingestao import eproc_intimacoes
 
     partes = (prazo_id or "").split(":")
-    if len(partes) != 3:
+    if len(partes) != 2:
         return None
-    num_alvo, categoria, idx_str = partes
+    num_alvo, idx_str = partes
     try:
         idx = int(idx_str)
     except ValueError:
         return None
 
-    dados = eproc_intimacoes.carregar()
-    for caso in (dados.get("secoes") or {}).get(categoria, []):
-        if _normalizar_num_processo(caso.get("processo", "")) != num_alvo:
-            continue
-        prazos = caso.get("prazos") or []
-        if 0 <= idx < len(prazos):
-            return {"prazo": prazos[idx], "caso": caso}
-    return None
+    m = eproc_intimacoes.caso_e_prazos_mesclados(num_alvo)
+    if not m.get("encontrado"):
+        return None
+    prazos = m.get("prazos") or []
+    if not (0 <= idx < len(prazos)):
+        return None
+    return {"prazo": prazos[idx], "caso": m.get("caso") or {}}
 
 
 # --- "Executar no e-proc" (peticionamento real) -------------------------------
@@ -406,10 +507,19 @@ async def confirmar_peticionamento_real(paj_norm: str, processo: str) -> dict:
     """Clica "Peticionar" de fato na aba já preparada por `executar_peticionamento`
     — IRREVERSÍVEL, protocolo real na vara. Em caso de sucesso, descarta o
     rascunho (mesmo efeito de `excluir_rascunho` — não há mais o que retomar
-    depois de protocolado)."""
+    depois de protocolado).
+
+    Lê o `evento` do rascunho ANTES de descartá-lo e repassa a
+    `eproc_client.confirmar_peticionamento` — necessário pra identificar a
+    linha CERTA na tabela de eventos do e-proc quando o evento lançado dispara
+    um evento automático em cascata (ver docstring de `confirmar_peticionamento`,
+    bug real corrigido 2026-08-13: recurso inominado gerando sozinho a
+    intimação da contraparte pra contrarrazões, com nº de evento maior)."""
     from ingestao import eproc_client
 
-    res = await eproc_client.confirmar_peticionamento(processo)
+    rascunho = obter_rascunho(paj_norm) or {}
+    evento = (rascunho.get("evento") or "").strip()
+    res = await eproc_client.confirmar_peticionamento(processo, evento=evento)
     if res.get("ok") and res.get("provavel_sucesso"):
         excluir_rascunho(paj_norm)
     return res
