@@ -48,12 +48,28 @@ function acoesEprocBlock(cfg) {
         uidPeticao: 'qpet-' + Math.random().toString(36).slice(2, 9),
         _editorPeticao: null, quillPeticaoOk: true, _montandoEditorPeticao: false,
         docsPaj: [], docsCarregados: false,
+        // "Adicionar Petições IA" — mesma tabela/modal de "Adicionar do SISDPU",
+        // mas listando a subpasta "Peças IA" do PAJ (petições/peças geradas pela
+        // análise de pretensão) em vez de `Arquivos/` (ver listar_pecas_ia).
+        pecasIa: [], pecasIaCarregadas: false,
+        modalPecasIaAberto: false, modalPecasIaSelecionados: {},
         // tabela de anexos — itens numerados, adicionados um a um:
-        // {origem:'paj'|'upload'|'rascunho', docPajKey, docLabelCache, arquivo,
+        // {_id, origem:'paj'|'upload'|'rascunho', docPajKey, docLabelCache, arquivo,
         //  nomeArquivo, tipo, sigilo} — 'rascunho' é um "Externo" já persistido no
         // servidor (ver gravarRascunho/carregarRascunho): sobrevive a um reload,
         // diferente de 'upload' puro (só um `File` na memória da aba).
+        // `_id` é uma chave ESTÁVEL (nunca o índice `i` do array) pro `:key` do
+        // x-for da tabela — bug real 2026-08-19: com `:key="i"`, um `unshift()`
+        // (petição sempre entra no TOPO da lista — ver _inserirOuAtualizarAnexoPeticao)
+        // ou o reordenar ▲/▼ (moverAnexo) faz o Alpine REAPROVEITAR o <select> de
+        // "Tipo" que já existia noutra posição em vez de criar um novo — e como
+        // `x-init="$nextTick(...)"` só roda na criação do nó, o valor pré-selecionado
+        // (ex.: "PETIÇÃO") nunca chegava a aparecer no <select>, mesmo com o dado
+        // certo no anexo (mesma classe de bug de alpine-select-xmodel-xfor-race,
+        // aqui causada por reordenar/inserir no meio em vez de só carregar assíncrono).
         anexos: [],
+        _anexoIdSeq: 0,
+        _novoAnexoId() { this._anexoIdSeq += 1; return this._anexoIdSeq; },
         modalDocsAberto: false, modalSelecionados: {},
 
         // Rascunho ("Gravar" p/ peticionar mais tarde — ver "Petições pendentes")
@@ -71,6 +87,23 @@ function acoesEprocBlock(cfg) {
         eventosFav: [], eventosFreq: [], eventosTodos: [],
         tiposFav: [], tiposFreq: [], tiposTodos: [],
         sigilosTodos: [], sigiloPadrao: '',
+        procuradoresFav: [], procuradoresTodos: [],
+
+        // --- Gerenciamento do processo (substabelecimento) — SEMPRE a última coisa
+        // feita: só configurado aqui (persistido no rascunho, ver gravarRascunho()/
+        // carregarRascunho()); a pergunta Sim/Não de execução real acontece DEPOIS
+        // do peticionamento confirmado (ver confirmarPeticionamentoReal()), mesmo
+        // idioma já usado ali pra "Deseja movimentar o SISDPU agora?". Tipos são
+        // estáticos (mesma lista de `eproc_client.TIPOS_GERENCIAMENTO`); procurador
+        // destino vem das preferências (a lista institucional completa tem
+        // centenas de nomes — curadoria de favoritos em Configurações › e-proc).
+        gerenciarAtivo: false, gerenciarTipo: 'S', gerenciarProcuradorValor: '', gerenciarProcuradorRotulo: '',
+        tiposGerenciamento: [
+            { valor: 'S', rotulo: 'Substituir procurador' },
+            { valor: 'C', rotulo: 'Associar procurador' },
+            { valor: 'D', rotulo: 'Desassociar procurador' },
+            { valor: 'T', rotulo: 'Substituição Transitória' },
+        ],
 
         async init() {
             await this.carregarPreferencias();
@@ -95,10 +128,26 @@ function acoesEprocBlock(cfg) {
                 this.sigiloPadrao = j.sigilo_padrao
                     || this.sigilosTodos.find(s => /sem sigilo/i.test(s)) || '';
                 if (!this.evento) this.evento = j.evento_padrao || '';
+                this.procuradoresFav = j.procuradores_favoritos || [];
+                this.procuradoresTodos = j.procuradores_todos || [];
+                // Pré-preenche o procurador destino padrão (Configurações › e-proc) só se
+                // ainda não houver nada escolhido — carregarRascunho() roda DEPOIS e
+                // sobrescreve com o que foi de fato salvo, se houver rascunho.
+                if (!this.gerenciarProcuradorValor && j.procurador_padrao) {
+                    this.gerenciarProcuradorValor = j.procurador_padrao.valor || '';
+                    this.gerenciarProcuradorRotulo = j.procurador_padrao.rotulo || '';
+                }
             } catch (e) {}
         },
         eventosDropdown() { return this.eventosFav.length ? this.eventosFav : this.eventosTodos; },
         tiposDropdown() { return this.tiposFav.length ? this.tiposFav : this.tiposTodos; },
+        procuradoresDropdown() { return this.procuradoresFav.length ? this.procuradoresFav : this.procuradoresTodos; },
+        // Guarda o rótulo junto do valor (não dá pra recuperar só do `value` depois
+        // que o rascunho é descartado no servidor — ver `montar_resumo_execucao`).
+        onTrocarProcuradorDestino() {
+            const p = this.procuradoresDropdown().find(p => p.valor === this.gerenciarProcuradorValor);
+            this.gerenciarProcuradorRotulo = p ? p.rotulo : '';
+        },
         // tiposDropdown()/sigilosTodos priorizam favoritos (subconjunto curado) —
         // certo pra ESCOLHER um tipo novo, mas errado pra EXIBIR um anexo
         // restaurado do rascunho: se o tipo/sigilo salvo não é favorito, ele
@@ -170,7 +219,12 @@ function acoesEprocBlock(cfg) {
                 if (r.evento) this.evento = r.evento;
                 this.prazosSelecionados = r.prazos_selecionados || {};
                 this._peticaoHtmlRascunho = r.peticao_html || '';
-                this.anexos = (r.anexos || []).map((a) => ({ ...a, _comprimindo: false }));
+                this.anexos = (r.anexos || []).map((a) => ({ ...a, _id: this._novoAnexoId(), _comprimindo: false }));
+                const ger = r.gerenciamento || {};
+                this.gerenciarAtivo = !!ger.ativo;
+                this.gerenciarTipo = ger.tipo || 'S';
+                this.gerenciarProcuradorValor = ger.procurador_valor || '';
+                this.gerenciarProcuradorRotulo = ger.procurador_rotulo || '';
                 this.rascunhoSalvoEm = r.salvo_em || '';
             } catch (e) {}
         },
@@ -217,6 +271,12 @@ function acoesEprocBlock(cfg) {
                         peticao_html: this.peticaoEfetiva(),
                         prazos_selecionados: this.prazosSelecionados,
                         anexos,
+                        gerenciamento: {
+                            ativo: this.gerenciarAtivo,
+                            tipo: this.gerenciarTipo,
+                            procurador_valor: this.gerenciarTipo === 'D' ? '' : this.gerenciarProcuradorValor,
+                            procurador_rotulo: this.gerenciarTipo === 'D' ? '' : this.gerenciarProcuradorRotulo,
+                        },
                     }),
                 });
                 const j = await resp.json();
@@ -226,7 +286,7 @@ function acoesEprocBlock(cfg) {
                 // tela — evita reenviar o arquivo se "Gravar" for clicado de novo, e
                 // usa o link do servidor em vez do blob local (que pode expirar).
                 this.anexos = this.anexos.map((a) => (a.origem === 'upload' && a._rascunhoNome)
-                    ? { origem: 'rascunho', nomeArquivo: a._rascunhoNome,
+                    ? { _id: a._id, origem: 'rascunho', nomeArquivo: a._rascunhoNome,
                         docLabelCache: a.arquivo ? a.arquivo.name : a.docLabelCache,
                         tamanho: a._rascunhoTamanho || (a.arquivo ? a.arquivo.size : 0),
                         tipo: a.tipo, sigilo: a.sigilo, _comprimindo: false }
@@ -334,7 +394,7 @@ function acoesEprocBlock(cfg) {
             // leem a extensão do nome, não do campo `arquivo`; sem isso, o e-proc
             // "não reconhece o formato" mesmo o arquivo sendo um PDF de verdade.
             this.anexos.unshift({
-                origem: 'rascunho', nomeArquivo, docLabelCache: nomeArquivo,
+                _id: this._novoAnexoId(), origem: 'rascunho', nomeArquivo, docLabelCache: nomeArquivo,
                 tamanho: tamanho || 0, tipo: tipoPeticao, sigilo: semSigilo, _comprimindo: false,
             });
         },
@@ -383,6 +443,14 @@ function acoesEprocBlock(cfg) {
                     const d = await resp.json();
                     this.docsPaj = d.anexos_sisdpu || [];
                 }
+            } catch (e) {}
+        },
+        async carregarPecasIa() {
+            this.pecasIaCarregadas = true;
+            if (!this.pajNorm) return;
+            try {
+                const j = await (await fetch('/api/acoes-eproc/pecas-ia/' + encodeURIComponent(this.pajNorm))).json();
+                this.pecasIa = j.itens || [];
             } catch (e) {}
         },
         // `anexos_sisdpu` (mesma fonte da seção "Anexos SISDPU" da aba do PAJ):
@@ -515,7 +583,7 @@ function acoesEprocBlock(cfg) {
                 // comprimido, ou várias "partes" em sequência se ainda não coubesse) —
                 // preserva a ordem dos demais anexos (não empurra tudo pro fim da lista).
                 const novosItens = (j.novos || []).map(n => ({
-                    origem: 'paj', docPajKey: n.caminho, docLabelCache: n.nome, tamanho: n.tamanho,
+                    _id: this._novoAnexoId(), origem: 'paj', docPajKey: n.caminho, docLabelCache: n.nome, tamanho: n.tamanho,
                     arquivo: null, tipo: a.tipo, sigilo: a.sigilo, _comprimindo: false,
                 }));
                 const idxAtual = this.anexos.indexOf(a);
@@ -547,12 +615,40 @@ function acoesEprocBlock(cfg) {
                     // Tipo NUNCA vem pré-preenchido — é uma classificação do CONTEÚDO do
                     // documento (ex.: "CÁLCULOS", "ATESTADO MÉDICO"), não algo que dê pra
                     // adivinhar por um "favorito" genérico. Usuário sempre escolhe explícito.
-                    origem: 'paj', docPajKey: k, docLabelCache: this.docLabel(d), tamanho: d.tamanho || 0,
+                    _id: this._novoAnexoId(), origem: 'paj', docPajKey: k, docLabelCache: this.docLabel(d), tamanho: d.tamanho || 0,
                     arquivo: null, tipo: '', sigilo: this.sigiloPadraoEfetivo(),
                     _comprimindo: false,
                 });
             });
             this.modalDocsAberto = false;
+            if (rejeitados.length) {
+                alert('Formato não aceito pelo e-proc — não adicionado(s):\n' + rejeitados.join('\n'));
+            }
+        },
+
+        // --- modal "Adicionar Petições IA" (subpasta "Peças IA" do PAJ) ---
+        async abrirModalPecasIa() {
+            if (!this.pecasIaCarregadas) await this.carregarPecasIa();
+            this.modalPecasIaSelecionados = {};
+            this.modalPecasIaAberto = true;
+        },
+        fecharModalPecasIa() { this.modalPecasIaAberto = false; },
+        confirmarAdicaoPecasIa() {
+            const jaAdicionados = new Set(
+                this.anexos.filter(a => a.origem === 'paj').map(a => a.docPajKey));
+            const rejeitados = [];
+            this.pecasIa.forEach(d => {
+                const k = this.docKey(d);
+                if (!this.modalPecasIaSelecionados[k] || jaAdicionados.has(k)) return;
+                if (!this.formatoAceito(this.docLabel(d))) { rejeitados.push(this.docLabel(d)); return; }
+                this.anexos.push({
+                    // Tipo NUNCA vem pré-preenchido — mesmo motivo de confirmarAdicaoDocs.
+                    _id: this._novoAnexoId(), origem: 'paj', docPajKey: k, docLabelCache: this.docLabel(d), tamanho: d.tamanho || 0,
+                    arquivo: null, tipo: '', sigilo: this.sigiloPadraoEfetivo(),
+                    _comprimindo: false,
+                });
+            });
+            this.modalPecasIaAberto = false;
             if (rejeitados.length) {
                 alert('Formato não aceito pelo e-proc — não adicionado(s):\n' + rejeitados.join('\n'));
             }
@@ -573,7 +669,7 @@ function acoesEprocBlock(cfg) {
             arquivos.forEach(f => {
                 if (!this.formatoAceito(f.name)) { rejeitados.push(f.name); return; }
                 this.anexos.push({
-                    origem: 'upload', docPajKey: '', docLabelCache: '',
+                    _id: this._novoAnexoId(), origem: 'upload', docPajKey: '', docLabelCache: '',
                     arquivo: f, tipo: '', sigilo: this.sigiloPadraoEfetivo(),
                     _comprimindo: false,
                 });
@@ -606,12 +702,23 @@ function acoesEprocBlock(cfg) {
         // enviado, mesmo se a aba for recarregada entre os dois cliques).
         modalExecutarAberto: false, execEtapa: 'resumo', execResumo: null,
         execResultado: null, execErro: '',
+        // Resultado do Gerenciamento de Processo e da gravação da movimentação
+        // pendente no SISDPU — capturados aqui (em vez de só um alert() de
+        // passagem) pra aparecerem TODOS juntos no resumo final da etapa
+        // "confirmado", que só é exibida depois de as duas ações terem
+        // rodado (pedido do usuário 2026-08-19: a aba "Executar no e-proc"
+        // deve mostrar por último, já com tudo concluído, o que foi feito e
+        // se houve sucesso ou falha). null = nem chegou a ser oferecido
+        // (evento sem gerenciamento configurado / peticionamento sem sucesso);
+        // {pulado:true} = oferecido, mas o usuário respondeu Não.
+        execGerenciamento: null, execMovimentacaoSisdpu: null,
         async abrirModalExecutar() {
             if (!this.rascunhoSalvoEm) {
                 alert('Grave o rascunho ("Gravar") antes de executar — a execução real parte do que estiver salvo em disco.');
                 return;
             }
             this.execEtapa = 'resumo'; this.execResumo = null; this.execResultado = null; this.execErro = '';
+            this.execGerenciamento = null; this.execMovimentacaoSisdpu = null;
             this.modalExecutarAberto = true;
             try {
                 const j = await (await fetch('/api/acoes-eproc/executar/' + encodeURIComponent(this.pajNorm) + '/resumo')).json();
@@ -623,7 +730,15 @@ function acoesEprocBlock(cfg) {
         },
         fecharModalExecutar() {
             if (this.execEtapa === 'preparando' || this.execEtapa === 'confirmando') return; // não fecha em operação
+            const eraConfirmado = this.execEtapa === 'confirmado';
             this.modalExecutarAberto = false;
+            // A página só recarrega quando o usuário FECHA o modal por conta própria,
+            // depois de conferir o resumo final (peticionamento + gerenciamento +
+            // movimentação pendente no SISDPU) — antes recarregava sozinha 1.2s após
+            // "confirmado", o que apagava o resumo antes de dar tempo de ler, ainda
+            // mais agora que ele tem 3 partes (pedido do usuário 2026-08-19). Esta é a
+            // etapa de encerramento da execução — só ela dispara o reload.
+            if (eraConfirmado) window.location.reload();
         },
         // Etapa 1 — preenche de verdade a tela do e-proc (evento + anexos),
         // sem protocolar. Pode demorar (upload real de cada anexo).
@@ -653,26 +768,51 @@ function acoesEprocBlock(cfg) {
                 const j = await resp.json();
                 if (!j.ok) { this.execErro = j.erro || 'Falha ao peticionar.'; this.execEtapa = 'preparado'; return; }
                 this.execResultado = { ...this.execResultado, ...j };
-                this.execEtapa = 'confirmado';
                 if (j.provavel_sucesso) {
                     this.rascunhoSalvoEm = ''; // rascunho foi descartado no servidor
+                    const refEvento = j.numero_evento ? ('Evento ' + j.numero_evento) : '';
+                    // TODAS as ações no e-proc primeiro (peticionar, depois gerenciar/
+                    // substabelecer) — só ao final, com o processo já no estado
+                    // definitivo, é que perguntamos sobre registrar no SISDPU. Ordem
+                    // importa: gravar a movimentação do SISDPU antes de terminar as
+                    // ações no e-proc descreveria um ato ainda incompleto (pedido do
+                    // usuário 2026-08-17).
+                    const ger = (this.execResumo && this.execResumo.gerenciamento) || {};
+                    if (ger.ativo) {
+                        const tipoLabel = (this.tiposGerenciamento.find(t => t.valor === ger.tipo) || {}).rotulo || ger.tipo;
+                        const procTexto = ger.tipo === 'D' ? '' : ('\nProcurador destino: ' + (ger.procurador_rotulo || ger.procurador_valor || '(não selecionado)'));
+                        if (confirm('Petição protocolada com sucesso no e-proc'
+                                + (refEvento ? ' (' + refEvento + ').' : '.')
+                                + '\n\nGerenciar (substabelecer) este processo agora?\n\n'
+                                + 'Processo: ' + this.execResultado.processo
+                                + '\nTipo: ' + tipoLabel + procTexto
+                                + '\n\nEsta ação é IRREVERSÍVEL no e-proc.')) {
+                            this.execGerenciamento = { ...await this._executarGerenciamento(ger), tipoLabel };
+                        } else {
+                            this.execGerenciamento = { pulado: true };
+                        }
+                    }
                     // Pergunta se quer registrar o mesmo ato no SISDPU — nunca automático
                     // (movimentar cria um registro novo a cada execução, então só dispara
                     // com confirmação explícita do usuário, mesma cautela do próprio módulo
-                    // Ações no SISDPU ao executar).
-                    const refEvento = j.numero_evento ? ('Evento ' + j.numero_evento) : '';
-                    if (confirm('Petição protocolada com sucesso no e-proc'
-                            + (refEvento ? ' (' + refEvento + ').' : '.')
+                    // Ações no SISDPU ao executar). Sempre por ÚLTIMO — ver comentário acima.
+                    if (confirm('Todas as ações no e-proc foram concluídas.'
                             + '\n\nDeseja movimentar o SISDPU agora para registrar este ato?')) {
-                        await this._prepararMovimentacaoSisdpu(refEvento);
+                        this.execMovimentacaoSisdpu = await this._prepararMovimentacaoSisdpu(refEvento);
+                    } else {
+                        this.execMovimentacaoSisdpu = { pulado: true };
                     }
                 }
-                // Atualiza a página INTEIRA depois de executar (pedido do usuário
-                // 2026-08-13) — garante que esta seção e qualquer outra aba do PAJ
-                // (movimentações, prazos, badges) reflitam o que acabou de ser feito,
-                // sem depender do usuário lembrar de dar F5. Pequeno atraso só pra
-                // deixar a mensagem final visível antes do reload.
-                setTimeout(() => window.location.reload(), 1200);
+                // Etapa final do modal só agora — depois de peticionar, gerenciar (se
+                // configurado) e gravar a movimentação pendente no SISDPU (se aceito)
+                // já terem rodado, pra mostrar de uma vez só o que foi feito e se
+                // houve sucesso ou falha em cada ação (pedido do usuário 2026-08-19;
+                // antes esta etapa aparecia logo após peticionar, e as ações
+                // seguintes rodavam "por trás" dela via confirm()/alert() do navegador).
+                // A página só é atualizada (badges, prazos, movimentações) quando o
+                // usuário FECHA este modal — ver fecharModalExecutar() — não mais num
+                // timer automático, que apagava o resumo antes de dar tempo de ler.
+                this.execEtapa = 'confirmado';
             } catch (e) {
                 this.execErro = 'Erro de rede: ' + e;
                 this.execEtapa = 'preparado';
@@ -695,8 +835,8 @@ function acoesEprocBlock(cfg) {
             if (nomesAnexos.length) linhas.push('Documentos anexados: ' + nomesAnexos.join(', ') + '.');
             return linhas.join('\n\n');
         },
-        // Monta a descrição (ver acima) + anexo (a própria petição) e GRAVA direto
-        // como rascunho do "Ações no SISDPU" (mesma persistência do botão "Gravar"
+        // Monta a descrição (ver acima) + todos os documentos protocolados como
+        // anexo e GRAVA direto como rascunho do "Ações no SISDPU" (mesma persistência do botão "Gravar"
         // de lá — sobrevive a reload/fechar a aba, não depende do console do SISDPU
         // estar montado agora). Só depois avisa via evento — pra reagir AO VIVO se o
         // console já estiver na página (abrir e reler do disco), sem duplicar o
@@ -706,36 +846,88 @@ function acoesEprocBlock(cfg) {
             const nomesAnexos = docs.map((d) => d.nome);
             const descricaoTexto = this._montarDescricaoPosPeticionamento(refEvento, nomesAnexos);
 
-            // A petição em si (o documento cujo Tipo lembra "petição" — normalmente
-            // o 1º, mas resolvido pelo Tipo pra não depender só da ordem) vem
-            // pré-anexada na movimentação — os demais anexos (provas/documentos de
-            // apoio) NÃO se repetem aqui, já estão no e-proc; o SISDPU só precisa do
-            // registro da peça protocolada.
-            const peticaoDoc = docs.find((d) => this._normalizarTexto(d.tipo).includes('peticao')) || docs[0];
-            const anexosSisdpu = peticaoDoc ? [{
-                origem: 'paj', ref: peticaoDoc.nome, nome: peticaoDoc.nome, tamanho: peticaoDoc.tamanho || 0,
-                tipo: 'pdf', descricao: 'Petição', tipoArquivo: 'Petições',
-            }] : [];
+            // TODOS os documentos desta petição entram como anexo da movimentação no
+            // SISDPU, já com Tipo de Arquivo pré-estabelecido como "Petições" (pedido
+            // do usuário 2026-08-19 — antes só a petição em si entrava aqui; os
+            // demais, embora já protocolados no e-proc, ficavam de fora e exigiam
+            // reclassificar um por um se o usuário quisesse registrá-los também no
+            // SISDPU). Resolvido no SERVIDOR (preparar-anexos-sisdpu) porque um
+            // anexo "Externo" pode só existir na pasta de rascunhos de Ações no
+            // Eproc (fora da pasta do PAJ) — precisa ser copiado pra dentro dela
+            // antes de virar uma referência 'paj' válida pro SISDPU.
+            let anexosSisdpu = [];
+            try {
+                const respAnexos = await fetch('/api/acoes-eproc/preparar-anexos-sisdpu/' + encodeURIComponent(this.pajNorm), {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ documentos: docs }),
+                });
+                const jAnexos = await respAnexos.json();
+                if (jAnexos.ok) anexosSisdpu = jAnexos.anexos || [];
+            } catch (e) {}
             const descricaoHtml = '<p>' + descricaoTexto.replace(/\n+/g, '</p><p>') + '</p>';
+
+            // Fase da movimentação no SISDPU depende do evento lançado no e-proc: um
+            // ato de mera ciência (eventoSemAnexo — "Ciência, com renúncia ao prazo")
+            // é "Petição simples, De mera ciência ou por cota nos autos" no SISDPU,
+            // não "Petição diversa com conteúdo jurídico" (essa é só pra petição de
+            // conteúdo/mérito de verdade) — pedido do usuário 2026-08-19.
+            const faseMov = this.eventoSemAnexo()
+                ? 'Petição simples, De mera ciência ou por cota nos autos'
+                : 'Petição diversa com conteúdo jurídico';
 
             try {
                 const resp = await fetch('/api/acoes-sisdpu/rascunho/' + encodeURIComponent(this.pajNorm), {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
-                        paj_label: this.paj, fase: 'Petição diversa com conteúdo jurídico',
+                        paj_label: this.paj, fase: faseMov,
                         descricao_mov_html: descricaoHtml, anexos: anexosSisdpu,
                     }),
                 });
                 const j = await resp.json();
-                if (!j.ok) { alert('Falha ao gravar rascunho de movimentação no SISDPU: ' + (j.erro || 'erro desconhecido')); return; }
+                if (!j.ok) return { ok: false, mensagem: j.erro || 'Falha ao gravar rascunho de movimentação no SISDPU: erro desconhecido' };
             } catch (e) {
-                alert('Erro de rede gravando o rascunho de movimentação no SISDPU: ' + e);
-                return;
+                return { ok: false, mensagem: 'Erro de rede gravando o rascunho de movimentação no SISDPU: ' + e };
             }
             // Avisa o console "Ações no SISDPU" (se já estiver na página) pra se
             // abrir e reler o que acabou de ser gravado — sem carregar o payload
             // no próprio evento (fonte única: o rascunho no disco).
             window.dispatchEvent(new CustomEvent('eproc-peticionado', { detail: { pajNorm: this.pajNorm } }));
+            // "ok" aqui é só "o RASCUNHO da movimentação foi gravado com sucesso" —
+            // a movimentação em si ainda depende de "Executar no SISDPU" no console
+            // ao lado (ou na página, após o reload). O resumo final deixa isso claro
+            // (ver template do modal) pra não parecer que já foi executada de fato.
+            return { ok: true, fase: faseMov };
+        },
+
+        // Executa de fato o Gerenciamento de Processo (substabelecimento) — chamado
+        // só depois do Sim explícito em confirmarPeticionamentoReal(). IRREVERSÍVEL.
+        // Devolve um resultado estruturado (em vez de um alert() de passagem) — o
+        // resumo final da etapa "confirmado" mostra sucesso/falha/parcial de todas
+        // as ações desta petição juntas (pedido do usuário 2026-08-19).
+        async _executarGerenciamento(ger) {
+            try {
+                const resp = await fetch('/api/acoes-eproc/gerenciar', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        processo: this.execResultado.processo, tipo: ger.tipo,
+                        procurador_valor: ger.procurador_valor || '',
+                    }),
+                });
+                const j = await resp.json();
+                if (!j.ok) return { ok: false, mensagem: j.erro || 'erro desconhecido' };
+                // provavel_sucesso só é True se TODAS as partes marcadas mostrarem a
+                // mensagem exata "Procurador cadastrado com sucesso no(s) processo(s)"
+                // (checado por parte no backend — ver eproc_client.gerenciar_processo).
+                // Qualquer parte com mensagem diferente entra em partes_com_erro e
+                // precisa aparecer pro usuário, mesmo que outras partes do mesmo lote
+                // tenham dado certo — nunca mascarar erro parcial atrás de sucesso.
+                return {
+                    ok: true, provavel_sucesso: !!j.provavel_sucesso,
+                    partes_marcadas: j.partes_marcadas || [], partes_com_erro: j.partes_com_erro || [],
+                };
+            } catch (e) {
+                return { ok: false, mensagem: 'Erro de rede: ' + e };
+            }
         },
     };
 }

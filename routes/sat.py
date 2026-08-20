@@ -18,10 +18,17 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse
 from sse_starlette.sse import EventSourceResponse
 
 from ingestao import sisdpu_movtram as movtram
-from services import historico_sat, sat_service
+from services import cofre_service, historico_sat, sat_service
 
 with __import__("contextlib").suppress(Exception):
     from services import config_painel_service as _cfg  # preferências (favoritas/prazo)
+
+
+def _credenciais_sat() -> tuple[str, str]:
+    """(usuario, senha) do GERID do cofre unificado (sistema "sat"); ("","") se o
+    cofre estiver trancado ou sem credencial cadastrada — login fica manual."""
+    creds = cofre_service.get_credenciais("sat")
+    return creds if creds else ("", "")
 
 router = APIRouter()
 
@@ -69,16 +76,21 @@ async def api_del_manual(request: Request):
 
 @router.get("/api/sat/abrir", response_class=JSONResponse)
 async def api_sat_abrir():
-    """Abre a janela do SAT na tela para o login (usuário/senha/2FA/CAPTCHA)."""
+    """Abre a janela do SAT e tenta logar sozinho: usuário/senha do cofre
+    (sistema "sat") + 2FA (seed TOTP). Se o cofre estiver trancado/sem
+    credencial, login continua manual na janela; CAPTCHA é sempre manual."""
     from ingestao import sat_client
-    return JSONResponse(await sat_client.abrir())
+    usuario, senha = _credenciais_sat()
+    return JSONResponse(await sat_client.abrir(usuario=usuario, senha=senha))
 
 
 @router.get("/api/sat/sessao", response_class=JSONResponse)
 async def api_sat_sessao():
-    """Verifica se a sessão do SAT está pronta (logado, na página de consulta)."""
+    """Verifica se a sessão do SAT está pronta (logado, na página de consulta).
+    Também tenta logar sozinho (ver `/api/sat/abrir`)."""
     from ingestao import sat_client
-    return JSONResponse(await sat_client.status())
+    usuario, senha = _credenciais_sat()
+    return JSONResponse(await sat_client.status(usuario=usuario, senha=senha))
 
 
 @router.get("/api/sat/sessao-leve", response_class=JSONResponse)

@@ -43,8 +43,6 @@ from services.valor_causa_service import INSTRUCAO_VALOR_CAUSA
 
 # tipo -> {skill, label, palavras-chave da pretensão que pré-selecionam esse
 # tipo no dropdown "Analisar" da página do PAJ}.
-# Adicionar "bi" aqui (mesmo padrão) quando existir um playbook teses-dpu
-# dedicado a Benefício por Incapacidade (hoje só existe a área bpc-loas).
 #
 # "generica" (sem skill/palavras-chave): rota de diagnóstico SEM playbook de
 # área — usada quando a pretensão do PAJ não tem skill dedicada, OU quando o
@@ -63,6 +61,21 @@ CONFIG_TIPOS: dict[str, dict] = {
             "LOAS",
             "BENEFICIO ASSISTENCIAL",
             "PRESTACAO CONTINUADA",
+        ),
+    },
+    "bi": {
+        "skill": "SISDPU-AnalisarPAJ-BI",
+        "label": "Benefício por Incapacidade",
+        "palavras_pretensao": (
+            "AUXILIO-DOENCA",
+            "AUXILIO DOENCA",
+            "AUXILIO POR INCAPACIDADE",
+            "BENEFICIO POR INCAPACIDADE",
+            "INCAPACIDADE TEMPORARIA",
+            "APOSENTADORIA POR INVALIDEZ",
+            "APOSENTADORIA POR INCAPACIDADE PERMANENTE",
+            "AUXILIO-ACIDENTE",
+            "AUXILIO ACIDENTE",
         ),
     },
     "generica": {
@@ -141,21 +154,35 @@ def _persistir(paj_norm: str, session: ChatSession, tipo: str) -> None:
 
 def get_status(paj_norm: str) -> dict:
     sess = _sessions.get(paj_norm)
-    # NAO exigir sess.is_alive() aqui (mesmo padrao do `chat.py: /api/elaborar/
-    # status`, que so confia em session.status): is_alive() só vira True
-    # depois que o subprocess do Claude CLI é aberto em _start_subprocess(),
-    # mas iniciar() já marca session.status = "running" ANTES disso, durante o
-    # pré-processamento (OCR-LLM + regeneração do PROMPT_MAX, que pode levar
-    # dezenas de segundos em PAJs com muitos anexos). Exigir is_alive() fazia
-    # o status "vazar" de volta pra "idle" nesse intervalo — o polling do
-    # frontend via fetchStatus() sincronizava com esse falso "idle" e o
-    # usuário via a análise "desaparecer" logo após clicar em Analisar BPC.
-    if sess and sess.status == "running":
+    # Confia na sessao em memoria sempre que ela existir — qualquer status
+    # (running/done/error), nao so "running" (mesmo padrao do
+    # `chat.py: /api/elaborar/status`, que tambem nunca cai pro disco enquanto
+    # a sessao em memoria existe).
+    #
+    # Ate aqui so retornava direto da sessao quando "running" — e' o motivo do
+    # comentario antigo sobre nao exigir is_alive() (is_alive() so vira True
+    # depois que o subprocess abre em _start_subprocess(), mas iniciar() ja
+    # marca "running" antes disso, durante o pre-processamento OCR-LLM/
+    # PROMPT_MAX). Mas isso deixava uma race MAIOR e mais grave: ao concluir,
+    # a THREAD LEITORA do subprocess marca sess.status = "done" IMEDIATAMENTE
+    # (dentro de _parse_event, ao processar o evento "result"); quem grava
+    # analise_pretensao.json no disco e' a thread controladora (_run ->
+    # _aguardar_conclusao, que so' percebe a mudanca no proximo polling —
+    # granularidade de ate 0.5s — e so' ENTAO chama _persistir()). Nessa
+    # janela, o status ja nao era "running" (pulava o `if` antigo) e o
+    # arquivo ainda nao existia no disco (pulava o `ler_disco` abaixo) —
+    # caia no fallback "idle". O polling do frontend (fetchStatus a cada 2s)
+    # via esse "idle" fantasma, parava de acompanhar (analise_pretensao.js so
+    # recarrega a pagina quando status === "done") e NUNCA recarregava — a
+    # analise ficava com cara de "falha silenciosa" mesmo tendo terminado com
+    # sucesso. Confiar sempre na sessao em memoria (enquanto ela existir)
+    # fecha essa janela.
+    if sess:
         return {
-            "status": "running",
+            "status": sess.status,
             "last_action": sess.last_action,
             "summary": sess.summary,
-            "error": "",
+            "error": sess.error,
             "tipo": getattr(sess, "_tipo_analise", ""),
         }
     disco = ler_disco(paj_norm)
@@ -277,6 +304,25 @@ _INSTRUCAO_DIAGNOSTICO_GENERICO = (
 )
 
 
+# O painel captura e exibe TODO texto que o Claude emite durante o turno —
+# inclusive comentários de passagem entre uma leitura de anexo e outra (ex.:
+# "Let me first confirm the folder structure...") — não só a resposta final
+# (ver chat_service._parse_event: todo text_delta do turno vai pro mesmo
+# buffer `accumulated_text`, que vira `session.summary` e é renderizado
+# inteiro na seção "Análise feita pela IA"). Sem instrução explícita, essa
+# narração de passagem tende a sair em inglês mesmo com o restante da
+# instrução em português (visto ao vivo: PAJ 2026/029-02299, narração em
+# inglês antes do parecer em português) — por isso reforçamos aqui.
+_INSTRUCAO_IDIOMA = (
+    "IMPORTANTE sobre idioma: toda a sua comunicação nesta tarefa deve ser em "
+    "português do Brasil — inclusive comentários breves de passagem entre uma "
+    "leitura de anexo/ferramenta e outra (ex.: \"vou ler os documentos "
+    "médicos agora\"). Não narre nem pense em voz alta em inglês em nenhum "
+    "momento; toda essa narração é exibida ao Defensor exatamente como "
+    "escrita.\n\n"
+)
+
+
 def _montar_instrucao_diagnostico(paj_norm: str, skill_slug: str, prompt_max: str) -> str:
     pasta = PAJS_DIR / paj_norm
     prompt_max_limpo = prompt_max.replace(_TRAILER_GENERICO_PROMPT_MAX, "").rstrip()
@@ -293,6 +339,7 @@ def _montar_instrucao_diagnostico(paj_norm: str, skill_slug: str, prompt_max: st
         abertura = _INSTRUCAO_DIAGNOSTICO_GENERICO
     return (
         abertura
+        + _INSTRUCAO_IDIOMA
         + "IMPORTANTE sobre a fonte dos dados: use o CONTEXTO DO PAJ anexado abaixo "
         "(dados colados diretamente) — NÃO abra o SISDPU no navegador nem procure "
         "'Referencia PAJ.md' em C:\\Claude\\DPU\\PREV4\\; os dados já estão "

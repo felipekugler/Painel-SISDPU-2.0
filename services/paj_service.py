@@ -199,6 +199,11 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
         def _sigla_of(x):
             return x
 
+    # Badge "PI" (petição inicial minutada pela IA) da coluna Análise —
+    # mesma checagem que já habilita o botão "Organizar Documentos para
+    # Ajuizamento" na página do PAJ (ver services/organizar_ajuizamento_service).
+    from services.organizar_ajuizamento_service import tem_peticao_inicial as _tem_peticao_inicial
+
     ativos: list[dict] = []
     concluidos: list[dict] = []
 
@@ -343,6 +348,10 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
                 isinstance(_ap := _ler_json(pasta / "analise_pretensao.json"), dict)
                 and _ap.get("status") == "done"
             ),
+            # Badge "PI" da coluna Análise — já existe petição inicial
+            # minutada pela IA na pasta (Peças IA/ ou raiz do PAJ, mesma
+            # checagem do botão "Organizar Documentos para Ajuizamento").
+            "tem_peticao_inicial": _tem_peticao_inicial(paj_norm),
             # Estado atual usado pelo frontend pra detectar novidades desde a
             # ultima visita (snapshot guardado em localStorage). Vide
             # static/js/app.js -> calcularNovidades().
@@ -681,6 +690,11 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
     PAJs abertos direto pela própria página (não pelo store da aba Retornos).
     `resultado` é o payload enriquecido que `acoesSisdpuBlock.onExecutado`
     devolve (ok/status/concluido/tramitado_para/fase/descricao_mov_texto/...).
+
+    `resultado["concluidos"]` (lista, NOVO): ids de trâmite concluídos agora OU já
+    ausentes nesta execução — cobre a seleção de 1 a N tramitações da caixa direto
+    no console "Ações no SISDPU" da página do PAJ. Sem essa lista (chamador legado,
+    ex.: Retornos), cai no fallback singular `resultado["idTramite"]`.
     """
     pasta = PAJS_DIR / paj_norm
     meta_path = pasta / "metadata.json"
@@ -724,19 +738,30 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
     saiu_da_caixa = False
     outros_tramites_abertos = 0
     if concluido or ja_ausente:
-        id_tramite_concluido = str((resultado or {}).get("idTramite") or "").strip()
+        # "concluidos" (NOVO — lista): ids concluídos agora OU já ausentes nesta
+        # execução, devolvidos por acoes_sisdpu_service.executar_stream — cobre
+        # tanto 1 quanto N trâmites selecionados de uma vez na página do PAJ.
+        # "idTramite" (singular) é o fallback pro par legado (ex.: Retornos, cujo
+        # trâmite fica fora de tramitacoes_caixa e nunca manda a lista).
+        concluidos_raw = (resultado or {}).get("concluidos")
+        if isinstance(concluidos_raw, list) and concluidos_raw:
+            ids_concluidos = [str(i).strip() for i in concluidos_raw if str(i).strip()]
+        else:
+            id_tramite_concluido = str((resultado or {}).get("idTramite") or "").strip()
+            ids_concluidos = [id_tramite_concluido] if id_tramite_concluido else []
         tramitacoes_caixa = metadata.get("tramitacoes_caixa")
 
         if tramitacoes_caixa is not None:
             # Modelo novo: a lista já é escopada à MINHA caixa (ver
-            # ingestao.sincronizador._atualizar_tramitacoes_caixa) — remover o
-            # id concluído dali é suficiente, sem precisar de nova consulta ao
-            # vivo. Sem id_tramite informado (ex.: chamada antiga), não
-            # arrisca remover o item errado — não decide.
-            if id_tramite_concluido:
+            # ingestao.sincronizador._atualizar_tramitacoes_caixa) — remover os
+            # ids concluídos dali é suficiente, sem precisar de nova consulta ao
+            # vivo. Sem nenhum id informado (ex.: chamada antiga), não arrisca
+            # remover o item errado — não decide.
+            if ids_concluidos:
+                ids_set = set(ids_concluidos)
                 restantes = [
                     t for t in tramitacoes_caixa
-                    if str(t.get("id_tramite") or "").strip() != id_tramite_concluido
+                    if str(t.get("id_tramite") or "").strip() not in ids_set
                 ]
                 outros_tramites_abertos = len(restantes)
                 metadata["tramitacoes_caixa"] = restantes

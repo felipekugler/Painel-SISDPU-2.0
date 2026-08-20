@@ -510,17 +510,47 @@ async def movimentar_paj(
     await page.wait_for_timeout(900)
     body = await page.evaluate("()=>document.body.innerText||''")
     ok = bool(re.search(r"gravad[oa] com sucesso", body, re.I))
-    for d in await _dialogos_visiveis(page):
-        if "tramitar" in _norm_nome(d.get("msg", "")).lower():
+    # Diálogos de confirmação em SEQUÊNCIA depois do registro — o 2º só aparece
+    # depois de responder o 1º, por isso o laço relê `_dialogos_visiveis` a cada
+    # volta em vez de tratar só o primeiro encontrado. Confirmado ao vivo em
+    # 2026-08-19 (arquivamento real do PAJ 2025/029-01184, fase "Arquivado.
+    # Processo extinto por questões processuais"):
+    #   1) "Cadastrar Honorário" — "Deseja cadastrar honorário?" — só aparece em
+    #      fases de ARQUIVAMENTO. SEMPRE "Não" aqui (decisão explícita do usuário:
+    #      o cadastro de honorário, quando cabível, é feito à parte, fora deste
+    #      fluxo automatizado de movimentação).
+    #   2) "Tramitar processo(s)" — já tratado abaixo (padrão anterior a esta
+    #      mudança) — sempre "Não" (tramitação é ação própria e independente).
+    for _ in range(3):  # 2 diálogos conhecidos + 1 de folga
+        dlgs = await _dialogos_visiveis(page)
+        if not dlgs:
+            break
+        msg_norm = _norm_nome(dlgs[0].get("msg", "")).lower()
+        if "honorario" in msg_norm:
+            with contextlib.suppress(Exception):
+                await page.locator(f'#{dlgs[0].get("id", "")} button', has_text="Não").first.click(timeout=5000)
+                await _wait_pf_ajax(page)
+                await page.wait_for_timeout(600)
+            continue
+        if "tramitar" in msg_norm:
             with contextlib.suppress(Exception):
                 await page.locator(_sel(f"{_MOV_FORM}:confirmDialogTramitacao") + ' button', has_text="Não").first.click()
                 await page.wait_for_timeout(600)
             break
+        break  # diálogo desconhecido — não arrisca clicar; segue pro log final
     if not ok and "detalhamentoProcesso" in page.url:
         ok = True
     detalhe = "Movimentação registrada com sucesso." if ok else "Não confirmei a movimentação (sem growl de sucesso)."
     if anexados:
         detalhe += f" Anexos: {len(anexados)}."
+    # Sinal extra específico de ARQUIVAMENTO: o cabeçalho do PAJ passa a mostrar
+    # "<PAJ> - PAJ Arquivado" (em vermelho na tela) — checagem adicional barata,
+    # só quando a fase escolhida já indicava arquivamento.
+    if ok and fase.strip().lower().startswith("arquivado"):
+        with contextlib.suppress(Exception):
+            body_final = await page.evaluate("()=>document.body.innerText||''")
+            if "paj arquivado" in body_final.lower():
+                detalhe += " · PAJ arquivado."
     mov_seq = await _ler_seq_mov(page, pajs[0]["id"]) if ok else None
     if ok and mov_seq is not None:
         detalhe += f" · Mov {mov_seq}"
@@ -850,6 +880,7 @@ _JS_HISTORICO_TRAMITACOES = r"""() => {
     const iRem   = ths.findIndex(h => /remetente/i.test(h));
     const iData  = ths.findIndex(h => /tr[âa]mite/i.test(h));
     const iDesc  = ths.findIndex(h => /descri/i.test(h));
+    const iPrazo = ths.findIndex(h => /prazo/i.test(h));
     if (iConcl < 0 || (iGrupo < 0 && iDest < 0)) continue;
     const todas = [];
     for (const tr of t.querySelectorAll('tbody tr')) {
@@ -862,7 +893,7 @@ _JS_HISTORICO_TRAMITACOES = r"""() => {
       const dataTxt = cell(iData);
       todas.push({ local, grupo, destinatario: dest, remetente: cell(iRem),
                    data: dataTxt, descricao: cell(iDesc), conclusao: cell(iConcl),
-                   _ts: parseData(dataTxt) });
+                   prazo: cell(iPrazo), _ts: parseData(dataTxt) });
     }
     todas.sort((a, b) => b._ts - a._ts);
     return todas.map(({ _ts, ...r }) => r);

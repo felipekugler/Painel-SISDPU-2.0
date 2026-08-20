@@ -19,14 +19,17 @@
                     <!-- Número -->
                     <div class="flex items-center gap-1 flex-1 min-w-[12rem]">
                         <span class="text-xs text-base-content/50">Processo:</span>
-                        <div class="dropdown">
-                            <div tabindex="0" role="button" class="link font-mono font-semibold text-sm"
-                                 title="Escolher onde consultar o processo" x-text="p.processo_judicial"></div>
-                            <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-52 p-1 shadow border border-base-300">
-                                <li><a @click="consultarProcessoMcp(p.processo_judicial)">Consultar processo (MCP)</a></li>
-                                <li><a @click="abrirProcessoNavegador(p.processo_judicial, $event.target)">Abrir no navegador</a></li>
-                            </ul>
-                        </div>
+                        <!-- Minimenu reposicionado via posMenu (ver menu teleportado no fim do
+                             partial) — o dropdown nativo do daisyUI ficava cortado pelo
+                             overflow:hidden do card .collapse. -->
+                        <button type="button" class="link font-mono font-semibold text-sm"
+                                title="Escolher onde consultar o processo"
+                                @click.stop="menuAbertoProc = (menuAbertoProc === p.processo_judicial ? null : p.processo_judicial);
+                                             if (menuAbertoProc === p.processo_judicial) {
+                                                 const rect = $el.getBoundingClientRect();
+                                                 posMenu = { top: rect.bottom, left: rect.left };
+                                             }"
+                                x-text="p.processo_judicial"></button>
                         <button class="btn btn-ghost btn-xs p-1 h-auto hover:bg-base-200"
                                 @click="navigator.clipboard.writeText(p.processo_judicial); copied_proc = true; setTimeout(() => copied_proc = false, 2000)"
                                 :title="copied_proc ? 'Copiado!' : 'Copiar número do processo'"
@@ -213,3 +216,16 @@
         </div>
     </div>
 </div>
+
+<!-- Menu global único (processo): sempre o mesmo elemento, reposicionado por
+     clique — teleportado pro <body> pra escapar do overflow:hidden do card
+     .collapse (mesmo padrão de prazos.html/historico.html/sat.html/watchlist.html). -->
+<template x-teleport="body">
+    <ul x-show="menuAbertoProc !== null" x-cloak
+        @click.outside="menuAbertoProc = null"
+        :style="'position:fixed; top:' + posMenu.top + 'px; left:' + posMenu.left + 'px;'"
+        class="menu menu-xs bg-base-100 rounded-box z-[1000] w-52 p-1 shadow border border-base-300">
+        <li><a @click.stop="consultarProcessoMcp(menuAbertoProc); menuAbertoProc = null">Consultar processo (MCP)</a></li>
+        <li><a @click.stop="abrirProcessoNavegador(menuAbertoProc, $event.target); menuAbertoProc = null">Abrir no navegador</a></li>
+    </ul>
+</template>

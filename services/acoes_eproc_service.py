@@ -198,6 +198,21 @@ async def importar_sigilos(numero_processo: str) -> dict:
     return {"ok": True, "n_sigilos": len(res.get("sigilos", [])), "prefs": prefs}
 
 
+def listar_pecas_ia(paj_norm: str) -> list[dict]:
+    """Arquivos da subpasta "Peças IA" do PAJ (petições/peças geradas pela análise
+    de pretensão — services/analise_pretensao_service.py) — alimenta o modal
+    "Adicionar Petições IA" em Ações no Eproc, mesmo padrão de "Adicionar do
+    SISDPU" (anexos_sisdpu). Reaproveita `paj_service.ler_paj()`, que já separa
+    "Peças IA/" do resto de `pecas_geradas` pelo prefixo do `caminho` — sem
+    escanear a pasta de novo aqui."""
+    from services.paj_service import ler_paj
+
+    dados = ler_paj(paj_norm)
+    if not dados:
+        return []
+    return [p for p in (dados.get("pecas_geradas") or []) if (p.get("caminho") or "").startswith("Peças IA/")]
+
+
 async def comprimir_anexo(paj_norm: str, caminho: str) -> dict:
     """Comprime/divide um anexo em PDF de um PAJ, reaproveitando o SCRIPT da skill
     global `/PDF-Comprimir_Dividir` (`compress_split.py`: reduz DPI/qualidade JPEG e,
@@ -256,10 +271,14 @@ def _so_data(s: str) -> str:
     return m.group(1) if m else ""
 
 
-# Papéis que NUNCA são a parte representada pela DPU (perito, testemunha, terceiro)
-# — mesma lista de `_ehTerceiroNuncaDpu` em processo_judicial.js. Excluir é seguro
-# em qualquer caso (não é uma adivinhação de polo).
-_PAPEL_TERCEIRO = {"PERITO", "PERITA", "TESTEMUNHA", "TERCEIRO", "ASSISTENTE TECNICO", "ASSISTENTE TÉCNICO"}
+# Papéis que NUNCA são a parte representada pela DPU (perito, testemunha, terceiro,
+# MPF, unidade externa, agência da previdência) — mesma lista de
+# `_ehTerceiroNuncaDpu` em processo_judicial.js (sincronizada 2026-08-18 depois de
+# um caso real em que a intimação do MPF foi escolhida por engano como rótulo de
+# um prazo do Painel do Procurador — PAJ 2024/029-01535). Excluir é seguro em
+# qualquer caso (não é uma adivinhação de polo).
+_PAPEL_TERCEIRO = {"PERITO", "PERITA", "TESTEMUNHA", "TERCEIRO", "ASSISTENTE TECNICO", "ASSISTENTE TÉCNICO",
+                   "MPF", "UNIDADE EXTERNA", "AGÊNCIA DA PREVIDÊNCIA SOCIAL", "AGENCIA DA PREVIDENCIA SOCIAL"}
 # Polos que a DPU tipicamente representa no Previdenciário (o segurado, contra o
 # INSS — sempre réu/requerido/executado/impetrado). A triagem MCP traz uma
 # intimação por PARTE do processo (autor E réu, com mesmo dia/prazo quando saem
@@ -444,13 +463,89 @@ def _caminho_anexo(paj_norm: str, anexo: dict) -> Path | None:
     return None
 
 
-def montar_resumo_execucao(paj_norm: str) -> dict:
+def _anexo_relativo_ao_paj(paj_norm: str, caminho_absoluto: str) -> str | None:
+    """Caminho relativo à pasta do PAJ (resolvível por `paj_service.ler_arquivo`/
+    `/files/<paj>/<caminho>`) se `caminho_absoluto` já estiver DENTRO dela —
+    None se estiver fora (ex.: anexo "Externo" salvo só na pasta de rascunhos
+    de Ações no Eproc, `dados/acoes_eproc_rascunhos/`, fora de `PAJS_DIR`)."""
+    pasta_paj = (Path(config.PAJS_DIR) / paj_norm).resolve()
+    p = Path(caminho_absoluto).resolve()
+    try:
+        return str(p.relative_to(pasta_paj)).replace("\\", "/")
+    except ValueError:
+        return None
+
+
+# Subpasta dedicada, DENTRO da pasta do PAJ, para onde um anexo "Externo" da
+# petição (só existia na pasta de rascunhos de Ações no Eproc até aqui) é
+# copiado antes de virar uma referência 'paj' válida pro SISDPU — ver
+# `preparar_documentos_para_movimentacao_sisdpu`.
+_PASTA_ANEXOS_EPROC_NO_PAJ = "Anexos e-proc"
+
+
+def preparar_documentos_para_movimentacao_sisdpu(paj_norm: str, documentos: list[dict]) -> list[dict]:
+    """Monta a lista de anexos pronta pra "Anexos da movimentação" de Ações no
+    SISDPU a partir dos documentos JÁ PROTOCOLADOS numa petição do e-proc (ver
+    `montar_resumo_execucao` -> `documentos`, cada um com `caminho` ABSOLUTO já
+    resolvido — capturado em memória pelo front ANTES de confirmar o
+    peticionamento, porque o rascunho de Ações no Eproc já foi descartado a
+    esta altura).
+
+    TODOS os documentos desta petição entram, cada um com Tipo de Arquivo
+    pré-estabelecido como "Petições" (pedido do usuário 2026-08-19 — antes só
+    a petição em si entrava aqui; os demais anexos, embora já protocolados no
+    e-proc, ficavam de fora e o usuário tinha que reclassificar um por um se
+    quisesse registrá-los também no SISDPU).
+
+    Cada documento vira uma referência 'paj' (caminho relativo dentro da pasta
+    do PAJ) — a maioria já mora lá (Arquivos/, Peças IA/, ou a própria raiz, no
+    caso da petição gerada por IA). Um anexo "Externo" que só existia na pasta
+    de rascunhos de Ações no Eproc (fora de `PAJS_DIR`) é COPIADO pra dentro da
+    pasta do PAJ (subpasta "Anexos e-proc") antes — sem isso, o `ref` não
+    resolveria e `acoes_sisdpu_service.executar_stream` descartaria o anexo
+    EM SILÊNCIO na hora de executar."""
+    resultado: list[dict] = []
+    for doc in documentos or []:
+        caminho_abs = doc.get("caminho") or ""
+        if not caminho_abs:
+            continue
+        nome = doc.get("nome") or Path(caminho_abs).name
+        rel = _anexo_relativo_ao_paj(paj_norm, caminho_abs)
+        if rel is None:
+            origem_arquivo = Path(caminho_abs)
+            if not origem_arquivo.exists():
+                continue
+            pasta_destino = Path(config.PAJS_DIR) / paj_norm / _PASTA_ANEXOS_EPROC_NO_PAJ
+            pasta_destino.mkdir(parents=True, exist_ok=True)
+            destino = pasta_destino / origem_arquivo.name
+            # Sempre sobrescreve (nunca reaproveita um destino já existente) — o
+            # nome sozinho não garante mesmo conteúdo entre petições diferentes
+            # (ex.: duas provas homônimas "documento.pdf" em datas distintas);
+            # a fonte aqui É o documento recém-protocolado, sempre a verdade.
+            shutil.copyfile(origem_arquivo, destino)
+            rel = f"{_PASTA_ANEXOS_EPROC_NO_PAJ}/{destino.name}"
+        resultado.append({
+            "origem": "paj", "ref": rel, "nome": nome, "tamanho": doc.get("tamanho") or 0,
+            "descricao": nome, "tipoArquivo": "Petições",
+        })
+    return resultado
+
+
+async def montar_resumo_execucao(paj_norm: str) -> dict:
     """Resolve o rascunho salvo do PAJ num resumo pronto pra revisão do usuário
-    ANTES de preparar de verdade no e-proc — evento, processo e a lista de
+    ANTES de preparar de verdade no e-proc — evento, processo, a lista de
     anexos que serão de fato enviados (já excluindo os ignorados por
-    `eventoSemAnexo`), cada um com o caminho em disco resolvido. Erro claro se
-    o rascunho não existir, o processo/evento estiver vazio, ou algum anexo não
-    for encontrado em disco (arquivo movido/apagado desde que foi adicionado)."""
+    `eventoSemAnexo`), cada um com o caminho em disco resolvido, e os PRAZOS
+    marcados no checkbox "Selecione o(s) prazo(s)..." do Painel (rótulo oficial
+    do e-proc, mesmo formato usado pela tela real "Movimentar/Peticionar" —
+    ver `eproc_client._marcar_prazos_fechar`). Erro claro se o rascunho não
+    existir, o processo/evento estiver vazio, ou algum anexo não for
+    encontrado em disco (arquivo movido/apagado desde que foi adicionado).
+
+    Prazo selecionado no rascunho que não resolve mais pra um `label` (cache
+    de Prazos e-proc desatualizado desde a seleção, ou o prazo já fechou)
+    entra em `prazos_nao_resolvidos` — não é omitido silenciosamente, o
+    chamador decide o que fazer (o front mostra aviso antes de "Preparar")."""
     rascunho = obter_rascunho(paj_norm)
     if not rascunho:
         return {"ok": False, "erro": "Nenhum rascunho salvo para este PAJ — grave o rascunho antes de executar."}
@@ -479,9 +574,29 @@ def montar_resumo_execucao(paj_norm: str) -> dict:
                 "tamanho": anexo.get("tamanho") or 0,
             })
 
+    ids_selecionados = [pid for pid, sel in (rascunho.get("prazos_selecionados") or {}).items() if sel]
+    prazos_labels: list[str] = []
+    prazos_nao_resolvidos: list[str] = []
+    if ids_selecionados:
+        itens = await listar_prazos([processo])
+        por_id = {it["id"]: it for it in itens}
+        for pid in ids_selecionados:
+            it = por_id.get(pid)
+            if it and it.get("label"):
+                prazos_labels.append(it["label"])
+            else:
+                prazos_nao_resolvidos.append(pid)
+
     return {
         "ok": True, "processo": processo, "evento": evento,
         "evento_sem_anexo": sem_anexo, "documentos": documentos,
+        "prazos": prazos_labels, "prazos_nao_resolvidos": prazos_nao_resolvidos,
+        # Configuração de Gerenciamento de Processo (ver seção mais abaixo) — capturada
+        # AQUI (resumo, antes de preparar/confirmar) porque `confirmar_peticionamento_real`
+        # descarta o rascunho em caso de sucesso; o front guarda isto em memória
+        # (`execResumo.gerenciamento`) pra ainda ter os parâmetros na mão depois de
+        # peticionar, na hora de perguntar Sim/Não.
+        "gerenciamento": rascunho.get("gerenciamento") or {},
     }
 
 
@@ -493,14 +608,60 @@ async def executar_peticionamento(paj_norm: str) -> dict:
     explicitamente o resumo devolvido aqui)."""
     from ingestao import eproc_client
 
-    resumo = montar_resumo_execucao(paj_norm)
+    resumo = await montar_resumo_execucao(paj_norm)
     if not resumo.get("ok"):
         return resumo
     res = await eproc_client.preparar_peticionamento(
-        resumo["processo"], resumo["evento"], resumo["documentos"])
+        resumo["processo"], resumo["evento"], resumo["documentos"],
+        prazos_labels=resumo.get("prazos") or [])
     if not res.get("ok"):
         return res
     return {**resumo, **res}
+
+
+async def importar_procuradores_gerenciamento(numero_processo: str) -> dict:
+    """Consulta AO VIVO (via `eproc_client`) os procuradores/unidades disponíveis
+    como destino no Gerenciamento de Processo do processo de referência informado
+    e persiste como a lista "todos" nas preferências de Ações no Eproc
+    (Configurações). Preserva favoritos/frequentes já curados — descarta só os
+    que sumirem da lista nova (mesmo padrão de `importar_eventos`)."""
+    from ingestao import eproc_client
+    from services import config_painel_service
+
+    res = await eproc_client.listar_procuradores_gerenciamento(numero_processo)
+    if not res.get("ok"):
+        return res
+    prefs = config_painel_service.set_eproc_procuradores_todos(
+        res.get("procuradores", []), res.get("numero_processo", ""))
+    return {"ok": True, "n_procuradores": len(res.get("procuradores", [])), "prefs": prefs}
+
+
+# --- "Gerenciamento de Processo" (substabelecimento) ---------------------------
+# Sempre a ÚLTIMA coisa feita no processo, depois de confirmado o peticionamento/
+# movimento — ver `acoes_eproc.js:confirmarPeticionamentoReal`, que pergunta
+# (Sim/Não, com os parâmetros) se o usuário quer executar isto logo após
+# protocolar, mesmo idioma já usado ali para "movimentar o SISDPU agora".
+#
+# Recebe processo/tipo/procurador_valor DIRETO do chamador (não relê o rascunho
+# do disco) porque `confirmar_peticionamento_real` já descartou o rascunho a
+# esta altura (sucesso do peticionamento) — o front captura esses parâmetros em
+# `execResumo.gerenciamento` (ver `montar_resumo_execucao`, chamado ANTES do
+# peticionamento) e os guarda em memória até a hora de perguntar Sim/Não.
+async def executar_gerenciamento_real(processo: str, tipo: str, procurador_valor: str = "") -> dict:
+    """Executa de fato o Gerenciamento de Processo (substituir/associar/
+    desassociar procurador) — IRREVERSÍVEL, mesmo efeito de um substabelecimento
+    real no e-proc. Só chamar depois que o usuário confirmar explicitamente
+    tipo + procurador destino."""
+    from ingestao import eproc_client
+    from ingestao.eproc_client import TIPOS_GERENCIAMENTO
+
+    processo = (processo or "").strip()
+    tipo = (tipo or "").strip()
+    if not processo:
+        return {"ok": False, "erro": "processo é obrigatório."}
+    if tipo not in TIPOS_GERENCIAMENTO:
+        return {"ok": False, "erro": f"Tipo de gerenciamento inválido: {tipo!r}."}
+    return await eproc_client.gerenciar_processo(processo, tipo, procurador_valor or "")
 
 
 async def confirmar_peticionamento_real(paj_norm: str, processo: str) -> dict:

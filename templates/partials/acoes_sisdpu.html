@@ -104,7 +104,8 @@
                                         <input type="text" class="input input-bordered input-xs w-full font-mono" x-model="a.descricao">
                                     </td>
                                     <td>
-                                        <select class="select select-bordered select-xs w-full" x-model="a.tipoArquivo">
+                                        <select class="select select-bordered select-xs w-full" x-model="a.tipoArquivo"
+                                                x-init="$nextTick(() => { $el.value = a.tipoArquivo; })">
                                             <template x-for="t in tiposArquivoAnexo" :key="t"><option :value="t" x-text="t"></option></template>
                                         </select>
                                     </td>
@@ -226,9 +227,38 @@
                 </div>
             </template>
         </div>
-        <!-- Concluir + Executar -->
-        <div class="flex items-center gap-2 flex-wrap pt-2 border-t border-base-300">
-            <template x-if="idTramite">
+        <!-- Concluir trâmite(s) — INDEPENDENTE de Movimentar/Tramitar: não haver
+             nenhum trâmite aberto pra concluir NUNCA desabilita "Executar" (só
+             desabilita a própria opção de concluir). -->
+        <div class="pt-2 border-t border-base-300">
+            <!-- Modelo NOVO (lista): o chamador passou tramitacoesCaixa (ex.: página
+                 do PAJ) — mostra todas as tramitações abertas na caixa com checkbox. -->
+            <template x-if="tramitacoesCaixa !== null">
+                <div class="ret-acao-bloco">
+                    <div class="ret-acao-titulo">Concluir trâmite(s) da caixa de entrada</div>
+                    <template x-if="!tramitacoesCaixa.length">
+                        <span class="text-[11px] text-base-content/50">Não há trâmite aberto na caixa de entrada.</span>
+                    </template>
+                    <template x-if="tramitacoesCaixa.length">
+                        <div class="flex flex-col gap-1 max-h-40 overflow-y-auto mt-1">
+                            <template x-for="t in tramitacoesCaixa" :key="t.id_tramite">
+                                <label class="flex items-start gap-2 text-[12px] p-1.5 rounded border cursor-pointer"
+                                       :class="idsTramiteSelecionados[t.id_tramite] ? 'border-primary bg-primary/5' : 'border-base-300'">
+                                    <input type="checkbox" class="checkbox checkbox-xs mt-0.5" x-model="idsTramiteSelecionados[t.id_tramite]">
+                                    <span class="flex-1 min-w-0">
+                                        <span x-text="t.descricao || '—'"></span>
+                                        <span class="block text-[10.5px] text-base-content/50"
+                                              x-text="(t.remetente || '') + (t.remetente && t.data_envio ? ' · ' : '') + (t.data_envio || '')"></span>
+                                        <span x-show="t.id_tramite === idTramite" class="badge badge-primary badge-xs mt-0.5">trâmite de trabalho</span>
+                                    </span>
+                                </label>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+            </template>
+            <!-- Modelo LEGADO (singular): sem tramitacoesCaixa (ex.: Retornos). -->
+            <template x-if="tramitacoesCaixa === null && idTramite">
                 <div class="flex items-center gap-2">
                     <span class="font-medium">Concluir trâmite:</span>
                     <button type="button" class="btn btn-xs" :class="concluir ? 'btn-primary' : 'btn-outline'" @click="concluir=true">Sim</button>
@@ -236,20 +266,22 @@
                     <span class="text-[11px] text-base-content/50">(retira o PAJ da caixa)</span>
                 </div>
             </template>
-            <span class="text-[11px] text-base-content/40 ml-auto" x-show="rascunhoSalvoEm">
-                Rascunho gravado
-            </span>
-            <button type="button" class="btn btn-sm btn-outline" :class="!rascunhoSalvoEm ? 'ml-auto' : ''"
-                    @click="gravarRascunho()" :disabled="gravando"
-                    title="Grava fase, despachos e anexos pra executar depois, sem perder o que já foi preenchido.">
-                <span x-show="gravando" class="loading loading-spinner loading-xs"></span>
-                Gravar
-            </button>
-            <button type="button" class="btn btn-sm btn-success ret-btn-exec" @click="executar()"
-                    :disabled="(!fase && !grupo && !(idTramite && concluir)) || exec">
-                <span x-show="exec" class="loading loading-spinner loading-xs"></span>
-                Executar no SISDPU
-            </button>
+            <div class="flex items-center gap-2 flex-wrap mt-2">
+                <span class="text-[11px] text-base-content/40 ml-auto" x-show="rascunhoSalvoEm">
+                    Rascunho gravado
+                </span>
+                <button type="button" class="btn btn-sm btn-outline" :class="!rascunhoSalvoEm ? 'ml-auto' : ''"
+                        @click="gravarRascunho()" :disabled="gravando"
+                        title="Grava fase, despachos e anexos pra executar depois, sem perder o que já foi preenchido.">
+                    <span x-show="gravando" class="loading loading-spinner loading-xs"></span>
+                    Gravar
+                </button>
+                <button type="button" class="btn btn-sm btn-success ret-btn-exec" @click="executar()"
+                        :disabled="(!fase && !grupo && !concluirEfetivo()) || exec">
+                    <span x-show="exec" class="loading loading-spinner loading-xs"></span>
+                    Executar no SISDPU
+                </button>
+            </div>
         </div>
     </div>
 

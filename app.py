@@ -25,12 +25,14 @@ from routes.chat_livre import router as chat_livre_router
 from routes.cofre import router as cofre_router
 from routes.acoes_eproc import router as acoes_eproc_router
 from routes.acoes_sisdpu import router as acoes_sisdpu_router
+from routes.agenda import router as agenda_router
 from routes.analise_pretensao import router as analise_pretensao_router
 from routes.configuracoes import router as configuracoes_router
 from routes.dashboard import router as dashboard_router
 from routes.docgen import router as docgen_router
 from routes.files import router as files_router
 from routes.historico import router as historico_router
+from routes.minutas import router as minutas_router
 from routes.paj import router as paj_router
 from routes.eproc_consulta import router as eproc_consulta_router
 from routes.eproc_mcp import router as eproc_mcp_router
@@ -226,6 +228,7 @@ app.state.jinja.filters["tipo_analise_pretensao"] = _tipo_analise_pretensao
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
 app.include_router(acoes_eproc_router)
 app.include_router(acoes_sisdpu_router)
+app.include_router(agenda_router)
 app.include_router(analise_pretensao_router)
 app.include_router(dashboard_router)
 app.include_router(paj_router)
@@ -247,6 +250,7 @@ app.include_router(seguranca_router)
 app.include_router(sat_router)
 app.include_router(retornos_router)
 app.include_router(historico_router)
+app.include_router(minutas_router)
 
 # Healthcheck de dependencias externas — expoe em app.state.ambiente pra
 # o dashboard renderizar banner quando algo falta.

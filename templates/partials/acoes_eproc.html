@@ -100,6 +100,12 @@
                         </svg>
                         Adicionar do SISDPU
                     </button>
+                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="eventoSemAnexo()" @click="abrirModalPecasIa()">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                        </svg>
+                        Adicionar Petições IA
+                    </button>
                     <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="eventoSemAnexo()" @click="adicionarExterno()">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
@@ -132,7 +138,7 @@
                         </tr>
                     </thead>
                     <tbody>
-                        <template x-for="(a, i) in anexos" :key="i">
+                        <template x-for="(a, i) in anexos" :key="a._id">
                             <tr>
                                 <td x-text="i + 1"></td>
                                 <td>
@@ -217,6 +223,34 @@
             <span x-show="!sigilosTodos.length" class="text-[11px] text-base-content/50 block mt-1">configure níveis de sigilo em Configurações › e-proc</span>
         </div>
 
+        <!-- Gerenciamento do processo (opcional) — SEMPRE a última coisa feita: só
+             configura aqui os parâmetros; a pergunta Sim/Não de execução aparece
+             DEPOIS que o peticionamento for confirmado com sucesso (ver modal
+             "Executar no e-proc" abaixo, etapa "confirmado"). -->
+        <div class="ret-acao-bloco">
+            <label class="flex items-center gap-2 cursor-pointer mb-1">
+                <input type="checkbox" class="checkbox checkbox-xs" x-model="gerenciarAtivo">
+                <span class="ret-acao-titulo mb-0">Gerenciar processo depois de peticionar (substabelecer)?</span>
+            </label>
+            <div class="flex items-center gap-2 flex-wrap" x-show="gerenciarAtivo">
+                <select class="select select-bordered select-sm" x-model="gerenciarTipo">
+                    <template x-for="t in tiposGerenciamento" :key="t.valor">
+                        <option :value="t.valor" x-text="t.rotulo"></option>
+                    </template>
+                </select>
+                <select class="select select-bordered select-sm min-w-[18rem]" x-show="gerenciarTipo !== 'D'"
+                        x-model="gerenciarProcuradorValor" @change="onTrocarProcuradorDestino()">
+                    <option value="">Escolha um Procurador</option>
+                    <template x-for="p in procuradoresDropdown()" :key="p.valor">
+                        <option :value="p.valor" x-text="p.rotulo"></option>
+                    </template>
+                </select>
+                <span x-show="gerenciarTipo !== 'D' && !procuradoresDropdown().length" class="text-[11px] text-base-content/50">
+                    configure em Configurações › e-proc
+                </span>
+            </div>
+        </div>
+
         <!-- Modal: adicionar documentos do SISDPU (mesma tabela da seção "Anexos SISDPU" do PAJ) -->
         <div class="modal" :class="{'modal-open': modalDocsAberto}" @click.self="fecharModalDocs()">
             <div class="modal-box max-w-3xl">
@@ -271,6 +305,60 @@
                 </div>
             </div>
         </div>
+        <!-- Modal: adicionar Petições IA (subpasta "Peças IA" do PAJ — mesmo padrão do modal "Adicionar do SISDPU" acima) -->
+        <div class="modal" :class="{'modal-open': modalPecasIaAberto}" @click.self="fecharModalPecasIa()">
+            <div class="modal-box max-w-3xl">
+                <h3 class="font-bold text-lg mb-1">Adicionar Petições IA</h3>
+                <p class="text-xs text-base-content/50 mb-3">
+                    Marque os arquivos da pasta "Peças IA" deste PAJ a anexar à petição. Clique no selo do tipo para abrir/visualizar o arquivo.
+                </p>
+                <div x-show="!pecasIa.length" class="text-sm text-base-content/40 py-4 text-center">
+                    Nenhum arquivo encontrado na pasta "Peças IA" deste PAJ.
+                </div>
+                <div class="overflow-x-auto max-h-[55vh] overflow-y-auto" x-show="pecasIa.length">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr class="bg-base-300/50">
+                                <th class="w-8"></th>
+                                <th>Arquivo</th>
+                                <th>Tamanho</th>
+                                <th class="w-20">Visualizar</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="d in pecasIa" :key="docKey(d)">
+                                <tr class="hover:bg-base-300/30" :class="!formatoAceito(docLabel(d)) ? 'opacity-50' : ''">
+                                    <td>
+                                        <input type="checkbox" class="checkbox checkbox-sm"
+                                               :disabled="!formatoAceito(docLabel(d))"
+                                               x-model="modalPecasIaSelecionados[docKey(d)]">
+                                    </td>
+                                    <td class="font-mono text-xs break-all max-w-md">
+                                        <span x-text="docLabel(d)"></span>
+                                        <span class="text-error block" x-show="!formatoAceito(docLabel(d))">formato não aceito pelo e-proc</span>
+                                    </td>
+                                    <td class="text-xs whitespace-nowrap" x-text="formatarTamanho(d.tamanho)"></td>
+                                    <td>
+                                        <a :href="linkArquivoPaj(d)" target="_blank" @click.stop
+                                           class="badge badge-sm gap-1 border border-black/15 cursor-pointer"
+                                           :class="corBadgeTipo(d.tipo)" :title="'Abrir ' + docLabel(d)">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                            </svg>
+                                            <span x-text="(d.tipo || 'file').toUpperCase()"></span>
+                                        </a>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="modal-action">
+                    <button type="button" class="btn btn-sm" @click="fecharModalPecasIa()">Cancelar</button>
+                    <button type="button" class="btn btn-sm btn-primary" @click="confirmarAdicaoPecasIa()">Adicionar anexos</button>
+                </div>
+            </div>
+        </div>
         <!-- Executar -->
         <div class="flex items-center gap-2 flex-wrap pt-2 border-t border-base-300">
             <span class="text-[11px] text-error font-medium" x-show="temAnexoInvalido()">
@@ -296,7 +384,7 @@
 
         <!-- Modal: revisão + execução real (2 etapas — preparar, depois peticionar) -->
         <div class="modal" :class="{'modal-open': modalExecutarAberto}" @click.self="fecharModalExecutar()">
-            <div class="modal-box max-w-2xl">
+            <div class="modal-box max-w-2xl md:max-w-4xl lg:max-w-6xl">
                 <h3 class="font-bold text-lg mb-1">Executar no e-proc</h3>
 
                 <div class="text-[11px] text-error mb-2" x-show="execErro" x-text="execErro"></div>
@@ -317,6 +405,18 @@
                                 <div class="text-sm"><strong>Evento:</strong> <span x-text="execResumo.evento"></span></div>
                                 <div class="text-xs text-warning" x-show="execResumo.evento_sem_anexo">
                                     Este evento não aceita anexos — nenhum documento será enviado.
+                                </div>
+                                <div class="text-sm" x-show="(execResumo.prazos || []).length">
+                                    <strong>Prazo(s) a fechar:</strong>
+                                    <div class="overflow-x-auto">
+                                        <ul class="list-disc ml-5 mt-1 w-max">
+                                            <template x-for="p in execResumo.prazos" :key="p"><li class="text-xs whitespace-nowrap" x-text="p"></li></template>
+                                        </ul>
+                                    </div>
+                                </div>
+                                <div class="text-xs text-error" x-show="(execResumo.prazos_nao_resolvidos || []).length">
+                                    <strong x-text="(execResumo.prazos_nao_resolvidos || []).length"></strong> prazo(s) selecionado(s) no rascunho não puderam ser identificados agora
+                                    (cache de Prazos e-proc desatualizado, ou o prazo já não está mais aberto) — não serão marcados para fechamento. Confira em "Prazos e-proc" antes de continuar.
                                 </div>
                                 <div class="overflow-x-auto max-h-[40vh] overflow-y-auto" x-show="!execResumo.evento_sem_anexo && execResumo.documentos.length">
                                     <table class="table table-xs w-full">
@@ -353,6 +453,23 @@
                             Preenchido no e-proc: evento "<strong x-text="execResultado.evento"></strong>"
                             <span x-show="execResultado.n_documentos">+ <strong x-text="execResultado.n_documentos"></strong> anexo(s)</span> confirmados na tela.
                         </div>
+                        <div class="text-sm text-success" x-show="(execResultado.prazos_marcados || []).length">
+                            <strong x-text="execResultado.prazos_marcados.length"></strong> prazo(s) marcado(s) para fechamento:
+                            <div class="overflow-x-auto">
+                                <ul class="list-disc ml-5 mt-1 w-max">
+                                    <template x-for="p in execResultado.prazos_marcados" :key="p"><li class="text-xs whitespace-nowrap" x-text="p"></li></template>
+                                </ul>
+                            </div>
+                        </div>
+                        <div class="text-[11px] text-error font-medium border border-error/40 rounded p-2" x-show="(execResultado.prazos_nao_encontrados || []).length">
+                            ⚠ <strong x-text="execResultado.prazos_nao_encontrados.length"></strong> prazo(s) selecionado(s) NÃO foram encontrados/marcados na tela do e-proc —
+                            eles continuarão ABERTOS mesmo depois de peticionar. Confira manualmente na aba do e-proc antes de "Peticionar de verdade":
+                            <div class="overflow-x-auto">
+                                <ul class="list-disc ml-5 mt-1 w-max">
+                                    <template x-for="p in execResultado.prazos_nao_encontrados" :key="p"><li class="whitespace-nowrap" x-text="p"></li></template>
+                                </ul>
+                            </div>
+                        </div>
                         <div class="text-xs text-base-content/60">
                             A aba do e-proc está aberta — confira lá se quiser, antes de decidir.
                         </div>
@@ -363,21 +480,67 @@
                     </div>
                 </template>
 
-                <!-- Etapa: confirmando (clique real em Peticionar em andamento) -->
+                <!-- Etapa: confirmando (clique real em Peticionar, e possíveis ações
+                     seguintes — gerenciamento, movimentação no SISDPU — em andamento;
+                     a etapa "confirmado" só aparece depois de TUDO concluído, ver
+                     confirmarPeticionamentoReal()). -->
                 <template x-if="execEtapa === 'confirmando'">
                     <div class="text-sm text-base-content/60 py-6 text-center">
-                        <span class="loading loading-spinner loading-sm"></span> Protocolando no e-proc…
+                        <span class="loading loading-spinner loading-sm"></span> Executando no e-proc…
                     </div>
                 </template>
 
-                <!-- Etapa: confirmado — resultado final do clique em Peticionar -->
+                <!-- Etapa: confirmado — resumo final de TUDO que foi feito nesta petição
+                     (peticionamento + gerenciamento + movimentação pendente no SISDPU,
+                     cada um com seu próprio sucesso/falha) — exibida por ÚLTIMO, só
+                     depois que as ações seguintes já rodaram (pedido do usuário
+                     2026-08-19). -->
                 <template x-if="execEtapa === 'confirmado'">
-                    <div class="flex flex-col gap-2">
-                        <div :class="execResultado.provavel_sucesso ? 'text-success' : 'text-warning'" class="text-sm font-medium">
-                            <span x-show="execResultado.provavel_sucesso">Peticionamento enviado — confira a aba do e-proc para ver o número do evento/protocolo.</span>
-                            <span x-show="!execResultado.provavel_sucesso">Peticionar foi clicado, mas o resultado não pôde ser confirmado automaticamente — confira a aba do e-proc.</span>
+                    <div class="flex flex-col gap-3">
+                        <div>
+                            <div :class="execResultado.provavel_sucesso ? 'text-success' : 'text-warning'" class="text-sm font-medium">
+                                <span x-show="execResultado.provavel_sucesso">✓ Peticionamento enviado — confira a aba do e-proc para ver o número do evento/protocolo.</span>
+                                <span x-show="!execResultado.provavel_sucesso">⚠ Peticionar foi clicado, mas o resultado não pôde ser confirmado automaticamente — confira a aba do e-proc.</span>
+                            </div>
+                            <div class="text-[11px] text-base-content/50" x-show="execResultado.dialogo" x-text="'Diálogo do e-proc: ' + execResultado.dialogo"></div>
                         </div>
-                        <div class="text-[11px] text-base-content/50" x-show="execResultado.dialogo" x-text="'Diálogo do e-proc: ' + execResultado.dialogo"></div>
+
+                        <!-- Gerenciamento de Processo (substabelecimento) — só aparece se foi oferecido -->
+                        <div x-show="execGerenciamento" class="text-sm border-t border-base-300 pt-2">
+                            <template x-if="execGerenciamento && execGerenciamento.pulado">
+                                <div class="text-base-content/50">— Gerenciamento de processo: não executado (você optou por não fazer agora).</div>
+                            </template>
+                            <template x-if="execGerenciamento && !execGerenciamento.pulado && !execGerenciamento.ok">
+                                <div class="text-error">⚠ Falha ao gerenciar o processo: <span x-text="execGerenciamento.mensagem"></span></div>
+                            </template>
+                            <template x-if="execGerenciamento && !execGerenciamento.pulado && execGerenciamento.ok && execGerenciamento.provavel_sucesso">
+                                <div class="text-success">✓ Gerenciamento executado com sucesso para <strong x-text="(execGerenciamento.partes_marcadas || []).length"></strong> parte(s)<span x-show="execGerenciamento.tipoLabel"> (<span x-text="execGerenciamento.tipoLabel"></span>)</span>.</div>
+                            </template>
+                            <template x-if="execGerenciamento && !execGerenciamento.pulado && execGerenciamento.ok && !execGerenciamento.provavel_sucesso && (execGerenciamento.partes_com_erro || []).length">
+                                <div class="text-[11px] text-error font-medium border border-error/40 rounded p-2">
+                                    ⚠ ATENÇÃO — nem todas as partes foram gerenciadas com sucesso. Confira e tome providências:
+                                    <ul class="list-disc ml-5 mt-1">
+                                        <template x-for="b in execGerenciamento.partes_com_erro" :key="b.parte_label"><li x-text="b.parte_label + ': ' + b.status"></li></template>
+                                    </ul>
+                                </div>
+                            </template>
+                            <template x-if="execGerenciamento && !execGerenciamento.pulado && execGerenciamento.ok && !execGerenciamento.provavel_sucesso && !(execGerenciamento.partes_com_erro || []).length">
+                                <div class="text-warning">⚠ O gerenciamento foi executado, mas o resultado não pôde ser confirmado automaticamente — confira a aba do e-proc.</div>
+                            </template>
+                        </div>
+
+                        <!-- Movimentação pendente no SISDPU — só aparece se foi oferecida -->
+                        <div x-show="execMovimentacaoSisdpu" class="text-sm border-t border-base-300 pt-2">
+                            <template x-if="execMovimentacaoSisdpu && execMovimentacaoSisdpu.pulado">
+                                <div class="text-base-content/50">— Movimentação no SISDPU: não registrada agora (você optou por não fazer).</div>
+                            </template>
+                            <template x-if="execMovimentacaoSisdpu && !execMovimentacaoSisdpu.pulado && !execMovimentacaoSisdpu.ok">
+                                <div class="text-error">⚠ Falha ao gravar a movimentação pendente no SISDPU: <span x-text="execMovimentacaoSisdpu.mensagem"></span></div>
+                            </template>
+                            <template x-if="execMovimentacaoSisdpu && !execMovimentacaoSisdpu.pulado && execMovimentacaoSisdpu.ok">
+                                <div class="text-success">✓ Movimentação gravada como PENDENTE no SISDPU (fase: <span x-text="execMovimentacaoSisdpu.fase"></span>) — ainda falta executá-la de fato em "Ações no SISDPU" ou em "Movimentações pendentes".</div>
+                            </template>
+                        </div>
                     </div>
                 </template>
 

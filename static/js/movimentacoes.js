@@ -38,8 +38,25 @@ function tabelaMovimentacoes() {
         selecionados: new Set(),
         baixando: false,
 
+        // Modo seleção pra IA (ver "Gerar Minuta" — minuta_ia.js): quando
+        // true, clicar num documento JÁ SINCRONIZADO seleciona em vez de
+        // abrir (documento ainda não sincronizado continua indo pro fluxo
+        // antigo de toggleSelecao/baixarDocumentos — não dá pra mandar pra
+        // IA o que ainda não existe em disco). Default false — não muda em
+        // nada o comportamento das outras duas telas que usam este
+        // componente (aba Movimentações do PAJ, modal da Retornos).
+        modoSelecao: false,
+        selecionadosIA: new Map(), // _idDocumento(doc) -> {origem:'paj', caminho}
+
         // Atualizacao exclusiva das movimentacoes (icone de refresh no
-        // cabecalho da tabela) — ver atualizarMovimentacoes() abaixo.
+        // cabecalho da tabela) — ver atualizarMovimentacoes() abaixo. O botao
+        // "Atualizar movimentacoes" que roda isso (dentro do partial, abaixo
+        // dos filtros) e' condicional NO TEMPLATE (Jinja `mostrar_botao_
+        // atualizar_movs`, ver movimentacoes_tabela.html) — nao aqui no JS,
+        // porque este mesmo componente e' reaproveitado em mais de um lugar
+        // na MESMA pagina (aba Movimentacoes E o seletor de documentos do
+        // "Gerar Minuta"), todos lendo o MESMO window.__movInicial via
+        // bootstrap() — uma flag aqui vazaria pro seletor da minuta tambem.
         atualizando: false,
 
         // Hook de ciclo de vida do Alpine (chamado automaticamente ao
@@ -130,9 +147,16 @@ function tabelaMovimentacoes() {
             return !!(id && this._mapaArquivoLocalPorId[id]);
         },
 
-        linkDocumento(doc) {
+        // Caminho RELATIVO (dentro da pasta do PAJ, ex.: "Arquivos/xxx.pdf") —
+        // extraído de linkDocumento() pra reaproveitar em toggleSelecaoIA
+        // (que precisa do caminho puro, não da URL /files/... completa).
+        _caminhoRelativoLocal(doc) {
             const id = this._idDocumento(doc);
-            const caminhoLocal = id ? this._mapaArquivoLocalPorId[id] : null;
+            return id ? this._mapaArquivoLocalPorId[id] : null;
+        },
+
+        linkDocumento(doc) {
+            const caminhoLocal = this._caminhoRelativoLocal(doc);
             return caminhoLocal ? `/files/${this.pajNorm}/${caminhoLocal}` : null;
         },
 
@@ -168,6 +192,21 @@ function tabelaMovimentacoes() {
         // usado pelo botao "Baixar selecionados".
         selecionadosNaSeq(mov) {
             return this.naoBaixados(mov).filter(d => this.estaSelecionado(d));
+        },
+
+        // --- Seleção pra IA (modoSelecao — ver comentário de selecionadosIA
+        // acima). Só aceita documento JÁ sincronizado; documento pendente
+        // não pode ser selecionado aqui (não existe em disco pra enviar). ---
+        toggleSelecaoIA(doc) {
+            if (!this.temArquivoLocal(doc)) return;
+            const id = this._idDocumento(doc);
+            if (!id) return;
+            if (this.selecionadosIA.has(id)) this.selecionadosIA.delete(id);
+            else this.selecionadosIA.set(id, { origem: 'paj', caminho: this._caminhoRelativoLocal(doc) });
+        },
+        estaSelecionadoIA(doc) {
+            const id = this._idDocumento(doc);
+            return !!(id && this.selecionadosIA.has(id));
         },
 
         // Baixa uma lista de documentos (sincronizacao parcial — so os IDs

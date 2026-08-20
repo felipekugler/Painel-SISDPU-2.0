@@ -24,13 +24,29 @@ async def pagina_peticoes_pendentes(request: Request):
 
 @router.get("/api/acoes-eproc/preferencias", response_class=JSONResponse)
 async def api_preferencias():
-    """Favoritos (dropdown) + frequentes (badges) de eventos e de tipos de documento
-    — do cache local (instantâneo). Curadoria feita em Configurações › e-proc."""
+    """Favoritos (dropdown) + frequentes (badges) de eventos, tipos de documento e
+    procuradores destino do Gerenciamento de Processo — do cache local
+    (instantâneo). Curadoria feita em Configurações › e-proc."""
     return JSONResponse({
         **config_painel_service.get_eproc_eventos_prefs(),
         **config_painel_service.get_eproc_tipos_doc_prefs(),
         **config_painel_service.get_eproc_sigilo_prefs(),
+        **config_painel_service.get_eproc_procuradores_prefs(),
     })
+
+
+@router.post("/api/acoes-eproc/importar-procuradores", response_class=JSONResponse)
+async def api_importar_procuradores(request: Request):
+    """Consulta AO VIVO (via `eproc_client`) os procuradores/unidades disponíveis
+    como destino no Gerenciamento de Processo (substabelecimento) do processo de
+    referência informado, e persiste como a lista "todos" nas preferências
+    (mesmo botão "Importar" de eventos/tipos de documento em Configurações)."""
+    body = await request.json()
+    processo = (body.get("processo") or "").strip()
+    if not processo:
+        return JSONResponse({"ok": False, "erro": "processo é obrigatório."}, status_code=400)
+    res = await acoes_eproc_service.importar_procuradores_gerenciamento(processo)
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
 
 
 @router.get("/api/acoes-eproc/prazos", response_class=JSONResponse)
@@ -39,6 +55,13 @@ async def api_prazos(processo: list[str] = Query(default=[])):
     rótulo oficial do e-proc via triagem MCP) dos processos informados — alimenta
     o checkbox "Selecione o(s) prazo(s) a ser(em) fechado(s)"."""
     return JSONResponse({"ok": True, "itens": await acoes_eproc_service.listar_prazos(processo)})
+
+
+@router.get("/api/acoes-eproc/pecas-ia/{paj_norm}", response_class=JSONResponse)
+async def api_pecas_ia(paj_norm: str):
+    """Arquivos da subpasta "Peças IA" do PAJ (petições/peças geradas pela análise
+    de pretensão) — alimenta o modal "Adicionar Petições IA"."""
+    return JSONResponse({"ok": True, "itens": acoes_eproc_service.listar_pecas_ia(paj_norm)})
 
 
 @router.post("/api/acoes-eproc/comprimir-anexo", response_class=JSONResponse)
@@ -149,7 +172,7 @@ async def api_resumo_execucao(paj_norm: str):
     """Resumo do que SERIA enviado (evento, processo, anexos com tipo/sigilo/
     caminho) a partir do rascunho salvo — usado pelo modal de confirmação antes
     de preparar de verdade no e-proc. Não toca no e-proc."""
-    res = acoes_eproc_service.montar_resumo_execucao(paj_norm)
+    res = await acoes_eproc_service.montar_resumo_execucao(paj_norm)
     return JSONResponse(res, status_code=200 if res.get("ok") else 400)
 
 
@@ -174,4 +197,40 @@ async def api_confirmar_peticionamento(paj_norm: str, request: Request):
     if not processo:
         return JSONResponse({"ok": False, "erro": "processo é obrigatório."}, status_code=400)
     res = await acoes_eproc_service.confirmar_peticionamento_real(paj_norm, processo)
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
+
+
+# --- "Gerenciamento de Processo" (substabelecimento) ---------------------------
+# Sempre a ÚLTIMA coisa feita no processo — o front pergunta Sim/Não logo após o
+# peticionamento ser confirmado (ver acoes_eproc.js:confirmarPeticionamentoReal),
+# mesmo idioma já usado ali para "movimentar o SISDPU agora".
+
+@router.post("/api/acoes-eproc/preparar-anexos-sisdpu/{paj_norm}", response_class=JSONResponse)
+async def api_preparar_anexos_sisdpu(paj_norm: str, request: Request):
+    """A partir dos documentos JÁ PROTOCOLADOS numa petição do e-proc (capturados
+    em memória pelo front ANTES de confirmar o peticionamento — o rascunho de
+    Ações no Eproc já foi descartado a esta altura), monta a lista de anexos
+    pronta pra "Anexos da movimentação" de Ações no SISDPU — TODOS os
+    documentos desta petição, com Tipo de Arquivo pré-estabelecido como
+    "Petições" (ver `acoes_eproc_service.preparar_documentos_para_movimentacao_sisdpu`)."""
+    body = await request.json()
+    documentos = body.get("documentos") or []
+    anexos = acoes_eproc_service.preparar_documentos_para_movimentacao_sisdpu(paj_norm, documentos)
+    return JSONResponse({"ok": True, "anexos": anexos})
+
+
+@router.post("/api/acoes-eproc/gerenciar", response_class=JSONResponse)
+async def api_executar_gerenciamento(request: Request):
+    """Executa de fato o Gerenciamento de Processo (substituir/associar/desassociar
+    procurador) — IRREVERSÍVEL, mesmo efeito de um substabelecimento real no
+    e-proc. `processo`/`tipo`/`procurador_valor` vêm do front (capturados do
+    resumo ANTES do peticionamento, que descarta o rascunho em caso de sucesso —
+    ver `services.acoes_eproc_service.executar_gerenciamento_real`)."""
+    body = await request.json()
+    processo = (body.get("processo") or "").strip()
+    tipo = (body.get("tipo") or "").strip()
+    procurador_valor = (body.get("procurador_valor") or "").strip()
+    if not processo or not tipo:
+        return JSONResponse({"ok": False, "erro": "processo e tipo são obrigatórios."}, status_code=400)
+    res = await acoes_eproc_service.executar_gerenciamento_real(processo, tipo, procurador_valor)
     return JSONResponse(res, status_code=200 if res.get("ok") else 400)

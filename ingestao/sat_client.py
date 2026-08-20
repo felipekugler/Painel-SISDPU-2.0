@@ -36,6 +36,67 @@ SAT_CONSULTA = (
 )
 _CDP_PORT = 9222
 
+# --- TOTP (2FA) automático para o login GERID/CAS --------------------------
+# O login no SAT Central (GERID/Dataprev, via CAS em geridinss.dataprev.gov.br)
+# pede um código de 6 dígitos de um app autenticador — hoje resolvido manualmente
+# pelo usuário lendo a extensão Chrome "Authenticator" (linha "GERID"). Esse app
+# usa o padrão TOTP (RFC 6238), o MESMO já automatizado pro e-proc (ver
+# ingestao/eproc_client.py e o MCP C:\Claude\MCP\eproc-trf4\auth.py). Aqui a
+# seed é PRÓPRIA — conta/sistema diferente do e-proc, NUNCA reaproveitar a seed
+# de lá — guardada à parte no Credential Manager do Windows via `keyring`.
+# Cadastro: `python scripts/setup_totp_sat.py`.
+_TOTP_CRED_KEY = "sat-central"
+_TOTP_ITEM_KEY = "totp_seed"
+_BASE32_RE = re.compile(r"^[A-Z2-7]+=*$")
+
+
+def _normalizar_seed_totp(seed: str) -> str:
+    return (seed or "").replace(" ", "").replace("-", "").upper()
+
+
+def validar_seed_totp(seed: str) -> str:
+    """Valida e normaliza uma seed TOTP base32. Levanta ValueError se o formato
+    estiver errado ou o decodificador (`pyotp`) rejeitar a seed."""
+    norm = _normalizar_seed_totp(seed)
+    if not norm:
+        raise ValueError("Seed TOTP vazia.")
+    if not _BASE32_RE.match(norm):
+        raise ValueError(
+            "Seed TOTP em formato inválido. Esperado base32 (A-Z, 2-7, opcional padding '=')."
+        )
+    import pyotp
+    try:
+        pyotp.TOTP(norm).now()
+    except Exception as e:  # noqa: BLE001
+        raise ValueError(f"Seed TOTP rejeitada pelo decodificador: {e}") from e
+    return norm
+
+
+def salvar_seed_totp(seed: str) -> None:
+    """Valida e salva a seed TOTP do GERID no Credential Manager do Windows."""
+    import keyring
+    keyring.set_password(_TOTP_CRED_KEY, _TOTP_ITEM_KEY, validar_seed_totp(seed))
+
+
+def _gerar_codigo_totp() -> str | None:
+    """Código TOTP atual (6 dígitos) p/ o 2FA do GERID, lido da seed cadastrada
+    no Credential Manager. Retorna None se a seed não estiver cadastrada ou
+    `keyring`/`pyotp` faltarem — nesse caso o 2FA do login continua manual,
+    como sempre foi (nenhuma quebra do fluxo existente)."""
+    try:
+        import keyring
+        import pyotp
+    except ImportError:
+        return None
+    try:
+        seed = keyring.get_password(_TOTP_CRED_KEY, _TOTP_ITEM_KEY)
+        if not seed:
+            return None
+        return pyotp.TOTP(seed).now()
+    except Exception:  # noqa: BLE001
+        return None
+
+
 _pw = None
 _sat_pid: int | None = None  # PID do Chromium do SAT (p/ fechá-lo no shutdown do painel)
 
@@ -133,8 +194,184 @@ def _status_dict(url: str) -> dict:
     }
 
 
-async def abrir() -> dict:
-    """Abre/traz à frente a janela do SAT e navega para a consulta (login se preciso)."""
+# --- Login (usuário/senha) — campos "username"/"password" do CAS, form #fm1 -
+# Tela padrão de login do Apereo CAS (stock, sem customização), CONFIRMADO em
+# contexto descartável (sem cookies) 2026-08-14: form id="fm1", campos
+# id/name="username" (texto) e id/name="password" (senha nativa, sem máscara
+# JS por trás — value-set direto funciona, diferente do login NATIVO do
+# e-proc que exige digitação real). Botão é um <button> comum com texto
+# "Entrar" (não tem type=submit/name específico).
+_JS_TEM_LOGIN_GERID = "()=>!!document.querySelector('#username, input[name=username]')"
+
+_JS_FILL_LOGIN_GERID = r"""([usuario, senha])=>{
+  const setV=(el,v)=>{ if(!el) return false; try{el.focus();}catch(e){}
+    el.value=v;
+    el.dispatchEvent(new Event('input',{bubbles:true}));
+    el.dispatchEvent(new Event('change',{bubbles:true}));
+    el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true})); return true; };
+  const u=document.querySelector('#username, input[name=username]');
+  const p=document.querySelector('#password, input[name=password]');
+  return setV(u, usuario) && setV(p, senha);
+}"""
+
+_JS_SUBMIT_LOGIN_GERID = r"""()=>{
+  const f=document.querySelector('#fm1');
+  const b=f ? [...f.querySelectorAll('button, input[type=submit]')]
+    .find(el=>/entrar/i.test((el.innerText||el.value||'').trim())) : null;
+  if(b){ b.click(); return true; }
+  if(f){ f.submit(); return true; }
+  return false;
+}"""
+
+
+async def _preencher_login(page, usuario: str, senha: str) -> bool:
+    """Se a tela de login (usuário/senha) do CAS/GERID está presente, preenche
+    e envia. Retorna True se enviou. No-op (False) se não houver a tela ou
+    faltar usuário/senha (cofre trancado/sem credencial "sat" cadastrada) —
+    login continua manual na janela nesses casos."""
+    if not usuario or not senha:
+        return False
+    tem = False
+    with contextlib.suppress(Exception):
+        tem = await page.evaluate(_JS_TEM_LOGIN_GERID)
+    if not tem:
+        return False
+    with contextlib.suppress(Exception):
+        await page.evaluate(_JS_FILL_LOGIN_GERID, [usuario, senha])
+    await page.wait_for_timeout(300)
+    with contextlib.suppress(Exception):
+        await page.evaluate(_JS_SUBMIT_LOGIN_GERID)
+    for _ in range(30):  # ~15s aguardando sair da tela de login (foi p/ 2FA ou logou direto)
+        await page.wait_for_timeout(500)
+        with contextlib.suppress(Exception):
+            if not await page.evaluate(_JS_TEM_LOGIN_GERID):
+                break
+    await page.wait_for_timeout(500)
+    return True
+
+
+# --- 2FA (GAuth/CAS do GERID) — campo "token", CONFIRMADO AO VIVO 2026-08-14 --
+# Tela "Autenticação Google - CAS" (módulo cas-server-support-gauth, stock, sem
+# customização): form id="fm1", campo id/name="token" (texto), botão Entrar
+# name="_eventId_submit". ⚠️ A tela também tem um 2º botão perigoso,
+# name="_eventId_requestDeviceReset" ("Reiniciar Dispositivo MFA") — o submit
+# abaixo mira SÓ o "_eventId_submit", nunca esse outro.
+_JS_TEM_2FA_GERID = "()=>!!document.querySelector('#token, input[name=token]')"
+
+_JS_FILL_2FA_GERID = r"""(codigo)=>{
+  const el=document.querySelector('#token, input[name=token]');
+  if(!el) return false;
+  try{el.focus();}catch(e){}
+  el.value=codigo;
+  el.dispatchEvent(new Event('input',{bubbles:true}));
+  el.dispatchEvent(new Event('change',{bubbles:true}));
+  el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true}));
+  return true;
+}"""
+
+_JS_LER_2FA_GERID = ("()=>{const el=document.querySelector('#token, input[name=token]');"
+                      "return el ? el.value : null;}")
+
+_JS_SUBMIT_2FA_GERID = r"""()=>{
+  const b=document.querySelector('input[name=_eventId_submit], button[name=_eventId_submit]');
+  if(b){ b.click(); return true; }
+  return false;
+}"""
+
+
+async def _preencher_2fa(page) -> bool:
+    """Se a tela de 2FA do GERID (código TOTP do GAuth/CAS, campo "token") está
+    presente, gera o código a partir da seed cadastrada (ver
+    scripts/setup_totp_sat.py) e preenche/envia sozinho. Retorna True se
+    enviou. No-op (False) se não houver a tela ou a seed não estiver
+    cadastrada — nesses casos o 2FA continua manual, como sempre foi."""
+    tem = False
+    with contextlib.suppress(Exception):
+        tem = await page.evaluate(_JS_TEM_2FA_GERID)
+    if not tem:
+        return False
+    codigo = _gerar_codigo_totp()
+    if not codigo:
+        return False
+
+    ok = False
+    for _ in range(3):
+        with contextlib.suppress(Exception):
+            ok = await page.evaluate(_JS_FILL_2FA_GERID, codigo)
+        await page.wait_for_timeout(300)
+        atual = None
+        with contextlib.suppress(Exception):
+            atual = await page.evaluate(_JS_LER_2FA_GERID)
+        if ok and atual == codigo:
+            break
+        # o código pode ter virado entre tentativas (janela de 30s do TOTP) —
+        # gera de novo antes de reenviar, pra não submeter um código expirado.
+        codigo = _gerar_codigo_totp() or codigo
+    if not ok:
+        return False
+    with contextlib.suppress(Exception):
+        await page.evaluate(_JS_SUBMIT_2FA_GERID)
+    for _ in range(20):  # ~10s aguardando sair da tela de 2FA
+        await page.wait_for_timeout(500)
+        with contextlib.suppress(Exception):
+            if not await page.evaluate(_JS_TEM_2FA_GERID):
+                break
+    await page.wait_for_timeout(1000)
+    return True
+
+
+_watcher_2fa_ativo = False
+
+
+def _agendar_resolucao_2fa() -> None:
+    """Dispara em SEGUNDO PLANO (sem bloquear a resposta do endpoint que
+    chamou) um watcher com conexão CDP PRÓPRIA que fica de olho por até 3 min
+    esperando a tela de 2FA do GERID aparecer — o usuário ainda vai digitar
+    CPF/senha na janela DEPOIS que este endpoint já respondeu, então o único
+    jeito de reagir é observar em background — e resolve sozinho assim que
+    ela surgir. No-op se já tiver um watcher rodando (evita empilhar)."""
+    global _watcher_2fa_ativo
+    if _watcher_2fa_ativo:
+        return
+    import asyncio as _asyncio
+
+    async def _watch():
+        global _watcher_2fa_ativo
+        _watcher_2fa_ativo = True
+        try:
+            browser, page = await _connect()
+        except Exception:  # noqa: BLE001
+            _watcher_2fa_ativo = False
+            return
+        try:
+            ini = time.monotonic()
+            while time.monotonic() - ini < 180:  # ~3 min p/ o usuário digitar CPF/senha
+                with contextlib.suppress(Exception):
+                    if _status_dict(page.url)["logado"]:
+                        return
+                    if await page.evaluate(_JS_TEM_2FA_GERID):
+                        await _preencher_2fa(page)
+                        return
+                await page.wait_for_timeout(1000)
+        finally:
+            with contextlib.suppress(Exception):
+                await browser.close()
+            _watcher_2fa_ativo = False
+
+    _asyncio.create_task(_watch())
+
+
+async def abrir(usuario: str = "", senha: str = "") -> dict:
+    """Abre/traz à frente a janela do SAT e navega para a consulta, em cadeia:
+
+      1) login (usuário/senha) → se vierem do cofre (sistema "sat"), preenche
+         e envia; senão, para aqui (login manual na janela).
+      2) 2FA → resolvido sozinho se a seed TOTP estiver cadastrada (ver
+         scripts/setup_totp_sat.py); se a tela ainda não apareceu (login
+         acabou de ser enviado), arma um watcher em background que resolve
+         assim que ela surgir.
+
+    CAPTCHA (na consulta por CPF dentro do SAT) continua sempre manual."""
     browser, page = await _connect()
     try:
         with contextlib.suppress(Exception):
@@ -142,20 +379,36 @@ async def abrir() -> dict:
         with contextlib.suppress(Exception):
             await page.goto(SAT_CONSULTA, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(1500)
-        return _status_dict(page.url)
+        with contextlib.suppress(Exception):
+            await _preencher_login(page, usuario, senha)
+        with contextlib.suppress(Exception):
+            await _preencher_2fa(page)
+        d = _status_dict(page.url)
+        if not d["logado"]:
+            _agendar_resolucao_2fa()
+        return d
     finally:
         with contextlib.suppress(Exception):
             await browser.close()
 
 
-async def status() -> dict:
-    """Verifica se a sessão está ativa navegando para a consulta (deixa a tela pronta)."""
+async def status(usuario: str = "", senha: str = "") -> dict:
+    """Verifica se a sessão está ativa navegando para a consulta (deixa a tela
+    pronta). Resolve login/2FA sozinho se as telas já estiverem na frente, ou
+    arma o watcher em background (ver `abrir`)."""
     browser, page = await _connect()
     try:
         with contextlib.suppress(Exception):
             await page.goto(SAT_CONSULTA, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(1200)
-        return _status_dict(page.url)
+        with contextlib.suppress(Exception):
+            await _preencher_login(page, usuario, senha)
+        with contextlib.suppress(Exception):
+            await _preencher_2fa(page)
+        d = _status_dict(page.url)
+        if not d["logado"]:
+            _agendar_resolucao_2fa()
+        return d
     finally:
         with contextlib.suppress(Exception):
             await browser.close()
@@ -1210,6 +1463,8 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
             await page.bring_to_front()
             await page.goto(SAT_CONSULTA, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(1000)
+        with contextlib.suppress(Exception):
+            await _preencher_2fa(page)  # resolve sozinho se a sessão caiu na tela de 2FA
         if not _status_dict(page.url)["logado"]:
             yield {"done": True, "resultado": {"ok": False,
                    "detalhe": "Sessão do SAT expirada — clique em 'Abrir SAT / Login' e refaça o login."}}

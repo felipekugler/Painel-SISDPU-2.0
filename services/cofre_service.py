@@ -49,6 +49,7 @@ _ITERACOES = 240_000  # custo do PBKDF2 (dificulta força bruta da senha-mestra)
 SISTEMAS = {
     "sisdpu": "SISDPU",
     "eproc": "e-proc",
+    "sat": "SAT Central (GERID)",
 }
 
 

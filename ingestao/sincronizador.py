@@ -30,7 +30,6 @@ from config import (
 from ingestao import ocr, parser, sisdpu_client, sisdpu_movtram
 import contextlib
 
-
 # Formato canonico: AAAA/UUU-NNNNN (5 digitos no numero). Alinhado com
 # services.paj_service.PAJ_NORM_REGEX — toda a app trabalha com largura fixa,
 # entao manter aqui tambem evita aceitar formato que as rotas FastAPI rejeitariam.
@@ -106,19 +105,22 @@ def _montar_contatos(det: dict, meta_antiga: dict) -> dict:
 
     App SISDPU / Telefone / E-mail / Endereço vêm direto da extração desta
     sincronização (sisdpu_client já visitou o Cadastro de Pessoa Física de
-    cada assistido). WhatsApp é a ÚNICA exceção: o SISDPU não distingue "este
-    telefone é WhatsApp" de um telefone comum — é uma escolha manual do
-    usuário (ver `services/contatos_service.py` / endpoint de definir
-    WhatsApp) — por isso `whatsapp_numeros` é lido do metadata ANTERIOR
-    (preservado através de re-sincronizações) em vez de recalculado aqui.
+    cada assistido) — mas, se a extração desta rodada não devolver nada
+    (instabilidade pontual, mesma classe de bug já vista em narrativa/foto),
+    preserva o que já estava gravado em vez de apagar. WhatsApp é a ÚNICA
+    exceção INTENCIONAL: o SISDPU não distingue "este telefone é WhatsApp" de
+    um telefone comum — é uma escolha manual do usuário (ver
+    `services/contatos_service.py` / endpoint de definir WhatsApp) — por isso
+    `whatsapp_numeros` é lido do metadata ANTERIOR (preservado através de
+    re-sincronizações) em vez de recalculado aqui.
 
     Retorna {"contatos": {...5 bool...}, "telefones": [...], "emails": [...],
     "enderecos": [...], "whatsapp_numeros": [...]} pronto pra gravar direto em
     `metadata` (chaves de topo, sobrevivem a `metadata["sisdpu_raw"] = det`).
     """
-    telefones = det.get("telefones") or []
-    emails = det.get("emails") or []
-    enderecos = det.get("enderecos") or []
+    telefones = det.get("telefones") or meta_antiga.get("telefones") or []
+    emails = det.get("emails") or meta_antiga.get("emails") or []
+    enderecos = det.get("enderecos") or meta_antiga.get("enderecos") or []
     whatsapp_numeros = meta_antiga.get("whatsapp_numeros") or []
     return {
         "contatos": {
@@ -243,7 +245,6 @@ def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
 
     return "\n".join(linhas) + "\n"
 
-
 _NOME_VALIDO_RE = re.compile(r"[^A-Za-z0-9._\- ]+")
 
 
@@ -302,7 +303,6 @@ def _nome_anexo(idx: int, descricao: str, arquivo: str) -> str:
     nome = "_".join(partes)
     return nome
 
-
 _MAGIC_BYTES = [
     (b"%PDF", ".pdf"),
     (b"PK\x03\x04", ".zip"),  # tambem e' a assinatura de docx/xlsx/pptx
@@ -338,7 +338,6 @@ def _detectar_ext_por_magic(path: Path) -> str | None:
                 return ".zip"
             return ext
     return None
-
 
 # Extensoes "conhecidas" que nao precisam de rebatizacao por magic bytes
 _EXTS_LEGITIMAS = {
@@ -811,15 +810,29 @@ async def _processar_paj_pos_detalhamento(
     rodar_ocr: bool = False,
     extrair_documentos: bool = True,
     via_busca_global: bool = False,
+    fora_da_caixa_confirmado: bool = False,
 ) -> tuple[str, bool]:
     """Etapa pos-detalhamento: a page do Playwright ja esta no detalhamento do
     PAJ (via clique na caixa ou via campo de pesquisa global) e `det` ja foi
     extraido. Grava sisdpu.txt/metadata.json, detecta prazos, baixa anexos.
 
-    `via_busca_global=True`: nao sobrescreve `em_caixa_atual` (preserva o
-    valor anterior — a busca global nao responde se o PAJ ainda esta na
-    caixa do defensor), e preserva `etiqueta_sisdpu` do metadata antigo
-    (o campo de pesquisa do SIS nao expoe a etiqueta da caixa).
+    `via_busca_global=True`: por padrao NAO sobrescreve `em_caixa_atual`
+    (preserva o valor anterior — a busca global, por si so, nao responde se o
+    PAJ ainda esta na caixa do defensor), e preserva `etiqueta_sisdpu` do
+    metadata antigo (o campo de pesquisa do SIS nao expoe a etiqueta da caixa).
+
+    `fora_da_caixa_confirmado=True`: usado quando o CHAMADOR ja verificou a
+    listagem da caixa segundos antes (caso do fallback de `rodar_paj_unico` —
+    abriu a caixa, nao achou o PAJ, so' ENTAO caiu na busca global) e por isso
+    sabe com certeza que o PAJ NAO esta mais na caixa. Nesse caso, sobrescreve
+    `em_caixa_atual=False` (com `concluido_em`) em vez de preservar o valor
+    antigo. Sem essa distincao, um PAJ que saiu da caixa MAS foi ressincronizado
+    via "Sincronizar PAJ" (que cai na busca global por nao acha-lo na caixa)
+    ficava com `em_caixa_atual=True` PRA SEMPRE (o valor antigo, de quando
+    ainda estava la), reaparecendo indefinidamente no dashboard como se ainda
+    estivesse na caixa — bug real observado em producao. Diferente do uso pela
+    watchlist/`rodar_watchlist`, onde a busca global e' o UNICO caminho (nunca
+    se checou a caixa) e preservar o valor antigo continua sendo o correto.
     """
     paj = item.get("paj", "") or det.get("paj", "")
     dec = _decompor_paj(paj)
@@ -864,12 +877,44 @@ async def _processar_paj_pos_detalhamento(
     # Snapshot da estrutura bruta devolvida pelo SISDPU para diagnostico/posteridade
     metadata["sisdpu_raw"] = det
 
+    # Campos de `sisdpu_raw` cuja extracao e' fragil (dependem do layout/estado
+    # da pagina de detalhamento no momento exato do evaluate() — ver
+    # sisdpu_client.py, movimentacoes_paj/buscar_paj_global): se o SISDPU nao
+    # devolveu algum deles NESTA sincronizacao, preserva o da sincronizacao
+    # anterior em vez de apagar por uma falha pontual de extracao — mesmo
+    # raciocinio ja aplicado a foto_assistido logo abaixo. Bug real observado
+    # com narrativa: sync leve disparada logo apos uma movimentacao via "Acoes
+    # no SISDPU" veio sem narrativa e apagou a que ja existia (2026-08-20,
+    # PAJ-2026-029-03259) — auditoria subsequente achou o mesmo padrao de risco
+    # nos demais campos abaixo, corrigidos juntos na mesma leva.
+    sisdpu_raw_antigo = meta_antiga.get("sisdpu_raw") or {}
+    for _campo in ("narrativa", "assistidos_pf", "audiencias"):
+        if not metadata["sisdpu_raw"].get(_campo) and sisdpu_raw_antigo.get(_campo):
+            metadata["sisdpu_raw"][_campo] = sisdpu_raw_antigo[_campo]
+
+    # Assistido/Ofício da caixa: já têm dupla fonte (caixa + detalhamento, ver
+    # `_montar_sisdpu_txt`), o que já reduz bastante o risco — mas se AMBAS
+    # vierem vazias nesta rodada (ex.: via busca global, que não tem a linha
+    # da caixa), cai pro valor anterior em vez de ficar em branco.
+    # `assistido_prev` já era capturado no topo desta função, mas nunca tinha
+    # sido de fato usado como fallback — fechando esse gap aqui.
+    if not metadata.get("assistido_caixa") and assistido_prev:
+        metadata["assistido_caixa"] = assistido_prev
+    if not metadata.get("oficio_caixa") and meta_antiga.get("oficio_caixa"):
+        metadata["oficio_caixa"] = meta_antiga["oficio_caixa"]
+
     # TODOS os processos judiciais vinculados ao PAJ — direto do `det` (sem reparse
     # de texto, evita perda de dados), mesmo padrão usado para movimentações abaixo.
     # `processo_judicial` (singular, em metadata via parser) continua existindo
     # para os consumidores antigos (compat), representando o ÚLTIMO da lista.
+    # Preserva o vínculo anterior se esta rodada não devolveu nenhum (mesmo
+    # raciocínio do bloco acima — sem isso, uma falha pontual de extração
+    # "desvincularia" o processo judicial e desabilitaria Ações no e-proc /
+    # Gerar Minuta até a próxima sync bem-sucedida).
     if det.get("processos_judiciais"):
         metadata["processos_judiciais"] = det["processos_judiciais"]
+    elif meta_antiga.get("processos_judiciais"):
+        metadata["processos_judiciais"] = meta_antiga["processos_judiciais"]
 
     # Foto do assistido — vem do `det` como data URI (extraida do <img> do
     # SISDPU). Roda em toda sincronizacao (rapida ou completa), ja que so'
@@ -918,6 +963,15 @@ async def _processar_paj_pos_detalhamento(
             for mov_antiga in movs_antigas
             if mov_antiga.get("documentos")
         }
+        # Seqs cujo popup ja foi aberto e CONFIRMADO vazio (sem erro) em uma
+        # sync anterior — sem isso, uma seq com icone clicavel mas 0
+        # documentos era reprocessada em TODA sincronizacao pra sempre (o
+        # dict acima so' cacheia seqs com documento, por ser `dict` vazio =
+        # falsy). Persistido em metadata["seqs_sem_documento_confirmado"].
+        seqs_sem_doc_antigas = {
+            str(s) for s in (meta_antiga.get("seqs_sem_documento_confirmado") or [])
+        }
+        seqs_conhecidas_para_pular = list(documentos_conhecidos_por_seq.keys()) + list(seqs_sem_doc_antigas)
         # `extrair_documentos=False` (ex.: aba Retornos): PULA a extracao por seq
         # (cara — 1 popup por movimentacao com anexo), mas ainda preserva os
         # documentos ja conhecidos de sync anterior (nada e' perdido). Um sync
@@ -925,7 +979,7 @@ async def _processar_paj_pos_detalhamento(
         if extrair_documentos:
             try:
                 resultado_docs = await sisdpu_client.extrair_documentos_por_seq(
-                    seqs_conhecidos=list(documentos_conhecidos_por_seq.keys()),
+                    seqs_conhecidos=seqs_conhecidas_para_pular,
                     deve_cancelar=deve_cancelar,
                     log=log,
                 )
@@ -940,6 +994,15 @@ async def _processar_paj_pos_detalhamento(
             str(mov_doc.get("seq")): mov_doc.get("documentos", [])
             for mov_doc in resultado_docs.get("movimentacoes_com_documentos", [])
         }
+
+        # Acumula (com as antigas) as seqs recem-confirmadas sem documento
+        # nesta rodada — persistido abaixo pra beneficiar a PROXIMA sync.
+        seqs_sem_doc_novas = {
+            str(s) for s in (resultado_docs.get("seqsVerificadosSemDocumento") or [])
+        }
+        seqs_sem_doc_total = seqs_sem_doc_antigas | seqs_sem_doc_novas
+        if seqs_sem_doc_total:
+            metadata["seqs_sem_documento_confirmado"] = sorted(seqs_sem_doc_total, key=lambda s: (len(s), s))
 
         n_documentos_indexados = 0
         for mov in mov_estruturadas:
@@ -958,13 +1021,43 @@ async def _processar_paj_pos_detalhamento(
                 file_id = sisdpu_client.extrair_id_arquivo(doc.get("urlDownload", ""))
                 if file_id:
                     seq_por_file_id[file_id] = mov.get("seq")
+    elif movs_antigas:
+        # SISDPU nao devolveu movimentacoes nesta rodada (extracao falhou —
+        # todo PAJ tem ao menos a movimentacao de abertura, entao "vazio de
+        # verdade" nao existe aqui) — preserva o historico inteiro da
+        # sincronizacao anterior em vez de zera-lo. Mesma auditoria de
+        # 2026-08-20 que corrigiu a narrativa: essa e' a perda mais grave
+        # possivel desse padrao de bug (histórico inteiro, nao so' um campo).
+        log(f"  [aviso] SISDPU nao devolveu movimentacoes nesta sincronizacao "
+            f"— preservando {len(movs_antigas)} da sincronizacao anterior")
+        if "detalhes_sisdpu" not in metadata:
+            metadata["detalhes_sisdpu"] = {}
+        metadata["detalhes_sisdpu"]["movimentacoes"] = movs_antigas
+        if meta_antiga.get("n_documentos_indexados") is not None:
+            metadata["n_documentos_indexados"] = meta_antiga["n_documentos_indexados"]
+        if meta_antiga.get("seqs_sem_documento_confirmado"):
+            metadata["seqs_sem_documento_confirmado"] = meta_antiga["seqs_sem_documento_confirmado"]
 
     if via_busca_global:
-        # Busca global nao da informacao sobre estar na caixa atual — preserva
-        # o que tinhamos (se houver). Tambem nao tem acesso a etiqueta da
-        # caixa, entao mantemos a antiga.
-        if "em_caixa_atual" in meta_antiga:
-            metadata["em_caixa_atual"] = meta_antiga["em_caixa_atual"]
+        if fora_da_caixa_confirmado:
+            # Chamador (rodar_paj_unico) ja checou a caixa momentos antes e
+            # confirmou que o PAJ nao esta la — nao preserva o `True` antigo
+            # (ficaria "em caixa" pra sempre, mesmo tendo saido de verdade).
+            if meta_antiga.get("em_caixa_atual") is not False:
+                import datetime as _dt
+
+                metadata["em_caixa_atual"] = False
+                metadata["concluido_em"] = _dt.datetime.now().isoformat(timespec="seconds")
+                metadata["tramitacoes_caixa"] = []
+            else:
+                metadata["em_caixa_atual"] = False
+        else:
+            # Busca global nao da informacao sobre estar na caixa atual —
+            # preserva o que tinhamos (se houver). Caso do via_watchlist puro,
+            # que nunca chegou a checar a caixa.
+            if "em_caixa_atual" in meta_antiga:
+                metadata["em_caixa_atual"] = meta_antiga["em_caixa_atual"]
+        # Tambem nao tem acesso a etiqueta da caixa, entao mantemos a antiga.
         metadata["etiqueta_sisdpu"] = meta_antiga.get("etiqueta_sisdpu", "") or ""
         # Campos de ciclo de vida que nao vem do detalhamento — preservar.
         for k in (
@@ -1225,6 +1318,41 @@ async def _atualizar_tramitacoes_caixa(
     return atualizados
 
 
+async def atualizar_tramitacoes_paj(paj_norm: str, log: Callable[[str], None]) -> list[dict]:
+    """Atualiza `tramitacoes_caixa` de UM ÚNICO PAJ, sob demanda — mesma leitura
+    de `_atualizar_tramitacoes_caixa` (a caixa inteira, o SISDPU não expõe
+    consulta por PAJ), mas grava só este PAJ e devolve a lista fresca.
+
+    Existe porque esse campo hoje só é atualizado pela sync COMPLETA da caixa
+    (`rodar()`) — os caminhos avulsos (`rodar_paj_unico`, busca global,
+    watchlist) nunca passam por `_atualizar_tramitacoes_caixa`, então um PAJ
+    sincronizado só por esses caminhos fica com o campo `None` (nunca
+    calculado, diferente de "sabidamente zero trâmites"). O botão "Concluir
+    PAJ da Caixa de Entrada" (`services.paj_service`, `static/js/app.js`
+    `concluirPajModalApp`) chama isto ANTES de decidir entre o caminho
+    simples (0-1 trâmite) e o modal de escolha múltipla — sem isso, um PAJ
+    com `tramitacoes_caixa=None` e MAIS de um trâmite pendente de verdade
+    seria tratado como se tivesse só um, concluindo apenas o "trâmite de
+    trabalho" e deixando os demais abertos sem o usuário saber (bug real,
+    relatado em 2026-08-17 no PAJ-2024-029-01535).
+
+    PAJ fora da caixa (não encontrado na leitura) grava `[]` — mesmo
+    comportamento de `_atualizar_tramitacoes_caixa` pra PAJs sem tramitação
+    geral pendente.
+    """
+    paj_norm = paj_norm.strip()
+    await _atualizar_tramitacoes_caixa({paj_norm}, log)
+
+    meta_path = PAJS_DIR / paj_norm / "metadata.json"
+    if not meta_path.exists():
+        return []
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:
+        return []
+    return meta.get("tramitacoes_caixa") or []
+
+
 def _reconciliar_concluidos(
     pajs_na_caixa: set[str],
     log: Callable[[str], None],
@@ -1331,8 +1459,6 @@ async def atualizar_caixa(log_callback: Callable[[str], None]) -> dict:
         data = await sisdpu_client.caixa_de_entrada()
     except Exception as e:
         log(f"[FATAL] falha ao abrir caixa: {type(e).__name__}: {e}")
-        with contextlib.suppress(Exception):
-            await sisdpu_client.fechar()
         return {
             "ok": False,
             "total_caixa": 0,
@@ -1348,9 +1474,6 @@ async def atualizar_caixa(log_callback: Callable[[str], None]) -> dict:
             pajs_na_caixa.add(_normalizar_paj(it["paj"]))
 
     log(f"[atualizar] caixa: {len(pajs_na_caixa)} PAJs")
-
-    with contextlib.suppress(Exception):
-        await sisdpu_client.fechar()
 
     log("[atualizar] reconciliando PAJs que saíram da caixa...")
     removidos = _reconciliar_concluidos(pajs_na_caixa, log)
@@ -1414,8 +1537,6 @@ async def rodar(
     except Exception as e:
         log(f"[FATAL] falha ao abrir caixa: {type(e).__name__}: {e}")
         resumo["erros"].append(f"caixa: {e}")
-        with contextlib.suppress(Exception):
-            await sisdpu_client.fechar()
         return resumo
 
     itens_raw = data.get("itens_tabela", []) or []
@@ -1429,8 +1550,6 @@ async def rodar(
 
     if not itens:
         log("[sync] nada a sincronizar — encerrando")
-        with contextlib.suppress(Exception):
-            await sisdpu_client.fechar()
         return resumo
 
     # Comum o mesmo PAJ ter mais de uma tramitação pendente na caixa (aparece
@@ -1468,9 +1587,6 @@ async def rodar(
             log(f"  [EXC] {type(e).__name__}: {e}")
             resumo["erros"].append(f"{item.get('paj', '?')}: {e}")
         await asyncio.sleep(RATE_LIMIT_SISDPU)
-
-    with contextlib.suppress(Exception):
-        await sisdpu_client.fechar()
 
     # Se foi cancelado, pula reconciliacao (dados incompletos — nao queremos
     # concluir PAJs que ainda nao foram visitados)
@@ -1627,8 +1743,6 @@ async def rodar_anexos_desde_data(
         data = await sisdpu_client.caixa_de_entrada()
     except Exception as e:
         log(f"[FATAL] falha ao abrir caixa: {type(e).__name__}: {e}")
-        with contextlib.suppress(Exception):
-            await sisdpu_client.fechar()
         return {"erro": f"caixa: {e}"}
 
     itens_raw = data.get("itens_tabela", []) or []
@@ -1642,8 +1756,6 @@ async def rodar_anexos_desde_data(
 
     if not item_alvo:
         log(f"[anexos-desde] PAJ {alvo} NÃO encontrado na caixa atual")
-        with contextlib.suppress(Exception):
-            await sisdpu_client.fechar()
         return {"erro": "paj_nao_na_caixa"}
 
     # 2) Abre detalhamento (necessario antes de listar arquivos)
@@ -1651,8 +1763,6 @@ async def rodar_anexos_desde_data(
     dec = _decompor_paj(paj_txt)
     if not dec:
         log(f"[anexos-desde] PAJ mal-formado: {paj_txt!r}")
-        with contextlib.suppress(Exception):
-            await sisdpu_client.fechar()
         return {"erro": "paj_mal_formado"}
     ano, unidade, numero = dec
 
@@ -1661,14 +1771,10 @@ async def rodar_anexos_desde_data(
         det = await sisdpu_client.movimentacoes_paj(numero, ano, unidade)
     except Exception as e:
         log(f"  [ERRO] movimentacoes_paj: {type(e).__name__}: {e}")
-        with contextlib.suppress(Exception):
-            await sisdpu_client.fechar()
         return {"erro": f"detalhamento: {e}"}
 
     if det.get("erro"):
         log(f"  [ERRO] {det['erro']}")
-        with contextlib.suppress(Exception):
-            await sisdpu_client.fechar()
         return {"erro": det["erro"]}
 
     pasta = PAJS_DIR / alvo
@@ -1702,9 +1808,6 @@ async def rodar_anexos_desde_data(
         seq_por_file_id=seq_por_file_id,
         rodar_ocr=rodar_ocr,
     )
-
-    with contextlib.suppress(Exception):
-        await sisdpu_client.fechar()
 
     # 4) Atualiza metadata: pode reduzir/eliminar overflow
     meta_path = pasta / "metadata.json"
@@ -1869,9 +1972,6 @@ async def rodar_baixar_documentos(
         seq_por_file_id=seq_por_file_id,
     )
 
-    with contextlib.suppress(Exception):
-        await sisdpu_client.fechar()
-
     resultado["nao_encontrados"] = nao_encontrados
     log("=" * 60)
     log(f"[baixar-docs] FIM: {resultado['baixados']}/{resultado['total']} documento(s) baixado(s)")
@@ -1933,8 +2033,6 @@ async def rodar_paj_unico(
     except Exception as e:
         log(f"[FATAL] falha ao abrir caixa: {type(e).__name__}: {e}")
         resumo["erros"].append(f"caixa: {e}")
-        with contextlib.suppress(Exception):
-            await sisdpu_client.fechar()
         return resumo
 
     itens_raw = data.get("itens_tabela", []) or []
@@ -1948,8 +2046,12 @@ async def rodar_paj_unico(
     if not item_alvo:
         # Fora da caixa nao e' erro: e' o caso normal de PAJ concluido, de
         # watchlist ou incluido manualmente. Segue pela pesquisa global do
-        # SIS-DPU REAPROVEITANDO a sessao ja logada (forcar_sessao=False) —
-        # `rodar_paj_via_busca_global` fecha o navegador no fim.
+        # SIS-DPU REAPROVEITANDO a sessao ja logada (forcar_sessao=False).
+        # `fora_da_caixa_confirmado=True`: acabamos de checar a listagem da
+        # caixa (logo acima) e o PAJ NAO estava la — diferente da watchlist,
+        # aqui sabemos com certeza que ele saiu, entao `em_caixa_atual` deve
+        # ser corrigido pra False (nao preservado do valor antigo, que pode
+        # estar desatualizado de quando o PAJ ainda estava na caixa).
         log(f"[sync-paj] PAJ {alvo} não está na caixa atual — seguindo pela busca global do SIS-DPU")
         return await rodar_paj_via_busca_global(
             alvo,
@@ -1958,6 +2060,7 @@ async def rodar_paj_unico(
             baixar_anexos=baixar_anexos,
             rodar_ocr=rodar_ocr,
             forcar_sessao=False,
+            fora_da_caixa_confirmado=True,
             extrair_documentos=extrair_documentos,
             esperas_curtas=esperas_curtas,
         )
@@ -1994,9 +2097,6 @@ async def rodar_paj_unico(
         log(f"  [EXC] {type(e).__name__}: {e}")
         resumo["erros"].append(f"{alvo}: {e}")
 
-    with contextlib.suppress(Exception):
-        await sisdpu_client.fechar()
-
     log("=" * 60)
     log(
         f"[sync-paj] FIM: processado={resumo['processado']}, "
@@ -2016,6 +2116,7 @@ async def rodar_paj_via_busca_global(
     forcar_sessao: bool = True,
     extrair_documentos: bool = True,
     esperas_curtas: bool = False,
+    fora_da_caixa_confirmado: bool = False,
 ) -> dict:
     """Sincroniza UM PAJ via o campo de pesquisa global do SIS-DPU.
 
@@ -2026,17 +2127,26 @@ async def rodar_paj_via_busca_global(
     (cadastrados individualmente).
 
     Preservacao de metadata vs `rodar_paj_unico`:
-      - `em_caixa_atual` — preservado do metadata anterior (a busca global
-        nao responde se o PAJ ainda esta na caixa do defensor).
+      - `em_caixa_atual` — por padrao preservado do metadata anterior (a busca
+        global, por si so, nao responde se o PAJ ainda esta na caixa do
+        defensor) — EXCETO se `fora_da_caixa_confirmado=True` (ver abaixo).
       - `etiqueta_sisdpu` — preservada da rodada anterior (campo de pesquisa
         nao expoe etiquetas da caixa).
-      - `via_watchlist`, `concluido_em`, `n_anexos_removidos` — preservados.
+      - `via_watchlist`, `concluido_em`, `n_anexos_removidos` — preservados
+        (exceto `concluido_em`, tambem atualizado quando `fora_da_caixa_confirmado`
+        confirma uma transicao True->False que ainda nao tinha sido registrada).
 
     `paj_identificador` aceita 'PAJ-2026-044-00311' ou '2026/044-00311'.
 
     `forcar_sessao=False` reaproveita a sessao Playwright ja aberta em vez de
     fechar e relogar do zero — usado pelo fallback de `rodar_paj_unico`, que
     ja abriu a caixa (e portanto ja esta logado).
+
+    `fora_da_caixa_confirmado=True`: usado exclusivamente pelo fallback de
+    `rodar_paj_unico` (que ACABOU de checar a caixa e nao achou o PAJ) — repassa
+    ao `_processar_paj_pos_detalhamento` pra corrigir `em_caixa_atual` pra False
+    em vez de preservar cegamente um `True` desatualizado. NAO usar em chamadas
+    vindas da watchlist (`rodar_watchlist`), que nunca checaram a caixa.
     """
 
     def log(msg: str) -> None:
@@ -2070,15 +2180,11 @@ async def rodar_paj_via_busca_global(
     except Exception as e:
         log(f"[FATAL] falha na busca global: {type(e).__name__}: {e}")
         resumo["erros"].append(f"busca: {e}")
-        with contextlib.suppress(Exception):
-            await sisdpu_client.fechar()
         return resumo
 
     if det.get("erro"):
         log(f"[busca-global] sem resultado: {det['erro']}")
         resumo["erros"].append(det["erro"])
-        with contextlib.suppress(Exception):
-            await sisdpu_client.fechar()
         return resumo
 
     if not baixar_anexos:
@@ -2099,6 +2205,7 @@ async def rodar_paj_via_busca_global(
             rodar_ocr=rodar_ocr,
             extrair_documentos=extrair_documentos,
             via_busca_global=True,
+            fora_da_caixa_confirmado=fora_da_caixa_confirmado,
         )
         if ok:
             resumo["processado"] = True
@@ -2116,9 +2223,6 @@ async def rodar_paj_via_busca_global(
     except Exception as e:
         log(f"  [EXC] {type(e).__name__}: {e}")
         resumo["erros"].append(f"{alvo}: {e}")
-
-    with contextlib.suppress(Exception):
-        await sisdpu_client.fechar()
 
     log("=" * 60)
     log(
@@ -2207,6 +2311,102 @@ async def rodar_watchlist(
     return resumo
 
 
+async def rodar_prazos_abertos(
+    log_callback: Callable[[str], None],
+    deve_cancelar: Callable[[], bool] | None = None,
+) -> dict:
+    """Sincronização LEVE (só movimentações, sem anexos) de todos os PAJs que
+    aparecem na categoria "Processos com prazo em aberto" das intimações do
+    e-proc (aba Prazos) — postura proativa: sempre que a caixa do SISDPU é
+    sincronizada, os PAJs que têm um prazo correndo no e-proc já ficam com o
+    detalhamento/movimentações atualizados no painel, sem precisar abrir cada
+    um manualmente.
+
+    Fonte da lista: `eproc_intimacoes.carregar()["secoes"]["prazo_aberto"]` —
+    o que já foi lido na ÚLTIMA sincronização de intimações (não força uma
+    releitura do e-proc aqui; isso é papel do botão "Sincronizar intimações"
+    ou do auto-sync do início do painel). O campo `paj` de cada caso vem de
+    texto livre digitado no lembrete do e-proc — pode estar vazio (sem
+    lembrete) ou não bater com nada no SISDPU; ambos os casos são só um erro
+    registrado no resumo, não interrompem os demais.
+
+    Itera serialmente (mesmo motivo de `rodar_watchlist`: uma única sessão
+    Playwright) via `rodar_paj_via_busca_global` com `baixar_anexos=False` —
+    funciona mesmo se o PAJ já saiu da caixa de entrada (concluído).
+    """
+    from ingestao import eproc_intimacoes
+
+    def log(msg: str) -> None:
+        with contextlib.suppress(Exception):
+            log_callback(msg)
+
+    resumo: dict = {"total": 0, "processados": 0, "erros": [], "cancelado": False}
+
+    dados_intimacoes = eproc_intimacoes.carregar()
+    casos = (dados_intimacoes.get("secoes") or {}).get("prazo_aberto") or []
+
+    # Dedupe por paj_norm preservando ordem — o mesmo PAJ pode ter varios
+    # prazos/processos na mesma categoria.
+    vistos: set[str] = set()
+    pajs_norm: list[str] = []
+    for c in casos:
+        paj_exibicao = (c.get("paj") or "").strip()
+        if not paj_exibicao:
+            continue
+        dec = _decompor_paj(paj_exibicao)
+        if not dec:
+            resumo["erros"].append(f"{paj_exibicao}: número de PAJ inválido (lembrete mal formatado)")
+            continue
+        paj_norm = _normalizar_paj(paj_exibicao)
+        if paj_norm in vistos:
+            continue
+        vistos.add(paj_norm)
+        pajs_norm.append(paj_norm)
+
+    resumo["total"] = len(pajs_norm)
+
+    if not pajs_norm:
+        log("[prazos-abertos] nenhum PAJ com prazo em aberto identificado nas intimações — nada a fazer")
+        return resumo
+
+    log(f"[prazos-abertos] {len(pajs_norm)} PAJ(s) com prazo em aberto (sincronização leve, sem anexos)")
+
+    for idx, paj_norm in enumerate(pajs_norm, start=1):
+        if deve_cancelar is not None and deve_cancelar():
+            log(f"[prazos-abertos] CANCELADO após {idx - 1} de {len(pajs_norm)}")
+            resumo["cancelado"] = True
+            break
+
+        log("-" * 60)
+        log(f"[prazos-abertos] ({idx}/{len(pajs_norm)}) {paj_norm}")
+
+        try:
+            r = await rodar_paj_via_busca_global(
+                paj_norm,
+                log_callback,
+                deve_cancelar=deve_cancelar,
+                baixar_anexos=False,
+                extrair_documentos=True,
+                esperas_curtas=True,
+            )
+            if r.get("processado"):
+                resumo["processados"] += 1
+            else:
+                erros_paj = r.get("erros", []) or ["não processado"]
+                resumo["erros"].append(f"{paj_norm}: {'; '.join(erros_paj)}")
+        except Exception as e:
+            log(f"[prazos-abertos] EXC em {paj_norm}: {type(e).__name__}: {e}")
+            resumo["erros"].append(f"{paj_norm}: {type(e).__name__}: {e}")
+
+    log("=" * 60)
+    log(
+        f"[prazos-abertos] FIM: processados={resumo['processados']} de "
+        f"{resumo['total']}, erros={len(resumo['erros'])}"
+        + (" (cancelado)" if resumo["cancelado"] else "")
+    )
+    return resumo
+
+
 async def buscar_resumo_via_busca(
     paj_identificador: str,
     log_callback: Callable[[str], None] | None = None,
@@ -2253,8 +2453,6 @@ async def buscar_resumo_via_busca(
         det = await sisdpu_client.buscar_paj_global(numero, ano, unidade)
     except Exception as e:
         log(f"[busca-paj] FALHA: {type(e).__name__}: {e}")
-        with contextlib.suppress(Exception):
-            await sisdpu_client.fechar()
         return {
             "paj_norm": paj_norm,
             "ok": False,
@@ -2263,8 +2461,6 @@ async def buscar_resumo_via_busca(
 
     if det.get("erro"):
         log(f"[busca-paj] sem resultado: {det['erro']}")
-        with contextlib.suppress(Exception):
-            await sisdpu_client.fechar()
         return {
             "paj_norm": paj_norm,
             "ok": False,
@@ -2293,8 +2489,6 @@ async def buscar_resumo_via_busca(
         metadata = parser.montar_metadata(paj_norm, texto_sisdpu)
     except Exception as e:
         log(f"[busca-paj] ERRO parser: {type(e).__name__}: {e}")
-        with contextlib.suppress(Exception):
-            await sisdpu_client.fechar()
         return {
             "paj_norm": paj_norm,
             "ok": False,
@@ -2302,16 +2496,47 @@ async def buscar_resumo_via_busca(
         }
 
     metadata["sisdpu_raw"] = det
+
+    # Campos frageis de sisdpu_raw: preserva o da sincronizacao anterior se
+    # esta nao devolveu (mesmo raciocinio/auditoria de
+    # _processar_paj_pos_detalhamento, ver comentario lá).
+    sisdpu_raw_antigo = meta_antiga.get("sisdpu_raw") or {}
+    for _campo in ("narrativa", "assistidos_pf", "audiencias"):
+        if not metadata["sisdpu_raw"].get(_campo) and sisdpu_raw_antigo.get(_campo):
+            metadata["sisdpu_raw"][_campo] = sisdpu_raw_antigo[_campo]
+
+    # Assistido/Ofício: aqui (busca global "resumo") não há linha da caixa
+    # nenhuma — só o detalhamento. Se vier vazio, cai pro valor anterior.
+    if not metadata.get("assistido_caixa") and meta_antiga.get("assistido_caixa"):
+        metadata["assistido_caixa"] = meta_antiga["assistido_caixa"]
+    if not metadata.get("oficio_caixa") and meta_antiga.get("oficio_caixa"):
+        metadata["oficio_caixa"] = meta_antiga["oficio_caixa"]
+
+    # Vínculo com processo judicial — mesma proteção de
+    # _processar_paj_pos_detalhamento.
+    if det.get("processos_judiciais"):
+        metadata["processos_judiciais"] = det["processos_judiciais"]
+    elif meta_antiga.get("processos_judiciais"):
+        metadata["processos_judiciais"] = meta_antiga["processos_judiciais"]
+
     metadata.update(_montar_contatos(det, meta_antiga))
 
     # Se temos movimentacoes estruturadas do sisdpu_client, usa direto sem perda
+    movs_antigas = (meta_antiga.get("detalhes_sisdpu", {}) or {}).get("movimentacoes", []) or []
     if det.get("movimentacoes"):
         mov_estruturadas = parser.parsear_movimentacoes_estruturadas(det["movimentacoes"])
-        movs_antigas = (meta_antiga.get("detalhes_sisdpu", {}) or {}).get("movimentacoes", []) or []
         _preservar_descricao_retorno_antiga(mov_estruturadas, movs_antigas)
         if "detalhes_sisdpu" not in metadata:
             metadata["detalhes_sisdpu"] = {}
         metadata["detalhes_sisdpu"]["movimentacoes"] = mov_estruturadas
+    elif movs_antigas:
+        # Mesma proteção de _processar_paj_pos_detalhamento — nunca zerar o
+        # histórico inteiro por uma falha pontual de extração.
+        log(f"[busca-paj] SISDPU nao devolveu movimentacoes — preservando "
+            f"{len(movs_antigas)} da sincronizacao anterior")
+        if "detalhes_sisdpu" not in metadata:
+            metadata["detalhes_sisdpu"] = {}
+        metadata["detalhes_sisdpu"]["movimentacoes"] = movs_antigas
 
     # Foto do assistido (mesma logica de `_processar_paj_pos_detalhamento`).
     foto_src = det.get("foto_assistido_src") or ""
@@ -2337,9 +2562,6 @@ async def buscar_resumo_via_busca(
         json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
     )
-
-    with contextlib.suppress(Exception):
-        await sisdpu_client.fechar()
 
     log(f"[busca-paj] OK: {paj_norm} (assistido={metadata.get('assistido_caixa', '?')[:40]})")
     return {

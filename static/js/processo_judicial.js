@@ -29,6 +29,17 @@ function processoJudicialBlock(cfg) {
         erro: {},         // idx -> string
         baixando: {},     // "idx:numeroEvento" -> bool
 
+        // Minimenu "Consultar processo (MCP) / Abrir no navegador" do número
+        // do processo — mesmo padrão de posicionamento usado em prazos.html/
+        // historico.html/sat.html/watchlist.html: um único elemento
+        // teleportado pro <body> (ver partials/processo_judicial.html),
+        // reposicionado via posMenu a cada clique. Sem isso, o dropdown nativo
+        // ficava cortado pelo overflow:hidden do card .collapse (o número do
+        // processo pode aparecer mais de uma vez na mesma seção — daí a chave
+        // ser o número do processo, não um booleano único).
+        menuAbertoProc: null,
+        posMenu: { top: 0, left: 0 },
+
         async init() {
             await Promise.all(this.processos.map((_, idx) => this.carregarIntimacoes(idx)));
         },
@@ -118,7 +129,18 @@ function processoJudicialBlock(cfg) {
             return (it.parte_intimada || '').split(/[-–]/)[0].trim().toUpperCase();
         },
         _ehTerceiroNuncaDpu(it) {
-            return ['PERITO', 'PERITA', 'TESTEMUNHA', 'TERCEIRO', 'ASSISTENTE TÉCNICO', 'ASSISTENTE TECNICO']
+            // MPF, Unidade Externa (ex.: AGU-Cálculos) e Agência da Previdência Social
+            // são da MESMA natureza de Perito/Testemunha/Terceiro: papéis estruturais
+            // do processo que a DPU jamais representa — seguros de excluir sempre,
+            // não é uma adivinhação de polo. Faltava "MPF" aqui: intimação de
+            // fiscal-da-lei (comum em Requisição de Pagamento) foi escolhida por
+            // engano como rótulo de um prazo do Painel do Procurador quando as
+            // intimações dos assistidos já estavam fechadas (ciência dada) e só
+            // sobravam MPF/INSS como candidatos com mesmo dia+prazo — nenhum dos
+            // dois é polo ativo, e o desempate caía no primeiro da lista (MPF).
+            // Bug real relatado 2026-08-18 (PAJ 2024/029-01535).
+            return ['PERITO', 'PERITA', 'TESTEMUNHA', 'TERCEIRO', 'ASSISTENTE TÉCNICO', 'ASSISTENTE TECNICO',
+                     'MPF', 'UNIDADE EXTERNA', 'AGÊNCIA DA PREVIDÊNCIA SOCIAL', 'AGENCIA DA PREVIDENCIA SOCIAL']
                 .includes(this._papelDe(it));
         },
         // Polos que a DPU tipicamente representa no Previdenciário (o segurado,

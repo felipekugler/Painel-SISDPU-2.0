@@ -697,9 +697,16 @@
                   <span class="loading loading-spinner loading-xs"></span>
                   analisando…
                 </span>
-                <span class="badge badge-sm font-semibold" x-show="!analiseEmAndamento(paj.paj_norm)"
-                      :class="paj.tem_analise_ia ? 'badge-success' : 'badge-ghost text-base-content/40'"
-                      x-text="paj.tem_analise_ia ? 'SIM' : 'NÃO'"></span>
+                <span class="inline-flex items-center gap-1" x-show="!analiseEmAndamento(paj.paj_norm)">
+                  <span class="badge badge-sm font-semibold"
+                        :class="paj.tem_analise_ia ? 'badge-success' : 'badge-ghost text-base-content/40'"
+                        x-text="paj.tem_analise_ia ? 'SIM' : 'NÃO'"></span>
+                  <!-- PI: já existe petição inicial minutada pela IA na pasta
+                       (Peças IA/ ou raiz do PAJ) — mesma checagem do botão
+                       "Organizar Documentos para Ajuizamento" na página do PAJ. -->
+                  <span class="badge badge-sm badge-warning font-semibold" x-show="paj.tem_peticao_inicial"
+                        title="Já existe uma petição inicial minutada pela IA na pasta deste PAJ">PI</span>
+                </span>
               </td>
             </tr><tr x-show="expandidoTramites[paj.paj_norm] && (paj.tramitacoes_caixa || []).length > 1" @click.stop
                 class="bg-base-200/40">
@@ -850,8 +857,6 @@ function dashboardApp() {
             this.expandidoTramites[paj.paj_norm] = !this.expandidoTramites[paj.paj_norm];
         },
         async concluirTramite(paj, tramite) {
-            if (!confirm('Concluir esta tramitação de ' + paj.paj + ' na caixa de entrada?\n\n'
-                + (tramite.descricao || '') + (tramite.remetente ? ('\nDe: ' + tramite.remetente) : ''))) return;
             if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
             this.concluindoTramite[tramite.id_tramite] = true;
             try {

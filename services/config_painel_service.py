@@ -416,6 +416,79 @@ def set_eproc_sigilos_todos(sigilos: list[str], processo_referencia: str = "") -
     return get_eproc_sigilo_prefs()
 
 
+# Procurador/unidade destino do Gerenciamento de Processo (substabelecimento):
+# lista institucional completa tem centenas de nomes — mesmo padrão de
+# favoritos (dropdown) + frequentes (badges) usado em eventos/tipos de
+# documento, mas cada item é {"valor": <code interno>, "rotulo": <nome
+# exibido>} (o "valor" é o que precisa ir pro <select> do e-proc, não dá pra
+# guardar só o rótulo como nas listas de string simples acima).
+def get_eproc_procuradores_prefs() -> dict:
+    """Lista de procuradores/unidades destino do Gerenciamento de Processo —
+    importada (ao vivo, por processo de referência) + favoritos (dropdown) +
+    frequentes (badges), mesmo padrão de eventos/tipos de documento."""
+    raw = _ler_raw()
+    return {
+        "procuradores_todos": raw.get("eproc_procuradores_todos") or [],
+        "procuradores_favoritos": raw.get("eproc_procuradores_favoritos") or [],
+        "procuradores_frequentes": raw.get("eproc_procuradores_frequentes") or [],
+        "procurador_padrao": raw.get("eproc_procurador_padrao") or None,
+    }
+
+
+def set_eproc_procuradores_todos(procuradores: list[dict], processo_referencia: str = "") -> dict:
+    """Grava a lista COMPLETA importada do e-proc (mantém a curadoria existente,
+    só descartando favoritos/frequentes/padrão cujo `valor` sumiu da lista nova).
+
+    O próprio dropdown do e-proc lista alguns destinos DUAS VEZES (mesmo
+    `valor`/código, ex. uma unidade "fixada" no topo e de novo na ordem
+    alfabética) — sem deduplicar aqui, o `:key="p.valor"` do Alpine no `x-for`
+    (Configurações e no bloco "Gerenciamento do processo") colide e a lista
+    inteira deixa de renderizar (bug real 2026-08-17: 249 importados, grade
+    vazia). Mantém a 1ª ocorrência de cada `valor`."""
+    raw = _ler_raw()
+    vistos: set[str] = set()
+    procuradores_dedup: list[dict] = []
+    for p in (procuradores or []):
+        valor = str(p.get("valor") or "")
+        if not valor or valor in vistos:
+            continue
+        vistos.add(valor)
+        procuradores_dedup.append({"valor": valor, "rotulo": str(p.get("rotulo") or "")})
+    procuradores = procuradores_dedup
+    raw["eproc_procuradores_todos"] = procuradores
+    if processo_referencia:
+        raw["eproc_processo_referencia"] = str(processo_referencia)
+    valores = {p["valor"] for p in procuradores}
+    for k in ("eproc_procuradores_favoritos", "eproc_procuradores_frequentes"):
+        atual = raw.get(k)
+        if isinstance(atual, list) and procuradores:
+            raw[k] = [p for p in atual if isinstance(p, dict) and p.get("valor") in valores]
+    padrao = raw.get("eproc_procurador_padrao")
+    if isinstance(padrao, dict) and procuradores and padrao.get("valor") not in valores:
+        raw["eproc_procurador_padrao"] = None
+    _salvar_raw(raw)
+    return get_eproc_procuradores_prefs()
+
+
+def set_eproc_procuradores_prefs(d: dict) -> dict:
+    """Grava a curadoria (favoritos/frequentes/padrão) presente em `d`."""
+    raw = _ler_raw()
+    for chave in ("procuradores_favoritos", "procuradores_frequentes"):
+        if chave in d and isinstance(d[chave], list):
+            raw["eproc_" + chave] = [
+                {"valor": str(p.get("valor") or ""), "rotulo": str(p.get("rotulo") or "")}
+                for p in d[chave] if isinstance(p, dict) and p.get("valor")
+            ]
+    if "procurador_padrao" in d:
+        p = d.get("procurador_padrao")
+        raw["eproc_procurador_padrao"] = (
+            {"valor": str(p.get("valor") or ""), "rotulo": str(p.get("rotulo") or "")}
+            if isinstance(p, dict) and p.get("valor") else None
+        )
+    _salvar_raw(raw)
+    return get_eproc_procuradores_prefs()
+
+
 # --- Tabela de Ofícios: nome completo -> SIGLA (padronização de exibição) ---
 # Exibida no lugar do nome completo do ofício em todo o painel (dashboard, PAJ,
 # Retornos). Editável na aba SISDPU das Configurações. O casamento nome->sigla é

@@ -952,6 +952,15 @@
                 </svg>
                 <span>Petições pendentes</span>
             </a>
+
+            <!-- Agenda: calendário + tabela unificando audiências (SISDPU),
+                 prazos finais (e-proc) e compromissos/afastamentos manuais. -->
+            <a href="/agenda" class="nav-item {% if request.url.path == '/agenda' %}active{% endif %}">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5m-13.5-3h.008v.008h-.008v-.008ZM9.75 15h.008v.008H9.75V15Zm-.375 3h.008v.008h-.008V18Zm2.625-3h.008v.008h-.008V15Zm-.375 3h.375v.008h-.375V18Zm2.625-3h.008v.008h-.008V15Zm2.625-3h.008v.008h-.008V12Z" />
+                </svg>
+                <span>Agenda</span>
+            </a>
         </nav>
 
         <!-- Footer com Pipeline e Configurações -->
@@ -1182,6 +1191,8 @@
     <script src="/static/js/acoes_sisdpu.js?v={{ app_version }}"></script>
     <script src="/static/js/acoes_eproc.js?v={{ app_version }}"></script>
     <script src="/static/js/processo_judicial.js?v={{ app_version }}"></script>
+    <script src="/static/js/eventos_processo.js?v={{ app_version }}"></script>
+    <script src="/static/js/minuta_ia.js?v={{ app_version }}"></script>
     <script src="/static/js/analise_pretensao.js?v={{ app_version }}"></script>
     <script src="/static/js/lembretes.js?v={{ app_version }}"></script>
     {% block scripts %}{% endblock %}
@@ -1433,8 +1444,62 @@
             if (window._cofreResolve) { window._cofreResolve(false); window._cofreResolve = null; }
         };
 
-        // Atualiza ao carregar e faz polling leve.
-        window.atualizarSelos();
+        // ── Inicialização do painel ─────────────────────────────────────────
+        // Primeira coisa pedida ao abrir o painel (se o cofre já estiver
+        // configurado e ainda trancado — o que é o normal após reiniciar,
+        // já que o cofre é só em memória): a senha-mestra. Assim que
+        // desbloqueado, reconecta SISDPU e e-proc sozinho (mesma chamada do
+        // selo "reconectar") e, com o e-proc já logado, sincroniza as
+        // intimações (mesma rota do botão "Sincronizar intimações" da
+        // página Prazos) — tudo sem esperar o usuário clicar em nada. Roda
+        // uma vez por processo do servidor — nas páginas seguintes o cofre
+        // já está destrancado e este bloco não faz nada além do polling
+        // normal. O SAT fica de fora de propósito: não usa credencial do
+        // cofre, o login sempre exige 2FA/CAPTCHA manual, então abrir a
+        // janela dele sozinho não adiantaria nada.
+        async function _inicializarPainel() {
+            var st = await _lerCofre();
+            if (st.configurado && !st.destrancado) {
+                var ok = await window.abrirModalCofre();
+                if (ok) {
+                    showToast('Cofre desbloqueado — reconectando SISDPU e e-proc...', 'info');
+                    // Em SEQUÊNCIA, não em paralelo: os dois sobem um navegador
+                    // Playwright (SISDPU headless + e-proc com janela visível) e,
+                    // disparados ao mesmo tempo, disputam CPU/IO o bastante pra
+                    // estourar o timeout de 15s do login do SISDPU (que então só
+                    // conecta no reconectar manual seguinte, com a máquina livre).
+                    await window.reconectarSistema('sisdpu');
+                    await window.reconectarSistema('eproc');
+                    // Só dispara a sincronização de intimações DEPOIS do e-proc
+                    // ter terminado de logar — mesma lógica de não competir por
+                    // CPU/IO, e a rota abaixo precisa da sessão já ativa.
+                    _sincronizarIntimacoesInicial();
+                }
+            }
+            window.atualizarSelos();
+        }
+
+        // Sincroniza as intimações do e-proc (mesma rota do botão "Sincronizar
+        // intimações" da página Prazos) logo após o login automático do início
+        // do painel. O resultado fica persistido no servidor
+        // (eproc_intimacoes.salvar) — quando o usuário abrir a página Prazos,
+        // ela já carrega sincronizada (carregarIntimacoes() só lê o que já foi
+        // salvo), sem precisar clicar em nada.
+        function _sincronizarIntimacoesInicial() {
+            showToast('Sincronizando intimações do e-proc...', 'info');
+            fetch('/api/prazos/sincronizar')
+                .then(function(r) { return r.json().then(function(d) { return { httpOk: r.ok, d: d }; }); })
+                .then(function(res) {
+                    if (res.httpOk) {
+                        showToast('Intimações do e-proc sincronizadas.', 'success');
+                    } else {
+                        showToast('Falha ao sincronizar intimações: ' + ((res.d && res.d.erro) || 'erro desconhecido'), 'error');
+                    }
+                })
+                .catch(function() { showToast('Falha de rede ao sincronizar intimações.', 'error'); });
+        }
+
+        _inicializarPainel();
         setInterval(window.atualizarSelos, 15000);
     </script>
 </body>

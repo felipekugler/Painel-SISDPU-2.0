@@ -944,8 +944,17 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
                 const seq = (cells[0]?.textContent || '').trim();
                 const fases = (cells[4]?.textContent || '').trim();
 
-                // Se esta TR tem "Atendimento de retorno"
-                if (fases.includes('Atendimento de retorno')) {
+                // Se esta TR tem "Atendimento de retorno" E de fato tem o icone de
+                // expansao PROPRIO dela (nem toda "Atendimento de retorno" tem — há
+                // variante sem campo expansivel). Sem essa checagem, o loop abaixo
+                // "vazava" pra frente e pegava o conteudo expandido de uma OUTRA
+                // TR de retorno mais adiante (bug real: seq sem expansao propria
+                // ficava com o descricao_retorno de um seq vizinho, sobrescrevendo
+                // por engano a descricao correta na exibicao — ver
+                // movimentacoes_tabela.html, que prioriza descricao_retorno sobre
+                // descricao pra "Atendimento de retorno").
+                const temToggler = !!tr.querySelector('.ui-row-toggler');
+                if (fases.includes('Atendimento de retorno') && temToggler) {
                     // Procurar pela próxima TR (pode haver várias)
                     for (let j = i + 1; j < Math.min(i + 5, allTrs.length); j++) {
                         const proximaTr = allTrs[j];
@@ -1534,9 +1543,18 @@ async def buscar_paj_global(
 
             function valorParaLabel(rotulos) {
                 const alvos = rotulos.map(norm);
-                const candidatos = document.querySelectorAll(
+                // Exclui o MENU DE NAVEGAÇÃO do topo (ul.epaj_info_menu_lista, presente
+                // em toda pagina do SISDPU) — ele tem itens de configuracao com o MESMO
+                // texto de varios labels que procuramos aqui (ex: um item de menu chamado
+                // literalmente "Ofício", que leva a uma tela administrativa de cadastro de
+                // oficios, nada a ver com o Oficio Responsavel DESTE PAJ). Sem essa
+                // exclusao, o proximo <li> do menu (ex: "Documento/Pretensão", outro item
+                // do MESMO menu) era capturado como se fosse o valor do campo — bug real,
+                // gravava "Documento/Pretensão" como oficio_caixa em ~38 PAJs sincronizados
+                // via busca global (rodar_paj_via_busca_global), relatado em 2026-08-19.
+                const candidatos = Array.from(document.querySelectorAll(
                     'td, th, label, span, dt, dd, li, b, strong, div, p'
-                );
+                )).filter((el) => !el.closest('.epaj_info_menu_lista'));
                 for (const el of candidatos) {
                     const txt = norm(el.textContent || '');
                     if (!alvos.includes(txt)) continue;
@@ -1637,11 +1655,19 @@ async def buscar_paj_global(
                 'Ofício', 'Oficio', 'Ofício Responsável', 'Oficio Responsavel',
                 'Ofício responsável', 'Ofício atual'
             ]);
-            r.juizo = valorParaLabel([
-                'Juízo/Orgão Julgador', 'Juizo/Orgao Julgador',
-                'Juízo/Órgão Julgador', 'Juízo', 'Juizo',
-                'Órgão Julgador', 'Orgao Julgador'
-            ]);
+            // `juizo`/`processo_judicial`/`processos_judiciais` NAO usam mais
+            // valorParaLabel aqui — essa busca generica por texto de label
+            // (usada pros demais campos acima) nao enxerga a tabela real de
+            // "Processo Judicial" (colunas, sem label solto "Juízo:" no DOM),
+            // entao vinha vazia ou pegava texto de outro rotulo por coincidencia
+            // de layout. A extracao por tabela (mesma logica de
+            // movimentacoes_paj.extrairProcessosJudiciais) fica mais abaixo,
+            // apos `movs` — preenche processo_judicial/juizo/data_inclusao/
+            // observacoes_processo (onde mora a "chave" de acesso, ver
+            // services.paj_service.buscar_chave_por_processo)/processos_judiciais
+            // igual ao caminho da caixa. Sem essa tabela, PAJs sincronizados
+            // pela busca global (fora da caixa) ficavam com juizo/chave ausentes
+            // ou errados mesmo tendo "Processo Judicial" cadastrado.
             r.foro_detalhado = valorParaLabel([
                 'Foro Detalhado', 'Foro detalhado', 'Foro'
             ]);
@@ -1665,12 +1691,6 @@ async def buscar_paj_global(
                     r.status_paj = '';
                 }
             }
-
-            // ---------- Numero do processo judicial (padrao CNJ) ----------
-            const procMatch = body.match(
-                /(\\d{7}-\\d{2}\\.\\d{4}\\.\\d\\.\\d{2}\\.\\d{4})/
-            );
-            if (procMatch) r.processo_judicial = procMatch[1];
 
             // ---------- Movimentacoes (tabela; mesma logica de antes) ----------
             const movs = [];
@@ -1707,6 +1727,103 @@ async def buscar_paj_global(
                 }
             }
             if (movs.length > 0) r.movimentacoes = movs.slice(0, 500);
+
+            // ---------- Processo(s) Judicial(is) — MESMA logica de
+            // movimentacoes_paj.extrairProcessosJudiciais (ver lá o comentário
+            // completo). Duplicada aqui (nao compartilhada — cada chamada de
+            // page.evaluate() e' uma string isolada) porque a busca global
+            // tambem precisa dos dados REAIS da tabela (juizo, observacoes com
+            // a chave de acesso), nao so' do numero do processo. ----------
+            const extrairProcessosJudiciais = () => {
+              const processos = [];
+              const tabelas = document.querySelectorAll('table.epaj_sistema_formulario_tabela.epaj_sistema_formulario_tabela_filtro');
+              let tabelaProcesso = null;
+              for (const tabela of tabelas) {
+                const th = tabela.querySelector('th');
+                if (th && th.textContent.includes('Processo Judicial')) { tabelaProcesso = tabela; break; }
+              }
+              if (!tabelaProcesso) return processos;
+
+              const linhas = tabelaProcesso.querySelectorAll('tbody tr');
+              let atual = null;
+              for (let i = 0; i < linhas.length; i++) {
+                const linha = linhas[i];
+                const celulas = linha.querySelectorAll('td');
+                if (celulas.length >= 3 && !linha.textContent.includes('Observações:')) {
+                  const spanProc = celulas[0]?.querySelector('span[style*="font-weight"]');
+                  const numero = spanProc?.textContent.trim() || '';
+                  if (!numero) { atual = null; continue; }
+                  const spanJuizo = celulas[1]?.querySelector('span[id*="juizo"]');
+                  const spanData = celulas[2]?.querySelector('span');
+                  atual = {
+                    processo_judicial: numero,
+                    juizo: spanJuizo?.textContent.trim() || null,
+                    data_inclusao: spanData?.textContent.trim() || null,
+                    observacoes_processo: null,
+                    validacao: { sucesso: false, motivo: '' },
+                  };
+                  processos.push(atual);
+                }
+                if (linha.textContent.includes('Observações:') && atual) {
+                  const celulasObs = linha.querySelectorAll('td');
+                  if (celulasObs.length >= 2) {
+                    atual.observacoes_processo = celulasObs[1]?.textContent.trim() || null;
+                  }
+                }
+              }
+              return processos;
+            };
+
+            const processosJudiciais = extrairProcessosJudiciais();
+            for (const p of processosJudiciais) {
+              if (p.processo_judicial && p.data_inclusao) {
+                const movCadastro = movs.find(mov =>
+                  (mov.fases?.includes('Cadastramento de processo judicial') ||
+                   mov.movimentacao?.includes('Cadastramento de processo judicial')) &&
+                  (mov.descricao || '').includes(p.processo_judicial)
+                );
+                if (movCadastro) {
+                  const descricao = movCadastro.descricao || '';
+                  const numeroMatch = descricao.match(/Número do Processo Judicial[:\\s]+(\\d+)/i);
+                  const numeroNaMov = numeroMatch ? numeroMatch[1] : '';
+                  const dataMov = movCadastro.data.substring(0, 10);
+                  if (numeroNaMov === p.processo_judicial && dataMov === p.data_inclusao) {
+                    p.validacao.sucesso = true;
+                    p.validacao.motivo = 'Validação cruzada bem-sucedida';
+                  } else {
+                    p.validacao.motivo = 'Dados não coincidem com movimentação';
+                  }
+                } else {
+                  p.validacao.motivo = 'Movimentação de cadastramento não encontrada';
+                }
+              } else {
+                p.validacao.motivo = 'Dados incompletos (sem número ou data)';
+              }
+            }
+
+            const ultimoProcesso = processosJudiciais.length
+                ? processosJudiciais[processosJudiciais.length - 1] : null;
+            if (ultimoProcesso) {
+              r.processo_judicial = ultimoProcesso.processo_judicial;
+              r.juizo = ultimoProcesso.juizo;
+              r.data_inclusao = ultimoProcesso.data_inclusao;
+              r.observacoes_processo = ultimoProcesso.observacoes_processo;
+              r.validacao_processo = ultimoProcesso.validacao;
+              r.processos_judiciais = processosJudiciais;
+            }
+            // Sem `else`/fallback por regex aqui de proposito: um regex de
+            // padrao CNJ solto sobre `body` (texto de TODA a pagina, inclusive
+            // descricoes de movimentacao/despacho) pega qualquer numero de
+            // processo MENCIONADO em prosa — comum em despachos que citam
+            // "coisa julgada"/"acao anterior"/processo de OUTRO PAJ da mesma
+            // pessoa — e nao necessariamente o processo REALMENTE cadastrado
+            // neste PAJ. Bug real observado em producao: PAJ sem nenhum
+            // processo ajuizado aparecia com o numero de um processo ANTIGO
+            // (ja baixado, de outro PAJ) so' porque uma analise previa citava
+            // esse numero como "processo em nome da assistida" localizado no
+            // e-proc. Preferimos deixar `processo_judicial` vazio (fiel a
+            // realidade) a arriscar mostrar um numero ERRADO — mais perigoso
+            // que simplesmente nao mostrar nada.
 
             // ---------- Audiências (mesma logica de movimentacoes_paj — ver lá o
             // comentário completo sobre a estrutura da tabela) ----------
@@ -1813,8 +1930,17 @@ async def buscar_paj_global(
                 const seq = (cells[0]?.textContent || '').trim();
                 const fases = (cells[4]?.textContent || '').trim();
 
-                // Se esta TR tem "Atendimento de retorno"
-                if (fases.includes('Atendimento de retorno')) {
+                // Se esta TR tem "Atendimento de retorno" E de fato tem o icone de
+                // expansao PROPRIO dela (nem toda "Atendimento de retorno" tem — há
+                // variante sem campo expansivel). Sem essa checagem, o loop abaixo
+                // "vazava" pra frente e pegava o conteudo expandido de uma OUTRA
+                // TR de retorno mais adiante (bug real: seq sem expansao propria
+                // ficava com o descricao_retorno de um seq vizinho, sobrescrevendo
+                // por engano a descricao correta na exibicao — ver
+                // movimentacoes_tabela.html, que prioriza descricao_retorno sobre
+                // descricao pra "Atendimento de retorno").
+                const temToggler = !!tr.querySelector('.ui-row-toggler');
+                if (fases.includes('Atendimento de retorno') && temToggler) {
                     // Procurar pela próxima TR (pode haver várias)
                     for (let j = i + 1; j < Math.min(i + 5, allTrs.length); j++) {
                         const proximaTr = allTrs[j];
@@ -1957,7 +2083,11 @@ async def extrair_documentos_por_seq(
 
     Retorna dict: {paj, assistido, movimentacoes_com_documentos: [{seq,
     dataHora, movimentacao, documentos: [{tipoArquivo, descricao, nomeArquivo,
-    urlDownload}]}], total_documentos, seqsPuladas, tabela_markdown}.
+    urlDownload}]}], total_documentos, seqsPuladas, seqsVerificadosSemDocumento,
+    tabela_markdown}. `seqsVerificadosSemDocumento` sao seqs cujo popup abriu e
+    fechou com sucesso mas nao tinha nenhum documento — o chamador (sincronizador)
+    persiste essa lista em metadata pra nao reabrir esses popups nas proximas
+    syncs (sem isso, so' seqs COM documento eram cacheadas como "conhecidas").
     Em caso de erro ou tabela nao encontrada, retorna {"erro": "..."}.
     """
 
@@ -2038,11 +2168,19 @@ async def listar_arquivos_paj(debug: bool = False) -> dict:
     Retorna dict:
         {
             "ok": bool,
-            "itens": [{tipo, descricao, arquivo, row_index, todas_celulas}, ...],
+            "itens": [{tipo, descricao, arquivo, href, sem_link_direto, row_index,
+                       todas_celulas}, ...],
             "diag": {...}   # sempre presente; use pra debug quando itens == []
         }
     `diag` inclui: candidatos_botao_arquivos, clicou, dialogs_visiveis,
     dialog_escolhido, total_linhas, linhas_filtradas_por_texto, html_snippet.
+
+    `sem_link_direto=True`: o link "Visualizar" dessa linha e' um `<p:commandLink>`
+    do PrimeFaces (href="#" cru, sem URL de download real) — tipicamente .doc/.docx
+    e imagens "Documentos do Assistido". `href` vem vazio nesse caso (nao mais
+    preenchido com uma URL fabricada que so' aponta pra propria pagina). Quem
+    consome esta lista (`baixar_todos_arquivos`) usa `row_index` + clique real
+    (`baixar_anexo_por_indice`) para esses, em vez de tentar um GET.
     """
     page = await _get_page()
 
@@ -2273,6 +2411,7 @@ async def listar_arquivos_paj(debug: bool = False) -> dict:
                     const linkVis = tr.querySelector('a, button, span[role="button"]');
                     let nome_arquivo = '';
                     let href = '';
+                    let semLinkDireto = false;
                     if (linkVis) {
                         // Tenta extrair em ordem de confiabilidade:
                         // 1. Atributo download (HTML5)
@@ -2280,13 +2419,31 @@ async def listar_arquivos_paj(debug: bool = False) -> dict:
                         // 3. Href com padrão comuns (ex: /download/123)
                         const downloadAttr = linkVis.getAttribute('download');
                         const dataNome = linkVis.getAttribute('data-filename');
+                        // getAttribute (RAW, nunca .href resolvido) — ver mesmo padrao e
+                        // mesmo motivo em extrair_documentos_movimentacoes.js: alguns
+                        // anexos (imagens "Documentos do Assistido", peticoes .doc/.docx)
+                        // sao <p:commandLink> do PrimeFaces SEM URL de download nenhuma —
+                        // href="#" cru, clique dispara um POST do formulario via JS. Se
+                        // resolvido por linkVis.href, "#" vira a URL da PROPRIA pagina
+                        // (nunca um erro de sintaxe), entao so' getAttribute cru pega isso.
                         let hrefAttr = linkVis.getAttribute('href') || '';
 
-                        // Torna href absoluto se for relativo
-                        if (hrefAttr && !hrefAttr.startsWith('http')) {
-                            hrefAttr = window.location.origin + (hrefAttr.startsWith('/') ? '' : '/sisdpu/') + hrefAttr;
+                        if (hrefAttr === '#') {
+                            // NAO sintetiza URL nenhuma pra esse caso — antes isso virava
+                            // `window.location.origin + '/sisdpu/#'`, uma URL "absoluta"
+                            // com cara de valida que na verdade so' aponta pra propria
+                            // pagina atual. Um GET nela sempre devolve HTML (a propria
+                            // tela), nunca o arquivo — silenciosamente tratado como link
+                            // "real" e falhando so' mais tarde, sem sinal nenhum de que
+                            // esse doc precisava de clique de verdade (nao GET).
+                            semLinkDireto = true;
+                        } else {
+                            // Torna href absoluto se for relativo
+                            if (hrefAttr && !hrefAttr.startsWith('http')) {
+                                hrefAttr = window.location.origin + (hrefAttr.startsWith('/') ? '' : '/sisdpu/') + hrefAttr;
+                            }
+                            href = hrefAttr;
                         }
-                        href = hrefAttr;
 
                         if (downloadAttr) nome_arquivo = downloadAttr;
                         else if (dataNome) nome_arquivo = dataNome;
@@ -2306,6 +2463,7 @@ async def listar_arquivos_paj(debug: bool = False) -> dict:
                         tipo_arquivo: textos[3] || '',
                         arquivo: nome_arquivo,
                         href: href,
+                        sem_link_direto: semLinkDireto,
                         categoria: categoria,
                         todas_celulas: textos,
                     });
@@ -2769,6 +2927,12 @@ async def baixar_todos_arquivos(
             # (ver extrair_documentos_movimentacoes.js) — usado pra clicar de
             # verdade no elemento em vez de tentar um GET que nao existe.
             "commandLinkId": doc.get("commandLinkId"),
+            # Sinalizado por listar_arquivos_paj() quando o link "Visualizar" e'
+            # um <p:commandLink> do PrimeFaces (href="#" cru) — mesma situacao
+            # do commandLinkId acima, so' que vinda da tela "Arquivos" (que nao
+            # expoe um id de elemento estavel, so' a posicao na tabela).
+            "sem_link_direto": bool(doc.get("sem_link_direto")),
+            "row_index": doc.get("row_index"),
         })
 
     docs = docs_normalizados
@@ -2778,36 +2942,96 @@ async def baixar_todos_arquivos(
         return {"baixados": 0, "erros": [], "total": 0}
 
     # 2) Inicia servidor local
-    _log("[fetch] iniciando servidor local na porta 8765...")
+    #
+    # HISTORICO: cada chamada desta funcao subia um download_server.py NOVO e
+    # o matava no `finally` ao final — um ciclo spawn+kill POR REQUISICAO. Isso
+    # cria uma janela de corrida real: se dois downloads acontecerem em rapida
+    # sucessao (ou o kill anterior ainda nao liberou a porta), o `Popen` daqui
+    # ainda "sobe" (o processo abre), mas falha o bind da porta 8765 e MORRE
+    # sozinho pouco depois — sem que este codigo jamais soubesse disso, porque
+    # o sleep(1) fixo assumia sucesso e o stderr do processo (onde o traceback
+    # do bind ia parar) nunca era lido. Resultado: todo POST subsequente dava
+    # erro de conexao (servidor morto), sync tentado de novo minutos depois
+    # (porta ja livre) e funcionava — exatamente o padrao "erro, repete, ok"
+    # relatado em produção. Corrigido com: (1) probe de saude ANTES de tentar
+    # subir um novo processo — se algo ja estiver respondendo em 8765 (de uma
+    # requisicao concorrente, ou um processo anterior que nao terminou a
+    # tempo), REAPROVEITA em vez de tentar subir outro (que so' falharia); (2)
+    # apos o Popen, poll ATIVO (nao sleep fixo) confirmando resposta real; (3)
+    # se nunca responder, LE o stderr do processo pra saber o motivo real em
+    # vez de deixar a inconsistencia estourar so' nos POSTs individuais.
+    async def _servidor_saudavel() -> bool:
+        try:
+            async with httpx.AsyncClient(timeout=0.5) as probe:
+                r = await probe.options("http://127.0.0.1:8765")
+                return r.status_code < 500
+        except Exception:
+            return False
 
-    # Tenta em ordem: projeto local, depois PREV4
-    server_path = Path(__file__).resolve().parents[1] / ".claude" / "download_server.py"
-    if not server_path.exists():
-        server_path = Path("C:/Claude/DPU/PREV4/.claude/download_server.py")
+    import httpx
 
-    if not server_path.exists():
-        _log(f"[fetch] ERRO: servidor {server_path} não encontrado")
-        return {"baixados": 0, "erros": ["servidor download_server.py não encontrado"], "total": len(docs)}
+    _log("[fetch] verificando servidor local (porta 8765)...")
+    proc = None  # so' fica setado se ESTA chamada tiver spawnado (unico caso em que ela deve matar no finally)
 
-    proc = None
-    try:
-        # Inicia o servidor como background process (Windows)
-        # Usa cwd do diretório do projeto para que paths relativos funcionem
-        cwd = Path(__file__).resolve().parents[1].parent
+    if await _servidor_saudavel():
+        _log("[fetch] servidor local já ativo (reaproveitando)")
+    else:
+        _log("[fetch] iniciando servidor local na porta 8765...")
 
-        proc = subprocess.Popen(
-            ["python", str(server_path)],
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            cwd=str(cwd),
-        )
-        await asyncio.sleep(1)  # Aguarda servidor iniciar
-    except Exception as e:
-        _log(f"[fetch] ✗ falha ao iniciar servidor: {type(e).__name__}")
-        if proc:
-            with contextlib.suppress(Exception):
-                proc.terminate()
-        return {"baixados": 0, "erros": [f"falha ao iniciar servidor"], "total": len(docs)}
+        # Tenta em ordem: projeto local, depois PREV4
+        server_path = Path(__file__).resolve().parents[1] / ".claude" / "download_server.py"
+        if not server_path.exists():
+            server_path = Path("C:/Claude/DPU/PREV4/.claude/download_server.py")
+
+        if not server_path.exists():
+            _log(f"[fetch] ERRO: servidor {server_path} não encontrado")
+            return {"baixados": 0, "erros": ["servidor download_server.py não encontrado"], "total": len(docs)}
+
+        try:
+            # Inicia o servidor como background process (Windows)
+            # Usa cwd do diretório do projeto para que paths relativos funcionem
+            cwd = Path(__file__).resolve().parents[1].parent
+
+            proc = subprocess.Popen(
+                ["python", str(server_path)],
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                cwd=str(cwd),
+            )
+
+            # Poll ativo em vez de sleep fixo — sai assim que responder (rapido
+            # no caso comum) e da' tempo real de sobra no caso lento, em vez de
+            # um sleep(1) que tanto pode ser curto demais (maquina lenta) quanto
+            # desperdicar tempo (servidor sobe em 100ms na maioria das vezes).
+            subiu = False
+            for _ in range(20):  # ate ~4s (20 x 200ms)
+                if proc.poll() is not None:
+                    break  # processo ja morreu — nao insiste
+                if await _servidor_saudavel():
+                    subiu = True
+                    break
+                await asyncio.sleep(0.2)
+
+            if not subiu:
+                # Motivo real do erro (ex.: porta ja em uso por outro processo
+                # que o probe acima nao pegou por timing) — antes ficava
+                # invisivel: o stderr do subprocess nunca era lido.
+                motivo = "timeout aguardando resposta"
+                if proc.poll() is not None:
+                    with contextlib.suppress(Exception):
+                        _, stderr_bytes = proc.communicate(timeout=1)
+                        if stderr_bytes:
+                            motivo = stderr_bytes.decode("utf-8", errors="replace").strip().splitlines()[-1][:200]
+                _log(f"[fetch] ✗ servidor local não respondeu ({motivo})")
+                with contextlib.suppress(Exception):
+                    proc.terminate()
+                return {"baixados": 0, "erros": [f"servidor local não respondeu: {motivo}"], "total": len(docs)}
+        except Exception as e:
+            _log(f"[fetch] ✗ falha ao iniciar servidor: {type(e).__name__}")
+            if proc:
+                with contextlib.suppress(Exception):
+                    proc.terminate()
+            return {"baixados": 0, "erros": [f"falha ao iniciar servidor"], "total": len(docs)}
 
     page = await _get_page()
     context = page.context
@@ -2816,7 +3040,7 @@ async def baixar_todos_arquivos(
 
     try:
         # 3) Download via Playwright (usa cookies da session autenticada) + POST ao servidor
-        import httpx
+        # (httpx ja importado acima, no probe de saude do servidor local)
         import base64
 
         # Extrai cookies do contexto Playwright para passar ao httpx
@@ -2855,6 +3079,33 @@ async def baixar_todos_arquivos(
                 destino_path = pasta_destino / nome_para_post
                 resultado_click = await baixar_documento_via_commandlink(
                     str(seq_real), command_link_id, destino_path
+                )
+                if resultado_click:
+                    tamanho = resultado_click.stat().st_size
+                    tam_str = (
+                        f"{tamanho / 1024:.1f} KB" if tamanho < 1024 * 1024
+                        else f"{tamanho / (1024 * 1024):.1f} MB"
+                    )
+                    _log(f"               ... Concluído    ✓ {tam_str} (clique)")
+                    baixados += 1
+                else:
+                    _log(f"               ... ERRO     ✗ falha ao clicar/capturar download")
+                    erros.append(f"{nomeArq}: falha no download via clique (sem link direto)")
+                continue
+
+            # Mesma situacao do commandLinkId acima (anexo sem URL de download
+            # real — tipicamente .doc/.docx e imagens "Documentos do
+            # Assistido"), so' que sinalizada por `listar_arquivos_paj()` (tela
+            # "Arquivos", que expoe `row_index` em vez de um id de elemento
+            # estavel). ANTES disso, o codigo tentava um GET na URL fabricada
+            # (window.location.origin + '/sisdpu/#'), que sempre volta HTML da
+            # propria pagina — 100% reproduzivel pra TODO .doc/.docx/imagem
+            # sem link direto, nao uma falha intermitente.
+            row_index = doc.get("row_index")
+            if doc.get("sem_link_direto") and row_index is not None:
+                destino_path = pasta_destino / nome_para_post
+                resultado_click = await baixar_anexo_por_indice(
+                    row_index, destino_path, seq=str(seq_real)
                 )
                 if resultado_click:
                     tamanho = resultado_click.stat().st_size
@@ -2979,10 +3230,17 @@ async def baixar_anexo_por_indice(
     seq: str = "",
     ext_hint: str = "",
 ):
-    """DEPRECADO: Mantido por compatibilidade. Use extrair_lista_arquivos_paj()
-    + baixar_todos_arquivos() em vez disso.
+    """Clica em "Visualizar" da linha `row_index` (na tela "Arquivos" ja aberta
+    por `listar_arquivos_paj()`) e captura o `download` do Playwright.
 
-    Clica em "Visualizar" da linha `row_index` e salva o arquivo baixado.
+    NAO esta mais deprecada: e' o fallback ATIVO usado por `baixar_todos_arquivos`
+    para os anexos sinalizados com `sem_link_direto=True` — tipicamente .doc/.docx
+    e imagens "Documentos do Assistido" que sao `<p:commandLink>` do PrimeFaces
+    (href="#", sem URL de download real). Um `httpx.get()` nesses nunca funciona
+    (so' baixa a propria pagina); so' o clique real + captura do evento `download`
+    consegue. Analogo a `baixar_documento_via_commandlink`, mas localizando o
+    elemento por posicao na tabela em vez de por id (a tela "Arquivos" nao
+    expoe um id de elemento estavel do jeito que o popup por-seq expoe).
     """
     from pathlib import Path as _Path
 

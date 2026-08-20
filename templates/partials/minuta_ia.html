@@ -1,0 +1,137 @@
+{# Console "Gerar Minuta" — revelado pelo botão da barra de ações (ver
+   paj_detail.html, mesmo padrão de "Ações no SISDPU"/"Ações no e-proc").
+   O modal de seleção de documentos REAPROVEITA ipsis litteris as tabelas
+   compartilhadas do painel (não duplica nada):
+     - aba "Processo": partials/eventos_processo_tabela.html (mesma tabela de
+       "Consultar processo"), em modo seleção (eventos_processo.js).
+     - aba "PAJ": partials/movimentacoes_tabela.html (mesma tabela da aba
+       Movimentações/modal Retornos), em modo seleção (movimentacoes.js).
+   Clicar no badge do documento SELECIONA em vez de abrir/baixar — mesmo
+   gesto de sempre, só que o destino agora é a IA em vez do navegador. #}
+<div class="flex items-center gap-2 flex-wrap">
+    <select class="select select-bordered select-sm" x-model="tipoSlug" x-show="tipos.length">
+        <template x-for="t in tipos" :key="t.slug">
+            <option :value="t.slug" x-text="t.label"></option>
+        </template>
+    </select>
+    <span class="text-xs text-base-content/40" x-show="!tipos.length">Nenhum tipo de minuta configurado ainda.</span>
+
+    <button type="button" class="btn btn-sm btn-outline gap-1" :disabled="!tipos.length || gerando" @click="abrirModal()">
+        📝 Selecionar documentos e gerar
+    </button>
+
+    <span class="loading loading-spinner loading-xs" x-show="gerando"></span>
+    <span class="text-xs text-base-content/50" x-show="gerando">Gerando minuta com IA…</span>
+</div>
+
+<div class="text-xs text-error mt-1" x-show="erro" x-text="erro"></div>
+
+<!-- Rascunho da IA — editável (Quill; cai pra textarea simples se o Quill não
+     montar) — mesmo padrão de "Ações no Eproc". Nada é salvo em arquivo até
+     clicar "Gerar arquivo". -->
+<div class="mt-2" x-show="status === 'done'">
+    <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
+        <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Minuta (revise antes de gerar o arquivo)</div>
+        <div class="flex items-center gap-2">
+            <span class="text-[11px] text-success" x-show="gravado" x-cloak x-transition>Gravado ✓</span>
+            <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="gravando" @click="gravarRascunho()"
+                    title="Salva o texto atual da caixa (sem gerar arquivo) — evita perder a edição se a página recarregar.">
+                <span x-show="gravando" class="loading loading-spinner loading-xs"></span>
+                <span x-show="!gravando">Gravar</span>
+                <span x-show="gravando">Gravando…</span>
+            </button>
+            <button type="button" class="btn btn-xs btn-primary gap-1" :disabled="gerandoArquivo" @click="gerarArquivo()">
+                <span x-show="gerandoArquivo" class="loading loading-spinner loading-xs"></span>
+                <span x-show="!gerandoArquivo">Gerar arquivo (DOC/PDF)</span>
+                <span x-show="gerandoArquivo">Formatando…</span>
+            </button>
+        </div>
+    </div>
+    <div :id="uidMinuta" x-show="quillMinutaOk"></div>
+    <textarea x-show="!quillMinutaOk" class="textarea textarea-bordered w-full text-[12.5px] leading-[1.6]" rows="10"
+              x-model="minutaTexto"></textarea>
+    <div class="text-xs text-error mt-1" x-show="erroArquivo" x-text="erroArquivo"></div>
+    <div class="text-xs text-error mt-1" x-show="erroGravar" x-text="erroGravar"></div>
+</div>
+
+<!-- Resultado: arquivos gerados pelo último "Gerar arquivo", com link direto
+     (mesma rota /files/ usada pelas demais peças do PAJ). -->
+<div class="mt-2" x-show="arquivos.length">
+    <div class="text-xs text-success font-semibold mb-1">Salvo em "Peças IA":</div>
+    <div class="flex flex-wrap gap-1">
+        <template x-for="nome in arquivos" :key="nome">
+            <a :href="'/files/' + encodeURIComponent(pajNorm) + '/' + encodeURIComponent('Peças IA') + '/' + encodeURIComponent(nome)"
+               target="_blank" class="badge badge-sm badge-success gap-1 border border-black/15" x-text="nome"></a>
+        </template>
+    </div>
+</div>
+
+<!-- Modal de seleção de documentos -->
+<dialog class="modal" :open="modalAberto" @close="fecharModal()">
+    <div class="modal-box max-w-6xl w-11/12">
+        <h3 class="font-bold text-lg mb-1">Selecionar documentos para a minuta</h3>
+        <p class="text-xs text-base-content/50 mb-3">
+            Clique no badge de um documento pra selecioná-lo (mesmo gesto de sempre — só que agora
+            marca pra enviar à IA em vez de abrir/baixar). Clique de novo pra desmarcar.
+        </p>
+
+        <div class="flex items-center gap-2 mb-3" x-show="processos.length > 1">
+            <span class="text-xs text-base-content/50">Processo:</span>
+            <select class="select select-bordered select-xs" x-model="processoSelecionado" @change="trocarProcesso($event.target.value)">
+                <template x-for="p in processos" :key="p">
+                    <option :value="p" x-text="p"></option>
+                </template>
+            </select>
+        </div>
+
+        <div role="tablist" class="tabs tabs-boxed tabs-sm mb-3 w-fit">
+            <a role="tab" class="tab" :class="abaAtiva === 'processo' ? 'tab-active' : ''" @click="abaAtiva = 'processo'">
+                Processo Judicial
+                <span class="badge badge-xs badge-primary ml-1" x-show="totalSelecionadosProcesso()" x-text="totalSelecionadosProcesso()"></span>
+            </a>
+            <a role="tab" class="tab" :class="abaAtiva === 'paj' ? 'tab-active' : ''" @click="abaAtiva = 'paj'">
+                PAJ (SISDPU)
+                <span class="badge badge-xs badge-primary ml-1" x-show="totalSelecionadosPaj()" x-text="totalSelecionadosPaj()"></span>
+            </a>
+        </div>
+
+        <!-- Aba Processo: MESMA tabela de "Consultar processo", em modo seleção.
+             x-ref no WRAPPER (não no elemento com x-data) — Alpine não expõe
+             $refs declarados no MESMO elemento que inicia um x-data aninhado
+             pro escopo do componente pai; por isso minuta_ia.js lê o estado
+             via querySelector('[x-data]') dentro deste wrapper. -->
+        <!-- Sem max-h/overflow próprio aqui — quem rola é o modal-box inteiro
+             (.modal-box do daisyUI já rola sozinho quando o conteúdo passa da
+             altura da tela); rolagem aninhada (tabela dentro de div dentro de
+             modal) duplicava barra de rolagem e prejudicava a leitura. -->
+        <div x-show="abaAtiva === 'processo'" x-ref="tabProcessoWrap">
+            <div class="text-sm text-base-content/50 text-center py-6" x-show="!processoSelecionado">
+                Este PAJ não tem processo judicial vinculado — use a aba "PAJ (SISDPU)" pra
+                selecionar documentos já sincronizados do PAJ.
+            </div>
+            <div x-show="processoSelecionado" x-data="eventosProcessoBlock({ modoSelecao: true })">
+                {% include "partials/eventos_processo_tabela.html" %}
+            </div>
+        </div>
+
+        <!-- Aba PAJ: MESMA tabela de movimentações (aba Movimentações/modal Retornos), em modo seleção.
+             SEM x-data extra aqui — o partial já tem seu próprio x-data (ver
+             movimentacoes_tabela.html); x-ref no wrapper, mesmo motivo acima. -->
+        <div x-show="abaAtiva === 'paj'" x-ref="tabPajWrap">
+            {% include "partials/movimentacoes_tabela.html" %}
+        </div>
+
+        <div class="text-xs text-error mt-2" x-show="erro" x-text="erro"></div>
+
+        <div class="modal-action">
+            <span class="text-xs text-base-content/50 mr-auto"
+                  x-text="(totalSelecionadosProcesso() + totalSelecionadosPaj()) + ' documento(s) selecionado(s)'"></span>
+            <button type="button" class="btn btn-sm btn-ghost" @click="fecharModal()">Cancelar</button>
+            <button type="button" class="btn btn-sm btn-primary" :disabled="gerando" @click="gerar()">
+                <span x-show="gerando" class="loading loading-spinner loading-xs"></span>
+                Gerar minuta
+            </button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button type="button" @click="fecharModal()">fechar</button></form>
+</dialog>

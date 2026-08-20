@@ -841,12 +841,91 @@ def _aba_peticionamento_unica(ctx, numero: str):
     return candidatas[0], None
 
 
-async def preparar_peticionamento(numero_processo: str, evento: str, documentos: list[dict]) -> dict:
+def _normalizar_texto_prazo(s: str) -> str:
+    import unicodedata
+    s = unicodedata.normalize("NFKD", s or "").encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\s+", " ", s).strip().upper()
+
+
+async def _marcar_prazos_fechar(page, labels: list[str]) -> dict:
+    """Marca, na tela já com o Evento selecionado, os checkboxes "Selecione o(s)
+    prazo(s) a ser(em) fechado(s)" (`input[name="selPrazo[]"]`, um por
+    intimação pendente do processo — só existe quando o Evento escolhido
+    permite fechar prazo, ex. "Ciência, com renúncia ao prazo") cujo texto
+    bata com algum item de `labels` (mesmo formato do rótulo oficial produzido
+    por `acoes_eproc_service.listar_prazos`: rótulo + data + "Ref. Evento N" +
+    parte — achado inspecionando ao vivo a tela real, 2026-08-17).
+
+    Casa por "Ref. Evento N" (nº do evento de intimação, único no processo) em
+    vez de string exata — o texto do e-proc pode trazer espaço/quebra que o
+    `label` calculado não reproduz caractere a caractere, e "Ref. Evento N" já
+    é suficiente pra identidade. Cai pro texto inteiro normalizado só se
+    `label` não tiver "Ref. Evento" (não deveria acontecer, formato sempre tem).
+
+    Sem isso, ANTES desta correção, o evento era lançado normalmente mas os
+    prazos selecionados no Painel ficavam abertos — a seleção nunca chegava a
+    marcar o checkbox real do e-proc (bug real confirmado 2026-08-17, PAJ
+    2026/029-01734: duas intimações marcadas pro fechamento na "Ciência, com
+    renúncia ao prazo", nenhuma delas de fato fechada).
+
+    Retorna {disponivel: bool (a seção existe nesta tela?), marcados: [labels
+    que bateram e foram marcados], nao_encontrados: [labels sem checkbox
+    correspondente]} — quem chama decide se `nao_encontrados` não-vazio é
+    motivo pra abortar (não é erro automático aqui: um evento que não fecha
+    prazo tem `disponivel=False` e isso é normal)."""
+    checkboxes = page.locator('input[name="selPrazo[]"]')
+    n = await checkboxes.count()
+    if n == 0:
+        return {"disponivel": False, "marcados": [], "nao_encontrados": list(labels)}
+
+    contextos = await page.evaluate(r"""() => {
+        return [...document.querySelectorAll('input[name="selPrazo[]"]')].map(chk => {
+            const lbl = chk.closest('label') || chk.parentElement;
+            return lbl ? lbl.innerText.replace(/\s+/g,' ').trim() : '';
+        });
+    }""")
+
+    marcados, nao_encontrados, usados = [], [], set()
+    for label in labels:
+        m_alvo = re.search(r"Ref\.\s*Evento\s*(\d+)", label, re.IGNORECASE)
+        achou = None
+        for i, ctx_txt in enumerate(contextos):
+            if i in usados:
+                continue
+            if m_alvo:
+                m = re.search(r"Ref\.\s*Evento\s*(\d+)", ctx_txt, re.IGNORECASE)
+                bate = bool(m and m.group(1) == m_alvo.group(1))
+            else:
+                bate = _normalizar_texto_prazo(ctx_txt) == _normalizar_texto_prazo(label)
+            if bate:
+                achou = i
+                break
+        if achou is None:
+            nao_encontrados.append(label)
+            continue
+        usados.add(achou)
+        try:
+            await checkboxes.nth(achou).check()
+            marcados.append(label)
+        except Exception:  # noqa: BLE001
+            # achou o checkbox mas o `.check()` falhou (elemento coberto/
+            # desabilitado) — NÃO finge que marcou; conta como não-encontrado
+            # pra aparecer no aviso do front, em vez de sumir silenciosamente.
+            nao_encontrados.append(label)
+
+    return {"disponivel": True, "marcados": marcados, "nao_encontrados": nao_encontrados}
+
+
+async def preparar_peticionamento(numero_processo: str, evento: str, documentos: list[dict],
+                                   prazos_labels: list[str] | None = None) -> dict:
     """Abre a tela "Movimentar/Peticionar" do processo numa ABA NOVA, seleciona o
-    EVENTO e anexa, NA ORDEM, cada item de `documentos`
-    (`[{"caminho": Path|str, "tipo": str, "sigilo": str}, ...]`), terminando com
-    UM clique em "Confirmar seleção de documentos". `documentos` vazio (evento
-    que não aceita anexo) só seleciona o evento, sem tocar na área de Documentos.
+    EVENTO, marca o(s) checkbox(es) "Selecione o(s) prazo(s) a ser(em)
+    fechado(s)" indicado(s) em `prazos_labels` (ver `_marcar_prazos_fechar` —
+    seção que só aparece pra eventos que fecham prazo) e anexa, NA ORDEM, cada
+    item de `documentos` (`[{"caminho": Path|str, "tipo": str, "sigilo": str},
+    ...]`), terminando com UM clique em "Confirmar seleção de documentos".
+    `documentos` vazio (evento que não aceita anexo) só seleciona o evento, sem
+    tocar na área de Documentos.
 
     Fecha qualquer aba de peticionamento JÁ ABERTA pro mesmo processo antes de
     abrir a nova (ver nota acima) — garante que sobra EXATAMENTE uma.
@@ -854,7 +933,8 @@ async def preparar_peticionamento(numero_processo: str, evento: str, documentos:
     NÃO clica em "Peticionar"/"Assinar com Certificado Digital" — protocolar de
     fato é IRREVERSÍVEL (é o processo real na vara) e fica por conta exclusiva de
     `confirmar_peticionamento`, chamada só depois que o usuário revisar o que foi
-    preenchido aqui (evento + tabela de anexos) e confirmar explicitamente.
+    preenchido aqui (evento + prazos marcados + tabela de anexos) e confirmar
+    explicitamente.
 
     A aba fica ABERTA ao final, sucesso ou erro (só a conexão CDP é fechada) —
     pra o usuário revisar visualmente no e-proc, e pra `confirmar_peticionamento`
@@ -873,6 +953,11 @@ async def preparar_peticionamento(numero_processo: str, evento: str, documentos:
 
         if not await _selecionar_autocomplete(page, "txtEvento", "divInfraAjaxtxtEvento", evento):
             return {"ok": False, "erro": f'Evento "{evento}" não encontrado no catálogo deste processo.'}
+
+        prazos_resultado = {"disponivel": False, "marcados": [], "nao_encontrados": []}
+        if prazos_labels:
+            await page.wait_for_timeout(1200)  # a seção de prazos (se houver) só renderiza após o evento
+            prazos_resultado = await _marcar_prazos_fechar(page, prazos_labels)
 
         total = len(documentos)
         for i, doc in enumerate(documentos, start=1):
@@ -901,7 +986,10 @@ async def preparar_peticionamento(numero_processo: str, evento: str, documentos:
         with contextlib.suppress(Exception):
             await page.bring_to_front()
             await _maximizar_janela(page)
-        return {"ok": True, "numero_processo": numero, "evento": evento, "n_documentos": total}
+        return {"ok": True, "numero_processo": numero, "evento": evento, "n_documentos": total,
+                "prazos_disponivel": prazos_resultado["disponivel"],
+                "prazos_marcados": prazos_resultado["marcados"],
+                "prazos_nao_encontrados": prazos_resultado["nao_encontrados"]}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:400]}
     finally:
@@ -1102,6 +1190,297 @@ async def abrir_processo_por_numero(numero: str) -> dict:
         return {"ok": True, "url": page.url}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:300]}
+    finally:
+        with contextlib.suppress(Exception):
+            await browser.close()
+
+
+# --- Gerenciamento de Processo (substabelecimento) ----------------------------
+# "Gerenciar Processo" na barra de ações do processo → tela "Gerenciamento
+# Individual (Meus Processos)": transfere/associa/desassocia a gestão do
+# processo para outro procurador/unidade — equivalente ao substabelecimento
+# feito por advogados. Só aparece cadastrado como procurador de alguma parte
+# do processo (senão o botão nem existe na barra de ações).
+
+TIPOS_GERENCIAMENTO = {
+    "S": "Substituir procurador",
+    "C": "Associar procurador",
+    "D": "Desassociar procurador",
+    "T": "Substituição Transitória",
+}
+
+
+async def _abrir_tela_gerenciamento(page, numero: str) -> str | None:
+    """Pesquisa `numero` na busca rápida e clica "Gerenciar Processo" na barra de
+    ações — devolve uma mensagem de erro (str) se o processo não for encontrado
+    ou o botão não existir (ex.: usuário não é procurador de nenhuma parte),
+    ou None em caso de sucesso (a `page` fica na tela de Gerenciamento)."""
+    await page.goto(EPROC_HOME, wait_until="domcontentloaded", timeout=30000)
+    await page.wait_for_timeout(600)
+    if not _status_dict(page.url)["logado"]:
+        return "Sessão do e-proc não está logada — faça login na janela do e-proc e tente de novo."
+
+    campo = page.locator("#txtNumProcessoPesquisaRapida:visible")
+    await campo.click()
+    await campo.fill(numero)
+    await campo.press("Enter")
+    await page.wait_for_load_state("domcontentloaded", timeout=20000)
+    await page.wait_for_timeout(600)
+
+    gerenciar = page.locator("a, button", has_text=re.compile("Gerenciar Processo", re.IGNORECASE))
+    if await gerenciar.count() == 0:
+        return ('Botão "Gerenciar Processo" não encontrado — processo inexistente/inacessível, ou '
+                "você não está cadastrado como procurador de nenhuma parte deste processo.")
+    await gerenciar.first.click()
+    await page.wait_for_load_state("domcontentloaded", timeout=20000)
+    await page.wait_for_timeout(800)
+    return None
+
+
+async def listar_procuradores_gerenciamento(numero_processo: str) -> dict:
+    """Lista as opções do dropdown "Procurador que irá receber os processos" da
+    tela de Gerenciamento Individual — usado para popular a curadoria de
+    favoritos/frequentes em Configurações › e-proc (mesmo padrão de
+    `listar_eventos_movimentacao`/`listar_tipos_documento`), já que a lista
+    institucional completa tem centenas de nomes. Cada item vem com `valor`
+    (o `value` real do `<option>`, o que `gerenciar_processo` espera) e
+    `rotulo` (nome exibido). Só consulta — não deixa aba aberta."""
+    numero = re.sub(r"\D", "", numero_processo or "")
+    if not numero:
+        return {"ok": False, "erro": "Número de processo vazio."}
+    browser, pagina_ref = await _connect()
+    ctx = pagina_ref.context
+    try:
+        page = await ctx.new_page()
+        erro = await _abrir_tela_gerenciamento(page, numero)
+        if erro:
+            return {"ok": False, "erro": erro}
+        sel_proc = page.locator("select[id^='selProNov']").first
+        opcoes = await sel_proc.evaluate(
+            "(el) => [...el.options].filter(o => o.value && o.value !== 'null')"
+            ".map(o => ({valor: o.value, rotulo: o.textContent.trim()}))")
+        return {"ok": True, "procuradores": opcoes, "numero_processo": numero}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:300]}
+    finally:
+        with contextlib.suppress(Exception):
+            await page.close()
+        with contextlib.suppress(Exception):
+            await browser.close()
+
+
+async def gerenciar_processo(numero_processo: str, tipo: str, procurador_valor: str = "",
+                              partes: list[str] | None = None) -> dict:
+    """Gerenciamento Individual (Meus Processos): substitui/associa/desassocia o
+    procurador do processo — equivalente ao substabelecimento feito por
+    advogados. Pesquisa `numero_processo`, clica "Gerenciar Processo", escolhe
+    Tipo + Procurador destino, marca o(s) checkbox(es) da(s) parte(s)
+    representada(s) (por padrão TODAS as linhas da tabela — normalmente só 1;
+    passe `partes` com nome(s) pra restringir quando houver mais de uma) e
+    clica "Executar".
+
+    IRREVERSÍVEL — protocola de fato a mudança no e-proc. Só chamar depois que
+    o usuário confirmar explicitamente tipo + procurador destino (ver
+    `services.acoes_eproc_service.executar_gerenciamento_real`).
+
+    `tipo`: uma chave de `TIPOS_GERENCIAMENTO` ("S"/"C"/"D"/"T").
+    `procurador_valor`: o `value` do `<option>` (não o texto) — vem de
+    `listar_procuradores_gerenciamento`. Obrigatório salvo para "D"
+    (Desassociar procurador, que não tem destino).
+
+    `provavel_sucesso` só vem True se a tela "Resultado do Gerenciamento de
+    Processo Individual" mostrar, para TODAS as partes marcadas, a mensagem de
+    status exata "Procurador cadastrado com sucesso no(s) processo(s)" —
+    nunca inferido por texto solto na página inteira. `resultado` traz um item
+    por parte com `status`/`sucesso`/`linhas`; qualquer parte com `sucesso`
+    False vai parar em `partes_com_erro` (mesma lista, só as que falharam) —
+    o chamador DEVE exibir isso ao usuário pra ciência e providências, mesmo
+    quando outras partes da mesma execução deram certo (pedido do usuário
+    2026-08-18: uma parte falhar não pode ficar escondida atrás do sucesso
+    de outra no mesmo lote).
+
+    Só com TODAS as partes bem-sucedidas, clica de volta no número dos autos
+    (link da tabela de resultado) pra deixar a aba na tela principal do
+    processo — com qualquer parte com erro, a tela de resultado permanece
+    aberta como está, pra análise do usuário (pedido do usuário 2026-08-19)."""
+    numero = re.sub(r"\D", "", numero_processo or "")
+    if not numero:
+        return {"ok": False, "erro": "Número de processo vazio."}
+    if tipo not in TIPOS_GERENCIAMENTO:
+        return {"ok": False, "erro": f"Tipo de gerenciamento inválido: {tipo!r}."}
+    if tipo != "D" and not procurador_valor:
+        return {"ok": False, "erro": "Procurador destino é obrigatório para este tipo de gerenciamento."}
+
+    browser, pagina_ref = await _connect()
+    ctx = pagina_ref.context
+    try:
+        page = await ctx.new_page()
+        _garantir_hook_dialogo(ctx)
+        erro = await _abrir_tela_gerenciamento(page, numero)
+        if erro:
+            return {"ok": False, "erro": erro}
+
+        # Cada parte representada é um BLOCO independente (Tipo + Procurador destino
+        # + checkbox PRÓPRIOS, com um sufixo comum — ex. "701771519433742621968060112262-0"
+        # — nos 3 ids: "chk<sufixo>Item0", "selTipo<sufixo>", "selProNov<sufixo>") sempre
+        # que o processo tem MAIS DE UMA parte representada. Só nesse caso o e-proc
+        # também mostra um par de selects "Todos" (`selTipoTodos`/`selProNovTodos`,
+        # atalho de UI que replica o valor escolhido pra cada bloco ao clicar
+        # "Aplicar" — não usado aqui, dispara um `confirm()` nativo e não some
+        # com o problema de fundo).
+        #
+        # BUG REAL corrigido (2026-08-18, PAJ-2025-029-00815, 2 autores/2 blocos):
+        # a versão anterior presumia um ÚNICO par de selects Tipo/Procurador no
+        # processo inteiro (`select[id^='selTipo']` sem sufixo) — com 2+ partes,
+        # esse seletor casa os 2+ blocos MAIS o par "Todos" ("selTipoTodos" também
+        # começa com "selTipo"), e `select_option()` do Playwright falha (strict
+        # mode violation: locator resolvido a vários elementos) assim que há mais
+        # de uma parte representada.
+        checkboxes_todos = page.locator("table input[type=checkbox][id*='Item']")
+        n_checkboxes = await checkboxes_todos.count()
+        if n_checkboxes == 0:
+            return {"ok": False, "erro": "Nenhuma parte representada encontrada na tela de gerenciamento."}
+
+        blocos: list[dict] = []
+        for i in range(n_checkboxes):
+            chk = checkboxes_todos.nth(i)
+            cid = await chk.get_attribute("id") or ""
+            m = re.match(r"^chk(.+?)Item\d+$", cid)
+            if not m:
+                continue  # defensivo — não deveria acontecer com o filtro '[id*=Item]'
+            linha_texto = ""
+            with contextlib.suppress(Exception):
+                linha_texto = (await chk.locator("xpath=ancestor::tr[1]").inner_text()).strip()
+            blocos.append({
+                "suffix": m.group(1), "checkbox": chk,
+                "linha_texto": re.sub(r"\s+", " ", linha_texto),
+            })
+
+        alvo_normalizado = [_normalizar_texto_prazo(p) for p in (partes or [])]
+        alvos = blocos
+        if alvo_normalizado:
+            alvos = [b for b in blocos if any(
+                alvo in _normalizar_texto_prazo(b["linha_texto"]) for alvo in alvo_normalizado)]
+        if not alvos:
+            return {"ok": False, "erro": "Nenhuma linha correspondente encontrada — confira o(s) nome(s) em `partes`."}
+
+        marcadas: list[str] = []
+        indisponiveis: list[str] = []
+        for b in alvos:
+            sel_tipo = page.locator(f"#selTipo{b['suffix']}")
+            if await sel_tipo.count() == 0:
+                indisponiveis.append(f"{b['linha_texto'][:120]} (select de Tipo não encontrado)")
+                continue
+            await sel_tipo.select_option(tipo)
+            await page.wait_for_timeout(150)
+
+            if tipo != "D":
+                sel_proc = page.locator(f"#selProNov{b['suffix']}")
+                if await sel_proc.count() == 0:
+                    indisponiveis.append(f"{b['linha_texto'][:120]} (select de Procurador destino não encontrado)")
+                    continue
+                # Confere se o destino pedido é uma opção válida NESTE bloco antes de
+                # selecionar — partes diferentes podem (em tese) ter listas de
+                # destino diferentes; select_option() lançaria um erro genérico
+                # de timeout sem essa checagem, sem dizer POR QUE falhou.
+                tem_opcao = await sel_proc.evaluate(
+                    "(el, valor) => [...el.options].some(o => o.value === valor)", procurador_valor)
+                if not tem_opcao:
+                    indisponiveis.append(f"{b['linha_texto'][:120]} (procurador destino indisponível para esta parte)")
+                    continue
+                await sel_proc.select_option(procurador_valor)
+                await page.wait_for_timeout(150)
+
+            if not await b["checkbox"].is_checked():
+                await b["checkbox"].check()
+            marcadas.append(b["linha_texto"][:150])
+
+        if not marcadas:
+            return {"ok": False, "erro": "Nenhuma parte pôde ser marcada.", "partes_indisponiveis": indisponiveis}
+
+        botao_executar = page.locator("#btnExecutar").first
+        async with _com_dialogo_aceito(page):
+            await botao_executar.click()
+            await page.wait_for_timeout(1200)
+        await page.wait_for_load_state("domcontentloaded", timeout=20000)
+        await page.wait_for_timeout(800)
+
+        # A tela "Resultado do Gerenciamento de Processo Individual" repete, um
+        # bloco POR PARTE gerenciada (mesma ordem em que apareciam no formulário):
+        # <label>{nome da parte} (...) (Proc. ...)</label><hr>
+        # <label>{status desta parte}</label><table>...linha(s) desta parte...</table>
+        # O status de CADA parte precisa ser conferido individualmente — uma
+        # parte pode ter dado certo e outra falhado na mesma execução (pedido
+        # do usuário 2026-08-18: nunca inferir sucesso pelo corpo da página
+        # inteira, só pela mensagem de status específica de cada bloco).
+        blocos_resultado = []
+        with contextlib.suppress(Exception):
+            blocos_resultado = await page.evaluate(
+                """() => {
+                    const labels = [...document.querySelectorAll('label.infraLabelObrigatorio')];
+                    const blocos = [];
+                    for (let i = 0; i + 1 < labels.length; i += 2) {
+                        const nomeLabel = labels[i], statusLabel = labels[i + 1];
+                        let el = statusLabel.nextElementSibling;
+                        while (el && el.tagName !== 'TABLE') el = el.nextElementSibling;
+                        // Filtra linhas de cabeçalho (algumas tabelas do e-proc colocam o
+                        // <thead> dentro do próprio <tbody>, com <th> em vez de <td> — sem
+                        // filtrar, cada bloco ganhava uma 1ª "linha" fantasma, toda vazia).
+                        const linhas = el ? [...el.querySelectorAll('tbody tr')]
+                            .filter(tr => tr.querySelectorAll('td').length >= 5)
+                            .map(tr => {
+                                const c = tr.querySelectorAll('td');
+                                return { processo: c[0].innerText.trim(), parte: c[1].innerText.trim(),
+                                         qualificacao: c[2].innerText.trim(), tipo_gerenciamento: c[3].innerText.trim(),
+                                         mensagem: c[4].innerText.trim() };
+                        }) : [];
+                        blocos.push({ parte_label: nomeLabel.innerText.trim(),
+                                       status: statusLabel.innerText.trim(), linhas });
+                    }
+                    return blocos;
+                }""")
+
+        _SUCESSO_TXT = "procurador cadastrado com sucesso no(s) processo(s)"
+        for b in blocos_resultado:
+            b["sucesso"] = _normalizar_texto_prazo(b.get("status", "")) == _normalizar_texto_prazo(_SUCESSO_TXT)
+
+        partes_com_erro = [b for b in blocos_resultado if not b["sucesso"]]
+        if blocos_resultado:
+            # Só "provável sucesso" se TODOS os blocos mostrarem a mensagem exata de
+            # sucesso — qualquer bloco com mensagem diferente precisa de ciência e
+            # providências, não pode ser mascarado por outros blocos terem dado certo.
+            sucesso = not partes_com_erro
+        else:
+            # Scraping por bloco não achou nada reconhecível (layout mudou, ou só
+            # 1 parte sem o padrão label/label esperado) — cai no fallback antigo,
+            # mas não é uma confirmação por parte, só um indício.
+            corpo = ""
+            with contextlib.suppress(Exception):
+                corpo = await page.inner_text("body")
+            sucesso = ("gerenciar_proc_individual_cadastrar" in page.url) or (_SUCESSO_TXT in corpo.lower())
+
+        # Só quando TODAS as partes deram certo: clica no número dos autos (link da
+        # 1ª linha de resultado, todas apontam pro mesmo processo) pra voltar à tela
+        # principal do processo — deixa a aba pronta pro próximo passo (gerenciar de
+        # novo, movimentar, etc.), em vez de parada na tela de resultado. Com erro em
+        # QUALQUER parte, a tela de resultado fica como está, pra análise do usuário
+        # (pedido do usuário 2026-08-19) — nunca navega para longe de um erro.
+        if sucesso:
+            with contextlib.suppress(Exception):
+                link_autos = page.locator('table a[href*="processo_selecionar"]').first
+                if await link_autos.count():
+                    await link_autos.click()
+                    await page.wait_for_load_state("domcontentloaded", timeout=20000)
+                    await page.wait_for_timeout(500)
+
+        return {
+            "ok": True, "provavel_sucesso": sucesso, "url_final": page.url,
+            "partes_marcadas": marcadas, "partes_indisponiveis": indisponiveis,
+            "resultado": blocos_resultado, "partes_com_erro": partes_com_erro,
+            "dialogo": getattr(page, "_eproc_ultimo_dialogo", ""),
+        }
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:400]}
     finally:
         with contextlib.suppress(Exception):
             await browser.close()

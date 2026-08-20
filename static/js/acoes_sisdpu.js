@@ -12,8 +12,23 @@
 //   pajNorm         (opcional) — para carregar os "Anexos SISDPU" já baixados do PAJ
 //                   (tabela de seleção de documentos a incluir na movimentação — mesma
 //                   fonte/rota usada pela aba do PAJ e por acoes_eproc.js).
-//   idTramite       (opcional) — id do trâmite da caixa de entrada a concluir; sem ele,
-//                   o bloco "Concluir trâmite" não aparece (nada a concluir).
+//   idTramite       (opcional) — id do "trâmite de trabalho" (o que originou esta
+//                   tela — ex.: o Atendimento de Retorno) a concluir. Junto de
+//                   `concluir` (toggle Sim/Não), é o modelo LEGADO de conclusão —
+//                   um único trâmite. Ignorado para fins de conclusão quando
+//                   `tramitacoesCaixa` (abaixo) é passado.
+//   tramitacoesCaixa (opcional, array) — NOVO modelo: TODAS as tramitações hoje
+//                   abertas na caixa de entrada deste PAJ ({id_tramite, descricao,
+//                   remetente, data_envio, ...} — mesma fonte de
+//                   window._paj_tramitacoes_caixa/meta.tramitacoes_caixa). Quando
+//                   informado (mesmo que vazio `[]`), o bloco "Concluir trâmite"
+//                   troca o toggle Sim/Não por uma lista de checkboxes (0, 1 ou N
+//                   selecionáveis) e mostra "não há trâmite aberto" se vier vazia.
+//                   `idTramite`, se bater com um item da lista, vem pré-marcado e
+//                   rotulado "trâmite de trabalho" (mesmo padrão do modal
+//                   "Concluir PAJ da Caixa de Entrada" em app.js). Movimentar/
+//                   tramitar/concluir são AÇÕES INDEPENDENTES — não haver nenhum
+//                   trâmite pra concluir NUNCA desabilita o restante do console.
 //   getDescricaoMov (opcional) — função síncrona que devolve o texto do despacho da
 //                   MOVIMENTAÇÃO no momento de Executar, e faz o módulo NÃO desenhar
 //                   editor próprio (evita duplicar campo com a fonte do chamador) — uso
@@ -56,12 +71,28 @@ function acoesSisdpuBlock(cfg) {
                              : (typeof cfg.getDescricao === 'function' ? cfg.getDescricao : null);
     const getDescricaoTramFn = typeof cfg.getDescricaoTram === 'function' ? cfg.getDescricaoTram : null;
     const getValorInicialMovFn = typeof cfg.getValorInicialMov === 'function' ? cfg.getValorInicialMov : null;
+    // NOVO modelo de conclusão (lista) — null quando o chamador não passa
+    // `tramitacoesCaixa` (ex.: Retornos), mantendo o modelo LEGADO (idTramite +
+    // toggle Sim/Não) intacto pra quem não se beneficia da seleção múltipla.
+    const tramitacoesCaixa = Array.isArray(cfg.tramitacoesCaixa) ? cfg.tramitacoesCaixa : null;
+    // Pré-marca o "trâmite de trabalho" (idTramite), se ele estiver entre as
+    // tramitações abertas — mesmo padrão do modal "Concluir PAJ da Caixa de
+    // Entrada" (concluirPajModalApp em app.js). O usuário pode desmarcar/marcar
+    // outros livremente antes de Executar.
+    const idsTramiteSelecionadosInit = {};
+    if (tramitacoesCaixa) {
+        tramitacoesCaixa.forEach((t) => {
+            idsTramiteSelecionadosInit[t.id_tramite] = (t.id_tramite === (cfg.idTramite || ''));
+        });
+    }
     return {
         aberto: !!cfg.aberto,
         idProcesso: cfg.idProcesso || '',
         paj: cfg.paj || '',
         pajNorm: cfg.pajNorm || '',
         idTramite: cfg.idTramite || '',
+        tramitacoesCaixa,
+        idsTramiteSelecionados: idsTramiteSelecionadosInit,
         getDescricaoMov: getDescricaoMovFn,
         getDescricaoTram: getDescricaoTramFn,
         getValorInicialMov: getValorInicialMovFn,
@@ -275,6 +306,23 @@ function acoesSisdpuBlock(cfg) {
         // de copiar (senão apareceriam tags "<b>" literais no campo de destino).
         copiarMovParaTram() { this.descTram = htmlParaTextoSimples(this.descMovEfetiva()); },
 
+        // --- Concluir trâmite(s) da caixa de entrada ---
+        // Ids marcados no modelo NOVO (lista de checkboxes) — vazio se
+        // `tramitacoesCaixa` não foi passado (modelo legado não usa isto).
+        idsTramiteSelecionadosArr() {
+            if (!this.tramitacoesCaixa) return [];
+            return this.tramitacoesCaixa.map((t) => t.id_tramite).filter((id) => this.idsTramiteSelecionados[id]);
+        },
+        // True quando há algo a concluir — no modelo novo, ao menos 1 checkbox
+        // marcado; no legado, o toggle Sim/Não com idTramite presente. Usado tanto
+        // pra habilitar "Executar" (junto com fase/grupo — AÇÕES INDEPENDENTES,
+        // nenhuma delas trava as outras) quanto pra montar o payload da execução.
+        concluirEfetivo() {
+            return this.tramitacoesCaixa !== null
+                ? this.idsTramiteSelecionadosArr().length > 0
+                : !!(this.idTramite && this.concluir);
+        },
+
         // --- Anexos da movimentação: upload externo (comum) + do PAJ via modal (raro) ---
         // Extensões aceitas pelo SISDPU nos anexos de movimentação — mesma lista do
         // backend (services/acoes_sisdpu_service.TIPOS_ANEXO_MOV_OK); valida aqui
@@ -400,7 +448,8 @@ function acoesSisdpuBlock(cfg) {
             }));
         },
         async executar() {
-            const concluirEfetivo = !!(this.idTramite && this.concluir);
+            const concluirEfetivo = this.concluirEfetivo();
+            const idsSelecionados = this.idsTramiteSelecionadosArr();
             if (this.exec || (!this.fase && !this.grupo && !concluirEfetivo)) return;
             const prazoTxt = this.grupo
                 ? (this.urgenteSelecionado() ? ' (URGENTE — mesmo dia da movimentação)'
@@ -408,11 +457,15 @@ function acoesSisdpuBlock(cfg) {
                    : this.prazo > 0 ? ' (prazo ' + this.prazo + ' dias)' : '')
                 : '';
             const anexosSel = this.fase ? this.anexosStagedParaEnviar() : [];
+            const concluirTxt = !concluirEfetivo ? '\nSem conclusão'
+                : this.tramitacoesCaixa !== null
+                    ? '\nConcluir ' + idsSelecionados.length + ' trâmite(s) selecionado(s) (retira(m) da caixa)'
+                    : '\nConcluir o trâmite (retira da caixa)';
             if (!confirm('Executar no SISDPU — ' + (this.paj || this.idProcesso) + '?\n\n'
                 + (this.fase ? 'Movimentar (fase: ' + this.fase + ')' : 'Sem movimentação')
                 + (anexosSel.length ? '\n+ ' + anexosSel.length + ' anexo(s)' : '')
                 + (this.grupo ? '\nTramitar para: ' + this.grupo + prazoTxt : '\nSem tramitação')
-                + (concluirEfetivo ? '\nConcluir o trâmite (retira da caixa)' : '\nSem conclusão'))) return;
+                + concluirTxt)) return;
             // Garante o cofre desbloqueado ANTES de acionar o SISDPU.
             if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
             this.exec = true;
@@ -426,6 +479,9 @@ function acoesSisdpuBlock(cfg) {
                 prazo: String(this.prazo > 0 ? this.prazo : 0),
                 prazo_data: this.prazoData || '', id_tramite: this.idTramite || '',
                 concluir: this.concluir ? '1' : '0',
+                // Modelo novo (lista) tem precedência no backend sobre o par legado acima —
+                // só é enviado quando o chamador passou tramitacoesCaixa (ex.: página do PAJ).
+                id_tramites: this.tramitacoesCaixa !== null ? JSON.stringify(idsSelecionados) : '',
                 anexos: JSON.stringify(anexosSel),
             });
             const es = new EventSource('/api/acoes-sisdpu/executar?' + qs.toString());

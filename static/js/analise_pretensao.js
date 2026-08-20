@@ -1,9 +1,13 @@
 // Componente Alpine "Análise feita pela IA" — diagnóstico de PAJ por rota de
 // pretensão escolhida no dropdown da barra de ações: "bpc" (skill dedicada
-// SISDPU-AnalisarPAJ-BPC, playbook teses-dpu) ou "generica" (diagnóstico
-// direto via PROMPT_MAX, sem playbook de área — cobre pretensões sem skill
-// dedicada, ou PAJs cadastrados no SISDPU com a pretensão errada) + reenvio
-// (ajustes na análise, ou pedido de redação da petição inicial).
+// SISDPU-AnalisarPAJ-BPC, playbook teses-dpu), "bi" (skill dedicada
+// SISDPU-AnalisarPAJ-BI, parecer de viabilidade de benefício por incapacidade)
+// ou "generica" (diagnóstico direto via PROMPT_MAX, sem playbook de área —
+// cobre pretensões sem skill dedicada, ou PAJs cadastrados no SISDPU com a
+// pretensão errada) + reenvio (ajustes na análise, ou pedido de redação da
+// petição inicial). Ver CONFIG_TIPOS em analise_pretensao_service.py para a
+// lista completa/atual de rotas — este componente é agnóstico ao "tipo",
+// só repassa a string escolhida no dropdown para o backend.
 //
 // Uso:
 //   <div x-data="analiseIaApp('{{ paj_norm }}', '{{ tipo_ia_padrao }}')" x-init="init()"

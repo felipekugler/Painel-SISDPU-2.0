@@ -1,0 +1,471 @@
+"""Geração de minuta jurídica via IA (Claude Code CLI, chamada única/"one-shot")
+pro módulo "Gerar Minuta" da aba Processo Judicial — usado quando o PAJ já tem
+processo judicial ajuizado e chegou intimação pra manifestação sobre uma peça
+técnica já nos autos (laudo pericial, avaliação social etc.).
+
+Diferente de `peticao_ia_service.py` (que responde a um PRAZO selecionado, com
+o "ato referenciado" resolvido automaticamente via casamento data+dias), aqui
+o Defensor escolhe manualmente OS DOCUMENTOS-FONTE (modal com 2 abas: eventos
+do processo + anexos do PAJ) — não há heurística de "adivinhar qual é o
+laudo". Ver `routes/minutas.py`.
+
+Cada "tipo de minuta" do dropdown aponta pra uma ÁREA do monorepo `teses-dpu`
+(playbook + modelos + CLAUDE.md), migrada de um Claude Project do Defensor
+(ver TIPOS_MINUTA abaixo) — mas o CONTEÚDO desses arquivos é lido AQUI, em
+Python, e embutido no prompt como texto (ver `_ler_area_texto`); o Claude
+NÃO abre esses arquivos sozinho.
+
+Motivo de existir dessa decisão (bug real, PAJ 2026/029-01460, 18/08/2026):
+a primeira versão apontava `cwd` do subprocesso pra dentro de `teses-dpu` e
+instruía o Claude a "ir ler" os arquivos da área + rodar o pipeline completo
+de `analise_pretensao_service.py` (`anti-alucinacao` -> `formatacao-docx` ->
+`checagem-final`). Isso trouxe DOIS problemas:
+  1. Rodar dentro de `teses-dpu` carrega automaticamente o `CLAUDE.md` RAIZ
+     do monorepo — que manda "peça real é completa, detalhada e minuciosa,
+     NUNCA enxuta" (regra certa pra petição inicial, errada pra uma
+     manifestação simples). A peça saiu com tópicos numerados (I/II/III/IV)
+     longos, bem diferente do texto corrido e curto que o Project do
+     Defensor sempre gerou em segundos.
+  2. Cada etapa do pipeline (ler N arquivos, rodar anti-alucinação, escrever
+     e rodar o script de formatação pesado com barra lateral/timbre, rodar
+     checagem-final, converter pra PDF) é uma ida-e-volta separada com o
+     modelo — pra uma manifestação de 1 página isso levou mais de 6 minutos,
+     contra menos de 1 minuto no Project (que só lê os PDFs e devolve o
+     texto, sem nenhuma dessas etapas).
+Corrigido: motor de formatação simples (`peticao_base.py`, o mesmo que
+"Ações no Eproc" já usa), sem anti-alucinação/checagem-final, critérios da
+área embutidos como texto (não como arquivos pra ir abrir), e conversão pra
+PDF feita em Python (Word/COM) depois que o subprocesso termina — não pelo
+próprio Claude.
+
+Fluxo em 2 etapas (pedido do Defensor, 18/08/2026 — mesmo padrão de "Gerar
+petição com IA" + "Incluir petição nos anexos" em `peticao_ia_service.py`):
+  1. `iniciar()` roda a IA e devolve o texto em HTML (`peticao_html`) — NENHUM
+     arquivo fica salvo ainda; é só um rascunho pro Defensor revisar/editar
+     na caixa de texto do painel.
+  2. `formatar_e_salvar()` pega o HTML JÁ REVISADO (com os ajustes manuais do
+     Defensor) e SÓ ENTÃO gera o `.docx`/`.pdf` de verdade, na subpasta
+     `Peças IA/` do PAJ (MESMA subpasta que `analise_pretensao_service.py`
+     já usa pra petição inicial) — aparece na aba "Peças" da página do PAJ.
+     Não chama IA — é formatação pura via `peticao_base.py`.
+
+Estado em memória (`_status`), 1 geração por PAJ por vez — mesmo padrão de
+`peticao_ia_service.py`.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import re
+import subprocess
+import threading
+from datetime import datetime
+from pathlib import Path
+
+from config import PAJS_DIR
+from services.chat_service import CLAUDE_CMD
+from services.peticao_ia_service import MODELOS_DIR, _REGRAS_FORMATO, _docx_para_html, _docx_para_pdf, _html_para_docx
+
+TESES_DPU_DIR = Path(r"C:\Claude\teses-dpu")
+
+# Catálogo de tipos de minuta do dropdown "Gerar Minuta". Cada entrada aponta
+# pra uma área do monorepo teses-dpu (só a origem do CONTEÚDO — ver
+# `_ler_area_texto`; o Claude não abre esses arquivos, o painel lê e embute
+# no prompt). Primeira migrada: BI - Laudo Médico Pericial (Project do
+# claude.ai) -> areas/beneficio-incapacidade/.
+TIPOS_MINUTA: dict[str, dict] = {
+    "bi-laudo-pericial": {
+        "label": "Manifestação sobre laudo médico pericial (BI)",
+        "area_dir": TESES_DPU_DIR / "areas" / "beneficio-incapacidade",
+        "documentos_sugeridos": "laudo pericial e petição inicial",
+    },
+}
+
+
+def listar_tipos() -> list[dict]:
+    """Catálogo pro dropdown do front — só {slug, label}, na ordem declarada."""
+    return [{"slug": slug, "label": cfg["label"]} for slug, cfg in TIPOS_MINUTA.items()]
+
+
+# paj_norm -> {status: idle|running|done|error, erro, arquivos, iniciado_em}
+_status: dict[str, dict] = {}
+_lock = threading.Lock()
+
+
+def status(paj_norm: str) -> dict:
+    return _status.get(paj_norm, {"status": "idle"})
+
+
+def salvar_rascunho(paj_norm: str, peticao_html: str) -> dict:
+    """Botão "Gravar" da caixa de edição — persiste o texto ATUAL (já editado
+    manualmente) em `_status`, sem gerar arquivo nenhum. Sem isso, a edição
+    só existia na memória do navegador (Quill) — um reload da página trazia
+    de volta o rascunho ORIGINAL da IA, perdendo o que o Defensor tivesse
+    ajustado (bug real, 18/08/2026)."""
+    atual = _status.get(paj_norm)
+    if not atual or atual.get("status") != "done":
+        return {"ok": False, "erro": "Não há rascunho gerado pra este PAJ ainda."}
+    with _lock:
+        _status[paj_norm]["peticao_html"] = peticao_html
+    return {"ok": True}
+
+
+def _falhar(paj_norm: str, erro: str) -> None:
+    with _lock:
+        _status[paj_norm] = {"status": "error", "erro": erro}
+
+
+def iniciar(paj_norm: str, processo: str, tipo_slug: str, documentos: list[dict]) -> dict:
+    """Valida e dispara a geração em background. `documentos`: lista de
+    {origem: "processo", ...} ou {origem: "paj", caminho: "Arquivos/xxx.pdf"}
+    — já resolvida pelo front a partir das 2 abas do modal de seleção.
+    Retorna {ok, status, erro?}."""
+    cfg = TIPOS_MINUTA.get(tipo_slug)
+    if not cfg:
+        return {"ok": False, "erro": f"Tipo de minuta desconhecido: {tipo_slug!r}."}
+    documentos = [d for d in (documentos or []) if d.get("origem")]
+    if not documentos:
+        return {"ok": False, "erro": "Selecione ao menos um documento (processo ou PAJ) antes de gerar a minuta."}
+
+    atual = _status.get(paj_norm)
+    if atual and atual.get("status") == "running":
+        return {"ok": True, "status": "running"}
+
+    with _lock:
+        _status[paj_norm] = {"status": "running", "erro": "", "iniciado_em": datetime.now().isoformat(timespec="seconds")}
+
+    t = threading.Thread(target=_gerar_worker, args=(paj_norm, processo, tipo_slug, documentos), daemon=True)
+    t.start()
+    return {"ok": True, "status": "running"}
+
+
+def _gerar_worker(paj_norm: str, processo: str, tipo_slug: str, documentos: list[dict]) -> None:
+    try:
+        cfg = TIPOS_MINUTA[tipo_slug]
+        area_dir: Path = cfg["area_dir"]
+        pasta_paj = PAJS_DIR / paj_norm
+        pasta_pecas_ia = pasta_paj / "Peças IA"
+        pasta_pecas_ia.mkdir(parents=True, exist_ok=True)
+
+        caminhos = _resolver_documentos(paj_norm, processo, documentos)
+        if not caminhos:
+            _falhar(paj_norm, "Não foi possível localizar nenhum dos documentos selecionados "
+                               "(falha ao baixar do e-proc, ou arquivo do PAJ não existe mais em disco).")
+            return
+
+        criterio_area = _ler_area_texto(area_dir)
+        paj_exibicao = _paj_exibicao(paj_norm)
+        antes = _listar_arquivos(pasta_pecas_ia)
+        prompt = _montar_prompt(paj_exibicao, processo, criterio_area, caminhos, pasta_pecas_ia)
+
+        # Prompt por STDIN (não argumento) — mesmo motivo de peticao_ia_service.py:
+        # o texto dos documentos-fonte facilmente passa do limite de linha de
+        # comando do Windows. cwd = MODELOS_DIR (NÃO teses-dpu — ver docstring
+        # do módulo: rodar dentro de teses-dpu carregaria o CLAUDE.md raiz
+        # daquele monorepo, com a regra "peça sempre extensa", errada aqui).
+        cmd = [*CLAUDE_CMD, "-p", "--permission-mode", "bypassPermissions"]
+        proc = subprocess.run(
+            cmd, cwd=str(MODELOS_DIR), input=prompt, capture_output=True, text=True,
+            encoding="utf-8", errors="replace", timeout=300,
+        )
+        depois = _listar_arquivos(pasta_pecas_ia)
+        novos = sorted(depois - antes)
+        docx_novos = [n for n in novos if n.lower().endswith(".docx")]
+        if not docx_novos:
+            saida = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
+            _falhar(paj_norm, f"A IA não gerou nenhum arquivo .docx novo em 'Peças IA'. Saída: {saida[-1500:] or '(vazia)'}")
+            return
+
+        # NÃO converte pra PDF nem deixa o(s) .docx do RASCUNHO em "Peças IA" —
+        # é só um rascunho pra virar texto editável na caixa do painel (o
+        # Defensor revisa/ajusta ANTES de gerar o arquivo final de verdade,
+        # via `formatar_e_salvar`, mesmo padrão de "Incluir petição nos
+        # anexos" em peticao_ia_service.py). Extrai o HTML do primeiro .docx
+        # gerado e descarta o(s) arquivo(s)-rascunho.
+        docx_path = pasta_pecas_ia / docx_novos[0]
+        peticao_html = ""
+        with contextlib.suppress(Exception):
+            peticao_html = _docx_para_html(docx_path)
+        for nome in docx_novos:
+            with contextlib.suppress(Exception):
+                (pasta_pecas_ia / nome).unlink()
+
+        if not peticao_html:
+            _falhar(paj_norm, "A IA gerou o rascunho, mas não foi possível extrair o texto dele.")
+            return
+
+        with _lock:
+            _status[paj_norm] = {
+                "status": "done", "erro": "", "peticao_html": peticao_html,
+                "concluido_em": datetime.now().isoformat(timespec="seconds"),
+            }
+    except subprocess.TimeoutExpired:
+        _falhar(paj_norm, "A IA excedeu o tempo limite (5 min) redigindo a minuta.")
+    except Exception as e:  # noqa: BLE001
+        _falhar(paj_norm, f"{type(e).__name__}: {e}"[:500])
+
+
+def _listar_arquivos(pasta: Path) -> set[str]:
+    if not pasta.exists():
+        return set()
+    return {f.name for f in pasta.iterdir() if f.is_file()}
+
+
+_MESES_PT = [
+    "janeiro", "fevereiro", "março", "abril", "maio", "junho",
+    "julho", "agosto", "setembro", "outubro", "novembro", "dezembro",
+]
+
+
+def _data_por_extenso() -> str:
+    """"18 de agosto de 2026" — calculada em Python (não deixada pro modelo
+    "adivinhar" a data atual), pro fecho da peça (ver assinatura() com
+    termos=False/data=... em peticao_base.py — pedido do Defensor,
+    18/08/2026: peça pronta pra uso imediato deve ter a data real por
+    extenso, não o placeholder 'data do protocolo eletrônico' usado no fluxo
+    de "Ações no Eproc" — lá a peça só é protocolada depois, e o e-proc
+    carimba a data real na hora)."""
+    agora = datetime.now()
+    return f"{agora.day} de {_MESES_PT[agora.month - 1]} de {agora.year}"
+
+
+def _paj_exibicao(paj_norm: str) -> str:
+    """Formato humano do PAJ ("2026/029-01460") pra citar DENTRO da peça —
+    `paj_norm` ("PAJ-2026-029-01460", com prefixo e hifens) é só o nome da
+    pasta em disco, nunca deveria aparecer literalmente no texto da peça.
+    Bug real (18/08/2026): o prompt citava `paj_norm` direto, saindo
+    "PAJ PAJ-2026-029-01460" (prefixo duplicado + formato de pasta) em vez de
+    "PAJ 2026/029-01460". Lê `metadata.json` (campo "paj", já no formato
+    humano) — cai pro próprio `paj_norm` só se o arquivo faltar."""
+    import contextlib as _contextlib
+    import json as _json
+
+    with _contextlib.suppress(Exception):
+        meta = _json.loads((PAJS_DIR / paj_norm / "metadata.json").read_text(encoding="utf-8"))
+        if meta.get("paj"):
+            return meta["paj"]
+    return paj_norm
+
+
+def _ler_area_texto(area_dir: Path) -> str:
+    """Lê CLAUDE.md + playbook/*.md + modelos/*.md da área e devolve como um
+    texto único, pra embutir DIRETO no prompt — o Claude não abre esses
+    arquivos sozinho (ver docstring do módulo pro motivo: evita cwd dentro
+    de teses-dpu, que carregaria o CLAUDE.md raiz daquele monorepo)."""
+    arquivos: list[Path] = []
+    claude_md = area_dir / "CLAUDE.md"
+    if claude_md.exists():
+        arquivos.append(claude_md)
+    for sub in ("playbook", "modelos"):
+        pasta = area_dir / sub
+        if pasta.exists():
+            arquivos.extend(sorted(pasta.glob("*.md")))
+    return "\n\n---\n\n".join(f.read_text(encoding="utf-8") for f in arquivos)
+
+
+def _resolver_documentos(paj_norm: str, processo: str, documentos: list[dict]) -> list[Path]:
+    """Garante no disco e devolve os caminhos de cada documento selecionado.
+    Documentos do PROCESSO ainda não baixados são baixados agora (MCP e-proc);
+    documentos do PAJ já estão sincronizados em `Arquivos/`."""
+    import asyncio
+
+    return asyncio.run(_resolver_async(paj_norm, processo, documentos))
+
+
+async def _resolver_async(paj_norm: str, processo: str, documentos: list[dict]) -> list[Path]:
+    """Traduz a seleção feita nas 2 abas do modal (tabela de eventos do
+    processo / tabela de movimentações do PAJ — ambas em "modo seleção", ver
+    static/js/eventos_processo.js e static/js/movimentacoes.js) em caminhos
+    reais no disco.
+
+    Cada documento chega em um destes 3 formatos:
+      - {origem: "processo", arquivo: "<NOME do arquivo>"} — documento do
+        evento que já estava baixado no momento da seleção (badge já
+        clicável na tabela). IMPORTANTE: `arquivo` aqui é só o NOME do
+        arquivo (é o que `listar_arquivos_baixados`/`arquivos_baixados` do
+        e-proc devolvem — ver `ingestao/eproc_mcp_client.py`), não o caminho
+        completo — precisa juntar com a pasta do processo em
+        `EPROC_DOCS_DIR`.
+      - {origem: "processo", evento_numero: "1", sigla: "INIC1"} — documento
+        do evento ainda NÃO baixado (só existia a descrição, com a `sigla`
+        que o e-proc já devolve por documento antes de baixar). A API do
+        e-proc só baixa por EVENTO INTEIRO (não existe download de 1
+        documento isolado) — baixa o evento, mas depois filtra pelo par
+        evento+sigla em `res["baixados"]` (que também vem com `sigla` por
+        item, ao contrário de `arquivos_por_evento`) pra incluir só o(s)
+        arquivo(s) realmente selecionado(s), não o evento inteiro. Sem
+        `sigla` (fallback defensivo, não deveria acontecer com o front atual)
+        inclui todos os arquivos do evento.
+      - {origem: "paj", caminho: "Arquivos/xxx.pdf"} — anexo já sincronizado
+        do PAJ (só documento já local é selecionável nessa aba — ver
+        toggleSelecaoIA em movimentacoes.js).
+    """
+    from ingestao import eproc_mcp_client as mcp
+
+    pasta_paj = PAJS_DIR / paj_norm
+    numero_limpo = re.sub(r"\D", "", processo or "")
+    pasta_docs_processo = (mcp.EPROC_DOCS_DIR / numero_limpo) if numero_limpo else None
+    caminhos: list[Path] = []
+
+    # 1) Documentos do processo já baixados no momento da seleção — só o
+    #    NOME do arquivo (não o caminho completo), reconstrói com a pasta
+    #    persistente do processo.
+    if pasta_docs_processo:
+        for d in documentos:
+            if d.get("origem") == "processo" and d.get("arquivo"):
+                caminho = pasta_docs_processo / d["arquivo"]
+                if caminho.exists():
+                    caminhos.append(caminho)
+
+    # 2) Documentos do processo ainda pendentes (evento_numero + sigla) —
+    #    baixa cada evento distinto UMA vez, depois filtra por sigla.
+    pendentes = [d for d in documentos
+                if d.get("origem") == "processo" and d.get("evento_numero") and not d.get("arquivo")]
+    eventos_a_baixar = sorted({str(d["evento_numero"]) for d in pendentes})
+    if eventos_a_baixar and numero_limpo:
+        with contextlib.suppress(Exception):
+            res = await mcp.baixar_documentos_evento(numero_limpo, 1, eventos_a_baixar)
+            baixados = res.get("baixados") or []  # [{evento, sigla, nome, arquivo (caminho completo), ...}]
+            for d in pendentes:
+                numero_evento = str(d["evento_numero"])
+                sigla = d.get("sigla")
+                if sigla:
+                    encontrados = [b for b in baixados
+                                   if str(b.get("evento")) == numero_evento and b.get("sigla") == sigla]
+                else:
+                    # Sem sigla (não deveria ocorrer com o front atual) —
+                    # inclui todos os arquivos baixados deste evento.
+                    encontrados = [b for b in baixados if str(b.get("evento")) == numero_evento]
+                for b in encontrados:
+                    caminho = b.get("arquivo")
+                    if caminho and Path(caminho).exists():
+                        caminhos.append(Path(caminho))
+
+    # 3) Anexos do PAJ (já sincronizados do SISDPU, em Arquivos/).
+    for d in documentos:
+        if d.get("origem") == "paj" and d.get("caminho"):
+            caminho = pasta_paj / d["caminho"]
+            if caminho.exists():
+                caminhos.append(caminho)
+
+    # Remove duplicatas preservando ordem (o mesmo arquivo pode ter sido
+    # selecionado por mais de uma via — ex.: já baixado E também bate com
+    # outra seleção pendente resolvida agora).
+    vistos: set[str] = set()
+    unicos: list[Path] = []
+    for c in caminhos:
+        chave = str(c.resolve())
+        if chave not in vistos:
+            vistos.add(chave)
+            unicos.append(c)
+    return unicos
+
+
+def _montar_prompt(paj_exibicao: str, processo: str, criterio_area: str, caminhos: list[Path], pasta_destino: Path) -> str:
+    lista_docs = "\n".join(f"- `{c}`" for c in caminhos)
+    nome_sugerido = pasta_destino / f"manifestacao-{datetime.now().strftime('%d-%m-%Y')}.docx"
+    return (
+        f"Redija uma manifestação sobre os documentos abaixo, no processo judicial "
+        f"{processo or '(ver documentos)'} (PAJ {paj_exibicao} — referência interna da DPU, "
+        "não aparece pro juízo).\n\n"
+        "## Documentos-fonte selecionados pelo Defensor (leia todos antes de redigir)\n"
+        f"{lista_docs}\n\n"
+        "## Critérios desta área — LEIA COM ATENÇÃO (define a classificação do caso e o "
+        "conteúdo jurídico da peça; já embutido aqui, NÃO precisa abrir nenhum arquivo "
+        "pra ler isso)\n"
+        f"{criterio_area}\n\n"
+        "## Classificação do caso\n"
+        "Classifique o caso conforme os critérios acima e prossiga direto com o tipo "
+        "identificado — não pergunte nada; registre a classificação e o motivo em 1 "
+        "parágrafo no INÍCIO da sua resposta de texto (fora do arquivo gerado). Lacunas/"
+        "dúvidas vão sinalizadas ENTRE COLCHETES dentro do próprio texto da peça, não "
+        "como pergunta.\n\n"
+        "## ATENÇÃO — isto é uma MANIFESTAÇÃO CURTA, não uma petição inicial\n"
+        "3 a 6 parágrafos em texto corrido, no total. NÃO estruture em tópicos numerados "
+        "(nada de \"I – DOS FATOS\", \"II – DO DIREITO\" etc.) e não invente seções que os "
+        "critérios acima não pedirem. Onde os critérios listarem itens a)/b)/c) como "
+        "conteúdo a abordar, isso é só a ORGANIZAÇÃO do que considerar — no texto final "
+        "viram parágrafos corridos, sem letras/números aparecendo na peça.\n\n"
+        + _REGRAS_FORMATO +
+        "\n---\n\n"
+        "## Como gerar o arquivo\n"
+        f"Use a biblioteca `peticao_base.py` (já está em `{MODELOS_DIR}` — rode a partir "
+        "dessa pasta, ou faça `sys.path.insert(0, r'" + str(MODELOS_DIR) + "')` antes do "
+        "import). Ela já traz as REGRAS DE ESTILO obrigatórias da DPU no próprio "
+        "docstring do módulo — leia-o primeiro e siga-as TAMBÉM, além das regras acima.\n\n"
+        "Estrutura ESPERADA, NESTA ORDEM (adapte o conteúdo, mas siga a sequência de "
+        "chamadas):\n"
+        "1. `novo_documento()` para abrir o doc.\n"
+        "2. `enderecamento(doc, texto_endereco, num_processo)` — ANTES da qualificação. "
+        "`texto_endereco` é algo como 'EXCELENTÍSSIMO(A) SENHOR(A) JUIZ(A) FEDERAL' (ajuste "
+        "o cargo/vara conforme a instância/classe do processo, se souber pelos documentos); "
+        f"`num_processo` é '{processo}'.\n"
+        f"3. Logo após, insira uma linha adicional (mesmo padrão de `par()`/`r()`, alinhado à "
+        f"esquerda, sem recuo de 1ª linha) com a referência do PAJ, em NEGRITO: "
+        f"'PAJ {paj_exibicao}' (EXATAMENTE este texto — não use nenhum outro identificador de "
+        "PAJ). Logo depois desta linha, 3 parágrafos em branco (`blank()`) antes da "
+        "qualificação.\n"
+        "4. `qualificacao(doc, nome_da_parte, '', texto_pre=<frase>, texto_pos='')` — nome "
+        "em maiúsculas (a função já faz isso). `texto_pre` deve ser algo como ', qualificada "
+        "nos autos, representada pela Defensoria Pública da União, comparece, perante Vossa "
+        "Excelência, para se manifestar sobre [o laudo pericial / a avaliação social / o que "
+        "for objeto desta manifestação, conforme os documentos].' — ajuste o final da frase "
+        "ao conteúdo real sendo respondido.\n"
+        "5. Parágrafos com `par()`/`r()` — texto corrido, conciso, seguindo as regras de "
+        "estilo acima. Poucos parágrafos (3 a 6) — isto NÃO é petição inicial.\n"
+        "6. Se houver pedido, encerre o corpo com o requerimento (sem usar dois-pontos "
+        "antes da lista).\n"
+        f"7. `assinatura(doc, termos=False, data='{_data_por_extenso()}')` — chame-a UMA "
+        "ÚNICA VEZ, IMEDIATAMENTE após o último parágrafo do pedido, e NÃO escreva você "
+        "mesmo nenhuma linha de fecho antes dela (nem 'Termos em que pede deferimento' — "
+        "NÃO usar essa linha nesta peça —, nem a data, nem o nome/cargo do defensor) — "
+        "`assinatura()` já gera TODAS essas linhas sozinha, EXATAMENTE nesses parâmetros "
+        "(não altere `termos` nem `data`).\n"
+        f"8. `salvar(doc, r'{nome_sugerido}')` — pode ajustar só o nome-base do arquivo pra "
+        "algo mais descritivo do tipo de peça, mas mantenha a pasta exatamente essa.\n\n"
+        "NÃO gere PDF nem rode conversão nenhuma — a conversão pra PDF é feita "
+        "automaticamente pelo painel, em Python, depois que o `.docx` for salvo.\n\n"
+        "IMPORTANTE sobre idioma: toda comunicação nesta tarefa em português do Brasil, "
+        "inclusive comentários de passagem entre a leitura de um anexo e outro.\n\n"
+        "Escreva e execute o script diretamente (você tem acesso a Bash/Write) — não "
+        "peça confirmação, não mostre o texto antes de salvar. Ao final, confirme em 1-2 "
+        "linhas que o arquivo foi salvo e a classificação do caso adotada."
+    )
+
+
+def formatar_e_salvar(paj_norm: str, tipo_slug: str, peticao_html: str) -> dict:
+    """"Gerar arquivo (DOC/PDF)" — pega o texto ATUAL da caixa de edição (já
+    revisado/ajustado manualmente pelo Defensor, ou o rascunho da IA sem
+    alteração) e o formata no padrão DPU (`peticao_base.py`, via
+    `_html_para_docx` — mesma função de "Incluir petição nos anexos" em
+    `peticao_ia_service.py`), sem chamar IA — rápido e síncrono (mas quem
+    chama deve rodar em thread — conversão via Word/COM é bloqueante).
+    Salva em `Peças IA/` (docx + pdf), sobrescrevendo se já existir um do
+    mesmo tipo no mesmo dia."""
+    texto_limpo = re.sub(r"<[^>]+>", "", peticao_html or "").strip()
+    if not texto_limpo:
+        return {"ok": False, "erro": "A caixa de texto está vazia — escreva ou gere o texto antes de gerar o arquivo."}
+
+    pasta_pecas_ia = PAJS_DIR / paj_norm / "Peças IA"
+    pasta_pecas_ia.mkdir(parents=True, exist_ok=True)
+    nome = f"minuta-{tipo_slug}-{datetime.now().strftime('%d-%m-%Y')}"
+    docx_path = pasta_pecas_ia / f"{nome}.docx"
+    pdf_path = pasta_pecas_ia / f"{nome}.pdf"
+
+    try:
+        # termos=False + data por extenso (não o placeholder "data do
+        # protocolo eletrônico" do fluxo de Ações no Eproc) — minuta é peça
+        # pronta pra uso imediato, não vai ser protocolada por aqui.
+        _html_para_docx(peticao_html, docx_path, termos=False, data=_data_por_extenso())
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"Falha ao formatar a minuta: {type(e).__name__}: {e}"[:400]}
+
+    with contextlib.suppress(Exception):
+        if pdf_path.exists():
+            pdf_path.unlink()
+    _docx_para_pdf(docx_path, pdf_path)
+    if not pdf_path.exists():
+        return {"ok": False, "erro": "A minuta foi formatada (.docx), mas a conversão pra PDF falhou "
+                                      "(verifique se o Microsoft Word está instalado nesta máquina)."}
+
+    return {"ok": True, "arquivos": [docx_path.name, pdf_path.name]}

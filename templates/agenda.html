@@ -1,0 +1,577 @@
+{% extends "base.html" %}
+{% block title %}Agenda{% endblock %}
+
+{% block content_class %}flex flex-col flex-1 p-0{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/fullcalendar@6.1.15/index.global.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@fullcalendar/core@6.1.15/locales-all.global.min.js"></script>
+<style>
+  .tnum { font-variant-numeric: tabular-nums; }
+  .legenda-dot { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
+  .filtro-chip { cursor:pointer; }
+  /* FullCalendar — harmoniza com o tema Fluent do painel (ver base.html) em vez
+     do visual padrão da lib. */
+  #fc-agenda { background: var(--card); border: 1px solid var(--stroke); border-radius: 10px; padding: 12px; }
+  #fc-agenda .fc-toolbar-title { font-size: 1.1rem; color: var(--text); }
+  #fc-agenda .fc-button { background: var(--card); border-color: var(--stroke-strong); color: var(--text); box-shadow: none !important; text-transform: capitalize; }
+  #fc-agenda .fc-button:hover { background: var(--card-hover); }
+  #fc-agenda .fc-button-active, #fc-agenda .fc-button:disabled { background: var(--accent) !important; border-color: var(--accent) !important; color: var(--accent-fg) !important; opacity: 1; }
+  #fc-agenda .fc-daygrid-day, #fc-agenda .fc-timegrid-slot { border-color: var(--stroke) !important; }
+  #fc-agenda th, #fc-agenda .fc-col-header-cell { border-color: var(--stroke) !important; color: var(--text-secondary); }
+  #fc-agenda .fc-day-today { background: var(--bg-tint) !important; }
+  #fc-agenda .fc-daygrid-day-number, #fc-agenda .fc-list-day-text, #fc-agenda .fc-list-day-side-text { color: var(--text); }
+  #fc-agenda a { color: inherit; }
+  #fc-agenda .fc-event { border: none; font-size: 11px; }
+  #fc-agenda .fc-list-event-dot { display:none; }
+</style>
+{% endblock %}
+
+{% block content %}
+<div x-data="agendaApp()" x-init="init()" x-cloak class="flex flex-col flex-1">
+
+  <!-- Banner de ambiente -->
+  {% if ambiente and ambiente.avisos %}
+  <div class="px-8 pt-5">
+    <div class="alert alert-warning">
+      <div>
+        <strong class="text-sm">Ambiente:</strong>
+        <ul class="text-xs list-disc ml-5 mt-1">
+          {% for aviso in ambiente.avisos %}<li>{{ aviso }}</li>{% endfor %}
+        </ul>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Top bar -->
+  <div class="px-8 pt-6 pb-4 flex items-start justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="text-3xl font-semibold tracking-tight">Agenda</h1>
+      <div class="text-xs text-base-content/50 mt-1">
+        Audiências (SISDPU), prazos judiciais finais (e-proc), compromissos e afastamentos.
+      </div>
+    </div>
+    <div class="flex gap-2 flex-wrap justify-end">
+      <button class="btn btn-sm btn-primary btn-outline" @click="abrirNovoCompromisso()">+ Compromisso</button>
+      <button class="btn btn-sm btn-primary btn-outline" @click="abrirNovoAfastamento()">+ Afastamento</button>
+      <button class="btn btn-sm btn-primary" @click="sincronizarPrazos()" :disabled="sincronizando">
+        <span x-show="sincronizando" class="loading loading-spinner loading-xs"></span>
+        Sincronizar prazos (e-proc)
+      </button>
+      <button class="btn btn-sm btn-ghost" @click="carregar()" :disabled="carregando">Atualizar</button>
+    </div>
+  </div>
+  <template x-if="syncErro">
+    <div class="px-8 pb-2"><div class="alert alert-error py-2 text-xs" x-text="syncErro"></div></div>
+  </template>
+
+  <!-- Legenda + filtro (mesmo estado controla calendário e tabela) -->
+  <div class="px-8 pb-4 flex items-center gap-4 flex-wrap text-xs">
+    <span class="filtro-chip badge" :class="filtroTipo === 'todos' ? 'badge-neutral' : 'badge-outline'" @click="setFiltro('todos')">Todos</span>
+    <span class="filtro-chip" @click="setFiltro('audiencia')">
+      <span class="legenda-dot" style="background:var(--accent);"></span>
+      <span :class="filtroTipo === 'audiencia' ? 'font-semibold' : 'text-base-content/60'">Audiência</span>
+    </span>
+    <span class="filtro-chip" @click="setFiltro('prazo')">
+      <span class="legenda-dot" style="background:var(--cor-intim-aberta); border:1px solid var(--stroke-strong);"></span>
+      <span :class="filtroTipo === 'prazo' ? 'font-semibold' : 'text-base-content/60'">Prazo em aberto</span>
+    </span>
+    <span class="filtro-chip" @click="setFiltro('prazo')">
+      <span class="legenda-dot" style="background:var(--cor-intim-urgente);"></span>
+      <span :class="filtroTipo === 'prazo' ? 'font-semibold' : 'text-base-content/60'">Prazo urgente</span>
+    </span>
+    <span class="filtro-chip" @click="setFiltro('manual')">
+      <span class="legenda-dot" style="background:#1f9d55;"></span>
+      <span :class="filtroTipo === 'manual' ? 'font-semibold' : 'text-base-content/60'">Compromisso</span>
+    </span>
+    <span class="filtro-chip" @click="setFiltro('afastamento')">
+      <span class="legenda-dot" style="background:repeating-linear-gradient(45deg, var(--text-tertiary) 0 2px, transparent 2px 4px); border:1px solid var(--stroke-strong);"></span>
+      <span :class="filtroTipo === 'afastamento' ? 'font-semibold' : 'text-base-content/60'">Afastamento</span>
+    </span>
+  </div>
+
+  <!-- Calendário -->
+  <div class="px-8 pb-6">
+    <div id="fc-agenda"></div>
+  </div>
+
+  <!-- Tabela -->
+  <div class="px-8 pb-8 flex-1">
+    <div class="bg-base-200 rounded-lg border border-base-300 overflow-hidden">
+      <template x-if="eventosListaFiltrados().length === 0">
+        <div class="p-8 text-center text-base-content/50">
+          Nenhum evento de hoje em diante para este filtro. Eventos passados continuam no calendário acima.
+        </div>
+      </template>
+      <template x-if="eventosListaFiltrados().length > 0">
+        <div class="overflow-x-auto">
+        <table class="table table-sm">
+          <thead>
+            <tr class="text-xs uppercase tracking-wide text-base-content/60">
+              <th>Data</th>
+              <th>Tipo</th>
+              <th>Descrição</th>
+              <th>PAJ / processo</th>
+              <th>Status</th>
+              <th class="text-right">Ações</th>
+            </tr>
+          </thead>
+          <tbody>
+            <template x-for="e in eventosListaFiltrados()" :key="e.id">
+              <tr>
+                <td class="text-xs tnum whitespace-nowrap" x-text="formatarData(e)"></td>
+                <td><span class="badge badge-sm" :class="badgeTipo(e.tipo)" x-text="rotuloTipo(e.tipo)"></span></td>
+                <td class="text-sm max-w-md">
+                  <div class="truncate" :title="e.descricao || e.titulo" x-text="e.titulo"></div>
+                </td>
+                <td class="text-xs whitespace-nowrap">
+                  <template x-if="e.paj_norm">
+                    <a class="link link-hover font-mono" @click="abrirPajPainel(e.paj_norm)" x-text="formatarPajNorm(e.paj_norm)"></a>
+                  </template>
+                  <template x-if="e.processo">
+                    <a class="link link-hover font-mono block" @click="abrirProcessoEproc(e.processo)" x-text="e.processo"></a>
+                  </template>
+                  <template x-if="!e.paj_norm && !e.processo">—</template>
+                </td>
+                <td class="text-xs">
+                  <span x-show="e.tipo === 'prazo'" x-text="e.urgente ? 'Urgente' : (e.status === 'estimado' ? 'Estimado' : 'Em aberto')"></span>
+                  <span x-show="e.tipo === 'manual'" x-text="e.status || '—'"></span>
+                  <span x-show="e.tipo === 'audiencia' || e.tipo === 'afastamento'">—</span>
+                </td>
+                <td class="text-right whitespace-nowrap">
+                  <template x-if="e.tipo === 'manual'">
+                    <button class="btn btn-xs btn-ghost" title="Editar" @click="abrirEdicaoCompromisso(e)">Editar</button>
+                  </template>
+                  <template x-if="e.tipo === 'manual'">
+                    <button class="btn btn-xs btn-ghost text-error" title="Excluir" @click="removerCompromisso(e)">Excluir</button>
+                  </template>
+                  <template x-if="e.tipo === 'afastamento'">
+                    <button class="btn btn-xs btn-ghost" title="Editar" @click="abrirEdicaoAfastamento(e)">Editar</button>
+                  </template>
+                  <template x-if="e.tipo === 'afastamento'">
+                    <button class="btn btn-xs btn-ghost text-error" title="Excluir" @click="removerAfastamento(e)">Excluir</button>
+                  </template>
+                </td>
+              </tr>
+            </template>
+          </tbody>
+        </table>
+        </div>
+      </template>
+    </div>
+  </div>
+
+  <!-- Modal: compromisso (novo/editar) -->
+  <dialog id="modal-compromisso" class="modal">
+    <div class="modal-box max-w-lg">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-bold text-lg" x-text="edicaoCompromissoId ? 'Editar compromisso' : 'Novo compromisso'"></h3>
+        <form method="dialog"><button class="btn btn-sm btn-ghost">X</button></form>
+      </div>
+      <form @submit.prevent="salvarCompromisso()" class="flex flex-col gap-3">
+        <label class="form-control">
+          <span class="label-text text-xs mb-1">Título <span class="text-error">*</span></span>
+          <input type="text" class="input input-bordered input-sm" placeholder="Ex: Atendimento presencial — assistido"
+                 x-model="formCompromisso.titulo" maxlength="200" required>
+        </label>
+        <div class="flex gap-3">
+          <label class="form-control flex-1">
+            <span class="label-text text-xs mb-1">Data <span class="text-error">*</span></span>
+            <input type="date" class="input input-bordered input-sm" x-model="formCompromisso.data_inicio" required>
+          </label>
+          <label class="form-control w-32">
+            <span class="label-text text-xs mb-1">Hora</span>
+            <input type="time" class="input input-bordered input-sm" x-model="formCompromisso.hora_inicio">
+          </label>
+        </div>
+        <div class="flex gap-3">
+          <label class="form-control flex-1">
+            <span class="label-text text-xs mb-1">PAJ vinculado (opcional)</span>
+            <input type="text" class="input input-bordered input-sm font-mono" placeholder="2026/029-00136"
+                   maxlength="14" :value="formCompromisso.paj_display"
+                   @input="formCompromisso.paj_display = formatarInputPaj($event.target.value)">
+          </label>
+          <label class="form-control flex-1">
+            <span class="label-text text-xs mb-1">Processo (NPU, opcional)</span>
+            <input type="text" class="input input-bordered input-sm" placeholder="0000000-00.0000.0.00.0000"
+                   maxlength="30" x-model="formCompromisso.processo">
+          </label>
+        </div>
+        <label class="form-control">
+          <span class="label-text text-xs mb-1">Status</span>
+          <select class="select select-bordered select-sm" x-model="formCompromisso.status">
+            <option value="agendado">Agendado</option>
+            <option value="confirmado">Confirmado</option>
+            <option value="concluido">Concluído</option>
+            <option value="cancelado">Cancelado</option>
+          </select>
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs mb-1">Descrição (opcional)</span>
+          <textarea class="textarea textarea-bordered text-sm" rows="3" x-model="formCompromisso.descricao"></textarea>
+        </label>
+        <template x-if="erroCompromisso">
+          <div class="alert alert-error py-2 text-xs" x-text="erroCompromisso"></div>
+        </template>
+        <div class="flex justify-between gap-2 mt-2">
+          <button type="button" class="btn btn-sm btn-ghost" @click="document.getElementById('modal-compromisso').close()" :disabled="salvandoCompromisso">Cancelar</button>
+          <button type="submit" class="btn btn-sm btn-primary" :disabled="salvandoCompromisso">
+            <span x-show="salvandoCompromisso" class="loading loading-spinner loading-xs"></span>
+            Salvar
+          </button>
+        </div>
+      </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
+  </dialog>
+
+  <!-- Modal: afastamento (novo/editar) -->
+  <dialog id="modal-afastamento" class="modal">
+    <div class="modal-box max-w-lg">
+      <div class="flex items-center justify-between mb-4">
+        <h3 class="font-bold text-lg" x-text="edicaoAfastamentoId ? 'Editar afastamento' : 'Novo afastamento'"></h3>
+        <form method="dialog"><button class="btn btn-sm btn-ghost">X</button></form>
+      </div>
+      <form @submit.prevent="salvarAfastamento()" class="flex flex-col gap-3">
+        <label class="form-control">
+          <span class="label-text text-xs mb-1">Tipo <span class="text-error">*</span></span>
+          <select class="select select-bordered select-sm" x-model="formAfastamento.tipo_afastamento" required>
+            <option value="ferias">Férias</option>
+            <option value="recesso">Recesso forense</option>
+            <option value="suspensao_distribuicao">Suspensão de distribuição</option>
+            <option value="licenca">Licença</option>
+            <option value="outro">Outro</option>
+          </select>
+        </label>
+        <div class="flex gap-3">
+          <label class="form-control flex-1">
+            <span class="label-text text-xs mb-1">Início <span class="text-error">*</span></span>
+            <input type="date" class="input input-bordered input-sm" x-model="formAfastamento.data_inicio" required>
+          </label>
+          <label class="form-control flex-1">
+            <span class="label-text text-xs mb-1">Fim <span class="text-error">*</span></span>
+            <input type="date" class="input input-bordered input-sm" x-model="formAfastamento.data_fim" required>
+          </label>
+        </div>
+        <label class="form-control">
+          <span class="label-text text-xs mb-1">Título (opcional — usa o tipo se vazio)</span>
+          <input type="text" class="input input-bordered input-sm" x-model="formAfastamento.titulo" maxlength="200">
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs mb-1">Descrição (opcional)</span>
+          <textarea class="textarea textarea-bordered text-sm" rows="2" x-model="formAfastamento.descricao"></textarea>
+        </label>
+        <template x-if="erroAfastamento">
+          <div class="alert alert-error py-2 text-xs" x-text="erroAfastamento"></div>
+        </template>
+        <div class="flex justify-between gap-2 mt-2">
+          <button type="button" class="btn btn-sm btn-ghost" @click="document.getElementById('modal-afastamento').close()" :disabled="salvandoAfastamento">Cancelar</button>
+          <button type="submit" class="btn btn-sm btn-primary" :disabled="salvandoAfastamento">
+            <span x-show="salvandoAfastamento" class="loading loading-spinner loading-xs"></span>
+            Salvar
+          </button>
+        </div>
+      </form>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
+  </dialog>
+
+</div>
+
+<script>
+function agendaApp() {
+  return {
+    eventos: [],
+    filtroTipo: 'todos',
+    carregando: false,
+    sincronizando: false,
+    syncErro: '',
+    calendar: null,
+
+    formCompromisso: { titulo: '', data_inicio: '', hora_inicio: '', paj_display: '', processo: '', status: 'agendado', descricao: '' },
+    edicaoCompromissoId: null,
+    salvandoCompromisso: false,
+    erroCompromisso: '',
+
+    formAfastamento: { tipo_afastamento: 'ferias', data_inicio: '', data_fim: '', titulo: '', descricao: '' },
+    edicaoAfastamentoId: null,
+    salvandoAfastamento: false,
+    erroAfastamento: '',
+
+    async init() {
+      this.initCalendar();
+      await this.carregar();
+    },
+
+    async carregar() {
+      this.carregando = true;
+      try {
+        const r = await fetch('/api/agenda/eventos');
+        const data = await r.json();
+        this.eventos = data.eventos || [];
+        this.atualizarCalendario();
+      } catch (e) {
+        showToast('Falha ao carregar a agenda', 'error');
+      } finally {
+        this.carregando = false;
+      }
+    },
+
+    setFiltro(tipo) {
+      this.filtroTipo = tipo;
+      this.atualizarCalendario();
+    },
+
+    eventosFiltrados() {
+      if (this.filtroTipo === 'todos') return this.eventos;
+      return this.eventos.filter(e => e.tipo === this.filtroTipo);
+    },
+
+    // Só a LISTA/tabela esconde eventos passados (o calendário continua
+    // mostrando tudo, filtrado só por tipo — ver eventosFiltrados()). Um
+    // afastamento em andamento (começou antes de hoje, termina hoje ou depois)
+    // ainda conta como "não passado", por isso compara pela data_fim.
+    hojeIso() {
+      const d = new Date();
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    },
+    eventosListaFiltrados() {
+      const hoje = this.hojeIso();
+      return this.eventosFiltrados().filter(e => (e.data_fim || e.data_inicio || '') >= hoje);
+    },
+
+    // --- FullCalendar ---
+    initCalendar() {
+      const el = document.getElementById('fc-agenda');
+      this.calendar = new FullCalendar.Calendar(el, {
+        locale: 'pt-br',
+        height: 'auto',
+        headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listMonth' },
+        buttonText: { today: 'hoje', month: 'mês', week: 'semana', list: 'lista' },
+        events: [],
+        eventClick: (info) => {
+          const raw = info.event.extendedProps.raw;
+          if (!raw) return;
+          if (raw.tipo === 'manual') { this.abrirEdicaoCompromisso(raw); return; }
+          if ((raw.tipo === 'prazo' || raw.tipo === 'audiencia') && raw.paj_norm) {
+            this.abrirPajPainel(raw.paj_norm);
+          }
+        },
+        eventMouseEnter: (info) => {
+          const raw = info.event.extendedProps.raw;
+          if (raw && (raw.tipo === 'manual' || ((raw.tipo === 'prazo' || raw.tipo === 'audiencia') && raw.paj_norm))) {
+            info.el.style.cursor = 'pointer';
+          }
+        },
+      });
+      this.calendar.render();
+    },
+
+    atualizarCalendario() {
+      if (!this.calendar) return;
+      this.calendar.getEventSources().forEach(s => s.remove());
+      this.calendar.addEventSource(this.eventosParaFullCalendar(this.eventosFiltrados()));
+    },
+
+    eventosParaFullCalendar(lista) {
+      return lista.map(e => {
+        const allDay = !e.hora_inicio;
+        const start = allDay ? e.data_inicio : (e.data_inicio + 'T' + e.hora_inicio);
+        let end;
+        if (e.tipo === 'afastamento' && e.data_fim && e.data_fim !== e.data_inicio) {
+          const d = new Date(e.data_fim + 'T00:00:00');
+          d.setDate(d.getDate() + 1);
+          end = d.toISOString().slice(0, 10);
+        }
+        const cores = this.corEvento(e);
+        return {
+          id: e.id, title: e.titulo, start, end, allDay,
+          display: e.tipo === 'afastamento' ? 'background' : 'auto',
+          backgroundColor: cores.bg, borderColor: cores.bg, textColor: cores.texto,
+          extendedProps: { raw: e },
+        };
+      });
+    },
+
+    corEvento(e) {
+      if (e.tipo === 'audiencia') return { bg: 'var(--accent)', texto: 'var(--accent-fg)' };
+      if (e.tipo === 'prazo') return e.urgente
+        ? { bg: 'var(--cor-intim-urgente)', texto: 'var(--cor-intim-urgente-texto)' }
+        : { bg: 'var(--cor-intim-aberta)', texto: 'var(--cor-intim-texto)' };
+      if (e.tipo === 'manual') return { bg: '#1f9d55', texto: '#ffffff' };
+      return { bg: 'var(--text-tertiary)', texto: 'var(--text)' };
+    },
+
+    badgeTipo(tipo) {
+      return { audiencia: 'badge-info', prazo: 'badge-error', manual: 'badge-success', afastamento: 'badge-ghost' }[tipo] || 'badge-ghost';
+    },
+    rotuloTipo(tipo) {
+      return { audiencia: 'Audiência', prazo: 'Prazo judicial', manual: 'Compromisso', afastamento: 'Afastamento' }[tipo] || tipo;
+    },
+    formatarData(e) {
+      const d = (e.data_inicio || '').split('-');
+      if (d.length !== 3) return '—';
+      let texto = `${d[2]}/${d[1]}/${d[0]}`;
+      if (e.tipo === 'afastamento' && e.data_fim && e.data_fim !== e.data_inicio) {
+        const f = e.data_fim.split('-');
+        texto += ` – ${f[2]}/${f[1]}/${f[0]}`;
+      }
+      if (e.hora_inicio) texto += ' - ' + e.hora_inicio;
+      return texto;
+    },
+
+    // --- Sincronizar prazos (reusa a mesma rota da página "Prazos") ---
+    async sincronizarPrazos() {
+      this.sincronizando = true; this.syncErro = '';
+      try {
+        const resp = await fetch('/api/prazos/sincronizar');
+        const r = await resp.json();
+        if (!resp.ok || r.ok === false) {
+          if (r.cofre_trancado && typeof window.garantirCofre === 'function') {
+            this.sincronizando = false;
+            if (await window.garantirCofre()) { await this.sincronizarPrazos(); }
+            return;
+          }
+          this.syncErro = r.erro || 'Falha ao sincronizar prazos.';
+          return;
+        }
+        await this.carregar();
+        showToast('Prazos sincronizados', 'success');
+      } catch (e) {
+        this.syncErro = 'Falha de rede na sincronização.';
+      } finally {
+        this.sincronizando = false;
+      }
+    },
+
+    // --- Abrir PAJ no próprio painel (nova aba). O `paj_norm` de eventos de
+    // prazo vem no formato de exibição (AAAA/UUU-NNNNN, do cache do e-proc);
+    // o de audiências já vem no formato interno (PAJ-AAAA-UUU-NNNNN, nome da
+    // pasta) — normaliza os dois antes de montar a URL. ---
+    abrirPajPainel(pajNorm) {
+      if (!pajNorm) return;
+      const norm = pajNorm.startsWith('PAJ-') ? pajNorm : pajExibicaoParaNorm(pajNorm);
+      if (!norm) return;
+      window.open('/paj/' + encodeURIComponent(norm), '_blank');
+    },
+    async abrirProcessoEproc(numero) {
+      if (!numero) return;
+      try {
+        await fetch('/api/prazos/abrir-processo-numero?numero=' + encodeURIComponent(numero));
+        showToast('Abrindo processo na janela do e-proc…', 'info');
+      } catch (e) {
+        showToast('Falha ao abrir o processo no e-proc', 'error');
+      }
+    },
+
+    // --- Compromissos manuais ---
+    abrirNovoCompromisso() {
+      this.edicaoCompromissoId = null;
+      this.erroCompromisso = '';
+      this.formCompromisso = { titulo: '', data_inicio: '', hora_inicio: '', paj_display: '', processo: '', status: 'agendado', descricao: '' };
+      document.getElementById('modal-compromisso').showModal();
+    },
+    abrirEdicaoCompromisso(e) {
+      this.edicaoCompromissoId = e.id;
+      this.erroCompromisso = '';
+      this.formCompromisso = {
+        titulo: e.titulo || '', data_inicio: e.data_inicio || '', hora_inicio: e.hora_inicio || '',
+        paj_display: e.paj_norm ? formatarPajNorm(e.paj_norm) : '', processo: e.processo || '',
+        status: e.status || 'agendado', descricao: e.descricao || '',
+      };
+      document.getElementById('modal-compromisso').showModal();
+    },
+    async salvarCompromisso() {
+      this.erroCompromisso = '';
+      let pajNorm = '';
+      if ((this.formCompromisso.paj_display || '').trim()) {
+        pajNorm = pajExibicaoParaNorm(this.formCompromisso.paj_display);
+        if (!pajNorm) {
+          this.erroCompromisso = 'PAJ em formato inválido. Use AAAA/UUU-NNNNN, ou deixe vazio.';
+          return;
+        }
+      }
+      this.salvandoCompromisso = true;
+      const corpo = {
+        titulo: (this.formCompromisso.titulo || '').trim(),
+        descricao: (this.formCompromisso.descricao || '').trim(),
+        data_inicio: this.formCompromisso.data_inicio,
+        hora_inicio: this.formCompromisso.hora_inicio || null,
+        paj_norm: pajNorm,
+        processo: (this.formCompromisso.processo || '').trim(),
+        status: this.formCompromisso.status,
+      };
+      try {
+        const url = this.edicaoCompromissoId ? '/api/agenda/compromissos/' + this.edicaoCompromissoId : '/api/agenda/compromissos';
+        const metodo = this.edicaoCompromissoId ? 'PUT' : 'POST';
+        const r = await fetch(url, { method: metodo, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
+        if (!r.ok) { this.erroCompromisso = 'Erro ao salvar.'; return; }
+        document.getElementById('modal-compromisso').close();
+        await this.carregar();
+        showToast(this.edicaoCompromissoId ? 'Compromisso atualizado' : 'Compromisso criado', 'success');
+      } catch (e) {
+        this.erroCompromisso = 'Falha de rede.';
+      } finally {
+        this.salvandoCompromisso = false;
+      }
+    },
+    async removerCompromisso(e) {
+      if (!confirm(`Excluir o compromisso "${e.titulo}"?`)) return;
+      await fetch('/api/agenda/compromissos/' + e.id, { method: 'DELETE' });
+      await this.carregar();
+    },
+
+    // --- Afastamentos ---
+    abrirNovoAfastamento() {
+      this.edicaoAfastamentoId = null;
+      this.erroAfastamento = '';
+      this.formAfastamento = { tipo_afastamento: 'ferias', data_inicio: '', data_fim: '', titulo: '', descricao: '' };
+      document.getElementById('modal-afastamento').showModal();
+    },
+    abrirEdicaoAfastamento(e) {
+      this.edicaoAfastamentoId = e.id;
+      this.erroAfastamento = '';
+      this.formAfastamento = {
+        tipo_afastamento: e.tipo_afastamento || 'ferias', data_inicio: e.data_inicio || '', data_fim: e.data_fim || '',
+        titulo: e.titulo || '', descricao: e.descricao || '',
+      };
+      document.getElementById('modal-afastamento').showModal();
+    },
+    async salvarAfastamento() {
+      this.erroAfastamento = '';
+      if (this.formAfastamento.data_fim < this.formAfastamento.data_inicio) {
+        this.erroAfastamento = 'A data final não pode ser antes da inicial.';
+        return;
+      }
+      this.salvandoAfastamento = true;
+      const corpo = {
+        tipo_afastamento: this.formAfastamento.tipo_afastamento,
+        data_inicio: this.formAfastamento.data_inicio,
+        data_fim: this.formAfastamento.data_fim,
+        titulo: (this.formAfastamento.titulo || '').trim(),
+        descricao: (this.formAfastamento.descricao || '').trim(),
+      };
+      try {
+        const url = this.edicaoAfastamentoId ? '/api/agenda/afastamentos/' + this.edicaoAfastamentoId : '/api/agenda/afastamentos';
+        const metodo = this.edicaoAfastamentoId ? 'PUT' : 'POST';
+        const r = await fetch(url, { method: metodo, headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
+        if (!r.ok) { this.erroAfastamento = 'Erro ao salvar.'; return; }
+        document.getElementById('modal-afastamento').close();
+        await this.carregar();
+        showToast(this.edicaoAfastamentoId ? 'Afastamento atualizado' : 'Afastamento criado', 'success');
+      } catch (e) {
+        this.erroAfastamento = 'Falha de rede.';
+      } finally {
+        this.salvandoAfastamento = false;
+      }
+    },
+    async removerAfastamento(e) {
+      if (!confirm(`Excluir o afastamento "${e.titulo}"?`)) return;
+      await fetch('/api/agenda/afastamentos/' + e.id, { method: 'DELETE' });
+      await this.carregar();
+    },
+  };
+}
+</script>
+{% endblock %}

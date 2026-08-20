@@ -263,6 +263,16 @@ async def api_eproc_mcp_lembretes(numero: str):
     return JSONResponse(eproc_intimacoes.buscar_lembretes(numero))
 
 
+@router.get("/api/eproc-mcp/paj-do-processo", response_class=JSONResponse)
+async def api_eproc_mcp_paj_do_processo(numero: str):
+    """PAJ associado a este processo — card "PAJ associado" da página "Consultar
+    processo". Mesma fonte/critério de `/lembretes` (cache já sincronizado pela
+    aba Prazos, PAJ extraído do texto do lembrete)."""
+    from ingestao import eproc_intimacoes
+
+    return JSONResponse(eproc_intimacoes.paj_do_processo(numero))
+
+
 @router.get("/api/eproc-mcp/prazos-procurador", response_class=JSONResponse)
 async def api_eproc_mcp_prazos_procurador(numero: str):
     """Prazos do MEU Painel do Procurador (cache já sincronizado pela aba

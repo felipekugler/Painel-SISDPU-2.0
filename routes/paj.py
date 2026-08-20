@@ -87,6 +87,17 @@ async def api_concluir_tramites(paj_norm: PajNorm, payload: dict = Body(...)):
     return resultado
 
 
+@router.post("/api/paj/{paj_norm}/atualizar-tramitacoes-caixa", response_class=JSONResponse)
+async def api_atualizar_tramitacoes_caixa(paj_norm: PajNorm):
+    """Atualiza `tramitacoes_caixa` deste PAJ sob demanda, lendo a caixa de
+    entrada agora (não depende da sync completa da caixa ter rodado
+    recentemente). Chamado pelo botão "Concluir PAJ da Caixa de Entrada"
+    ANTES de decidir entre o caminho simples e o modal de escolha múltipla —
+    ver `services.sync_service.atualizar_tramitacoes_paj` pro motivo."""
+    from services.sync_service import atualizar_tramitacoes_paj
+    return JSONResponse(await atualizar_tramitacoes_paj(paj_norm))
+
+
 @router.get("/api/paj/{paj_norm}/tramitacoes", response_class=JSONResponse)
 async def api_paj_tramitacoes(paj_norm: PajNorm, limite: int = 10):
     """Caixas onde o PAJ está aberto agora (mesma fonte usada pela Retornos —

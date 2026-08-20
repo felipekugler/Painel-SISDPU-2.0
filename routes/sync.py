@@ -16,6 +16,7 @@ from services.sync_service import (
     rodar_sync_anexos_desde_data,
     rodar_sync_baixar_documentos,
     rodar_sync_movimentacoes,
+    rodar_sync_prazos_abertos,
     rodar_sync_watchlist,
     solicitar_cancelamento,
 )
@@ -46,6 +47,12 @@ async def _stream_watchlist(baixar_anexos: bool, rodar_ocr: bool):
     async for linha in rodar_sync_watchlist(baixar_anexos=baixar_anexos, rodar_ocr=rodar_ocr):
         yield {"event": "log", "data": linha.rstrip("\n")}
     yield {"event": "done", "data": "Sincronização da watchlist finalizada"}
+
+
+async def _stream_prazos_abertos():
+    async for linha in rodar_sync_prazos_abertos():
+        yield {"event": "log", "data": linha.rstrip("\n")}
+    yield {"event": "done", "data": "PAJs com prazo em aberto sincronizados"}
 
 
 async def _stream_baixar_documentos(paj_norm: str, ids: list[str]):
@@ -127,6 +134,19 @@ async def sync_watchlist(anexos: int = 1, ocr: int = 0):
     ?ocr=1 => roda o OCR simples nos PDFs baixados (padrao: desabilitado).
     """
     return EventSourceResponse(_stream_watchlist(baixar_anexos=bool(anexos), rodar_ocr=bool(ocr)))
+
+
+@router.get("/sync/prazos-abertos")
+async def sync_prazos_abertos():
+    """Sincronização LEVE (sem anexos) de todos os PAJs com prazo em aberto
+    nas intimações do e-proc (aba Prazos) — disparada em sequência pelo
+    front-end logo após "Sincronizar caixa" (postura proativa, não precisa
+    abrir cada PAJ manualmente).
+
+    Fonte: última sincronização de intimações já salva (não força releitura
+    do e-proc — isso é papel do botão "Sincronizar intimações").
+    """
+    return EventSourceResponse(_stream_prazos_abertos())
 
 
 @router.get("/sync/paj/{paj_norm}/baixar-documentos")

@@ -158,6 +158,37 @@ async def importar_config_eproc_sigilo(request: Request):
     return JSONResponse(res, status_code=status_code)
 
 
+# --- Preferências e-proc: procuradores destino do Gerenciamento de Processo ---
+@router.get("/api/config/eproc-procuradores", response_class=JSONResponse)
+async def get_config_eproc_procuradores():
+    """Lista importada + favoritos (dropdown) + frequentes (badges)."""
+    return JSONResponse(config_painel_service.get_eproc_procuradores_prefs())
+
+
+@router.post("/api/config/eproc-procuradores", response_class=JSONResponse)
+async def set_config_eproc_procuradores(request: Request):
+    """Salva a curadoria (favoritos/frequentes/padrão de procuradores destino)."""
+    body = await request.json()
+    return JSONResponse({"ok": True, "prefs": config_painel_service.set_eproc_procuradores_prefs(body)})
+
+
+@router.post("/api/config/eproc-procuradores/importar", response_class=JSONResponse)
+async def importar_config_eproc_procuradores(request: Request):
+    """Importa do e-proc a lista COMPLETA de procuradores/unidades disponíveis
+    como destino no Gerenciamento de Processo (substabelecimento), usando um
+    PROCESSO DE REFERÊNCIA informado pelo usuário. Requer a janela do e-proc
+    aberta e logada."""
+    from services import acoes_eproc_service
+    body = await request.json()
+    numero = (body.get("numero_processo") or "").strip()
+    if not numero:
+        return JSONResponse({"ok": False, "erro": "Informe o número do processo de referência."},
+                            status_code=400)
+    res = await acoes_eproc_service.importar_procuradores_gerenciamento(numero)
+    status_code = 200 if res.get("ok") else 400
+    return JSONResponse(res, status_code=status_code)
+
+
 # --- Tabela de Ofícios: nome completo -> sigla (padronização de exibição) ---
 @router.get("/api/config/oficios", response_class=JSONResponse)
 async def get_config_oficios():

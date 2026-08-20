@@ -425,11 +425,13 @@ def _montar_prompt(paj_norm: str, atos: list[dict], docx_destino: Path) -> str:
         "entender o que realmente precisa ser dito — não repita o texto do ato, responda a ele.\n"
         "6. Se houver pedido, encerre o corpo com o requerimento (sem usar dois-pontos antes da "
         "lista).\n"
-        "7. `assinatura(doc, termos=True)` — chame-a UMA ÚNICA VEZ, IMEDIATAMENTE após o último "
-        "parágrafo do pedido, e NÃO escreva você mesmo nenhuma linha de fecho antes dela (nem "
-        "'Termos em que pede deferimento', nem 'Curitiba, ...data...', nem o nome/cargo do "
-        "defensor) — `assinatura()` já gera TODAS essas linhas sozinha. Escrever essas linhas "
-        "manualmente E chamar `assinatura()` duplica o fecho inteiro no documento final.\n"
+        "7. `assinatura(doc)` — chame-a UMA ÚNICA VEZ, IMEDIATAMENTE após o último parágrafo do "
+        "pedido, SEM passar `termos`/`data` (o padrão já é o fecho fixado pelo Defensor: "
+        "'Curitiba, <data de hoje por extenso>.' seguido do nome/cargo — SEM 'Termos em que pede "
+        "deferimento'). NÃO escreva você mesmo nenhuma linha de fecho antes dela (nem 'Termos em "
+        "que pede deferimento', nem 'Curitiba, ...data...', nem o nome/cargo do defensor) — "
+        "`assinatura()` já gera TODAS essas linhas sozinha. Escrever essas linhas manualmente E "
+        "chamar `assinatura()` duplica o fecho inteiro no documento final.\n"
         f"8. `salvar(doc, r'{docx_destino}')` — ESTE CAMINHO EXATO, sem alterar.\n\n"
         "Escreva e execute o script diretamente (você tem acesso a Bash/Write) — não pergunte "
         "nada, não peça confirmação, não mostre o texto antes de salvar. Ao final, apenas "
@@ -486,22 +488,49 @@ def incluir_nos_anexos(paj_norm: str, peticao_html: str) -> dict:
 # bold/italic/underline, não parágrafo-level alignment).
 _RE_LINHA_ASSINATURA = re.compile(
     r"^(termos em que pede deferimento\.?|.+,\s*data do protocolo eletr[ôo]nico\.?|"
+    # Fecho com data por extenso já preenchida (ex.: "Curitiba, 18 de agosto
+    # de 2026.") — usado por quem chama `_html_para_docx` com `data=` (ver
+    # services/minuta_ia_service.py) em vez do placeholder de protocolo acima.
+    r".+,\s*\d{1,2}\s+de\s+[a-zà-ÿ]+\s+de\s+\d{4}\.?|"
     r"felipe belache kugler|defensor p[uú]blico federal)$",
     re.IGNORECASE,
 )
 
+# Linhas de cabeçalho (endereçamento/autos/PAJ) — SEM recuo de 1ª linha,
+# diferente de todo o resto do corpo (recuo só a partir da qualificação, ver
+# `enderecamento()`/`qualificacao()` em peticao_base.py). Detectadas por
+# CONTEÚDO (regex própria pra cada uma, não uma só) pelo mesmo motivo de
+# `_RE_LINHA_ASSINATURA`: a extração `_docx_para_html` só guarda formatação
+# por RUN (negrito/itálico/sublinhado), não por parágrafo (recuo/quebras em
+# branco) — sem isso, "Gerar arquivo (DOC/PDF)" reconstruía essas linhas com
+# o recuo padrão de `par()` e sem as quebras em branco antes delas, igual ao
+# resto do corpo (bug real, 18/08/2026).
+_RE_LINHA_ENDERECO = re.compile(r"^EXCELENT[ÍI]SSIMO.*$", re.IGNORECASE)
+_RE_LINHA_AUTOS = re.compile(r"^Autos n[ºo°]\s.*$", re.IGNORECASE)
+_RE_LINHA_PAJ = re.compile(r"^PAJ[:\s].*$", re.IGNORECASE)
+_RE_LINHA_SEM_RECUO = re.compile(
+    r"^(EXCELENT[ÍI]SSIMO.*|Autos n[ºo°]\s.*|PAJ[:\s].*)$",
+    re.IGNORECASE,
+)
 
-def _html_para_docx(peticao_html: str, docx_path: Path) -> None:
+
+def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, data: str | None = None) -> None:
     """HTML da Quill -> .docx no padrão DPU. Cada `<p>`/`<li>` vira um
     parágrafo justificado com recuo de 1ª linha (mesmo estilo de `par()`);
     `<strong>/<b>`, `<em>/<i>`, `<u>` viram negrito/itálico/sublinhado por
     run. O bloco de assinatura (se sobrou do texto original) é removido e
     sempre reconstruído do zero via `assinatura()`, pra garantir centralização
-    e negrito corretos independente do que a extração/edição preservou."""
+    e negrito corretos independente do que a extração/edição preservou.
+
+    `termos`/`data`: repassados direto pra `assinatura()` — defaults (False/
+    None) são o fecho padrão fixado pelo Defensor (18/08/2026): "Curitiba,
+    <data de hoje por extenso>." + nome/cargo, SEM "Termos em que pede
+    deferimento" e SEM o antigo placeholder "data do protocolo eletrônico"
+    — removidos de todas as peças, sem exceção."""
     sys.path.insert(0, str(MODELOS_DIR))
     from bs4 import BeautifulSoup, NavigableString
 
-    from peticao_base import assinatura, novo_documento, par, r as escrever_run, salvar
+    from peticao_base import Cm, FI, assinatura, blank, novo_documento, par, r as escrever_run, salvar
 
     soup = BeautifulSoup(peticao_html or "", "html.parser")
     blocos = soup.find_all(["p", "li"])
@@ -512,6 +541,7 @@ def _html_para_docx(peticao_html: str, docx_path: Path) -> None:
         blocos = [BeautifulSoup(f"<p>{linha}</p>", "html.parser") for linha in texto_bruto.split("\n") if linha.strip()]
 
     doc, _ = novo_documento()
+    linha_anterior_era_paj = False
     for bloco in blocos:
         runs = _extrair_runs(bloco, NavigableString)
         texto_puro = "".join(t for t, _b, _i, _u in runs).strip()
@@ -519,11 +549,28 @@ def _html_para_docx(peticao_html: str, docx_path: Path) -> None:
             continue
         if _RE_LINHA_ASSINATURA.match(texto_puro):
             continue  # descartado — assinatura() reconstrói no final
-        p = par(doc)
+
+        eh_autos = bool(_RE_LINHA_AUTOS.match(texto_puro))
+        eh_paj = bool(_RE_LINHA_PAJ.match(texto_puro))
+        sem_recuo = eh_autos or eh_paj or _RE_LINHA_ENDERECO.match(texto_puro)
+
+        # 3 quebras em branco ANTES do número dos autos, e 3 ANTES do
+        # parágrafo de qualificação (o primeiro parágrafo comum logo após a
+        # linha do PAJ) — mesma regra do enderecamento()/prompt de geração,
+        # perdida na extração pro texto editável (bug real, 18/08/2026).
+        if eh_autos:
+            for _ in range(3):
+                blank(doc)
+        if linha_anterior_era_paj and not sem_recuo:
+            for _ in range(3):
+                blank(doc)
+        linha_anterior_era_paj = eh_paj
+
+        p = par(doc, fi=(Cm(0) if sem_recuo else FI))
         for texto, bold, italic, underline in runs:
             if texto:
                 escrever_run(p, texto, bold=bold, italic=italic, underline=underline)
-    assinatura(doc, termos=True)
+    assinatura(doc, termos=termos, data=data)
     salvar(doc, str(docx_path))
 
 

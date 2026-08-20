@@ -272,6 +272,21 @@ async def rodar_sync_watchlist(
         yield linha
 
 
+async def rodar_sync_prazos_abertos() -> AsyncGenerator[str, None]:
+    """Sincronização LEVE (sem anexos) de todos os PAJs com prazo em aberto
+    nas intimações do e-proc (aba Prazos) — postura proativa disparada em
+    sequência pelo front-end logo após "Sincronizar caixa" terminar.
+
+    Fonte: última sincronização de intimações já salva (não força releitura
+    do e-proc). Reusa o mesmo lock global — não colide com outra sync.
+    """
+    async for linha in _rodar_com_cancel(
+        lambda emit: sincronizador.rodar_prazos_abertos(emit, deve_cancelar=deve_cancelar),
+        None,
+    ):
+        yield linha
+
+
 async def atualizar_caixa() -> dict:
     """Verifica a caixa de entrada e remove do dashboard os PAJs que saíram
     dela — sem reabrir cada PAJ (bem mais rápido que `rodar_sync`).
@@ -332,6 +347,49 @@ async def atualizar_caixa() -> dict:
             invalidar_cache_listagem()
         resultado["log"] = logs
         return resultado
+
+
+async def atualizar_tramitacoes_paj(paj_norm: str) -> dict:
+    """Atualiza `tramitacoes_caixa` de UM ÚNICO PAJ sob demanda (lê a caixa
+    inteira — o SISDPU não expõe consulta por PAJ — mas grava só este).
+
+    Usado pelo botão "Concluir PAJ da Caixa de Entrada" ANTES de decidir entre
+    o caminho simples e o modal de escolha múltipla — ver docstring de
+    `sincronizador.atualizar_tramitacoes_paj` pro motivo (esse campo nunca é
+    tocado pelos caminhos de sync avulso/busca global, só pela sync completa
+    da caixa, então pode estar `None`/desatualizado mesmo num PAJ já
+    sincronizado há pouco por um desses caminhos).
+
+    Reusa o lock global das demais syncs. Sem SSE — operação curta (poucos
+    segundos, 1 página). Retorna {ok, tramitacoes_caixa, mensagem}.
+    """
+    if _sync_lock.locked():
+        return {
+            "ok": False, "tramitacoes_caixa": [],
+            "mensagem": "já existe uma sincronização em andamento — tente novamente em alguns segundos",
+        }
+    if not SISDPU_USERNAME or not SISDPU_PASSWORD:
+        return {
+            "ok": False, "tramitacoes_caixa": [],
+            "mensagem": "credenciais SISDPU ausentes — preencha SISDPU_USERNAME/SISDPU_PASSWORD no .env",
+        }
+
+    logs: list[str] = []
+    async with _sync_lock:
+        try:
+            tramitacoes = await asyncio.wait_for(
+                sincronizador.atualizar_tramitacoes_paj(paj_norm, logs.append),
+                timeout=60,
+            )
+            return {"ok": True, "tramitacoes_caixa": tramitacoes, "mensagem": ""}
+        except TimeoutError:
+            return {"ok": False, "tramitacoes_caixa": [], "mensagem": "timeout de 60s atingido ao ler a caixa"}
+        except CredenciaisInvalidas as e:
+            return {"ok": False, "tramitacoes_caixa": [], "mensagem": f"credenciais SISDPU rejeitadas: {e}"}
+        except Exception as e:
+            return {"ok": False, "tramitacoes_caixa": [], "mensagem": f"erro inesperado: {type(e).__name__}: {e}"}
+        finally:
+            invalidar_cache_listagem()
 
 
 async def buscar_resumo_paj(paj_identificador: str) -> dict:

@@ -5,11 +5,12 @@
 {% set meta = dados.metadata %}
 {% set det = meta.detalhes_sisdpu or {} %}
 {% set tipo_pretensao_ia = (meta.pretensaopura or meta.classificacao or '') | tipo_analise_pretensao %}
-{# Pré-seleção do dropdown "Analisar": BPC quando a pretensão registrada no
-   SISDPU bate com as palavras-chave; "Análise ampla" (genérica, sem playbook
-   de área) em qualquer outro caso — inclusive quando a pretensão está
-   cadastrada errada no SISDPU (o Defensor escolhe a rota certa na hora). #}
-{% set tipo_ia_padrao = 'bpc' if tipo_pretensao_ia == 'bpc' else 'generica' %}
+{# Pré-seleção do dropdown "Analisar": o tipo (bpc/bi/...) cujas palavras-chave
+   batem com a pretensão registrada no SISDPU (ver CONFIG_TIPOS em
+   analise_pretensao_service.py); "Análise ampla" (genérica, sem playbook de
+   área) em qualquer outro caso — inclusive quando a pretensão está cadastrada
+   errada no SISDPU (o Defensor escolhe a rota certa na hora). #}
+{% set tipo_ia_padrao = tipo_pretensao_ia if tipo_pretensao_ia else 'generica' %}
 
 {# Processos judiciais (dados completos: juízo/observações/validação) — usado pela
    seção "Processo Judicial" mais abaixo. Compat: PAJs sincronizados antes da
@@ -451,13 +452,14 @@
                 {% set _tem_tramite_caixa = (dados.id_tramite or '') | trim != '' %}
             {% endif %}
             {% if _tem_tramite_caixa %}
-            <button type="button" @click="abrir()"
+            <button type="button" @click="abrir()" :disabled="verificando"
                     class="btn btn-sm btn-outline btn-concluir-caixa gap-1.5 ml-auto normal-case whitespace-nowrap"
                     title="Conclui trâmite(s) deste PAJ na caixa de entrada do SISDPU (retira da caixa)">
+                <span x-show="verificando" class="loading loading-spinner loading-xs"></span>
                 <!-- Ícone provisório (check-circle) — aguardando o ícone do SISDPU que
                      você vai enviar, pra trocar por esse. -->
-                <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"></path></svg>
-                Concluir PAJ da Caixa de Entrada
+                <svg x-show="!verificando" class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"></path></svg>
+                <span x-text="verificando ? 'Verificando trâmites pendentes...' : 'Concluir PAJ da Caixa de Entrada'"></span>
             </button>
             {% endif %}
 
@@ -589,6 +591,7 @@
                             <th>Data</th>
                             <th>Grupo/Destinatário</th>
                             <th>Remetente</th>
+                            <th>Prazo</th>
                             <th>Descrição</th>
                             <th>Conclusão</th>
                         </tr>
@@ -601,12 +604,13 @@
                                 <td class="text-xs whitespace-nowrap" x-text="t.data || '-'"></td>
                                 <td class="text-sm" x-text="t.local || '-'"></td>
                                 <td class="text-sm" x-text="t.remetente || '-'"></td>
+                                <td class="text-xs whitespace-nowrap" x-text="t.prazo || '-'"></td>
                                 <td class="text-sm whitespace-normal break-words" x-text="t.descricao || '-'"></td>
                                 <td class="text-xs whitespace-nowrap" x-text="t.conclusao || '—'"></td>
                             </tr>
                         </template>
                         <tr x-show="!tramitacoes.length">
-                            <td colspan="5" class="text-center text-base-content/40 text-sm py-4">
+                            <td colspan="6" class="text-center text-base-content/40 text-sm py-4">
                                 Nenhuma tramitação encontrada.
                             </td>
                         </tr>
@@ -740,22 +744,68 @@
 </div>
 {% endif %}
 
-<!-- Barra de ações (estilo e-proc) — ações rápidas deste PAJ -->
+<!-- Ações com IA (estilo e-proc) — gerar minuta, analisar, elaborar e organizar
+     para ajuizamento, nessa ordem. Antes chamava só "Ações" e convivia na
+     mesma barra com "Ações no SISDPU"/"Ações no e-proc" — separadas em seções
+     próprias abaixo (2026-08-18), já que são módulos de sistemas externos,
+     não passos do fluxo de IA. -->
 <div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3 mb-4"
-     x-data="{ mostrarAcoesSisdpu: false, mostrarAcoesEproc: false }"
-     @eproc-peticionado.window="mostrarAcoesSisdpu = true">
+     x-data="{ mostrarGerarMinuta: false }">
     <div class="flex items-center gap-2 mb-2.5">
         <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-base-content/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
         </svg>
-        <span class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Ações</span>
+        <span class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Ações com IA</span>
     </div>
     <div class="flex flex-wrap items-center gap-2">
-        <!-- Elaborar (skills) — movido do cabeçalho pra cá, pra abrir espaço lá
-             pro módulo "Contatos". Estado próprio via elaborarApp(). O botão
-             "Ver Resumo" foi removido definitivamente: quando há análise de
-             IA, ela já fica visível na seção retrátil "Análise feita pela IA". -->
-        <div class="flex items-center gap-2 flex-wrap order-3 ml-auto" x-data="elaborarApp('{{ paj_norm }}')" x-init="init()">
+        <!-- Gerar Minuta: manifestação sobre documento(s) já nos autos do
+             processo (laudo pericial, avaliação social etc.) OU sobre
+             documento(s) já sincronizados do PAJ (SISDPU), via IA — ver
+             static/js/minuta_ia.js. Disponível em TODOS os PAJs, com ou sem
+             processo judicial vinculado (pedido do Defensor, 2026-08-18) —
+             a aba "PAJ (SISDPU)" do modal de seleção funciona de qualquer
+             forma; só a aba "Processo Judicial" fica vazia sem processo. -->
+        <button type="button" @click="mostrarGerarMinuta = !mostrarGerarMinuta"
+                class="btn btn-sm btn-outline gap-1.5"
+                title="Gera uma minuta de manifestação sobre documento(s) já nos autos (laudo pericial, avaliação social etc.) ou já sincronizados do PAJ, via IA">
+            📝 Gerar Minuta
+        </button>
+
+        <!-- Analisar (IA): dropdown de pretensão/rota + botão único. Dispara o
+             diagnóstico na seção "Análise feita pela IA" abaixo, no tipo
+             escolhido no dropdown — SEMPRE visível (não depende mais da
+             pretensão cadastrada no SISDPU bater com alguma skill): "BPC/LOAS"
+             e "Benefício por Incapacidade" rodam o playbook de teses dedicado
+             (skills /SISDPU-AnalisarPAJ-BPC e /SISDPU-AnalisarPAJ-BI,
+             respectivamente); "Análise ampla" é diagnóstico direto via
+             PROMPT_MAX, sem playbook de área. Isso permite escolher a rota
+             certa mesmo quando o PAJ está cadastrado no SISDPU com a
+             pretensão errada. Pré-seleciona `tipo_ia_padrao` (calculado no
+             topo do arquivo). -->
+        <div class="join" x-data="{ tipoAnalise: '{{ tipo_ia_padrao }}' }">
+            <select class="select select-bordered select-sm join-item"
+                    x-model="tipoAnalise"
+                    title="Escolha a pretensão/rota do diagnóstico por IA">
+                <option value="bpc">BPC/LOAS</option>
+                <option value="bi">Benefício por Incapacidade</option>
+                <option value="generica">Análise ampla</option>
+            </select>
+            <button type="button"
+                    class="btn btn-sm btn-outline btn-warning join-item gap-1.5"
+                    @click="
+                        document.getElementById('secao-abas-paj').scrollIntoView({behavior:'smooth'});
+                        window.dispatchEvent(new CustomEvent('iniciar-analise-ia', {detail:{tipo: tipoAnalise}}));
+                    "
+                    title="Diagnostica este PAJ por IA — BPC/LOAS aplica o playbook de teses (skill /SISDPU-AnalisarPAJ-BPC); Benefício por Incapacidade aplica o parecer de viabilidade dedicado (skill /SISDPU-AnalisarPAJ-BI); Análise ampla é um diagnóstico jurídico geral via PROMPT_MAX, sem playbook de área específica">
+                <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z"></path></svg>
+                Analisar
+            </button>
+        </div>
+
+        <!-- Elaborar (skills). Estado próprio via elaborarApp(). O botão "Ver
+             Resumo" foi removido definitivamente: quando há análise de IA,
+             ela já fica visível na seção retrátil "Análise feita pela IA". -->
+        <div class="flex items-center gap-2 flex-wrap" x-data="elaborarApp('{{ paj_norm }}')" x-init="init()">
             {% if meta.sync_incompleto %}
             <button class="btn btn-sm btn-disabled gap-1.5"
                     disabled
@@ -765,7 +815,7 @@
             </button>
             {% else %}
             <!-- Select de skill + botao Elaborar, contiguo (join) com icone de IA
-                 — mesmo estilo do "Analisar" logo abaixo. Disponivel em idle/error/done. -->
+                 — mesmo estilo do "Analisar" acima. Disponivel em idle/error/done. -->
             <template x-if="status !== 'running'">
                 <div class="join">
                     <select class="select select-bordered select-sm join-item w-52"
@@ -804,65 +854,12 @@
             </div>
         </div>
 
-        <!-- Ações no SISDPU: abre o console de movimentar/tramitar/concluir (módulo
-             compartilhado com a aba Retornos — static/js/acoes_sisdpu.js) -->
-        <button type="button" @click="mostrarAcoesSisdpu = !mostrarAcoesSisdpu"
-                class="btn btn-sm btn-outline btn-success gap-1.5 order-1"
-                title="Movimentar, tramitar ou concluir este PAJ diretamente no SISDPU">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5"></path></svg>
-            Ações no SISDPU
-        </button>
-
-        <!-- Ações no e-proc: abre o console de peticionamento (módulo compartilhado
-             com a aba Retornos — static/js/acoes_eproc.js). Ícone remete ao logo do
-             e-proc (aglomerado de círculos sobrepostos). Só existe quando o PAJ tem
-             processo judicial vinculado — sem processo não há o que peticionar. -->
-        {% if dados.processos_judiciais %}
-        <button type="button" @click="mostrarAcoesEproc = !mostrarAcoesEproc"
-                class="btn btn-sm btn-outline btn-info gap-1.5 order-2"
-                title="Peticionar ou lançar evento no processo judicial (e-proc) vinculado a este PAJ">
-            <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
-                <circle cx="8.5" cy="9" r="6.5" fill-opacity="1"></circle>
-                <circle cx="16" cy="10.5" r="4.5" fill-opacity="0.55"></circle>
-                <circle cx="12.5" cy="16.5" r="3" fill-opacity="0.8"></circle>
-            </svg>
-            Ações no e-proc
-        </button>
-        {% endif %}
-
-        <!-- Analisar (IA): dropdown de pretensão/rota + botão único. Dispara o
-             diagnóstico na seção "Análise feita pela IA" abaixo, no tipo
-             escolhido no dropdown — SEMPRE visível (não depende mais da
-             pretensão cadastrada no SISDPU bater com alguma skill): "BPC/LOAS"
-             roda o playbook de teses dedicado (skill /SISDPU-AnalisarPAJ-BPC);
-             "Análise ampla" é diagnóstico direto via PROMPT_MAX, sem playbook
-             de área. Isso permite escolher a rota certa mesmo quando o PAJ
-             está cadastrado no SISDPU com a pretensão errada. Pré-seleciona
-             `tipo_ia_padrao` (calculado no topo do arquivo). -->
-        <div class="join order-4" x-data="{ tipoAnalise: '{{ tipo_ia_padrao }}' }">
-            <select class="select select-bordered select-sm join-item"
-                    x-model="tipoAnalise"
-                    title="Escolha a pretensão/rota do diagnóstico por IA">
-                <option value="bpc">BPC/LOAS</option>
-                <option value="generica">Análise ampla</option>
-            </select>
-            <button type="button"
-                    class="btn btn-sm btn-outline btn-warning join-item gap-1.5"
-                    @click="
-                        document.getElementById('secao-analise-ia').scrollIntoView({behavior:'smooth'});
-                        window.dispatchEvent(new CustomEvent('iniciar-analise-ia', {detail:{tipo: tipoAnalise}}));
-                    "
-                    title="Diagnostica este PAJ por IA — BPC/LOAS aplica o playbook de teses (skill /SISDPU-AnalisarPAJ-BPC); Análise ampla é um diagnóstico jurídico geral via PROMPT_MAX, sem playbook de área específica">
-                <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z"></path></svg>
-                Analisar
-            </button>
-        </div>
-
         <!-- Organizar Documentos para Ajuizamento (skill /SISDPU-OrganizarArquivos):
-             habilitado só depois que uma petição inicial existir na pasta do PAJ. -->
+             habilitado só depois que uma petição inicial existir na pasta do PAJ.
+             Último botão da seção (etapa final do fluxo de IA). -->
         <button type="button"
                 onclick="organizarAjuizamento('{{ paj_norm }}', this)"
-                class="btn btn-sm btn-outline gap-1.5 order-5"
+                class="btn btn-sm btn-outline gap-1.5"
                 {% if not dados.tem_peticao_inicial %}disabled{% endif %}
                 title="{% if dados.tem_peticao_inicial %}{% if dados.tem_pasta_ajuizamento %}Reorganiza{% else %}Organiza{% endif %} os documentos deste PAJ numa subpasta 'Ajuizamento', prontos para peticionamento (skill /SISDPU-OrganizarArquivos){% else %}Disponível depois que uma petição inicial for gerada para este PAJ{% endif %}">
             <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0v6a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-6m-19.5 0h19.5M5.25 9.75V6a2.25 2.25 0 0 1 2.25-2.25h4.5a2.25 2.25 0 0 1 1.591.659l1.409 1.409a2.25 2.25 0 0 0 1.591.659H18a2.25 2.25 0 0 1 2.25 2.25v3.75"></path></svg>
@@ -870,16 +867,49 @@
         </button>
     </div>
 
-    <!-- Console "Ações no SISDPU" (movimentar/tramitar/concluir) — oculto até clicar no botão acima -->
-    <div x-show="mostrarAcoesSisdpu" x-transition x-cloak class="mt-3 pt-3 border-t border-base-300">
-        {% if dados.id_processo %}
-        <div x-data="acoesSisdpuBlock({
+    <!-- Console "Gerar Minuta" — oculto até clicar no botão acima. Sempre
+         renderizado (sem processo judicial, window._paj_processos_judiciais_completo
+         vem vazio/undefined — minutaIaApp trata isso normalmente, só a aba
+         "Processo Judicial" do modal fica sem conteúdo). -->
+    <div x-show="mostrarGerarMinuta" x-transition x-cloak class="mt-3 pt-3 border-t border-base-300">
+        <div x-data="minutaIaApp('{{ paj_norm }}')" x-init="init(window._paj_processos_judiciais_completo)">
+            {% include "partials/minuta_ia.html" %}
+        </div>
+    </div>
+</div>
+
+<!-- Ações no SISDPU — seção própria (mesma cor/ícone do botão de antes:
+     outline verde, ícone de "enviar/tramitar"). Movimentar/tramitar/concluir
+     este PAJ diretamente no SISDPU (módulo compartilhado com a aba Retornos
+     — static/js/acoes_sisdpu.js). -->
+<!-- x-data no MESMO elemento que o x-show do console (não um wrapper externo
+     separado) — Quill só é montado quando `aberto` vira true (ver abrir()/
+     _montarEditorMov em acoes_sisdpu.js), e `criarEditorRico` exige o container
+     de verdade VISÍVEL pra medir certo (ver cabeçalho de rich_editor.js). Um
+     x-data externo com seu próprio toggle (`mostrarAcoesSisdpu`) não sobrevive
+     ao reload da página — cada reload voltava a `false`, mas o `aberto: true`
+     hardcoded no cfg do bloco interno mandava montar/colar o Quill ASSIM MESMO,
+     ainda escondido atrás do x-show do wrapper: bug real 2026-08-19, a
+     descrição da movimentação gerada automaticamente após peticionar no e-proc
+     não aparecia nos 2 últimos eventos gravados (o rascunho no disco estava
+     correto — só o Quill não conseguia colar o HTML inicial enquanto oculto). -->
+<div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3 mb-4"
+     x-data="acoesSisdpuBlock({
                  idProcesso: '{{ dados.id_processo }}', paj: '{{ meta.paj }}', pajNorm: '{{ paj_norm }}',
-                 idTramite: '{{ dados.id_tramite }}', aberto: true,
+                 idTramite: '{{ dados.id_tramite }}', tramitacoesCaixa: window._paj_tramitacoes_caixa || [],
                  onExecutado: (res) => posExecucaoPaj('{{ paj_norm }}', res),
              })" x-init="init()">
-            {% include "partials/acoes_sisdpu.html" %}
-        </div>
+    <button type="button" @click="abrir()"
+            class="btn btn-sm btn-outline btn-success gap-1.5"
+            title="Movimentar, tramitar ou concluir este PAJ diretamente no SISDPU">
+        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5"></path></svg>
+        Ações no SISDPU
+    </button>
+
+    <!-- Console "Ações no SISDPU" (movimentar/tramitar/concluir) — oculto até clicar no botão acima -->
+    <div x-show="aberto" x-transition x-cloak class="mt-3 pt-3 border-t border-base-300">
+        {% if dados.id_processo %}
+        {% include "partials/acoes_sisdpu.html" %}
         {% else %}
         <div class="alert alert-warning text-sm">
             Não foi possível localizar o identificador do processo no SISDPU para este PAJ
@@ -887,50 +917,104 @@
         </div>
         {% endif %}
     </div>
-
-    <!-- Console "Ações no e-proc" (peticionamento) — oculto até clicar no botão acima.
-         Só é renderizado quando há processo judicial vinculado — o botão que o abre
-         (acima) já não existe caso contrário, então este bloco nunca fica órfão. -->
-    {% if dados.processos_judiciais %}
-    <div x-show="mostrarAcoesEproc" x-transition x-cloak class="mt-3 pt-3 border-t border-base-300">
-        <div x-data="acoesEprocBlock({
-                 processos: window._paj_processos_judiciais || [],
-                 paj: '{{ meta.paj }}', pajNorm: '{{ paj_norm }}', aberto: true,
-             })" x-init="init()">
-            {% include "partials/acoes_eproc.html" %}
-        </div>
-    </div>
-    {% endif %}
 </div>
 
-<!-- Análise feita pela IA (diagnóstico por pretensão + reenvio p/ ajuste ou
-     pedido de petição inicial) — recolhida por padrão, exceto quando o botão
-     "Analisar" da barra de ações a abre/dispara. Sempre presente (não só em
-     PAJs de BPC/LOAS): a rota "Análise ampla" do dropdown cobre qualquer
-     pretensão. Estado inicial usa `tipo_ia_padrao` (mesma pré-seleção do
-     dropdown), sobrescrito pelo tipo escolhido a cada disparo. -->
-<div id="secao-analise-ia" class="bg-base-200 border border-base-300 rounded-lg mb-4"
-     x-data="{...analiseIaApp('{{ paj_norm }}', '{{ tipo_ia_padrao }}'), aberto: false}" x-init="init()"
-     @iniciar-analise-ia.window="aberto = true; iniciar($event.detail && $event.detail.tipo)">
-    <div class="flex items-center gap-2 px-4 py-3">
-        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
-            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
-                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-            </svg>
-            <span class="text-lg font-semibold">Análise feita pela IA</span>
-            <span class="loading loading-spinner loading-sm text-warning" x-show="status === 'running'"></span>
-            <span class="badge badge-sm"
-                  :class="{
-                      'badge-warning': status === 'running',
-                      'badge-success': status === 'done',
-                      'badge-error': status === 'error',
-                      'badge-ghost': status === 'idle',
-                  }"
-                  x-text="status === 'running' ? 'em andamento' : (status === 'done' ? 'concluída' : (status === 'error' ? 'erro' : 'não iniciada'))"></span>
-        </button>
+<!-- Ações no e-proc — seção própria (mesma cor/ícone do botão de antes:
+     outline azul, logo do e-proc em círculos sobrepostos). Peticionar ou
+     lançar evento no processo judicial vinculado (módulo compartilhado com a
+     aba Retornos — static/js/acoes_eproc.js). Só existe quando o PAJ tem
+     processo judicial vinculado — sem processo não há o que peticionar. -->
+{% if dados.processos_judiciais %}
+<!-- x-data no MESMO elemento que o x-show do console — mesmo motivo/mesmo bug
+     corrigido no bloco "Ações no SISDPU" acima (ver comentário lá): um wrapper
+     externo com toggle próprio não sobrevive ao reload, e `aberto: true`
+     hardcoded no cfg montava o Quill da Petição escondido atrás dele. -->
+<div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3 mb-4"
+     x-data="acoesEprocBlock({
+                 processos: window._paj_processos_judiciais || [],
+                 paj: '{{ meta.paj }}', pajNorm: '{{ paj_norm }}',
+             })" x-init="init()">
+    <button type="button" @click="abrir()"
+            class="btn btn-sm btn-outline btn-info gap-1.5"
+            title="Peticionar ou lançar evento no processo judicial (e-proc) vinculado a este PAJ">
+        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+            <circle cx="8.5" cy="9" r="6.5" fill-opacity="1"></circle>
+            <circle cx="16" cy="10.5" r="4.5" fill-opacity="0.55"></circle>
+            <circle cx="12.5" cy="16.5" r="3" fill-opacity="0.8"></circle>
+        </svg>
+        Ações no e-proc
+    </button>
+
+    <!-- Console "Ações no e-proc" (peticionamento) — oculto até clicar no botão acima. -->
+    <div x-show="aberto" x-transition x-cloak class="mt-3 pt-3 border-t border-base-300">
+        {% include "partials/acoes_eproc.html" %}
     </div>
-    <div x-show="aberto" x-cloak class="px-4 pb-4">
+</div>
+{% endif %}
+
+<!-- Seção com abas: Movimentações, Análise IA, Narrativa, Anexos SISDPU e Peças
+     (aglutinadas aqui em 2026-08-19 — antes eram 5 seções retráteis
+     separadas; "Peças" foi destacada de dentro da seção "Outros", que
+     continua no final da página, sem alteração). Movimentações é a aba
+     default (primeira à esquerda, pré-selecionada na abertura da página).
+     x-data ÚNICO: mescla analiseIaApp() (status/summary/iniciar/etc., usados
+     tanto pela aba Análise IA quanto pelo badge de status no rótulo da aba)
+     com `tab` (aba ativa) — mesmo padrão de escopo compartilhado já usado em
+     "Outros" logo abaixo (x-data="{ tab: '...' }" envolvendo todas as abas).
+     O botão "Atualizar movimentações" mora DENTRO do partial (abaixo dos
+     filtros, ver mostrarBotaoAtualizar em movimentacoes_tabela.html) — usa o
+     `atualizando`/`atualizarMovimentacoes()` do próprio componente da tabela,
+     sem precisar do roundtrip de evento global que o botão externo usava. -->
+<div id="secao-abas-paj" class="bg-base-200 border border-base-300 rounded-lg mb-6"
+     x-data="{...analiseIaApp('{{ paj_norm }}', '{{ tipo_ia_padrao }}'), tab: 'movimentacoes'}"
+     x-init="init()"
+     @iniciar-analise-ia.window="tab = 'analise_ia'; iniciar($event.detail && $event.detail.tipo)">
+    <div class="px-4 pt-3">
+        <div role="tablist" class="tabs tabs-bordered mb-4">
+            <a role="tab" class="tab" :class="tab === 'movimentacoes' && 'tab-active'" @click="tab = 'movimentacoes'">
+                Movimentações <span class="badge badge-ghost badge-sm ml-1">{{ dados.movimentacoes|length }}</span>
+            </a>
+            <a role="tab" class="tab" :class="tab === 'analise_ia' && 'tab-active'" @click="tab = 'analise_ia'">
+                Análise IA
+                <span class="loading loading-spinner loading-xs text-warning ml-1" x-show="status === 'running'"></span>
+                <span class="badge badge-sm ml-1"
+                      :class="{
+                          'badge-warning': status === 'running',
+                          'badge-success': status === 'done',
+                          'badge-error': status === 'error',
+                          'badge-ghost': status === 'idle',
+                      }"
+                      x-text="status === 'running' ? 'em andamento' : (status === 'done' ? 'concluída' : (status === 'error' ? 'erro' : 'não iniciada'))"></span>
+            </a>
+            <a role="tab" class="tab" :class="tab === 'narrativa' && 'tab-active'" @click="tab = 'narrativa'">
+                Narrativa
+            </a>
+            <a role="tab" class="tab" :class="tab === 'anexos_sisdpu' && 'tab-active'" @click="tab = 'anexos_sisdpu'">
+                Anexos SISDPU <span class="badge badge-primary badge-sm ml-1">{{ dados.anexos_sisdpu|length }}</span>
+            </a>
+            <a role="tab" class="tab" :class="tab === 'pecas_jud' && 'tab-active'" @click="tab = 'pecas_jud'"
+               title="Peças judiciais geradas pelo Claude (recursos, agravos, embargos, memoriais, petições...)">
+                Peças <span id="badge-pecas-count" class="badge badge-ghost badge-xs ml-1">{{ dados.pecas_judiciais|length }}</span>
+            </a>
+        </div>
+    </div>
+
+    <!-- Aba: Movimentações. `mostrar_botao_atualizar_movs` (Jinja, escopado só
+         a este include via `with`) liga o botão "Atualizar movimentações" só
+         aqui — o mesmo partial é reaproveitado também dentro de "Gerar
+         Minuta" (seletor de documentos, ver partials/minuta_ia.html) e lá
+         não faz sentido nenhum esse botão (recarregaria as movimentações e
+         atrapalharia a seleção em andamento). -->
+    <div x-show="tab === 'movimentacoes'" x-cloak class="px-4 pb-4">
+        {% with mostrar_botao_atualizar_movs = true %}
+        {% include "partials/movimentacoes_tabela.html" %}
+        {% endwith %}
+    </div>
+
+    <!-- Aba: Análise IA (diagnóstico por pretensão + reenvio p/ ajuste ou pedido
+         de petição inicial). Sempre presente (não só em PAJs de BPC/LOAS): a
+         rota "Análise ampla" do dropdown cobre qualquer pretensão. -->
+    <div x-show="tab === 'analise_ia'" x-cloak class="px-4 pb-4">
         <template x-if="status === 'idle'">
             <div class="alert text-sm">
                 Nenhuma análise realizada ainda. Escolha o tipo de análise no
@@ -978,72 +1062,18 @@
             </div>
         </template>
     </div>
-</div>
 
-<!-- Narrativa (seção retrátil) — recolhida por padrão -->
-<div class="bg-base-200 border border-base-300 rounded-lg mb-4" x-data="{ aberto: false }">
-    <div class="flex items-center gap-2 px-4 py-3">
-        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
-            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
-                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-            </svg>
-            <span class="text-lg font-semibold">Narrativa</span>
-        </button>
-    </div>
-    <div x-show="aberto" x-cloak class="px-4 pb-4">
+    <!-- Aba: Narrativa -->
+    <div x-show="tab === 'narrativa'" x-cloak class="px-4 pb-4">
         {% if dados.narrativa %}
         <div class="text-sm text-base-content/80 leading-relaxed break-words bg-base-100 p-4 rounded border border-base-300/50 prose prose-sm max-w-none">{{ dados.narrativa|safe }}</div>
         {% else %}
         <p class="text-sm text-base-content/50 italic">Narrativa não disponível para este PAJ</p>
         {% endif %}
     </div>
-</div>
 
-<!-- Movimentações (seção retrátil) — recolhida por padrão. Cabeçalho "na mão"
-     (sem o checkbox-hack do DaisyUI), mesmo motivo do bloco de Lembretes acima:
-     o checkbox do collapse padrão cobre TODA a área do collapse-title, então o
-     ícone de atualizar aninhado ali nunca receberia o clique — só alternaria
-     expandir/recolher. Com dois controles separados (toggle | atualizar), cada
-     um funciona de forma independente. -->
-<div class="bg-base-200 border border-base-300 rounded-lg mb-6"
-     x-data="{ abertoMovs: false, atualizandoMovs: false }"
-     @mov-tabela-atualizando.window="atualizandoMovs = $event.detail.atualizando">
-    <div class="flex items-center gap-2 px-4 py-3">
-        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="abertoMovs = !abertoMovs">
-            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="abertoMovs ? 'rotate-90' : ''"
-                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-            </svg>
-            <span class="text-lg font-semibold">Movimentações</span>
-            <span class="badge badge-ghost badge-sm">{{ dados.movimentacoes|length }}</span>
-        </button>
-        <button type="button"
-                @click="window.dispatchEvent(new CustomEvent('mov-tabela-atualizar'))"
-                :disabled="atualizandoMovs"
-                class="btn btn-ghost btn-square btn-xs"
-                title="Atualizar movimentações">
-            <svg class="w-3.5 h-3.5" :class="atualizandoMovs ? 'animate-spin' : ''" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12a7.5 7.5 0 0 1-13.05 5.07M4.5 12A7.5 7.5 0 0 1 17.55 6.93M4.5 4.5v4.5h4.5M19.5 19.5V15h-4.5"></path></svg>
-        </button>
-    </div>
-    <div x-show="abertoMovs" x-cloak class="px-4 pb-4">
-        {% include "partials/movimentacoes_tabela.html" %}
-    </div>
-</div>
-
-<!-- Anexos SISDPU (seção retrátil) — recolhida por padrão -->
-<div class="bg-base-200 border border-base-300 rounded-lg mb-4" x-data="{ aberto: false }">
-    <div class="flex items-center gap-2 px-4 py-3">
-        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
-            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
-                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-            </svg>
-            <span class="text-lg font-semibold">Anexos SISDPU</span>
-            <span class="badge badge-primary badge-sm">{{ dados.anexos_sisdpu|length }}</span>
-        </button>
-    </div>
-    <div x-show="aberto" x-cloak class="px-4 pb-4">
+    <!-- Aba: Anexos SISDPU -->
+    <div x-show="tab === 'anexos_sisdpu'" x-cloak class="px-4 pb-4">
         <!-- Ações da seção -->
         <div class="flex items-center justify-end gap-2 mb-3 flex-wrap">
             <button class="btn btn-sm btn-outline btn-primary gap-1.5"
@@ -1175,6 +1205,88 @@
         </div>
         {% endif %}
     </div>
+
+    <!-- Aba: Peças judiciais geradas (destacada de dentro da seção "Outros",
+         que continua no final da página com as demais abas — Despachos,
+         Notas, Discutir, PROMPT_MAX). -->
+    <div x-show="tab === 'pecas_jud'" x-cloak class="px-4 pb-4">
+        <div class="flex items-start justify-between gap-3 mb-1 flex-wrap">
+            <h3 class="text-lg font-semibold">Peças judiciais geradas</h3>
+            <button type="button"
+                    class="btn btn-sm btn-outline gap-1.5"
+                    onclick="abrirPastaPaj('{{ paj_norm }}', this)"
+                    title="Abre a pasta deste PAJ no Explorer (funciona só na máquina onde o painel está rodando)">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0v6a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-6m-19.5 0h19.5M5.25 9.75V6a2.25 2.25 0 0 1 2.25-2.25h4.5a2.25 2.25 0 0 1 1.591.659l1.409 1.409a2.25 2.25 0 0 0 1.591.659H18a2.25 2.25 0 0 1 2.25 2.25v3.75"></path>
+                </svg>
+                Abrir pasta no Explorer
+            </button>
+        </div>
+        <p class="text-xs text-base-content/40 mb-4">
+            Recursos, agravos, embargos, memoriais, petições — documentos protocolados.
+            Clique em <strong>Elaborar Peça</strong> no topo para gerar.
+            Para .txt gerados pelo Claude, use os botões DOCX/PDF para converter.
+        </p>
+        {% if dados.pecas_judiciais %}
+        <div class="overflow-x-auto rounded-lg border border-base-300">
+            <table class="table table-sm">
+                <thead>
+                    <tr class="bg-base-300/50">
+                        <th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>Criado em</th><th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in dados.pecas_judiciais %}
+                    <tr class="hover:bg-base-300/30">
+                        <td class="font-mono text-sm">{{ p.nome }}</td>
+                        <td>
+                            <span class="badge badge-sm {% if p.tipo == 'pdf' %}badge-error{% elif p.tipo == 'docx' %}badge-info{% elif p.tipo == 'txt' %}badge-ghost{% else %}badge-ghost{% endif %}">
+                                {{ p.tipo|upper or 'FILE' }}
+                            </span>
+                        </td>
+                        <td class="text-sm">{{ (p.tamanho / 1024)|round(1) }} KB</td>
+                        <td class="text-xs text-base-content/60 whitespace-nowrap">{{ p.criado | data_hora_arquivo }}</td>
+                        <td>
+                            <div class="flex flex-wrap gap-1">
+                                {% if p.tipo in ('pdf', 'docx', 'doc') %}
+                                <a href="/files/{{ paj_norm }}/{{ p.caminho }}" target="_blank"
+                                   class="btn btn-primary btn-xs">Abrir</a>
+                                {% elif p.tipo in ('txt', 'md') %}
+                                <button class="btn btn-ghost btn-xs"
+                                        @click="verTxt('{{ paj_norm }}', '{{ p.caminho }}', '{{ p.nome|e }}')">Ler</button>
+                                <button class="btn btn-info btn-xs btn-outline"
+                                        onclick="runDocgen('{{ paj_norm }}', '{{ p.caminho }}', 'docx', 'Gerar DOCX — {{ p.nome|e }}')">
+                                    DOCX
+                                </button>
+                                <button class="btn btn-error btn-xs btn-outline"
+                                        onclick="runDocgen('{{ paj_norm }}', '{{ p.caminho }}', 'pdf', 'Gerar PDF — {{ p.nome|e }}')">
+                                    PDF
+                                </button>
+                                {% else %}
+                                <a href="/files/{{ paj_norm }}/{{ p.caminho }}" target="_blank"
+                                   class="btn btn-ghost btn-xs">Baixar</a>
+                                {% endif %}
+                                <button type="button" class="btn btn-ghost btn-xs text-error"
+                                        onclick="excluirArquivoPaj('{{ paj_norm }}', '{{ p.caminho|e }}', '{{ p.nome|e }}', this, 'badge-pecas-count')"
+                                        title="Excluir arquivo">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"></path></svg>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <div class="alert">
+            <div>
+                <p class="text-sm">Nenhuma peça judicial gerada ainda para este PAJ.</p>
+                <p class="text-xs text-base-content/50 mt-1">Clique em <strong>Elaborar Peça</strong> no topo para iniciar.</p>
+            </div>
+        </div>
+        {% endif %}
+    </div>
 </div>
 
 <!-- Outros (seção retrátil): Peças, Despachos, Notas, Discutir, PROMPT_MAX — recolhida por padrão -->
@@ -1189,13 +1301,11 @@
         </button>
     </div>
     <div x-show="aberto" x-cloak class="px-4 pb-4">
-<!-- Tabs -->
-<div x-data="{ tab: 'pecas_jud' }" class="mt-2">
+<!-- Tabs (Peças foi destacada daqui em 2026-08-19 — agora mora na seção com
+     abas do topo da página, junto de Movimentações/Análise IA/Narrativa/
+     Anexos SISDPU. Outros continua com as demais abas, sem outra alteração). -->
+<div x-data="{ tab: 'despachos' }" class="mt-2">
     <div role="tablist" class="tabs tabs-bordered mb-4">
-        <a role="tab" class="tab" :class="tab === 'pecas_jud' && 'tab-active'" @click="tab = 'pecas_jud'"
-           title="Peças judiciais geradas pelo Claude (recursos, agravos, embargos, memoriais, petições...)">
-            Peças <span id="badge-pecas-count" class="badge badge-ghost badge-xs ml-1">{{ dados.pecas_judiciais|length }}</span>
-        </a>
         <a role="tab" class="tab" :class="tab === 'despachos' && 'tab-active'" @click="tab = 'despachos'"
            title="Despachos administrativos para lançamento no SISDPU">
             Despachos <span id="badge-despachos-count" class="badge badge-ghost badge-xs ml-1">{{ dados.despachos|length }}</span>
@@ -1302,86 +1412,6 @@
                 </template>
             </div>
         </template>
-    </div>
-
-    <!-- Tab: Pecas Judiciais -->
-    <div x-show="tab === 'pecas_jud'" class="bg-base-200 rounded-lg border border-base-300 p-6">
-        <div class="flex items-start justify-between gap-3 mb-1 flex-wrap">
-            <h3 class="text-lg font-semibold">Peças judiciais geradas</h3>
-            <button type="button"
-                    class="btn btn-sm btn-outline gap-1.5"
-                    onclick="abrirPastaPaj('{{ paj_norm }}', this)"
-                    title="Abre a pasta deste PAJ no Explorer (funciona só na máquina onde o painel está rodando)">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0v6a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-6m-19.5 0h19.5M5.25 9.75V6a2.25 2.25 0 0 1 2.25-2.25h4.5a2.25 2.25 0 0 1 1.591.659l1.409 1.409a2.25 2.25 0 0 0 1.591.659H18a2.25 2.25 0 0 1 2.25 2.25v3.75"></path>
-                </svg>
-                Abrir pasta no Explorer
-            </button>
-        </div>
-        <p class="text-xs text-base-content/40 mb-4">
-            Recursos, agravos, embargos, memoriais, petições — documentos protocolados.
-            Clique em <strong>Elaborar Peça</strong> no topo para gerar.
-            Para .txt gerados pelo Claude, use os botões DOCX/PDF para converter.
-        </p>
-        {% if dados.pecas_judiciais %}
-        <div class="overflow-x-auto rounded-lg border border-base-300">
-            <table class="table table-sm">
-                <thead>
-                    <tr class="bg-base-300/50">
-                        <th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>Criado em</th><th>Ações</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for p in dados.pecas_judiciais %}
-                    <tr class="hover:bg-base-300/30">
-                        <td class="font-mono text-sm">{{ p.nome }}</td>
-                        <td>
-                            <span class="badge badge-sm {% if p.tipo == 'pdf' %}badge-error{% elif p.tipo == 'docx' %}badge-info{% elif p.tipo == 'txt' %}badge-ghost{% else %}badge-ghost{% endif %}">
-                                {{ p.tipo|upper or 'FILE' }}
-                            </span>
-                        </td>
-                        <td class="text-sm">{{ (p.tamanho / 1024)|round(1) }} KB</td>
-                        <td class="text-xs text-base-content/60 whitespace-nowrap">{{ p.criado | data_hora_arquivo }}</td>
-                        <td>
-                            <div class="flex flex-wrap gap-1">
-                                {% if p.tipo in ('pdf', 'docx', 'doc') %}
-                                <a href="/files/{{ paj_norm }}/{{ p.caminho }}" target="_blank"
-                                   class="btn btn-primary btn-xs">Abrir</a>
-                                {% elif p.tipo in ('txt', 'md') %}
-                                <button class="btn btn-ghost btn-xs"
-                                        @click="verTxt('{{ paj_norm }}', '{{ p.caminho }}', '{{ p.nome|e }}')">Ler</button>
-                                <button class="btn btn-info btn-xs btn-outline"
-                                        onclick="runDocgen('{{ paj_norm }}', '{{ p.caminho }}', 'docx', 'Gerar DOCX — {{ p.nome|e }}')">
-                                    DOCX
-                                </button>
-                                <button class="btn btn-error btn-xs btn-outline"
-                                        onclick="runDocgen('{{ paj_norm }}', '{{ p.caminho }}', 'pdf', 'Gerar PDF — {{ p.nome|e }}')">
-                                    PDF
-                                </button>
-                                {% else %}
-                                <a href="/files/{{ paj_norm }}/{{ p.caminho }}" target="_blank"
-                                   class="btn btn-ghost btn-xs">Baixar</a>
-                                {% endif %}
-                                <button type="button" class="btn btn-ghost btn-xs text-error"
-                                        onclick="excluirArquivoPaj('{{ paj_norm }}', '{{ p.caminho|e }}', '{{ p.nome|e }}', this, 'badge-pecas-count')"
-                                        title="Excluir arquivo">
-                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"></path></svg>
-                                </button>
-                            </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-        {% else %}
-        <div class="alert">
-            <div>
-                <p class="text-sm">Nenhuma peça judicial gerada ainda para este PAJ.</p>
-                <p class="text-xs text-base-content/50 mt-1">Clique em <strong>Elaborar Peça</strong> no topo para iniciar.</p>
-            </div>
-        </div>
-        {% endif %}
     </div>
 
     <!-- Tab: Despachos SISDPU -->

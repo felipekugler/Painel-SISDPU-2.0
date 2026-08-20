@@ -7,7 +7,9 @@ reutilizável em qualquer página do painel — não depende da Retornos.
 - POST /api/acoes-sisdpu/anexo-externo/remover — descarta um anexo externo staged.
 - GET/POST/DELETE /api/acoes-sisdpu/rascunho/{paj_norm} — rascunho de movimentação.
 - GET  /api/acoes-sisdpu/rascunhos       — todos os rascunhos salvos.
-- GET  /api/acoes-sisdpu/executar        — SSE: executa mov→tram→conclui em um PAJ.
+- GET  /api/acoes-sisdpu/executar        — SSE: executa mov→tram→conclui em um PAJ
+  (conclui aceita `id_tramites` — lista JSON, 0/1/N trâmites da caixa — ou o par
+  legado `id_tramite`+`concluir`).
 """
 
 from __future__ import annotations
@@ -89,12 +91,14 @@ async def api_excluir_rascunho(paj_norm: str):
 
 async def _stream_executar(id_processo: str, paj: str, paj_norm: str, fase: str, descricao_mov: str,
                            descricao_mov_html: bool, grupo: str, descricao_tram: str, prazo: int,
-                           prazo_data: str, id_tramite: str, concluir: bool, dry: bool, anexos: list):
+                           prazo_data: str, id_tramite: str, concluir: bool, id_tramites: list,
+                           dry: bool, anexos: list):
     async for ev in acoes_sisdpu_service.executar_stream(
         id_processo, paj=paj, paj_norm=paj_norm, fase=fase, descricao_mov=descricao_mov,
         descricao_mov_html=descricao_mov_html, grupo=grupo or None,
         descricao_tram=descricao_tram, prazo_dias=prazo, prazo_data=prazo_data,
-        id_tramite=id_tramite or None, concluir=concluir, dry_run=dry, anexos=anexos,
+        id_tramite=id_tramite or None, concluir=concluir, id_tramites=id_tramites,
+        dry_run=dry, anexos=anexos,
     ):
         if ev.get("done"):
             yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
@@ -105,20 +109,28 @@ async def _stream_executar(id_processo: str, paj: str, paj_norm: str, fase: str,
 @router.get("/api/acoes-sisdpu/executar")
 async def executar(id_processo: str, paj: str = "", paj_norm: str = "", fase: str = "", descricao_mov: str = "",
                    descricao_mov_html: int = 0, grupo: str = "", descricao_tram: str = "", prazo: int = 0,
-                   prazo_data: str = "", id_tramite: str = "", concluir: int = 0, dry: int = 0, anexos: str = ""):
+                   prazo_data: str = "", id_tramite: str = "", concluir: int = 0, id_tramites: str = "",
+                   dry: int = 0, anexos: str = ""):
     """SSE: movimenta (fase + despacho da movimentação, opcionalmente com documentos do
     PAJ anexados — `anexos`, JSON de caminhos relativos, requer `paj_norm` — e HTML de
     verdade quando `descricao_mov_html=1`, escrito direto no CKEditor do despacho) →
     tramita (se grupo, com despacho próprio da tramitação — SEMPRE texto puro, aquele
-    campo não é CKEditor) → conclui (se concluir=1 E id_tramite informado — sem
-    id_tramite não há trâmite específico a concluir). Os dois despachos são
-    independentes e podem ficar em branco — o SISDPU aceita ambos vazios."""
+    campo não é CKEditor) → conclui (se `id_tramites` — JSON de lista, ex.: '["123","456"]'
+    — trouxer ao menos um id; OU, no par legado, se concluir=1 E id_tramite informado).
+    Movimentar/tramitar/concluir são independentes entre si. Os dois despachos também
+    são independentes e podem ficar em branco — o SISDPU aceita ambos vazios."""
     try:
         anexos_list = json.loads(anexos) if anexos else []
         if not isinstance(anexos_list, list):
             anexos_list = []
     except Exception:  # noqa: BLE001 — JSON malformado: trata como "nenhum anexo"
         anexos_list = []
+    try:
+        id_tramites_list = json.loads(id_tramites) if id_tramites else []
+        if not isinstance(id_tramites_list, list):
+            id_tramites_list = []
+    except Exception:  # noqa: BLE001 — JSON malformado: trata como "nenhum selecionado"
+        id_tramites_list = []
     return EventSourceResponse(_stream_executar(
         id_processo, paj, paj_norm, fase, descricao_mov, bool(int(descricao_mov_html)), grupo, descricao_tram,
-        int(prazo), prazo_data, id_tramite, bool(int(concluir)), bool(int(dry)), anexos_list))
+        int(prazo), prazo_data, id_tramite, bool(int(concluir)), id_tramites_list, bool(int(dry)), anexos_list))

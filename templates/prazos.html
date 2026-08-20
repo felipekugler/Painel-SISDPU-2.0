@@ -52,6 +52,8 @@
 {% block content %}
 <div x-data="prazosEprocApp()" x-init="init()" x-cloak class="flex flex-col flex-1">
 
+  {% include "partials/sync_modal.html" %}
+
   <!-- Banner de ambiente -->
   {% if ambiente and ambiente.avisos %}
   <div class="px-8 pt-5">

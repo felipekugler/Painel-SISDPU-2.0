@@ -453,6 +453,26 @@ def buscar_lembretes(numero: str) -> dict:
     return {"encontrado": False, "lembrete_itens": [], "sincronizado_em": dados.get("sincronizado_em") or ""}
 
 
+def paj_do_processo(numero: str) -> dict:
+    """PAJ associado a este processo, lido do cache já sincronizado pela aba
+    Prazos (mesmo cache/critério de `buscar_lembretes` — extraído do texto do
+    LEMBRETE, ver `_extrair_paj`). Usado pelo card "PAJ associado" da página
+    "Consultar processo". Só acha algo se o processo já tiver passado por
+    aquela sincronização E tiver lembrete com o PAJ no texto.
+
+    Retorna {"encontrado": bool, "paj": "AAAA/UUU-NNNNN" | ""}."""
+    dados = carregar()
+    alvo = re.sub(r"\D", "", numero or "")
+    if alvo:
+        for casos in (dados.get("secoes") or {}).values():
+            for c in casos:
+                if re.sub(r"\D", "", c.get("processo") or "") == alvo:
+                    paj = c.get("paj") or ""
+                    if paj:
+                        return {"encontrado": True, "paj": paj}
+    return {"encontrado": False, "paj": ""}
+
+
 def caso_e_prazos_mesclados(numero: str) -> dict:
     """Mescla os PRAZOS de um processo entre TODAS as categorias do Painel do
     Procurador em que ele aparece — dedupe por (evento, data_envio,
@@ -554,6 +574,26 @@ async def _esperar_listagem(ctx, painel, cat: dict):
 
 
 async def _ler_categoria(ctx, painel, cat: dict) -> list[dict]:
+    from ingestao import eproc_client as ec
+
+    # Garante que `painel` ainda esteja na tela-resumo antes de clicar. O link
+    # da categoria tem `target="painel_remotoPR"` (deveria abrir a listagem
+    # numa aba SEPARADA) — mas o clique aqui é disparado via `page.evaluate()`
+    # (script), não um clique real de mouse, e sem a "ativação de usuário" de
+    # um clique real o Chromium às vezes RECUSA abrir aba nova e navega a
+    # própria aba de origem pra URL da listagem. Resultado: a partir da 2ª
+    # categoria do loop, `painel` já não é mais o resumo (é a listagem da
+    # categoria anterior) — o link da categoria seguinte não existe ali,
+    # `clicou` sai vazio e a categoria inteira fica de fora do resultado.
+    # Bug real confirmado 2026-08-17 (diagnóstico ao vivo: só "prazo_aberto",
+    # a 1ª categoria do loop, aparecia sincronizada — todas as demais, mesmo
+    # com quantidade > 0 no resumo, ficavam ausentes de `secoes`).
+    with contextlib.suppress(Exception):
+        if "painel_advogado_listar" not in (painel.url or ""):
+            await painel.goto(ec.EPROC_HOME + "controlador.php?acao=painel_advogado_listar",
+                              wait_until="domcontentloaded", timeout=30000)
+            await painel.wait_for_timeout(1000)
+
     clicou = None
     with contextlib.suppress(Exception):
         clicou = await painel.evaluate(_JS_CLICAR_CATEGORIA,
@@ -589,6 +629,26 @@ async def ler_todos() -> dict:
     browser, page = await ec._connect()
     ctx = page.context
     try:
+        # Sessão ativa? Confere em TODAS as abas já abertas (mesma lógica de
+        # `eproc_client.peek()` — "logado se ALGUMA aba está na área
+        # autenticada"), ANTES de decidir se precisa navegar alguma aba pra
+        # verificar. Sem isso, a checagem dependia SÓ de conseguir navegar a
+        # aba escolhida como `painel` até `painel_advogado_listar` — e depois
+        # que qualquer sincronização inteira roda, `painel` fica na ÚLTIMA
+        # categoria lida (listagem), não mais no resumo; a próxima chamada
+        # então cai no fallback `painel = page` (a 1ª aba do contexto,
+        # qualquer uma que seja) e tenta navegá-la de novo. Se essa navegação
+        # específica falhasse ou demorasse (aba fechada, travada por outro
+        # motivo alheio à sessão), a sessão era erroneamente reportada como
+        # INATIVA mesmo com outra aba aberta e autenticada — disparando a
+        # janela de login/cofre sem necessidade. Bug real relatado 2026-08-17.
+        sessao_ativa = False
+        for p in ctx.pages:
+            with contextlib.suppress(Exception):
+                if ec._status_dict(p.url or "")["logado"]:
+                    sessao_ativa = True
+                    break
+
         painel = None
         for p in ctx.pages:
             with contextlib.suppress(Exception):
@@ -601,8 +661,10 @@ async def ler_todos() -> dict:
                 await painel.goto(ec.EPROC_HOME + "controlador.php?acao=painel_advogado_listar",
                                   wait_until="domcontentloaded", timeout=60000)
                 await painel.wait_for_timeout(2000)
+            if not sessao_ativa:
+                sessao_ativa = ec._status_dict(painel.url)["logado"]
 
-        if not ec._status_dict(painel.url)["logado"]:
+        if not sessao_ativa:
             return {"ok": False, "erro": "Sessão do e-proc inativa. Use 'Abrir e-proc / Login' antes de sincronizar."}
 
         painel.on("dialog", lambda d: asyncio.create_task(d.dismiss()))

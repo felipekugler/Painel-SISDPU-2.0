@@ -228,22 +228,39 @@ function sincronizarCaixa(baixarAnexos) {
     _syncSource.addEventListener('done', function(e) {
         logEl.textContent += '\n' + e.data + '\n';
         logEl.scrollTop = logEl.scrollHeight;
-        statusEl.textContent = 'concluído';
-        statusEl.className = 'badge badge-sm badge-success';
-        closeBtn.disabled = false;
-        _syncBtnCancel(false);
         if (_syncSource) { _syncSource.close(); _syncSource = null; }
-        showToast('Caixa sincronizada — recarregando dashboard', 'success');
-        setTimeout(function() {
-            if (!modal.open) {
-                window.location.reload();
-            } else {
-                modal.addEventListener('close', function once() {
-                    modal.removeEventListener('close', once);
+
+        const finalizarTudo = function() {
+            statusEl.textContent = 'concluído';
+            statusEl.className = 'badge badge-sm badge-success';
+            closeBtn.disabled = false;
+            _syncBtnCancel(false);
+            showToast('Caixa sincronizada — recarregando dashboard', 'success');
+            setTimeout(function() {
+                if (!modal.open) {
                     window.location.reload();
-                });
-            }
-        }, 500);
+                } else {
+                    modal.addEventListener('close', function once() {
+                        modal.removeEventListener('close', once);
+                        window.location.reload();
+                    });
+                }
+            }, 500);
+        };
+
+        // Se o usuário cancelou a sync da caixa, não encadeia a 2ª fase —
+        // ela iniciaria um trabalho novo bem depois do pedido de parar.
+        if (logEl.textContent.indexOf('[CANCELADO]') !== -1) {
+            finalizarTudo();
+            return;
+        }
+
+        // Postura proativa: encadeia a sincronização leve (sem anexos) dos
+        // PAJs com prazo em aberto nas intimações do e-proc, na MESMA sessão
+        // de log/modal — só finaliza (toast + reload) depois dessa 2ª fase.
+        logEl.textContent += '\n' + '='.repeat(60) + '\n';
+        statusEl.textContent = 'sincronizando PAJs com prazo em aberto...';
+        _sincronizarPrazosAbertos(logEl, finalizarTudo);
     });
 
     _syncSource.onerror = function() {
@@ -252,6 +269,43 @@ function sincronizarCaixa(baixarAnexos) {
         closeBtn.disabled = false;
         _syncBtnCancel(false);
         if (_syncSource) { _syncSource.close(); _syncSource = null; }
+    };
+}
+
+/* 2ª fase da sincronização da caixa (chamada por sincronizarCaixa() acima):
+ * sincroniza LEVE (sem anexos) todos os PAJs com prazo em aberto nas
+ * intimações do e-proc — para que já fiquem tratáveis no painel sem precisar
+ * abrir cada um manualmente. Reusa o mesmo elemento de log e o mesmo botão
+ * "Cancelar" (compartilham o lock/cancelamento global do backend). Chama
+ * `aoTerminar()` sempre, mesmo em erro/desconexão — a sync da caixa em si já
+ * concluiu com sucesso; essa 2ª fase não deve travar o fluxo. */
+function _sincronizarPrazosAbertos(logEl, aoTerminar) {
+    let terminou = false;
+    const finalizar = function() {
+        if (terminou) return;
+        terminou = true;
+        aoTerminar();
+    };
+    let es;
+    try {
+        es = new EventSource('/api/sync/prazos-abertos');
+    } catch (e) {
+        finalizar();
+        return;
+    }
+    es.addEventListener('log', function(e) {
+        logEl.textContent += e.data + '\n';
+        logEl.scrollTop = logEl.scrollHeight;
+    });
+    es.addEventListener('done', function(e) {
+        logEl.textContent += e.data + '\n';
+        logEl.scrollTop = logEl.scrollHeight;
+        es.close();
+        finalizar();
+    });
+    es.onerror = function() {
+        es.close();
+        finalizar();
     };
 }
 
@@ -747,9 +801,19 @@ async function posExecucaoPaj(pajNorm, resultado) {
    padrão de baixarAnexosDesde() acima. */
 /** Alpine do botão "Concluir PAJ da Caixa de Entrada" do cabeçalho — decide
  * entre o caminho simples (0-1 trâmite, usa concluirPajCaixa() abaixo, com
- * log SSE) e o modal de escolha múltipla (>1 trâmite pendente, ver
- * window._paj_tramitacoes_caixa), que conclui os selecionados de uma vez via
- * /api/paj/<paj>/concluir-tramites (services/paj_service.concluir_tramites_caixa). */
+ * log SSE) e o modal de escolha múltipla (>1 trâmite pendente), que conclui
+ * os selecionados de uma vez via /api/paj/<paj>/concluir-tramites
+ * (services/paj_service.concluir_tramites_caixa).
+ *
+ * `window._paj_tramitacoes_caixa` (do carregamento da página) é só o CHUTE
+ * INICIAL — pode estar desatualizado ou `null`/nunca calculado (esse campo só
+ * é preenchido pela sync COMPLETA da caixa; PAJs sincronizados por caminhos
+ * avulsos/busca global nunca passam por ali). Por isso abrir() SEMPRE
+ * reconfere ao vivo (/api/paj/<paj>/atualizar-tramitacoes-caixa) antes de
+ * decidir — sem isso, um PAJ com >1 trâmite pendente de verdade mas
+ * `tramitacoes_caixa=null` seria tratado como se tivesse só um, concluindo
+ * apenas o "trâmite de trabalho" e deixando os demais abertos sem avisar
+ * (bug real, relatado em 2026-08-17 no PAJ-2024-029-01535). */
 function concluirPajModalApp(pajNorm, idProcesso, paj, idTramite) {
     return {
         pajNorm: pajNorm, idProcesso: idProcesso, paj: paj, idTramite: idTramite,
@@ -757,8 +821,31 @@ function concluirPajModalApp(pajNorm, idProcesso, paj, idTramite) {
         modalAberto: false,
         selecionados: [],
         concluindo: false,
+        verificando: false,
 
-        abrir() {
+        async abrir() {
+            this.verificando = true;
+            try {
+                const r = await fetch(
+                    '/api/paj/' + encodeURIComponent(this.pajNorm) + '/atualizar-tramitacoes-caixa',
+                    { method: 'POST' }
+                );
+                const d = await r.json().catch(() => ({}));
+                if (d && d.ok) {
+                    this.tramitacoes = d.tramitacoes_caixa || [];
+                } else {
+                    // Não deu pra confirmar ao vivo (sync ocupada, sessão etc.) —
+                    // avisa e segue com o que já tinha (chute inicial da página),
+                    // em vez de travar o usuário sem nenhuma opção.
+                    showToast('Não foi possível confirmar os trâmites pendentes ao vivo ('
+                        + (d.mensagem || 'erro') + ') — usando os dados já carregados.', 'warning');
+                }
+            } catch (e) {
+                showToast('Falha de rede ao confirmar trâmites pendentes — usando os dados já carregados.', 'warning');
+            } finally {
+                this.verificando = false;
+            }
+
             if (this.tramitacoes.length <= 1) {
                 concluirPajCaixa(this.pajNorm, this.idProcesso, this.paj, this.idTramite);
                 return;
@@ -803,8 +890,6 @@ async function concluirPajCaixa(pajNorm, idProcesso, paj, idTramite) {
         showToast('Este PAJ não está com trâmite pendente na caixa de entrada', 'warning');
         return;
     }
-    if (!confirm('Concluir o trâmite de ' + (paj || pajNorm) + ' na caixa de entrada do SISDPU?\n\nIsso retira o PAJ da caixa de entrada.')) return;
-
     if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
 
     let modal = document.getElementById('sync-modal');
@@ -1723,10 +1808,129 @@ async function abrirProcessoNavegador(numero, link) {
 /* Minimenu "Abrir PAJ" (número do PAJ clicável) — mesmo padrão do minimenu de
    processo: "Abrir no Painel" navega pra página do PAJ neste painel (mesma
    aba); "Abrir no navegador" abre o detalhamento do PAJ no SISDPU (aba nova,
-   via /api/prazos/abrir-paj — resolve o link stateless e redireciona). */
-function abrirPajPainel(pajNorm) {
+   via /api/prazos/abrir-paj — resolve o link stateless e redireciona).
+
+   O número do PAJ aqui costuma vir de texto livre (ex.: lembrete/post-it do
+   e-proc) — não tem nenhuma garantia de que esse PAJ já foi sincronizado no
+   painel (PAJs antigos/concluídos, ou que não voltaram pra caixa de entrada
+   recentemente, nunca chegam a ter pasta local). Por isso confere a
+   existência ANTES de abrir: se não achar localmente (404), dispara uma
+   sincronização avulsa LEVE (só movimentações/metadata — mesma rota usada
+   pela sincronização em lote dos "prazos em aberto") via
+   /api/sync/paj/{norm}/movimentacoes, entrando pela pesquisa global do
+   SISDPU — NÃO depende do PAJ estar na caixa de entrada. Mostra o MESMO
+   modal de log das outras sincronizações (não só um toast) — sem isso o
+   usuário não tem como saber que algo está rodando durante os ~1-3 minutos
+   que a sincronização leva, e pode clicar de novo por engano: um 2º clique
+   enquanto o 1º ainda está rodando colide no lock global do backend, falha
+   na hora, e cai direto no fallback de SISDPU (parecendo um bug, mas é só
+   a falta de feedback visual). Só cai pro fallback de "Abrir no navegador"
+   (SISDPU ao vivo) se a sincronização falhar de verdade (ex.: número errado
+   no lembrete, ou o PAJ realmente não existe no SISDPU). */
+async function abrirPajPainel(pajNorm) {
     if (!pajNorm) return;
+    try {
+        // GET, não HEAD: essa rota só responde a GET (HEAD dá 405, não 404 —
+        // com HEAD a checagem abaixo nunca disparava e sempre caía na tela
+        // morta de "PAJ não encontrado", já que 405 !== 404).
+        const r = await fetch('/api/paj/' + encodeURIComponent(pajNorm));
+        if (r.status === 404) {
+            const ok = await _sincronizarPajAvulsoComModal(pajNorm);
+            if (!ok) {
+                showToast('Não consegui sincronizar esse PAJ — abrindo direto no SISDPU...', 'error');
+                abrirPajNavegador(formatarPajNorm(pajNorm));
+                return;
+            }
+        }
+    } catch (e) { /* falha na checagem: cai no comportamento antigo abaixo */ }
     window.open('/paj/' + pajNorm, '_blank');
+}
+
+/* Sincronização avulsa e LEVE de um único PAJ, usada como passo intermediário
+   de abrirPajPainel() acima quando o PAJ ainda não existe localmente. Reusa
+   o MESMO modal/log das outras sincronizações (partials/sync_modal.html) —
+   se a página atual não tiver esse modal incluído, cai num fallback sem UI
+   (só aguarda e confere no fim), pra não quebrar em nenhuma página que use
+   abrirPajPainel(). Resolve `true`/`false`. */
+function _sincronizarPajAvulsoComModal(pajNorm) {
+    const modal = document.getElementById('sync-modal');
+    const logEl = document.getElementById('sync-log');
+    if (!modal || !logEl) return _sincronizarPajAvulsoSemModal(pajNorm);
+
+    const statusEl = document.getElementById('sync-status');
+    const closeBtn = document.getElementById('sync-close-btn');
+    const titleEl = document.getElementById('sync-title');
+    const cancelBtn = document.getElementById('sync-cancel-btn');
+
+    if (titleEl) titleEl.textContent = 'Sincronizar PAJ ' + formatarPajNorm(pajNorm) + ' (avulso)';
+    logEl.textContent = 'PAJ ainda não sincronizado no painel — buscando no SISDPU...\n';
+    if (statusEl) { statusEl.textContent = 'sincronizando...'; statusEl.className = 'badge badge-sm badge-warning'; }
+    if (closeBtn) closeBtn.disabled = true;
+    if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.textContent = 'Cancelar'; }
+    _syncBtnCancel(true);
+    modal.showModal();
+
+    return new Promise((resolve) => {
+        let terminou = false;
+        const es = new EventSource('/api/sync/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes');
+        const finalizar = async () => {
+            if (terminou) return;
+            terminou = true;
+            es.close();
+            _syncBtnCancel(false);
+            if (closeBtn) closeBtn.disabled = false;
+            let ok = false;
+            try {
+                const r = await fetch('/api/paj/' + encodeURIComponent(pajNorm));
+                ok = r.status !== 404;
+            } catch (e) { /* ok fica false */ }
+            if (statusEl) {
+                statusEl.textContent = ok ? 'concluído' : 'erro';
+                statusEl.className = 'badge badge-sm ' + (ok ? 'badge-success' : 'badge-error');
+            }
+            logEl.textContent += '\n' + (ok ? 'PAJ sincronizado.' : 'Não foi possível sincronizar este PAJ.') + '\n';
+            logEl.scrollTop = logEl.scrollHeight;
+            // Fecha sozinho em caso de sucesso (some da frente antes de abrir a
+            // página do PAJ); em erro, deixa aberto pra o usuário ler o log.
+            if (ok) {
+                setTimeout(function() {
+                    if (modal.open) modal.close();
+                    resolve(true);
+                }, 400);
+            } else {
+                resolve(false);
+            }
+        };
+        es.addEventListener('log', function(e) {
+            logEl.textContent += e.data + '\n';
+            logEl.scrollTop = logEl.scrollHeight;
+        });
+        es.addEventListener('done', finalizar);
+        es.onerror = finalizar;
+    });
+}
+
+/* Fallback sem UI de modal (páginas que usem abrirPajPainel() sem incluir
+   partials/sync_modal.html) — mesmo endpoint leve, só espera terminar. */
+function _sincronizarPajAvulsoSemModal(pajNorm) {
+    showToast('PAJ ainda não sincronizado no painel — sincronizando agora...', 'info');
+    return new Promise((resolve) => {
+        let terminou = false;
+        const es = new EventSource('/api/sync/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes');
+        const finalizar = async () => {
+            if (terminou) return;
+            terminou = true;
+            es.close();
+            try {
+                const r = await fetch('/api/paj/' + encodeURIComponent(pajNorm));
+                resolve(r.status !== 404);
+            } catch (e) {
+                resolve(false);
+            }
+        };
+        es.addEventListener('done', finalizar);
+        es.onerror = finalizar;
+    });
 }
 function abrirPajNavegador(pajDisplay) {
     if (!pajDisplay) return;

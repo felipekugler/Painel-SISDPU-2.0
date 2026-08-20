@@ -39,7 +39,14 @@ window.__extracaoInit = function (seqsConhecidos) {
     movimentacoes_com_documentos: [],
     total_documentos: 0,
     indice: 0,
-    seqsPuladas: []
+    seqsPuladas: [],
+    // Seqs cujo popup abriu, foi lido e fechado com SUCESSO (sem erro) mas
+    // nao tinha nenhum documento de verdade — permite ao chamador (Python)
+    // cachear esse resultado como "conhecido" tambem, igual ja faz pra seqs
+    // COM documento. Sem isso, uma seq com icone clicavel mas 0 documentos
+    // era reprocessada em TODA sincronizacao, pra sempre (nunca entrava em
+    // `seqsConhecidos` porque so' documentos NAO-VAZIOS eram cacheados).
+    seqsVerificadosSemDocumento: []
   };
 
   const tables = document.querySelectorAll('table');
@@ -189,20 +196,28 @@ window.__extracaoProximo = async function () {
       nomeArquivo = docCells[2]?.textContent.trim() || '';
     }
     // A maioria dos documentos (PDFs) tem um <a href="/rest/download/pdf/ID/nome">
-    // de verdade. MAS alguns anexos (imagens jpeg/png "Documentos do Assistido")
-    // vem como <p:commandLink> do PrimeFaces: href="#" e um onclick que faz
-    // PrimeFaces.addSubmitParam(...).submit('detalhamentoForm') — um POST do
-    // formulario inteiro, sem URL de download nenhuma pra seguir. O .href
-    // desses resolve pra URL da PROPRIA pagina (sempre a mesma pra varios
-    // documentos da mesma seq), o que quebrava tanto a extracao de ID quanto
-    // a unicidade no x-for da tabela. Detectamos esse padrao e guardamos, em
-    // vez da URL (inexistente), o id ESTAVEL do elemento — unico por
-    // documento dentro do popup — como um marcador sintetico reconhecido por
-    // extrair_id_arquivo()/_idDocumento() (nunca deve ser usado num GET).
+    // de verdade. MAS alguns anexos (imagens jpeg/png "Documentos do Assistido",
+    // e tambem "Peticoes" protocoladas — .doc/.docx) vem como <p:commandLink> do
+    // PrimeFaces: href="#" e o clique dispara via JS (onclick inline OU listener
+    // delegado — variantes diferentes de commandLink NAO garantem o atributo
+    // onclick inline) um PrimeFaces.addSubmitParam(...).submit('detalhamentoForm')
+    // — um POST do formulario inteiro, sem URL de download nenhuma pra seguir.
+    // O .href desses resolve pra URL da PROPRIA pagina + "#" (sempre a mesma pra
+    // varios documentos da mesma seq), o que quebrava tanto a extracao de ID
+    // quanto a unicidade no x-for da tabela. So' o href==="#" cru (RAW, via
+    // getAttribute — nunca ".href" resolvido) já e' sinal suficiente: nenhum link
+    // de download de verdade e' "#". Exigir onclick ALEM disso (versao anterior)
+    // deixava passar variantes de commandLink sem onclick inline (caso real:
+    // "Peticoes", que teve exatamente esse sintoma — clicava e nada ocorria).
+    // Detectamos pelo href e guardamos, em vez da URL (inexistente), o id
+    // ESTAVEL do elemento — unico por documento dentro do popup — como um
+    // marcador sintetico reconhecido por extrair_id_arquivo()/_idDocumento()
+    // (nunca deve ser usado num GET; requer clique real + captura do evento
+    // `download` do Playwright).
     const aTag = docRow.querySelector('a');
     let urlDownload = aTag?.href || '';
     let commandLinkId = null;
-    if (aTag && aTag.getAttribute('href') === '#' && aTag.hasAttribute('onclick')) {
+    if (aTag && aTag.getAttribute('href') === '#') {
       commandLinkId = aTag.id || '';
       urlDownload = commandLinkId ? ('sisdpu-commandlink:' + commandLinkId) : '';
     }
@@ -215,6 +230,11 @@ window.__extracaoProximo = async function () {
   if (documentos.length > 0) {
     estado.movimentacoes_com_documentos.push({ seq: mov.seq, dataHora: mov.dataHora, movimentacao: mov.movimentacao, documentos });
     estado.total_documentos += documentos.length;
+  } else {
+    // Popup abriu, estabilizou e fechou normalmente (sem `erro` — os retornos
+    // antecipados por falha ja saíram da funcao mais acima) e nao tinha
+    // documento nenhum. Confirmado — pode ser cacheado como "conhecido".
+    estado.seqsVerificadosSemDocumento.push(mov.seq);
   }
 
   // Fechar e CONFIRMAR que fechou antes de retornar (só então a próxima

@@ -237,13 +237,29 @@ async def executar_stream(
     prazo_data: str = "",
     id_tramite: str | None = None,
     concluir: bool = False,
+    id_tramites: list[str] | None = None,
     dry_run: bool = False,
     anexos: list[dict] | None = None,
 ) -> AsyncIterator[dict]:
     """Executa mov→tram→conclui (cada etapa opcional) em UM PAJ do SISDPU identificado
     por `id_processo`. Emite eventos SSE-like: {level,msg} de log; evento final
-    {done: True, resultado: {...}}. `concluir` só tem efeito quando `id_tramite`
-    também for informado (é o trâmite específico que sai da caixa de entrada).
+    {done: True, resultado: {...}}.
+
+    Conclusão — DOIS modelos coexistem (compat):
+    - `id_tramites` (NOVO — lista): 0, 1 ou N trâmites da caixa de entrada
+      selecionados pelo usuário (checkboxes) para concluir de uma vez só, na MESMA
+      sessão do Playwright que já fez a movimentação/tramitação (evita reabrir/logar
+      de novo). Usado pela página do PAJ, que mostra todas as tramitações abertas.
+    - `id_tramite` + `concluir` (LEGADO — singular): mantido para quem ainda não
+      passa a lista completa (ex.: a Retornos, cujo trâmite não pertence a
+      `tramitacoes_caixa` — ver ingestao.sincronizador._atualizar_tramitacoes_caixa).
+      Só tem efeito quando ambos informados. Se `id_tramites` vier preenchido, ele
+      tem PRECEDÊNCIA sobre o par legado.
+
+    Movimentar/tramitar/concluir são AÇÕES INDEPENDENTES — nenhuma delas depende de
+    outra ter sido selecionada; o "Executar" só fica bloqueado quando as TRÊS
+    estiverem vazias (ver `concluir_efetivo` abaixo).
+
     `descricao_mov` e `descricao_tram` são independentes — o SISDPU aceita ambas
     (ou qualquer uma delas) em branco, então não há validação de obrigatoriedade aqui.
     `descricao_mov_html=True` quando `descricao_mov` é HTML de verdade (editor rico do
@@ -267,7 +283,10 @@ async def executar_stream(
         yield {"done": True, "resultado": {"ok": False, "detalhe": "id_processo ausente."}}
         return
 
-    concluir_efetivo = bool(concluir and id_tramite)
+    ids_concluir = [str(i).strip() for i in (id_tramites or []) if str(i).strip()]
+    if not ids_concluir and concluir and id_tramite:
+        ids_concluir = [id_tramite]  # compat: par legado (Retornos)
+    concluir_efetivo = bool(ids_concluir)
     if not fase and not grupo and not concluir_efetivo:
         yield _ev("erro", "Selecione ao menos uma ação: movimentar, tramitar ou concluir.")
         yield {"done": True, "resultado": {"ok": False, "detalhe": "Nenhuma ação selecionada."}}
@@ -368,12 +387,16 @@ async def executar_stream(
             return
         tram_caixa = grupo
 
-    # 3) CONCLUIR (opcional — só quando id_tramite foi informado)
+    # 3) CONCLUIR (opcional — só quando houver ao menos um id em ids_concluir)
     concluido = False
     ja_ausente = False
+    ids_para_remover_caixa: list[str] = []  # concluídos agora OU já ausentes — em
+    # ambos os casos o trâmite não está mais na caixa, então some do cache local
+    # (tramitacoes_caixa) independente de quantos foram selecionados.
     if concluir_efetivo:
-        yield _ev("info", "Concluindo o trâmite…")
-        cc, exc, eventos = await com_auto_reconexao(lambda: movtram.concluir_paj([id_tramite], dry_run))
+        label_concl = "o trâmite" if len(ids_concluir) == 1 else f"{len(ids_concluir)} trâmites"
+        yield _ev("info", f"Concluindo {label_concl}…")
+        cc, exc, eventos = await com_auto_reconexao(lambda: movtram.concluir_paj(ids_concluir, dry_run))
         for ev in eventos:
             yield ev
         if exc is not None:
@@ -381,9 +404,20 @@ async def executar_stream(
                               "Mov./tramitação já podem ter sido registradas; verifique o PAJ.")
             yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": str(exc)[:300]}}
             return
+        resultados_por_id = cc.get("resultados") or {}
+        concluidos_agora = [i for i in ids_concluir if resultados_por_id.get(i, {}).get("concluido")]
+        ja_ausentes_agora = [i for i in ids_concluir if resultados_por_id.get(i, {}).get("ja_ausente")]
+        ids_para_remover_caixa = concluidos_agora + ja_ausentes_agora
         if cc.get("status") == "ja_ausente":
+            # TODOS os ids selecionados já estavam fora da caixa antes desta execução.
             yield _ev("muted", f"Conclusão: {cc.get('detalhe', '')}")
             ja_ausente = True
+        elif cc.get("status") == "parcial":
+            # Alguns concluídos/já ausentes, outros não — não trava a execução (mov/tram
+            # já valeram); o log já deixa claro o que não foi, e o que restou continua
+            # na caixa pro usuário tentar de novo.
+            yield _ev("erro", f"Conclusão parcial: {cc.get('detalhe', '')}")
+            concluido = bool(concluidos_agora) and not dry_run
         else:
             yield _ev("ok" if cc.get("ok") else "erro", f"Conclusão: {cc.get('detalhe', '')}")
             if not cc.get("ok"):
@@ -392,14 +426,15 @@ async def executar_stream(
             concluido = not dry_run
 
     if ja_ausente:
-        yield _ev("muted", f"{label} — o trâmite já não estava na caixa antes desta "
+        yield _ev("muted", f"{label} — o(s) trâmite(s) já não estava(m) na caixa antes desta "
                            "execução (provável conclusão manual anterior).")
         yield {"done": True, "resultado": {"ok": False, "status": "ja_ausente", "concluido": False,
-                                           "tramitado_para": tram_caixa,
-                                           "detalhe": "Trâmite já estava ausente antes desta execução — "
+                                           "tramitado_para": tram_caixa, "concluidos": ids_para_remover_caixa,
+                                           "detalhe": "Trâmite(s) já estava(m) ausente(s) antes desta execução — "
                                                      "nada foi concluído agora."}}
         return
 
     yield _ev("ok", f"{label} — executado com sucesso.")
     yield {"done": True, "resultado": {"ok": True, "concluido": concluido,
-                                       "tramitado_para": tram_caixa, "mov_seq": mv.get("mov_seq")}}
+                                       "tramitado_para": tram_caixa, "mov_seq": mv.get("mov_seq"),
+                                       "concluidos": ids_para_remover_caixa}}

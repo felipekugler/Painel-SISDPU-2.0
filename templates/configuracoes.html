@@ -676,6 +676,68 @@
         </div>
     </div>
 
+    <!-- Procuradores destino do Gerenciamento de Processo (substabelecimento) -->
+    <div class="card bg-base-200 shadow mt-4" x-data="eprocProcuradoresPrefs()" x-init="init()">
+        <div class="card-body gap-5">
+            <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
+                <h3 class="text-lg font-semibold text-base-content/80">Gerenciamento de Processo (substabelecimento)</h3>
+            </div>
+            <p class="text-sm text-base-content/60">
+                Lista de procuradores/unidades que podem receber o processo no "Gerenciar
+                Processo" (dropdown "Procurador que irá receber os processos") — lista
+                institucional com centenas de nomes, por isso a curadoria de <strong>favoritos</strong>
+                abaixo. A importação ainda pede um <strong>processo de referência</strong> (qualquer
+                um serve — a lista é a mesma para todos). Requer a janela do
+                <strong>e-proc aberta e logada</strong>.
+            </p>
+            <div class="flex items-end gap-2 flex-wrap">
+                <div class="form-control">
+                    <label class="label py-1"><span class="label-text text-xs">Processo de referência</span></label>
+                    <input type="text" class="input input-bordered input-sm w-64 font-mono"
+                           x-model="processoReferencia" placeholder="Ex: 5005326-13.2024.4.04.7000">
+                </div>
+                <button class="btn btn-sm btn-ghost" @click="importar()" :disabled="importando || !processoReferencia.trim()"
+                        title="Consulta o e-proc (tela Gerenciar Processo → Procurador que irá receber os processos) e atualiza a lista completa.">
+                    <span x-show="importando" class="loading loading-spinner loading-xs"></span>
+                    <span x-text="procuradoresTodos.length ? 'Reimportar do e-proc' : 'Importar do e-proc'"></span>
+                </button>
+            </div>
+            <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
+
+            <div class="pt-1">
+                <p class="font-medium mb-2">Procuradores/unidades
+                    <span class="text-base-content/50" x-text="'(' + procuradoresTodos.length + ')'"></span>
+                </p>
+                <div x-show="procuradoresTodos.length===0" class="text-sm text-base-content/40">
+                    Nenhum procurador importado. Informe um processo de referência e clique em <strong>Importar do e-proc</strong>.
+                </div>
+                <label class="flex items-center gap-2 mb-2 text-sm cursor-pointer" x-show="procuradoresTodos.length">
+                    <input type="radio" class="radio radio-sm" :checked="!procuradorPadrao" @change="procuradorPadrao=null">
+                    <span>Padrão: <strong>nenhum</strong> (escolher na hora)</span>
+                </label>
+                <div class="cfg-pref-grid" x-show="procuradoresTodos.length">
+                    <div class="cfg-pref-head"><span>Procurador/Unidade</span><span>Favorito</span><span>Frequente</span><span>Padrão</span></div>
+                    <template x-for="p in procuradoresTodos" :key="p.valor">
+                        <label class="cfg-pref-row">
+                            <span x-text="p.rotulo"></span>
+                            <input type="checkbox" class="checkbox checkbox-sm" :checked="emLista('procuradoresFav', p.valor)" @change="toggleIn('procuradoresFav', p)">
+                            <input type="checkbox" class="checkbox checkbox-sm" :checked="emLista('procuradoresFreq', p.valor)" @change="toggleIn('procuradoresFreq', p)">
+                            <input type="radio" class="radio radio-sm" :checked="procuradorPadrao && procuradorPadrao.valor===p.valor" @change="procuradorPadrao=p">
+                        </label>
+                    </template>
+                </div>
+            </div>
+
+            <div class="flex items-center gap-4 pt-2 border-t border-base-300">
+                <button class="btn btn-primary btn-sm" :disabled="salvando" @click="salvar()">
+                    <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
+                    Salvar curadoria
+                </button>
+                <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg2" x-show="msg2"></p>
+            </div>
+        </div>
+    </div>
+
     <!-- Documentos baixados (cache da página "Consultar processo") -->
     <div class="card bg-base-200 shadow mt-4" x-data="eprocDocsCache()" x-init="init()">
         <div class="card-body gap-5">
@@ -993,6 +1055,66 @@ function eprocEventosPrefs() {
                     body: JSON.stringify({
                         eventos_favoritos: this.eventosFav, eventos_frequentes: this.eventosFreq,
                         evento_padrao: this.eventoPadrao,
+                    }),
+                });
+                const j = await r.json();
+                if (j.ok) { this.msg2 = 'Curadoria salva ✓'; setTimeout(() => this.msg2 = '', 2500); }
+                else { this.msgErro = true; this.msg2 = 'Falha ao salvar.'; }
+            } catch (e) { this.msgErro = true; this.msg2 = 'Erro ao salvar: ' + e; }
+            finally { this.salvando = false; }
+        },
+    };
+}
+
+// Aba e-proc — Procuradores destino do Gerenciamento de Processo (substabelecimento):
+// mesmo padrão de eprocEventosPrefs(), mas cada item é {valor, rotulo} (o "valor" é o
+// código interno que o <select> do e-proc espera, não dá pra guardar só o nome).
+function eprocProcuradoresPrefs() {
+    return {
+        procuradoresTodos: [], procuradoresFav: [], procuradoresFreq: [], procuradorPadrao: null,
+        processoReferencia: '',
+        importando: false, salvando: false, msg: '', msg2: '', msgErro: false,
+        async init() {
+            try {
+                const j = await (await fetch('/api/config/eproc-procuradores')).json();
+                this.aplicar(j);
+            } catch (e) {}
+        },
+        aplicar(j) {
+            this.procuradoresTodos = j.procuradores_todos || [];
+            this.procuradoresFav = j.procuradores_favoritos || [];
+            this.procuradoresFreq = j.procuradores_frequentes || [];
+            this.procuradorPadrao = j.procurador_padrao || null;
+            if (!this.processoReferencia) this.processoReferencia = j.processo_referencia || '';
+        },
+        emLista(lista, valor) { return this[lista].some((p) => p.valor === valor); },
+        toggleIn(lista, item) {
+            const arr = this[lista];
+            const i = arr.findIndex((p) => p.valor === item.valor);
+            if (i >= 0) arr.splice(i, 1); else arr.push(item);
+        },
+        async importar() {
+            if (!this.processoReferencia.trim()) return;
+            this.importando = true; this.msg = ''; this.msgErro = false;
+            try {
+                const r = await fetch('/api/config/eproc-procuradores/importar', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ numero_processo: this.processoReferencia.trim() }),
+                });
+                const j = await r.json();
+                if (j.ok) { this.aplicar(j.prefs); this.msg = 'Importado: ' + j.n_procuradores + ' procuradores/unidades.'; }
+                else { this.msgErro = true; this.msg = j.erro || 'Falha ao importar.'; }
+            } catch (e) { this.msgErro = true; this.msg = 'Erro ao importar: ' + e; }
+            finally { this.importando = false; }
+        },
+        async salvar() {
+            this.salvando = true; this.msg2 = ''; this.msgErro = false;
+            try {
+                const r = await fetch('/api/config/eproc-procuradores', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        procuradores_favoritos: this.procuradoresFav, procuradores_frequentes: this.procuradoresFreq,
+                        procurador_padrao: this.procuradorPadrao,
                     }),
                 });
                 const j = await r.json();
