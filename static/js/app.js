@@ -970,6 +970,92 @@ async function concluirPajCaixa(pajNorm, idProcesso, paj, idTramite) {
     };
 }
 
+/* Desarquivar PAJ — botão do banner "PAJ arquivado" no cabeçalho (ver
+ * templates/paj_detail.html). Lança SÓ a fase "Paj desarquivado" no SISDPU —
+ * sem descrição, sem tramitação, sem conclusão de trâmite (movimentar/
+ * tramitar/concluir são independentes em /api/acoes-sisdpu/executar, então
+ * omitir grupo/concluir/id_tramite já garante isso). "Paj desarquivado" é uma
+ * fase real, já cadastrada em Configurações › SISDPU (sisdpu_fases_todas) —
+ * mesma string usada aqui, não é texto livre. Mesmo padrão de modal/SSE de
+ * concluirPajCaixa() acima, só que com confirmação antes (ação menos comum e
+ * mais sensível — desarquivar não tem "desfazer" trivial). */
+async function desarquivarPaj(pajNorm, idProcesso, paj) {
+    if (!confirm('Desarquivar ' + (paj || pajNorm) + '?\n\nIsso lança a fase "Paj desarquivado" no SISDPU (sem descrição, tramitação ou conclusão de trâmite).')) return;
+    if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
+
+    let modal = document.getElementById('sync-modal');
+    let logEl = document.getElementById('sync-log');
+    let statusEl = document.getElementById('sync-status');
+    let titleEl = document.getElementById('sync-title');
+    let closeBtn = document.getElementById('sync-close-btn');
+    if (!modal || !logEl) {
+        showToast('Modal de sync não encontrado na página', 'error');
+        return;
+    }
+
+    logEl.textContent = '';
+    if (titleEl) titleEl.textContent = 'Desarquivar PAJ — ' + (paj || pajNorm);
+    statusEl.textContent = 'executando...';
+    statusEl.className = 'badge badge-sm badge-warning';
+    closeBtn.disabled = true;
+    _syncBtnCancel(false);  // este endpoint nao suporta cancel — esconde o botao
+    modal.showModal();
+
+    if (_syncSource) { _syncSource.close(); _syncSource = null; }
+
+    const qs = new URLSearchParams({
+        id_processo: idProcesso || '', paj: paj || '', paj_norm: pajNorm || '',
+        fase: 'Paj desarquivado', descricao_mov: '', descricao_mov_html: '0',
+        grupo: '', descricao_tram: '', prazo: '0', prazo_data: '',
+        id_tramite: '', concluir: '0', anexos: '[]',
+    });
+    _syncSource = new EventSource('/api/acoes-sisdpu/executar?' + qs.toString());
+
+    _syncSource.addEventListener('log', function (e) {
+        try {
+            const d = JSON.parse(e.data);
+            logEl.textContent += (d.msg || e.data) + '\n';
+        } catch (err) {
+            logEl.textContent += e.data + '\n';
+        }
+        logEl.scrollTop = logEl.scrollHeight;
+    });
+
+    _syncSource.addEventListener('done', async function (e) {
+        let res = {};
+        try { res = JSON.parse(e.data); } catch (err) {}
+        const ok = res.ok !== false;
+        logEl.textContent += '\nFinalizado.\n';
+        logEl.scrollTop = logEl.scrollHeight;
+        statusEl.textContent = ok ? 'concluído' : 'com aviso';
+        statusEl.className = 'badge badge-sm ' + (ok ? 'badge-success' : 'badge-error');
+        closeBtn.disabled = false;
+        if (_syncSource) { _syncSource.close(); _syncSource = null; }
+        // Atualiza movimentações + registra no Histórico (mesmo passo de
+        // concluirPajCaixa) — sem isso a tabela de Movimentações e o banner
+        // do cabeçalho só refletiriam a fase nova depois de outra sync manual.
+        await posExecucaoPaj(pajNorm, res);
+        showToast(ok ? 'PAJ desarquivado — recarregando' : 'Concluído com aviso — recarregando', ok ? 'success' : 'warning');
+        setTimeout(function () {
+            if (!modal.open) {
+                window.location.reload();
+            } else {
+                modal.addEventListener('close', function once() {
+                    modal.removeEventListener('close', once);
+                    window.location.reload();
+                });
+            }
+        }, 500);
+    });
+
+    _syncSource.onerror = function () {
+        statusEl.textContent = 'erro/desconectado';
+        statusEl.className = 'badge badge-sm badge-error';
+        closeBtn.disabled = false;
+        if (_syncSource) { _syncSource.close(); _syncSource = null; }
+    };
+}
+
 /* Docgen — streaming SSE do gerar_docx.py / gerar_peticao.py */
 let _docgenSource = null;
 
@@ -1312,6 +1398,100 @@ function elaborarApp(pajNorm) {
         verResumo() {
             abrirResumo(this.pajNorm);
         }
+    };
+}
+
+// Botão "Organizar Documentos para Ajuizamento" — mesmo padrão de
+// elaborarApp() acima: init() consulta o status já no CARREGAMENTO da página
+// e retoma o spinner/polling se uma organização estiver rodando (ex.: F5 no
+// meio da tarefa, ou aberta em outra aba). A tarefa roda em background via
+// sessão de agente (não mais um script instantâneo — ver
+// services/organizar_ajuizamento_service.py) e sem esse init a página não
+// dava NENHUM sinal de que algo estava em andamento: parecia que a pasta
+// "Ajuizamento" mudava sozinha enquanto o Defensor mexia nela manualmente ao
+// mesmo tempo (relatado no PAJ 2026/029-01658, 2026-08-21) — na verdade era a
+// organização em background ainda escrevendo. Ao concluir com sucesso, o
+// backend cria um lembrete vermelho "Documentos organizados para
+// ajuizamento" no PAJ (ver organizar_ajuizamento_service._persistir) — como
+// os lembretes são lidos do disco a cada carregamento da página (ver
+// lembretesApp), o reload automático abaixo já mostra esse aviso persistente,
+// mesmo que o Defensor tenha saído da página antes de terminar.
+function organizarAjuizamentoApp(pajNorm) {
+    return {
+        pajNorm: pajNorm,
+        status: 'idle',
+        error: '',
+        _pollTimer: null,
+
+        async init() {
+            await this.fetchStatus();
+            if (this.status === 'running') {
+                this.startPolling();
+            }
+        },
+
+        async fetchStatus() {
+            try {
+                const resp = await fetch('/api/organizar-ajuizamento/status/' + this.pajNorm);
+                const data = await resp.json();
+                this.status = data.status || 'idle';
+                this.error = data.error || '';
+            } catch (e) {
+                this.error = 'Erro ao consultar status: ' + e.message;
+                this.status = 'error';
+            }
+        },
+
+        async organizar() {
+            let resp, data;
+            try {
+                resp = await fetch('/api/organizar-ajuizamento/' + this.pajNorm, { method: 'POST' });
+                data = await resp.json().catch(() => ({}));
+            } catch (e) {
+                showToast('Falha de rede: ' + e, 'error');
+                return;
+            }
+            if (!data.ok && data.precisa_confirmar) {
+                const ok = confirm('A pasta "Ajuizamento" já existe para este PAJ. Reorganizar e sobrescrever (apaga a versão atual por completo)?');
+                if (!ok) return;
+                try {
+                    resp = await fetch('/api/organizar-ajuizamento/' + this.pajNorm, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ forcar: true }),
+                    });
+                    data = await resp.json().catch(() => ({}));
+                } catch (e) {
+                    showToast('Falha de rede: ' + e, 'error');
+                    return;
+                }
+            }
+            if (!data.ok) {
+                showToast('Erro: ' + (data.erro || 'falha ao organizar'), 'error');
+                return;
+            }
+            this.status = 'running';
+            this.error = '';
+            showToast('Organizando documentos — pode levar alguns minutos. NÃO edite/renomeie nada em "Ajuizamento" enquanto isso roda (a organização reescreve a pasta).', 'info');
+            this.startPolling();
+        },
+
+        startPolling() {
+            if (this._pollTimer) return;
+            this._pollTimer = setInterval(async () => {
+                await this.fetchStatus();
+                if (this.status === 'done' || this.status === 'error') {
+                    clearInterval(this._pollTimer);
+                    this._pollTimer = null;
+                    if (this.status === 'done') {
+                        showToast('Documentos organizados em "Ajuizamento" — recarregando…', 'success');
+                        setTimeout(() => window.location.reload(), 1200);
+                    } else {
+                        showToast('Erro ao organizar: ' + (this.error || 'ver log no servidor'), 'error');
+                    }
+                }
+            }, 3000);
+        },
     };
 }
 
@@ -1739,7 +1919,10 @@ async function abrirPastaPaj(pajNorm, btn) {
    Jinja, não Alpine, pra exibir). */
 function formatarPretensao(txt) {
     if (!txt) return txt;
-    const m = txt.match(/\(([^()]+)\)\s*$/);
+    // {4,} evita mostrar só "A" quando a pretensão termina em marcador de
+    // gênero — "...PELO(A) ASSISTIDO(A)" — em vez do nome atual da
+    // pretensão (mesmo raciocínio do mirror em Python, app.py _formatar_pretensao).
+    const m = txt.match(/\(([^()]{4,})\)\s*$/);
     return m ? m[1].trim() : txt;
 }
 

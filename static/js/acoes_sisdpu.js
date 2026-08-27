@@ -151,11 +151,31 @@ function acoesSisdpuBlock(cfg) {
             // Antes de montar o editor — precisa do HTML salvo (se houver) pra passar
             // como valorInicial já na criação do Quill (mesmo padrão do "Ações no Eproc").
             if (!this.rascunhoCarregado) await this.carregarRascunho();
+            // "Gravar movimentação para o SISDPU" no resumo final de Ações no Eproc
+            // recarrega a página de propósito (ver acoes_eproc.js:gravarMovimentacaoSisdpuNoResumo)
+            // e usa sessionStorage (sobrevive ao reload, ao contrário de uma variável
+            // Alpine) pra avisar "abra e mostre o que acabou de ser gravado" — pedido
+            // do usuário 2026-08-20: sem isso, o usuário tinha que reabrir o console
+            // manualmente depois do refresh pra conferir/executar.
+            let vindoDoEproc = false;
+            try {
+                if (sessionStorage.getItem('painel_abrir_acoes_sisdpu') === this.pajNorm) {
+                    sessionStorage.removeItem('painel_abrir_acoes_sisdpu');
+                    vindoDoEproc = true;
+                    this.aberto = true;
+                }
+            } catch (e) {}
             // O Quill só é montado quando o painel está de fato ABERTO (senão o
             // container fica dentro de um ancestral display:none — o x-show="aberto"
             // do painel inteiro — e o Quill mede a largura errado ao montar). Ver
             // abrir() abaixo, que faz a mesma chamada quando o usuário expande depois.
             if (this.aberto) await this._montarEditorMov();
+            // Rola até o console já aberto — ele fica abaixo de várias outras seções
+            // na página do PAJ, o usuário não veria que abriu sem isso.
+            if (vindoDoEproc) {
+                await this.$nextTick();
+                this.$el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
             // "Ações no Eproc" (sibling na página do PAJ) dispara este evento depois
             // de um "Peticionar" real confirmado, perguntando ao usuário se quer
             // registrar o mesmo ato aqui — ver acoes_eproc.js:_prepararMovimentacaoSisdpu.

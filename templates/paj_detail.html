@@ -190,9 +190,40 @@
 {% set _partes_nome = (meta.assistido_caixa or '').split() %}
 {% set iniciais = ((_partes_nome[0][0] if _partes_nome else '') ~ (_partes_nome[-1][0] if _partes_nome|length > 1 else ''))|upper %}
 
+<!-- Banner "PAJ arquivado" — só aparece quando o status atual do PAJ no
+     SISDPU é "Arquivado" (det.status_paj, extraído do cabeçalho do PAJ, não
+     das movimentações). Mostra a última movimentação cuja fase começa com
+     "Arquivado" (seq + motivo + data — ver services.paj_service.
+     _ultima_fase_arquivamento) pra deixar visível o MOTIVO do arquivamento
+     sem precisar abrir a aba Movimentações. Botão "Desarquivar" lança a fase
+     "Paj desarquivado" no SISDPU (ver desarquivarPaj() em app.js) — pede
+     confirmação antes, por ser uma ação sensível sem "desfazer" trivial. -->
+{% if det.status_paj == 'Arquivado' %}
+<div class="alert alert-error rounded-b-none border-b-0 mb-0 flex flex-wrap items-center gap-2">
+    <svg class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M20.25 7.5l-.625 10.632a2.25 2.25 0 0 1-2.247 2.118H6.622a2.25 2.25 0 0 1-2.247-2.118L3.75 7.5M10 11.25h4M3.375 7.5h17.25c.621 0 1.125-.504 1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125Z"></path>
+    </svg>
+    <span class="font-bold">PAJ Arquivado</span>
+    {% if dados.arquivamento %}
+    {% set badge_style = 'border-radius:4px; background: rgba(255,255,255,0.18); color: inherit; border-color: rgba(255,255,255,0.35);' %}
+    <span class="badge badge-sm font-semibold" style="{{ badge_style }}">Mov {{ dados.arquivamento.seq }}</span>
+    <span class="badge badge-sm font-semibold" style="{{ badge_style }}">{{ dados.arquivamento.fase }}</span>
+    {% if dados.arquivamento.data %}
+    <span class="badge badge-sm font-semibold" style="{{ badge_style }}">{{ dados.arquivamento.data }}</span>
+    {% endif %}
+    {% endif %}
+    <button type="button" class="btn btn-sm gap-1.5 ml-auto"
+            style="background: rgba(255,255,255,0.15); border-color: rgba(255,255,255,0.4); color: inherit;"
+            onclick="desarquivarPaj('{{ paj_norm }}', '{{ dados.id_processo }}', '{{ meta.paj }}')"
+            title="Lança a fase &quot;Paj desarquivado&quot; no SISDPU (sem descrição, tramitação ou conclusão)">
+        Desarquivar
+    </button>
+</div>
+{% endif %}
+
 <!-- Card principal do PAJ: identidade do assistido em destaque, foto (quando o
      SISDPU tem uma cadastrada), PAJ/CPF, badges e acoes — tudo num so lugar. -->
-<div class="card bg-base-100 border border-base-300 shadow-sm mb-6"
+<div class="card bg-base-100 border border-base-300 shadow-sm mb-6 {% if det.status_paj == 'Arquivado' %}rounded-t-none{% endif %}"
      x-data="{ copied: null, watched: false, loading: false, async init() { await this.checkWatched(); }, async checkWatched() { try { const r = await fetch('/api/watchlist/check/' + encodeURIComponent('{{ paj_norm }}')); const data = await r.json(); this.watched = !!data.watched; } catch (e) { this.watched = false; } }, async toggleWatched() { this.loading = true; try { this.watched = await toggleWatchlist('{{ paj_norm }}', this.watched); } finally { this.loading = false; } } }"
      @init="init()">
     <div class="card-body p-5">
@@ -856,15 +887,39 @@
 
         <!-- Organizar Documentos para Ajuizamento (skill /SISDPU-OrganizarArquivos):
              habilitado só depois que uma petição inicial existir na pasta do PAJ.
-             Último botão da seção (etapa final do fluxo de IA). -->
-        <button type="button"
-                onclick="organizarAjuizamento('{{ paj_norm }}', this)"
-                class="btn btn-sm btn-outline gap-1.5"
-                {% if not dados.tem_peticao_inicial %}disabled{% endif %}
-                title="{% if dados.tem_peticao_inicial %}{% if dados.tem_pasta_ajuizamento %}Reorganiza{% else %}Organiza{% endif %} os documentos deste PAJ numa subpasta 'Ajuizamento', prontos para peticionamento (skill /SISDPU-OrganizarArquivos){% else %}Disponível depois que uma petição inicial for gerada para este PAJ{% endif %}">
-            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0v6a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-6m-19.5 0h19.5M5.25 9.75V6a2.25 2.25 0 0 1 2.25-2.25h4.5a2.25 2.25 0 0 1 1.591.659l1.409 1.409a2.25 2.25 0 0 0 1.591.659H18a2.25 2.25 0 0 1 2.25 2.25v3.75"></path></svg>
-            Organizar Documentos para Ajuizamento
-        </button>
+             Último botão da seção (etapa final do fluxo de IA).
+
+             Estado via organizarAjuizamentoApp() (mesmo padrão de elaborarApp()
+             acima) — x-init consulta o status no CARREGAMENTO da página e já
+             retoma o spinner/polling se uma organização estiver em andamento
+             (ex.: iniciada antes de um reload, ou em outra aba). Sem isso, um
+             F5 no meio da tarefa (que agora roda em background via agente,
+             não mais instantânea) escondia qualquer sinal de progresso —
+             pareceu pro Felipe que a pasta "sumia e reaparecia sozinha"
+             (PAJ 2026/029-01658, 2026-08-21) quando na verdade a organização
+             seguia rodando sem indicação nenhuma na tela. -->
+        <div class="flex items-center gap-2 flex-wrap"
+             x-data="organizarAjuizamentoApp('{{ paj_norm }}')" x-init="init()">
+            <template x-if="status !== 'running'">
+                <button type="button"
+                        @click="organizar()"
+                        class="btn btn-sm btn-outline gap-1.5"
+                        {% if not dados.tem_peticao_inicial %}disabled{% endif %}
+                        title="{% if dados.tem_peticao_inicial %}{% if dados.tem_pasta_ajuizamento %}Reorganiza{% else %}Organiza{% endif %} os documentos deste PAJ numa subpasta 'Ajuizamento', prontos para peticionamento (skill /SISDPU-OrganizarArquivos){% else %}Disponível depois que uma petição inicial for gerada para este PAJ{% endif %}">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0v6a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-6m-19.5 0h19.5M5.25 9.75V6a2.25 2.25 0 0 1 2.25-2.25h4.5a2.25 2.25 0 0 1 1.591.659l1.409 1.409a2.25 2.25 0 0 0 1.591.659H18a2.25 2.25 0 0 1 2.25 2.25v3.75"></path></svg>
+                    Organizar Documentos para Ajuizamento
+                </button>
+            </template>
+
+            <button class="btn btn-sm btn-warning" x-show="status === 'running'" disabled>
+                <span class="loading loading-spinner loading-xs"></span>
+                <span>Organizando documentos para ajuizamento… não edite/renomeie nada em "Ajuizamento" enquanto isso roda</span>
+            </button>
+
+            <div x-show="status === 'error' && error" class="alert alert-error text-xs py-2 px-3">
+                <span x-text="error"></span>
+            </div>
+        </div>
     </div>
 
     <!-- Console "Gerar Minuta" — oculto até clicar no botão acima. Sempre
@@ -1563,58 +1618,9 @@ async function baixarArquivosSat(pajNorm, btn) {
     }
 }
 
-// Botão "Organizar Documentos para Ajuizamento": chama a skill (script
-// determinístico) organizar_ajuizamento.py sobre a pasta deste PAJ. Se a pasta
-// Ajuizamento já existir, pede confirmação antes de sobrescrever (mesma regra
-// da própria skill). Faz polling do status até concluir e recarrega a página.
-async function organizarAjuizamento(pajNorm, btn) {
-    if (btn) btn.disabled = true;
-    try {
-        let resp = await fetch('/api/organizar-ajuizamento/' + pajNorm, { method: 'POST' });
-        let data = await resp.json().catch(() => ({}));
-        if (!data.ok && data.precisa_confirmar) {
-            const ok = confirm('A pasta "Ajuizamento" já existe para este PAJ. Reorganizar e sobrescrever?');
-            if (!ok) {
-                if (btn) btn.disabled = false;
-                return;
-            }
-            resp = await fetch('/api/organizar-ajuizamento/' + pajNorm, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ forcar: true }),
-            });
-            data = await resp.json().catch(() => ({}));
-        }
-        if (!data.ok) {
-            showToast('Erro: ' + (data.erro || 'falha ao organizar'), 'error');
-            if (btn) btn.disabled = false;
-            return;
-        }
-        showToast('Organizando documentos — isso pode levar alguns minutos (OCR)…', 'info');
-        _pollOrganizarAjuizamento(pajNorm, btn);
-    } catch (e) {
-        showToast('Falha de rede: ' + e, 'error');
-        if (btn) btn.disabled = false;
-    }
-}
-
-function _pollOrganizarAjuizamento(pajNorm, btn) {
-    const timer = setInterval(async () => {
-        try {
-            const r = await fetch('/api/organizar-ajuizamento/status/' + pajNorm);
-            const d = await r.json();
-            if (d.status === 'done') {
-                clearInterval(timer);
-                showToast('Documentos organizados em "Ajuizamento" — recarregando…', 'success');
-                setTimeout(() => window.location.reload(), 1200);
-            } else if (d.status === 'error') {
-                clearInterval(timer);
-                showToast('Erro ao organizar: ' + (d.error || 'ver log no servidor'), 'error');
-                if (btn) btn.disabled = false;
-            }
-        } catch (e) { /* falha transitória de rede — próximo tick tenta de novo */ }
-    }, 3000);
-}
+// Botão "Organizar Documentos para Ajuizamento": ver organizarAjuizamentoApp()
+// em app.js (mesmo padrão Alpine de elaborarApp() — status consultado já no
+// carregamento da página, pra sobreviver a reload/F5 no meio da tarefa).
 
 // "Baixar todos" (seção Anexos SISDPU): baixa todos os documentos referenciados
 // nas movimentações que ainda NÃO estão em Arquivos/. Reusa o download por IDs

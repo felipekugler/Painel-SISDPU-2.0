@@ -77,7 +77,7 @@ _configurar_logging()
 # Versao do painel — fonte unica. Usada pelo FastAPI (OpenAPI/docs) e tambem
 # exposta a todos os templates via Jinja globals (renderizada no rodape da
 # sidebar). Para incrementar: mude aqui e so aqui.
-APP_VERSION = "0.4.55"
+APP_VERSION = "0.4.56"
 
 app = FastAPI(title="oficio-geral-ui", version=APP_VERSION)
 app.state.jinja = jinja2.Environment(
@@ -118,7 +118,13 @@ def _formatar_area(valor: str | None) -> str:
 # CRU (ex.: dashboard filtra por `paj.pretensaopura` original) — só o RENDER
 # passa por este filtro. Mesma regra replicada em JS: static/js/app.js
 # `formatarPretensao()` (dashboard usa Alpine, não Jinja, pra exibir).
-_RE_PRETENSAO_PARENS = re.compile(r"\(([^()]+)\)\s*$")
+#
+# {4,} evita um falso positivo real: pretensões como "...RECEBIDO PELO(A)
+# ASSISTIDO(A)" também terminam com parênteses, só que como marcador de
+# gênero ("(A)") — sem o mínimo de tamanho, o regex mostrava só "A" no lugar
+# da pretensão inteira (bug real, PAJ-2026-029-01393). Nomes atuais de
+# pretensão sempre têm bem mais que 4 caracteres, então o corte é seguro.
+_RE_PRETENSAO_PARENS = re.compile(r"\(([^()]{4,})\)\s*$")
 
 
 def _formatar_pretensao(valor: str | None) -> str:

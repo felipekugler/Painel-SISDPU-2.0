@@ -232,6 +232,10 @@ def _montar_dados_calc(paj_norm: str, params: dict) -> tuple[dict, dict]:
         "data_ajuizamento": data_ajuizamento,
         "meses_vincendos": int(params.get("meses_vincendos", 12)),
         "piso_sm": piso_sm,
+        # Repassados só para a tabela de identificação do PDF decidir o rótulo
+        # (DER x DCB) e mostrar a data do marco sem o +1 dia do restabelecimento.
+        "marco": params.get("marco") or "DER",
+        "data_marco": params.get("data_marco") or params.get("der") or params.get("dcb") or data_inicio,
     }
     if params.get("data_fim_vincendos"):
         dados["data_fim_vincendos"] = params["data_fim_vincendos"]

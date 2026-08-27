@@ -1692,7 +1692,14 @@ async def buscar_paj_global(
                 }
             }
 
-            // ---------- Movimentacoes (tabela; mesma logica de antes) ----------
+            // ---------- Movimentacoes (tabela; MESMA estrutura de movimentacoes_paj —
+            // ver o comentario detalhado la: 0 Seq./1 Anexo/2 Data-Hora/3 Movimentacao/
+            // 4 Fases/5 Descricao/6 vazio-checkbox/7 Usuario. BUG HISTORICO (corrigido
+            // aqui): esta copia lia `cells[6]` (a coluna vazia/checkbox) em vez de
+            // `cells[7]` pro usuario — resultado: campo vazio na maioria das
+            // movimentacoes, e as vezes um numero (o valor cru daquela celula) quando
+            // o checkbox nao estava realmente vazio. Todo PAJ sincronizado via busca
+            // global (rodar_paj_via_busca_global/watchlist) tinha esse campo errado. ----------
             const movs = [];
             const movRows = document.querySelectorAll('table tbody tr');
             for (const tr of movRows) {
@@ -1704,7 +1711,7 @@ async def buscar_paj_global(
                     const movimentacao = (cells[3]?.textContent || '').trim();
                     const fases = (cells[4]?.textContent || '').trim();
                     const textoCompleto = cells[5]?.innerHTML || '';
-                    const usuario = (cells[6]?.textContent || '').trim();
+                    const usuario = (cells[7]?.textContent || '').trim();
 
                     if (seq && /^\\d{1,4}$/.test(seq)
                         && (textoCompleto.trim() || fases)) {
@@ -2016,6 +2023,45 @@ async def buscar_paj_global(
 
     _log.info("FIM(ok) %s", paj_texto)
     return dados
+
+
+async def abrir_detalhamento_paj(
+    numero: str, ano: str, unidade: str = "44", esperas_curtas: bool = False
+) -> dict:
+    """Abre o detalhamento de um PAJ, funcionando esteja ele NA caixa de
+    entrada ou nao — PADRAO a ser usado por qualquer funcionalidade que só
+    precisa chegar na tela de detalhamento (baixar documento, completar
+    anexos, etc.), sem depender de campos exclusivos da caixa (etiqueta,
+    em_caixa_atual).
+
+    Tenta primeiro `movimentacoes_paj` (caminho pela caixa de entrada — mais
+    rapido quando o PAJ esta la). Se ele nao encontrar o PAJ na caixa (PAJ
+    concluido, so' na watchlist, incluido manualmente, etc.), cai
+    automaticamente para `buscar_paj_global` (campo de pesquisa do SIS-DPU,
+    que funciona pra qualquer PAJ da unidade) — REAPROVEITANDO a sessao ja
+    aberta (`forcar_sessao=False`), sem custo de relogin.
+
+    O fato de um PAJ nao estar na caixa de entrada NUNCA deve, por si so,
+    impedir uma acao que so precisa abrir o detalhamento — esse e' o unico
+    motivo de existir esta funcao: centralizar o fallback num lugar so' em
+    vez de cada chamador reimplementar (ou esquecer de implementar, como
+    aconteceu antes em `rodar_baixar_documentos`/`rodar_anexos_desde_data`).
+
+    Retorna o mesmo formato de `movimentacoes_paj`/`buscar_paj_global`
+    (dict com os dados do detalhamento, ou `{"erro": "..."}` se ambos os
+    caminhos falharem)."""
+    det = await movimentacoes_paj(numero, ano, unidade, esperas_curtas=esperas_curtas)
+    if not det.get("erro"):
+        return det
+
+    _log.info(
+        "abrir_detalhamento_paj: PAJ %s/%s-%s nao encontrado na caixa (%s) — "
+        "tentando busca global...",
+        ano, unidade, numero, det.get("erro"),
+    )
+    return await buscar_paj_global(
+        numero, ano, unidade, forcar_sessao=False, esperas_curtas=esperas_curtas
+    )
 
 
 async def baixar_arquivo(url: str, destino) -> bool:

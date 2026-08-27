@@ -385,7 +385,7 @@
         <!-- Modal: revisão + execução real (2 etapas — preparar, depois peticionar) -->
         <div class="modal" :class="{'modal-open': modalExecutarAberto}" @click.self="fecharModalExecutar()">
             <div class="modal-box max-w-2xl md:max-w-4xl lg:max-w-6xl">
-                <h3 class="font-bold text-lg mb-1">Executar no e-proc</h3>
+                <h3 class="font-bold text-lg mb-1" x-text="execEtapa === 'confirmado' ? 'Executado no eproc' : 'Executar no e-proc'"></h3>
 
                 <div class="text-[11px] text-error mb-2" x-show="execErro" x-text="execErro"></div>
 
@@ -505,18 +505,17 @@
                             <div class="text-[11px] text-base-content/50" x-show="execResultado.dialogo" x-text="'Diálogo do e-proc: ' + execResultado.dialogo"></div>
                         </div>
 
-                        <!-- Gerenciamento de Processo (substabelecimento) — só aparece se foi oferecido -->
+                        <!-- Gerenciamento de Processo (substabelecimento) — executado
+                             AUTOMATICAMENTE (sem perguntar) quando já vinha configurado/
+                             ativado ao preparar a petição; só aparece se de fato rodou. -->
                         <div x-show="execGerenciamento" class="text-sm border-t border-base-300 pt-2">
-                            <template x-if="execGerenciamento && execGerenciamento.pulado">
-                                <div class="text-base-content/50">— Gerenciamento de processo: não executado (você optou por não fazer agora).</div>
-                            </template>
-                            <template x-if="execGerenciamento && !execGerenciamento.pulado && !execGerenciamento.ok">
+                            <template x-if="execGerenciamento && !execGerenciamento.ok">
                                 <div class="text-error">⚠ Falha ao gerenciar o processo: <span x-text="execGerenciamento.mensagem"></span></div>
                             </template>
-                            <template x-if="execGerenciamento && !execGerenciamento.pulado && execGerenciamento.ok && execGerenciamento.provavel_sucesso">
+                            <template x-if="execGerenciamento && execGerenciamento.ok && execGerenciamento.provavel_sucesso">
                                 <div class="text-success">✓ Gerenciamento executado com sucesso para <strong x-text="(execGerenciamento.partes_marcadas || []).length"></strong> parte(s)<span x-show="execGerenciamento.tipoLabel"> (<span x-text="execGerenciamento.tipoLabel"></span>)</span>.</div>
                             </template>
-                            <template x-if="execGerenciamento && !execGerenciamento.pulado && execGerenciamento.ok && !execGerenciamento.provavel_sucesso && (execGerenciamento.partes_com_erro || []).length">
+                            <template x-if="execGerenciamento && execGerenciamento.ok && !execGerenciamento.provavel_sucesso && (execGerenciamento.partes_com_erro || []).length">
                                 <div class="text-[11px] text-error font-medium border border-error/40 rounded p-2">
                                     ⚠ ATENÇÃO — nem todas as partes foram gerenciadas com sucesso. Confira e tome providências:
                                     <ul class="list-disc ml-5 mt-1">
@@ -524,20 +523,20 @@
                                     </ul>
                                 </div>
                             </template>
-                            <template x-if="execGerenciamento && !execGerenciamento.pulado && execGerenciamento.ok && !execGerenciamento.provavel_sucesso && !(execGerenciamento.partes_com_erro || []).length">
+                            <template x-if="execGerenciamento && execGerenciamento.ok && !execGerenciamento.provavel_sucesso && !(execGerenciamento.partes_com_erro || []).length">
                                 <div class="text-warning">⚠ O gerenciamento foi executado, mas o resultado não pôde ser confirmado automaticamente — confira a aba do e-proc.</div>
                             </template>
                         </div>
 
-                        <!-- Movimentação pendente no SISDPU — só aparece se foi oferecida -->
+                        <!-- Movimentação pendente no SISDPU — sob demanda: o botão
+                             "Gravar movimentação para o SISDPU" (modal-action) só some
+                             depois de gravada com sucesso; se falhar, o botão volta a
+                             aparecer pra tentar de novo. -->
                         <div x-show="execMovimentacaoSisdpu" class="text-sm border-t border-base-300 pt-2">
-                            <template x-if="execMovimentacaoSisdpu && execMovimentacaoSisdpu.pulado">
-                                <div class="text-base-content/50">— Movimentação no SISDPU: não registrada agora (você optou por não fazer).</div>
-                            </template>
-                            <template x-if="execMovimentacaoSisdpu && !execMovimentacaoSisdpu.pulado && !execMovimentacaoSisdpu.ok">
+                            <template x-if="execMovimentacaoSisdpu && !execMovimentacaoSisdpu.ok">
                                 <div class="text-error">⚠ Falha ao gravar a movimentação pendente no SISDPU: <span x-text="execMovimentacaoSisdpu.mensagem"></span></div>
                             </template>
-                            <template x-if="execMovimentacaoSisdpu && !execMovimentacaoSisdpu.pulado && execMovimentacaoSisdpu.ok">
+                            <template x-if="execMovimentacaoSisdpu && execMovimentacaoSisdpu.ok">
                                 <div class="text-success">✓ Movimentação gravada como PENDENTE no SISDPU (fase: <span x-text="execMovimentacaoSisdpu.fase"></span>) — ainda falta executá-la de fato em "Ações no SISDPU" ou em "Movimentações pendentes".</div>
                             </template>
                         </div>
@@ -548,6 +547,14 @@
                     <button type="button" class="btn btn-sm" @click="fecharModalExecutar()"
                             x-show="execEtapa !== 'preparando' && execEtapa !== 'confirmando'"
                             x-text="execEtapa === 'confirmado' ? 'Fechar' : 'Cancelar'"></button>
+                    <button type="button" class="btn btn-sm btn-outline btn-success gap-1"
+                            @click="gravarMovimentacaoSisdpuNoResumo()"
+                            x-show="execEtapa === 'confirmado' && execResultado.provavel_sucesso && !(execMovimentacaoSisdpu && execMovimentacaoSisdpu.ok)"
+                            :disabled="gravandoMovSisdpu"
+                            title="Grava a fase, descrição e anexos desta petição como movimentação PENDENTE no SISDPU — a execução de fato continua em 'Ações no SISDPU' ou 'Movimentações pendentes'.">
+                        <span x-show="gravandoMovSisdpu" class="loading loading-spinner loading-xs"></span>
+                        <span x-text="gravandoMovSisdpu ? 'Gravando…' : (execMovimentacaoSisdpu && !execMovimentacaoSisdpu.ok ? 'Tentar gravar de novo' : 'Gravar movimentação para o SISDPU')"></span>
+                    </button>
                     <button type="button" class="btn btn-sm btn-success" @click="prepararNoEproc()"
                             x-show="execEtapa === 'resumo'" :disabled="!execResumo">
                         Preparar no e-proc

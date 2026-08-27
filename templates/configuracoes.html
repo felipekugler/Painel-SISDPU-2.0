@@ -260,6 +260,62 @@
         </div>
     </div>
 
+    <!-- Conexão com o Claude CLI (motor do "Elaborar"/"Analisar"/peticionamento por IA) -->
+    <div class="card bg-base-200 shadow mt-6"
+         x-data="{
+             estado: null, testando: false,
+             async testar() {
+                 this.testando = true; this.estado = null;
+                 try {
+                     const r = await fetch('/api/claude/testar', { method: 'POST' });
+                     this.estado = await r.json().catch(() => ({ ok: false, estado: 'erro', detalhe: 'Resposta inválida.' }));
+                 } catch (e) {
+                     this.estado = { ok: false, estado: 'erro', detalhe: 'Falha ao chamar o painel: ' + e };
+                 } finally {
+                     this.testando = false;
+                     if (typeof window.atualizarSelos === 'function') window.atualizarSelos();
+                 }
+             },
+         }">
+        <div class="card-body gap-4">
+            <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
+                Conexão com o Claude
+            </h3>
+            <p class="text-sm text-base-content/60">
+                O Claude é o motor por trás de "Elaborar", "Analisar", peticionamento por IA e
+                outras ferramentas do painel. A <strong>autenticação é feita fora do painel</strong>:
+                abra um terminal, rode <code>claude</code> (ou <code>claude auth login</code>) e
+                faça login uma vez — o painel nunca pede ou grava sua senha/token aqui.
+            </p>
+
+            <div class="flex items-center gap-3 flex-wrap">
+                <span class="text-sm font-medium">Status:</span>
+                <template x-if="!estado">
+                    <span class="badge badge-ghost">Não testado nesta sessão</span>
+                </template>
+                <template x-if="estado && estado.ok">
+                    <span class="badge badge-success">✓ Conectado</span>
+                </template>
+                <template x-if="estado && !estado.ok && estado.estado === 'cota'">
+                    <span class="badge badge-warning">⚠ Cota atingida</span>
+                </template>
+                <template x-if="estado && !estado.ok && estado.estado !== 'cota'">
+                    <span class="badge badge-error">✗ Desconectado</span>
+                </template>
+
+                <button type="button" class="btn btn-sm btn-outline" @click="testar()" :disabled="testando">
+                    <span x-show="testando" class="loading loading-spinner loading-xs"></span>
+                    Testar conexão com o Claude
+                </button>
+            </div>
+
+            <template x-if="estado && estado.detalhe">
+                <p class="text-sm" :class="estado.ok ? 'text-success' : (estado.estado === 'cota' ? 'text-warning' : 'text-error')"
+                   x-text="estado.detalhe"></p>
+            </template>
+        </div>
+    </div>
+
     </div><!-- /cfg-panel acesso -->
 
     <!-- ===================== Aba: Arquivos SAT ===================== -->

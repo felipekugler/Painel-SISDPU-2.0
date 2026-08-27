@@ -1720,8 +1720,10 @@ async def rodar_anexos_desde_data(
     `data >= data_inicio`, sem aplicar o limite padrao de 30. Os 17 que ja
     estiverem no disco sao detectados pelo dedup e pulados.
 
-    Reuso do fluxo: login → caixa → abrir detalhamento do PAJ → baixar anexos.
-    Nao mexe em movs/metadata textuais; so completa o conjunto de anexos.
+    Reuso do fluxo: login → abrir detalhamento do PAJ (caixa OU busca global,
+    via `abrir_detalhamento_paj`) → baixar anexos. Funciona esteja o PAJ na
+    caixa de entrada ou nao. Nao mexe em movs/metadata textuais; so completa
+    o conjunto de anexos.
 
     Retorna dict com {paj_norm, total_no_sisdpu, baixados, ocr_ok, novos,
     overflow_residual}.
@@ -1737,40 +1739,23 @@ async def rodar_anexos_desde_data(
 
     log(f"[anexos-desde] alvo: {paj_identificador} (data_inicio={data_inicio.isoformat()})")
 
-    # 1) Localiza o PAJ na caixa atual (mesmo modus operandi de rodar_paj_unico)
-    log("[anexos-desde] abrindo caixa de entrada...")
-    try:
-        data = await sisdpu_client.caixa_de_entrada()
-    except Exception as e:
-        log(f"[FATAL] falha ao abrir caixa: {type(e).__name__}: {e}")
-        return {"erro": f"caixa: {e}"}
-
-    itens_raw = data.get("itens_tabela", []) or []
     alvo = _normalizar_paj(paj_identificador)
-    item_alvo = None
-    for raw in itens_raw:
-        it = sisdpu_client.parse_item_caixa(raw)
-        if it and _normalizar_paj(it.get("paj", "")) == alvo:
-            item_alvo = it
-            break
-
-    if not item_alvo:
-        log(f"[anexos-desde] PAJ {alvo} NÃO encontrado na caixa atual")
-        return {"erro": "paj_nao_na_caixa"}
-
-    # 2) Abre detalhamento (necessario antes de listar arquivos)
-    paj_txt = item_alvo.get("paj", "")
-    dec = _decompor_paj(paj_txt)
+    dec = _decompor_paj(paj_identificador)
     if not dec:
-        log(f"[anexos-desde] PAJ mal-formado: {paj_txt!r}")
+        log(f"[anexos-desde] PAJ mal-formado: {paj_identificador!r}")
         return {"erro": "paj_mal_formado"}
     ano, unidade, numero = dec
 
-    log(f"  [sisdpu] abrindo detalhamento {paj_txt}")
+    # Abre o detalhamento direto — funciona esteja o PAJ na caixa de entrada
+    # ou nao (concluido, watchlist, incluido manualmente...). Antes exigia
+    # localizar o item na listagem da caixa primeiro (`paj_nao_na_caixa`
+    # abortava aqui); agora usa o mesmo fallback padrao das demais
+    # funcionalidades (`abrir_detalhamento_paj`).
+    log(f"  [sisdpu] abrindo detalhamento {alvo}")
     try:
-        det = await sisdpu_client.movimentacoes_paj(numero, ano, unidade)
+        det = await sisdpu_client.abrir_detalhamento_paj(numero, ano, unidade)
     except Exception as e:
-        log(f"  [ERRO] movimentacoes_paj: {type(e).__name__}: {e}")
+        log(f"  [ERRO] abrir_detalhamento_paj: {type(e).__name__}: {e}")
         return {"erro": f"detalhamento: {e}"}
 
     if det.get("erro"):
@@ -1949,7 +1934,7 @@ async def rodar_baixar_documentos(
             ano, unidade, numero = dec
             log("[baixar-docs] há documento(s) sem link direto — abrindo detalhamento do PAJ...")
             try:
-                det = await sisdpu_client.movimentacoes_paj(numero, ano, unidade, esperas_curtas=True)
+                det = await sisdpu_client.abrir_detalhamento_paj(numero, ano, unidade, esperas_curtas=True)
                 if det.get("erro"):
                     log(f"[baixar-docs] aviso: falha ao abrir detalhamento ({det['erro']}) — esses documentos vão falhar")
             except Exception as e:

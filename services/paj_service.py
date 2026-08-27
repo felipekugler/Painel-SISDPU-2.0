@@ -107,6 +107,35 @@ def _e_pasta_paj(p: Path) -> bool:
     return p.is_dir() and p.name.startswith("PAJ-")
 
 
+def _texto_fase_limpo(fases: str) -> str:
+    """'· Arquivado. Desinteresse do assistido;' -> 'Arquivado. Desinteresse
+    do assistido' — remove o marcador/bullet do início e o ';' final que o
+    SISDPU usa nessa coluna (ver _ultima_fase_arquivamento)."""
+    t = (fases or "").strip()
+    t = re.sub(r"^\W+", "", t)  # bullet/marcador não-alfanumérico no início
+    return t.rstrip(";").strip()
+
+
+def _ultima_fase_arquivamento(movs: list[dict]) -> dict | None:
+    """Última movimentação (maior seq) cuja fase começa com "Arquivado" —
+    identifica motivo/seq/data do arquivamento pra exibir no banner "PAJ
+    arquivado" do cabeçalho (ver templates/paj_detail.html). None se nenhuma
+    movimentação tiver essa fase (PAJ nunca foi arquivado, ou foi
+    desarquivado depois — nesse caso a fase mais recente é "Paj
+    desarquivado", que não começa com "Arquivado" e não entra aqui)."""
+    candidatas = []
+    for m in movs or []:
+        texto = _texto_fase_limpo(m.get("fases", ""))
+        if texto.lower().startswith("arquivado"):
+            candidatas.append((int(m.get("seq", 0) or 0), texto, m))
+    if not candidatas:
+        return None
+    seq, texto, m = max(candidatas, key=lambda x: x[0])
+    data_original = (m.get("data_original") or "").strip()
+    data_curta = data_original.split(" ")[0] if data_original else (m.get("data") or "")
+    return {"seq": seq, "fase": texto, "data": data_curta}
+
+
 def _garantir_prompt_max(pasta: Path) -> None:
     """Gera PROMPT_MAX.md se faltar ou se estiver mais antigo que metadata.json."""
     try:
@@ -525,6 +554,7 @@ def ler_paj(paj_norm: str) -> dict | None:
     movs = det.get("movimentacoes", []) or []
     movs_sorted = sorted(movs, key=lambda m: int(m.get("seq", 0) or 0))
     max_seq_mov = max((int(m.get("seq", 0) or 0) for m in movs), default=0)
+    arquivamento = _ultima_fase_arquivamento(movs)
     # Data da ULTIMA movimentacao real (das movs estruturadas). NAO usar
     # metadata.data_mov_caixa: no fluxo atual ele cai no fallback = data de
     # abertura (o parser do sisdpu.txt nao acha movs), o que fazia a pagina do
@@ -624,6 +654,7 @@ def ler_paj(paj_norm: str) -> dict | None:
         "assistidos_pf": assistidos_pf,
         "movimentacoes": movs_sorted,
         "max_seq_mov": max_seq_mov,
+        "arquivamento": arquivamento,
         "ultima_mov_data": ultima_mov.get("data", ""),
         "n_anexos_sisdpu": len(anexos_sisdpu),
         "prazos_abertos": metadata.get("prazos_abertos", []),

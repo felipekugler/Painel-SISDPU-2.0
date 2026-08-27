@@ -1,11 +1,29 @@
 """Rota de Configurações do Painel — toggles de comportamento da sincronização."""
 
+import asyncio
+
 from fastapi import APIRouter, Body, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from services import cofre_service, config_painel_service
+from services import claude_status_service, cofre_service, config_painel_service
 
 router = APIRouter()
+
+
+# --- Conexão com o Claude CLI (selo da topbar + Configurações › Acesso) ---
+@router.get("/api/claude/status", response_class=JSONResponse)
+async def claude_status():
+    """Status LEVE (sem subprocess) — só o suficiente pro polling do selo."""
+    return {"ok": True, **claude_status_service.disponivel()}
+
+
+@router.post("/api/claude/testar", response_class=JSONResponse)
+async def claude_testar():
+    """Chamada real e mínima ao Claude CLI, pra confirmar a conexão de fato.
+    Roda em thread separada — é um subprocess.run bloqueante de até 60s, não
+    pode rodar direto no event loop do FastAPI."""
+    res = await asyncio.to_thread(claude_status_service.testar_conexao)
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
 
 
 @router.get("/configuracoes", response_class=HTMLResponse)

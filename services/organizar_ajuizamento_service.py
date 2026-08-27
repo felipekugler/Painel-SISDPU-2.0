@@ -179,7 +179,30 @@ def _montar_instrucao_organizar(paj_norm: str, forcar: bool) -> str:
         "recente e sinalize essa suposição no resumo final.\n\n"
         f"2. Rode sobre `{pasta_arquivos}\\` (é lá que estão os documentos de "
         "origem baixados do SISDPU — a skill, por padrão, varre a raiz da "
-        "pasta que você indicar).\n\n"
+        "pasta que você indicar). **Monte a pasta Ajuizamento inteira num "
+        "diretório TEMPORÁRIO fora da árvore do PAJ** (ex.: `tempfile."
+        "mkdtemp()`) — copie/extraia/comprima/verifique tudo lá — e só ao "
+        "final MOVA a pasta pronta e completa para o destino definitivo "
+        f"(`{pasta_destino}\\`) numa única operação. Isso evita reescrever "
+        "arquivos numa pasta que o Defensor pode estar consultando/com "
+        "preview aberto ao mesmo tempo (já causou `PermissionError` "
+        "persistente e específico de um único arquivo — organizando o PAJ "
+        "2026/029-01658, 2026-08-21 — porque o Defensor tinha aquele PDF "
+        "aberto para conferência manual enquanto a compressão tentava "
+        "sobrescrevê-lo). Se AINDA ASSIM dependido de retry, use janelas "
+        "generosas (múltiplos segundos, não milissegundos) antes de desistir "
+        "de um arquivo específico. **Se precisar reescrever o script no meio "
+        "da tarefa para contornar um erro, releia a classificação já "
+        "decidida (ou o que já copiou) antes de reescrever, e CONFIRME que "
+        "todo arquivo já classificado (inclusive os VERIFICAR) está presente "
+        "no script novo** — no episódio do PAJ 2026/029-01658 acima, ao "
+        "reescrever o script para montar em diretório temporário, 3 "
+        "documentos VERIFICAR já corretamente identificados na primeira "
+        "passada ficaram de fora da reescrita, e o resumo final relatou "
+        "27 arquivos entregues quando só 24 existiam de fato — só foi "
+        "percebido porque o Defensor pediu para conferir manualmente depois. "
+        "O passo 7 abaixo (contagem de arquivos) existe para pegar "
+        "exatamente esse tipo de erro antes de reportar sucesso.\n\n"
         "3. Extraia os 3 formulários obrigatórios com "
         "`extrair_documentos_obrigatorios()`. **Se ela não achar Declaração "
         "de Insuficiência de Recursos e/ou Termo de Renúncia por busca de "
@@ -216,7 +239,14 @@ def _montar_instrucao_organizar(paj_norm: str, forcar: bool) -> str:
         "qualquer grupo, isso é ERRO BLOQUEANTE, não um aviso — investigue a "
         "causa (provavelmente uma extração que reaproveitou um caminho ou "
         "copiou a fonte errada) e corrija antes de finalizar. Nunca entregue "
-        "a pasta com duplicatas.\n\n"
+        "a pasta com duplicatas. **Além disso, antes de escrever o resumo "
+        "final, faça uma contagem simples**: liste os arquivos REALMENTE "
+        "presentes na pasta final no disco (`os.listdir()`) e confira, um a "
+        "um, contra a lista de categorização que você decidiu — todo "
+        "documento que você classificou (numerado ou VERIFICAR) precisa "
+        "estar fisicamente lá. Só escreva o resumo DEPOIS dessa conferência "
+        "— o resumo deve descrever o que está no disco, nunca o que você "
+        "planejou ou lembra ter copiado.\n\n"
         "8. Se o valor da causa for conhecido (leia "
         f"`{pasta_pecas_ia}\\valor_causa_result.json` se existir, ou o texto "
         "da petição), rode `checar_valor_causa_jef()` com a competência de "
@@ -273,6 +303,23 @@ def _persistir(paj_norm: str, session: ChatSession) -> None:
             status=session.status,
             resumo=historico.primeira_linha_util(session.summary),
         )
+
+    # Lembrete vermelho ao concluir com sucesso — pedido do Felipe (PAJ
+    # 2026/029-01658, 2026-08-21): a organização agora roda em background
+    # (minutos, não mais instantânea) e sem sinal nenhum na tela dava a
+    # impressão de que a pasta "Ajuizamento" mudava sozinha enquanto ele
+    # mexia nela manualmente ao mesmo tempo. O lembrete é lido do disco a
+    # cada carregamento da página (ver lembretes_service/lembretesApp), então
+    # fica visível mesmo que ninguém tenha acompanhado o polling em tempo
+    # real — diferente do toast, que some se a página não estiver aberta.
+    # Best-effort: nunca deve derrubar a persistência do resultado principal.
+    if session.status == "done":
+        with contextlib.suppress(Exception):
+            from services import lembretes_service
+
+            lembretes_service.criar_lembrete(
+                paj_norm, "Documentos organizados para ajuizamento", "vermelho"
+            )
 
 
 def _aguardar_conclusao(session: ChatSession, timeout: int = TIMEOUT_TOTAL) -> None:

@@ -1059,6 +1059,19 @@
                         {{ _recon_svg }}
                     </button>
                 </span>
+
+                <!-- Claude CLI: motor de todo o "Elaborar"/"Analisar"/peticionamento por IA.
+                     Diferente dos demais (sessão de navegador), aqui não há janela pra abrir —
+                     reconectar dispara uma chamada mínima real ao Claude pra confirmar a sessão
+                     OAuth (ver services/claude_status_service.py). -->
+                <span class="sys-selo sys-off" id="selo-claude" data-sys="claude"
+                      title="Verificando conexão com o Claude…">
+                    <span class="dot"></span><span class="txt">Claude</span>
+                    <button type="button" class="sys-recon" onclick="reconectarSistema('claude', event)"
+                            title="Testar a conexão com o Claude CLI (chamada mínima real).">
+                        {{ _recon_svg }}
+                    </button>
+                </span>
             </div>
 
             <button type="button" id="btn-encerrar-painel" onclick="encerrarPainel()"
@@ -1359,12 +1372,33 @@
             }
         }
 
+        // Selo do Claude CLI — status LEVE (sem subprocess, ver claude_status_service.
+        // disponivel()): `sessao_valida` é uma heurística local (refresh token OAuth
+        // já vencido?) — null quando não dá pra saber (ex.: auth por API key), e
+        // nesse caso fica "on" por padrão (não afirma um problema que não pode
+        // confirmar). Só o clique em reconectar (chamada real) confirma de verdade.
+        async function _atualizarSeloClaude() {
+            try {
+                var st = await (await fetch('/api/claude/status')).json();
+                if (!st || !st.ok) return;
+                if (!st.instalado) {
+                    _setSelo('claude', 'off', 'Claude', 'Claude CLI não detectado nesta máquina. Clique para testar.');
+                } else if (st.sessao_valida === false) {
+                    _setSelo('claude', 'warn', 'Claude · sessão?',
+                              'A sessão do Claude pode ter expirado. Clique para testar/reconectar.');
+                } else {
+                    _setSelo('claude', 'on', 'Claude', 'Claude instalado. Clique para testar a conexão.');
+                }
+            } catch (e) {}
+        }
+
         window.atualizarSelos = async function() {
             await _lerCofre();
             _atualizarSeloSisdpu();
             _atualizarSeloSessao('eproc', '/api/prazos/sessao-leve', 'e-proc');
             _atualizarSeloSessao('sat', '/api/sat/sessao-leve', 'SAT');
             _atualizarMcpPill('eproc', '/api/eproc-mcp/status?instancia=1');
+            _atualizarSeloClaude();
         };
 
         // Garante o cofre desbloqueado: se está configurado e trancado, abre o
@@ -1400,6 +1434,14 @@
                     if (typeof showToast === 'function')
                         showToast(d3.logado ? 'SAT conectado.' : 'Janela do SAT aberta — faça o login.',
                                   d3.logado ? 'success' : 'info');
+                } else if (sys === 'claude') {
+                    // Chamada real (subprocess de até 60s no backend) — não é só um
+                    // "abrir janela": confirma de fato a conexão OAuth com o Claude.
+                    var r4 = await fetch('/api/claude/testar', { method: 'POST' });
+                    var d4 = await r4.json().catch(function(){ return {}; });
+                    if (typeof showToast === 'function')
+                        showToast(d4.ok ? 'Claude conectado.' : (d4.detalhe || 'Claude indisponível.'),
+                                  d4.ok ? 'success' : (d4.estado === 'cota' ? 'warning' : 'error'));
                 }
             } catch (e) {
                 if (typeof showToast === 'function') showToast('Erro: ' + e, 'error');

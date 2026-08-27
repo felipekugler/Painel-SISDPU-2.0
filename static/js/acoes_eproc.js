@@ -91,12 +91,14 @@ function acoesEprocBlock(cfg) {
 
         // --- Gerenciamento do processo (substabelecimento) — SEMPRE a última coisa
         // feita: só configurado aqui (persistido no rascunho, ver gravarRascunho()/
-        // carregarRascunho()); a pergunta Sim/Não de execução real acontece DEPOIS
-        // do peticionamento confirmado (ver confirmarPeticionamentoReal()), mesmo
-        // idioma já usado ali pra "Deseja movimentar o SISDPU agora?". Tipos são
-        // estáticos (mesma lista de `eproc_client.TIPOS_GERENCIAMENTO`); procurador
-        // destino vem das preferências (a lista institucional completa tem
-        // centenas de nomes — curadoria de favoritos em Configurações › e-proc).
+        // carregarRascunho()); a execução real acontece AUTOMATICAMENTE, sem
+        // perguntar de novo, logo depois do peticionamento confirmado (ver
+        // confirmarPeticionamentoReal()) — a decisão de gerenciar já foi tomada
+        // aqui, ao ativar/configurar, então confirmar outra vez seria redundante
+        // (pedido do usuário 2026-08-19). Tipos são estáticos (mesma lista de
+        // `eproc_client.TIPOS_GERENCIAMENTO`); procurador destino vem das
+        // preferências (a lista institucional completa tem centenas de nomes —
+        // curadoria de favoritos em Configurações › e-proc).
         gerenciarAtivo: false, gerenciarTipo: 'S', gerenciarProcuradorValor: '', gerenciarProcuradorRotulo: '',
         tiposGerenciamento: [
             { valor: 'S', rotulo: 'Substituir procurador' },
@@ -702,23 +704,26 @@ function acoesEprocBlock(cfg) {
         // enviado, mesmo se a aba for recarregada entre os dois cliques).
         modalExecutarAberto: false, execEtapa: 'resumo', execResumo: null,
         execResultado: null, execErro: '',
-        // Resultado do Gerenciamento de Processo e da gravação da movimentação
-        // pendente no SISDPU — capturados aqui (em vez de só um alert() de
-        // passagem) pra aparecerem TODOS juntos no resumo final da etapa
-        // "confirmado", que só é exibida depois de as duas ações terem
-        // rodado (pedido do usuário 2026-08-19: a aba "Executar no e-proc"
-        // deve mostrar por último, já com tudo concluído, o que foi feito e
-        // se houve sucesso ou falha). null = nem chegou a ser oferecido
-        // (evento sem gerenciamento configurado / peticionamento sem sucesso);
-        // {pulado:true} = oferecido, mas o usuário respondeu Não.
-        execGerenciamento: null, execMovimentacaoSisdpu: null,
+        // Resultado do Gerenciamento de Processo (executado automaticamente, sem
+        // perguntar, quando já veio configurado/ativado ao preparar a petição) e da
+        // gravação da movimentação pendente no SISDPU (agora sob demanda, via botão
+        // "Gravar movimentação para o SISDPU" no próprio resumo final, em vez de um
+        // confirm() no meio do fluxo) — capturados aqui (em vez de só um alert() de
+        // passagem) pra aparecerem no resumo final da etapa "confirmado" ("Executado
+        // no eproc"), com sucesso/falha de cada ação (pedido do usuário 2026-08-19:
+        // menos confirmações, mais rápido). null = ainda não aconteceu (gerenciamento
+        // não configurado / peticionamento sem sucesso / botão de movimentação ainda
+        // não clicado).
+        execGerenciamento: null, execMovimentacaoSisdpu: null, gravandoMovSisdpu: false,
+        _refEventoAtual: '',
         async abrirModalExecutar() {
             if (!this.rascunhoSalvoEm) {
                 alert('Grave o rascunho ("Gravar") antes de executar — a execução real parte do que estiver salvo em disco.');
                 return;
             }
             this.execEtapa = 'resumo'; this.execResumo = null; this.execResultado = null; this.execErro = '';
-            this.execGerenciamento = null; this.execMovimentacaoSisdpu = null;
+            this.execGerenciamento = null; this.execMovimentacaoSisdpu = null; this.gravandoMovSisdpu = false;
+            this._refEventoAtual = '';
             this.modalExecutarAberto = true;
             try {
                 const j = await (await fetch('/api/acoes-eproc/executar/' + encodeURIComponent(this.pajNorm) + '/resumo')).json();
@@ -770,52 +775,57 @@ function acoesEprocBlock(cfg) {
                 this.execResultado = { ...this.execResultado, ...j };
                 if (j.provavel_sucesso) {
                     this.rascunhoSalvoEm = ''; // rascunho foi descartado no servidor
-                    const refEvento = j.numero_evento ? ('Evento ' + j.numero_evento) : '';
-                    // TODAS as ações no e-proc primeiro (peticionar, depois gerenciar/
-                    // substabelecer) — só ao final, com o processo já no estado
-                    // definitivo, é que perguntamos sobre registrar no SISDPU. Ordem
-                    // importa: gravar a movimentação do SISDPU antes de terminar as
-                    // ações no e-proc descreveria um ato ainda incompleto (pedido do
-                    // usuário 2026-08-17).
+                    // Guardado pro botão "Gravar movimentação para o SISDPU" do resumo
+                    // final poder usar sob demanda (ver gravarMovimentacaoSisdpuNoResumo).
+                    this._refEventoAtual = j.numero_evento ? ('Evento ' + j.numero_evento) : '';
+                    // Gerenciamento de Processo: executa AUTOMATICAMENTE se já estava
+                    // configurado/ativado ao preparar a petição ("Gerenciar processo
+                    // depois de peticionar" + tipo/procurador, gravados no rascunho) —
+                    // SEM perguntar de novo aqui. Essa decisão já foi tomada explicitamente
+                    // pelo usuário antes de executar; confirmar outra vez é redundante e só
+                    // atrasa o fluxo (pedido do usuário 2026-08-19: menos confirmações).
                     const ger = (this.execResumo && this.execResumo.gerenciamento) || {};
                     if (ger.ativo) {
                         const tipoLabel = (this.tiposGerenciamento.find(t => t.valor === ger.tipo) || {}).rotulo || ger.tipo;
-                        const procTexto = ger.tipo === 'D' ? '' : ('\nProcurador destino: ' + (ger.procurador_rotulo || ger.procurador_valor || '(não selecionado)'));
-                        if (confirm('Petição protocolada com sucesso no e-proc'
-                                + (refEvento ? ' (' + refEvento + ').' : '.')
-                                + '\n\nGerenciar (substabelecer) este processo agora?\n\n'
-                                + 'Processo: ' + this.execResultado.processo
-                                + '\nTipo: ' + tipoLabel + procTexto
-                                + '\n\nEsta ação é IRREVERSÍVEL no e-proc.')) {
-                            this.execGerenciamento = { ...await this._executarGerenciamento(ger), tipoLabel };
-                        } else {
-                            this.execGerenciamento = { pulado: true };
-                        }
-                    }
-                    // Pergunta se quer registrar o mesmo ato no SISDPU — nunca automático
-                    // (movimentar cria um registro novo a cada execução, então só dispara
-                    // com confirmação explícita do usuário, mesma cautela do próprio módulo
-                    // Ações no SISDPU ao executar). Sempre por ÚLTIMO — ver comentário acima.
-                    if (confirm('Todas as ações no e-proc foram concluídas.'
-                            + '\n\nDeseja movimentar o SISDPU agora para registrar este ato?')) {
-                        this.execMovimentacaoSisdpu = await this._prepararMovimentacaoSisdpu(refEvento);
-                    } else {
-                        this.execMovimentacaoSisdpu = { pulado: true };
+                        this.execGerenciamento = { ...await this._executarGerenciamento(ger), tipoLabel };
                     }
                 }
-                // Etapa final do modal só agora — depois de peticionar, gerenciar (se
-                // configurado) e gravar a movimentação pendente no SISDPU (se aceito)
-                // já terem rodado, pra mostrar de uma vez só o que foi feito e se
-                // houve sucesso ou falha em cada ação (pedido do usuário 2026-08-19;
-                // antes esta etapa aparecia logo após peticionar, e as ações
-                // seguintes rodavam "por trás" dela via confirm()/alert() do navegador).
-                // A página só é atualizada (badges, prazos, movimentações) quando o
-                // usuário FECHA este modal — ver fecharModalExecutar() — não mais num
-                // timer automático, que apagava o resumo antes de dar tempo de ler.
+                // Etapa final do modal ("Executado no eproc") — mostra o que foi feito e
+                // se houve sucesso/falha em cada ação já executada até aqui (peticionamento
+                // + gerenciamento automático, se configurado). A movimentação no SISDPU
+                // NÃO é mais perguntada/gravada aqui — o próprio resumo final tem um botão
+                // "Gravar movimentação para o SISDPU" pra isso, sob demanda (pedido do
+                // usuário 2026-08-19). A página só é atualizada (badges, prazos,
+                // movimentações) quando o usuário FECHA este modal — ver fecharModalExecutar().
                 this.execEtapa = 'confirmado';
             } catch (e) {
                 this.execErro = 'Erro de rede: ' + e;
                 this.execEtapa = 'preparado';
+            }
+        },
+        // Botão "Gravar movimentação para o SISDPU" do resumo final ("Executado no
+        // eproc") — sob demanda, chamado só quando o usuário clica (nada de
+        // confirm() no meio do fluxo). Permite tentar de novo se a primeira
+        // gravação falhar (o botão reaparece nesse caso — ver template).
+        //
+        // Em caso de SUCESSO, fecha este modal e recarrega a página inteira já
+        // avisando (via sessionStorage — sobrevive ao reload) o console "Ações no
+        // SISDPU" pra se abrir sozinho com o que acabou de ser gravado, pronto pra
+        // conferir e executar — pedido do usuário 2026-08-20: antes o usuário tinha
+        // que reabrir aquele console manualmente depois do refresh. Em caso de
+        // FALHA, o modal continua aberto mostrando o erro (ver template) — só o
+        // sucesso encerra o fluxo.
+        async gravarMovimentacaoSisdpuNoResumo() {
+            this.gravandoMovSisdpu = true;
+            try {
+                this.execMovimentacaoSisdpu = await this._prepararMovimentacaoSisdpu(this._refEventoAtual || '');
+            } finally {
+                this.gravandoMovSisdpu = false;
+            }
+            if (this.execMovimentacaoSisdpu && this.execMovimentacaoSisdpu.ok) {
+                try { sessionStorage.setItem('painel_abrir_acoes_sisdpu', this.pajNorm); } catch (e) {}
+                this.modalExecutarAberto = false;
+                window.location.reload();
             }
         },
         // Monta a descrição da movimentação SÓ com dados OBJETIVOS do peticionamento

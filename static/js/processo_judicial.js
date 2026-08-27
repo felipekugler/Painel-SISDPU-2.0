@@ -166,8 +166,18 @@ function processoJudicialBlock(cfg) {
             if (!lista || !lista.length) return [];
 
             const r = this.resultados[idx];
-            const triagem = (r ? (r.intimacoes || []) : [])
-                .filter((it) => it.ativa && !this._ehTerceiroNuncaDpu(it));
+            // TODAS as intimações da triagem (ativas E já fechadas), exceto papéis
+            // que a DPU nunca representa. Precisamos das FECHADAS também: um prazo
+            // do Painel do Procurador cujo correspondente na triagem já fechou (ex.:
+            // recurso protocolado, ciência dada) precisa DESAPARECER daqui — não
+            // continuar aparecendo com dados crus/desatualizados do cache, e pior,
+            // podendo casar por engano com a intimação AINDA aberta de outra parte
+            // (ex. o INSS) só por ela ter sobrado como único candidato quando a
+            // nossa já não entrava na busca por estar fechada. Bug real confirmado
+            // 2026-08-22 (PAJ 2026/029-02440: Recurso Inominado já protocolado
+            // fechando a intimação do assistido; a tela continuava "pendente"
+            // mostrando a intimação — ainda aberta — do INSS no lugar).
+            const todas = (r ? (r.intimacoes || []) : []).filter((it) => !this._ehTerceiroNuncaDpu(it));
             const usadas = new Set();
             return lista.map((p) => {
                 const diaP = this._soData(p.data_envio);
@@ -175,9 +185,11 @@ function processoJudicialBlock(cfg) {
                 // Junta TODOS os candidatos do mesmo dia+dias (pode haver mais de um —
                 // ex. sentença intima autor E réu no mesmo evento/dia) e prefere o
                 // polo ativo (ver _PAPEL_POLO_ATIVO) — nunca escolhe o primeiro que
-                // aparecer na triagem (podia ser o do INSS).
+                // aparecer na triagem (podia ser o do INSS). A preferência de polo
+                // decide QUAL candidato é "o nosso" independente de estar aberto ou
+                // fechado — só depois de achar o nosso é que olhamos se fechou.
                 const candidatos = [];
-                triagem.forEach((it, i) => {
+                todas.forEach((it, i) => {
                     if (usadas.has(i)) return;
                     // data_hora = expedição da PRÓPRIA intimação (o que casa com o
                     // "data_envio" do Painel do Procurador) — NÃO enviado_em (sub-dado
@@ -191,13 +203,33 @@ function processoJudicialBlock(cfg) {
                 });
                 if (candidatos.length) {
                     candidatos.sort((a, b) => {
-                        const prioA = this._PAPEL_POLO_ATIVO.includes(this._papelDe(triagem[a])) ? 0 : 1;
-                        const prioB = this._PAPEL_POLO_ATIVO.includes(this._papelDe(triagem[b])) ? 0 : 1;
-                        return prioA - prioB;
+                        const poloA = this._PAPEL_POLO_ATIVO.includes(this._papelDe(todas[a])) ? 0 : 1;
+                        const poloB = this._PAPEL_POLO_ATIVO.includes(this._papelDe(todas[b])) ? 0 : 1;
+                        if (poloA !== poloB) return poloA - poloB;
+                        // Dentro do MESMO polo, prefere a intimação ainda ATIVA — evita
+                        // pegar por engano uma intimação ANTIGA/já fechada da mesma parte
+                        // que, por coincidência, tem o mesmo dia+prazo de uma outra
+                        // intimação (de ato diferente) ainda em curso. Sem isso, a busca
+                        // ampliada pra achar prazo fechado (ver comentário acima) podia
+                        // escolher a fechada e ESCONDER um prazo genuinamente aberto — bug
+                        // real confirmado 2026-08-24 (PAJ 2026/029-01909: JADIRO tinha 2
+                        // intimações de 5 dias no mesmo dia — uma antiga já encerrada por
+                        // petição, outra da decisão de tutela, ainda aberta — e o
+                        // desempate só por polo escolhia a fechada).
+                        const ativaA = todas[a].ativa ? 0 : 1;
+                        const ativaB = todas[b].ativa ? 0 : 1;
+                        return ativaA - ativaB;
                     });
                     const iMatch = candidatos[0];
                     usadas.add(iMatch);
-                    return triagem[iMatch]; // item da triagem: já tem evento_referenciado/docs
+                    const it = todas[iMatch];
+                    // Achou o correspondente exato (ao vivo) deste prazo do Painel —
+                    // se ele já fechou no e-proc, o prazo NÃO está mais pendente,
+                    // mesmo que o cache do Painel (desatualizado até a próxima
+                    // sincronização) ainda o liste; null aqui = removido do resultado
+                    // (ver .filter(Boolean) no fim). Se ainda ativo, mostra normal
+                    // (já tem evento_referenciado/docs).
+                    return it.ativa ? it : null;
                 }
                 // Sem correspondência na triagem (fora da janela de eventos, p.ex.)
                 // — mostra só com os dados do próprio Painel, sem link de documento.
@@ -215,7 +247,7 @@ function processoJudicialBlock(cfg) {
                     evento_referenciado: null,
                     dias_restantes: null,
                 };
-            });
+            }).filter(Boolean);
         },
         totalIntimacoesAtivas() {
             return this.processos.reduce((acc, _, idx) => acc + this.intimacoesAtivas(idx).length, 0);
