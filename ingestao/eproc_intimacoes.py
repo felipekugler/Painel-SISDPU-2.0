@@ -623,7 +623,19 @@ def _int(s: str) -> int:
 async def ler_todos() -> dict:
     """Lê TODAS as categorias de Citações/Intimações (JFPR) com quantidade > 0.
 
-    Retorna {ok, resumo:[{chave,label,quantidade}], secoes:{chave:[casos]}}."""
+    Retorna {ok, resumo:[{chave,label,quantidade}], secoes:{chave:[casos]}} —
+    NUNCA lança: qualquer exceção inesperada (ex.: a aba foi fechada por outra
+    operação concorrente no meio da leitura — `playwright.TargetClosedError`,
+    bug real relatado 2026-09-18) vira `{"ok": False, "erro": "..."}` com a
+    mensagem real, em vez de subir crua e virar um 500 sem corpo (o front-end
+    então mostrava "erro desconhecido", sem nada acionável)."""
+    try:
+        return await _ler_todos_corpo()
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:300]}
+
+
+async def _ler_todos_corpo() -> dict:
     from ingestao import eproc_client as ec
 
     browser, page = await ec._connect()
@@ -684,7 +696,23 @@ async def ler_todos() -> dict:
             resumo.append({"chave": cat["chave"], "label": cat["label"], "quantidade": qtd})
 
         # 2) lê cada categoria com quantidade > 0
+        #
+        # Defensivo (bug real 2026-08-27): o resumo pode reportar quantidade >
+        # 0 numa categoria e a extração de detalhe (`_ler_categoria`) ainda
+        # assim vir vazia — falha de clique/navegação/timing, não a categoria
+        # tendo esvaziado de verdade. Sem tratamento, isso "some" a categoria
+        # inteira do `secoes` desta rodada, e `salvar()` (merge por processo)
+        # interpreta CADA processo que estava nela como tendo "saído da
+        # caixa" — apagando prazos/urgências reais da tela por causa de uma
+        # falha de sincronização, não de um esvaziamento legítimo. Mesmo
+        # princípio já aplicado em `ingestao/sincronizador.py` (sync nunca
+        # apaga dado por falha parcial de extração): quando isso acontece,
+        # preserva os casos da sincronização ANTERIOR só para essa categoria
+        # específica, em vez de tratá-la como vazia.
+        anterior = carregar()
+        secoes_anteriores = anterior.get("secoes") or {}
         secoes: dict[str, list] = {}
+        categorias_com_falha: list[str] = []
         for cat in CATEGORIAS:
             q = next((x["quantidade"] for x in resumo if x["chave"] == cat["chave"]), 0)
             if q <= 0:
@@ -692,11 +720,105 @@ async def ler_todos() -> dict:
             casos = await _ler_categoria(ctx, painel, cat)
             if casos:
                 secoes[cat["chave"]] = casos
+            else:
+                anteriores_desta_cat = secoes_anteriores.get(cat["chave"]) or []
+                if anteriores_desta_cat:
+                    secoes[cat["chave"]] = anteriores_desta_cat
+                    categorias_com_falha.append(cat["chave"])
             # volta ao painel para o próximo clique ficar disponível
             with contextlib.suppress(Exception):
                 await painel.bring_to_front()
 
-        return {"ok": True, "resumo": resumo, "secoes": secoes}
+        resultado = {"ok": True, "resumo": resumo, "secoes": secoes}
+        if categorias_com_falha:
+            resultado["aviso"] = (
+                "Falha ao carregar o detalhe de: " + ", ".join(categorias_com_falha) +
+                " (o resumo indicava casos, mas a extração veio vazia) — mantidos os dados "
+                "da sincronização anterior para essas categorias. Tente sincronizar de novo "
+                "em instantes."
+            )
+        # Fecha as abas de listagem abertas durante o loop de categorias (o
+        # link tem target="painel_remotoPR" — às vezes o Chromium abre de
+        # fato uma aba nova em vez de navegar `painel` mesmo, ver comentário
+        # em `_ler_categoria`) — mantém só `painel` na janela do usuário.
+        with contextlib.suppress(Exception):
+            await ec._fechar_abas_extras(ctx, painel)
+        return resultado
     finally:
         with contextlib.suppress(Exception):
             await browser.close()
+
+
+# --- Sincronização completa: sessão + login automático + leitura + persistência,
+# serializada (single-flight) ------------------------------------------------
+#
+# `ler_todos()` (e o login automático de `eproc_client.abrir()`, chamado quando a
+# sessão está inativa) operam sobre a MESMA aba única do Chromium controlado por
+# CDP. Sem nenhuma exclusão mútua, um clique duplicado em "Sincronizar
+# intimações" (ou uma chamada concorrente qualquer — reload da página no meio do
+# caminho, por exemplo) disparava uma 2ª tentativa em paralelo, disputando a
+# mesma aba: uma preenchia/enviava o formulário de login enquanto a outra
+# navegava a aba de novo pro meio do caminho (`page.goto()`), reiniciando o
+# fluxo OAuth do zero (o e-proc gera um `state`/`nonce` novo a cada navegação).
+# O sintoma visível era a janela ficando presa tentando logar indefinidamente,
+# mesmo com credenciais corretas no cofre — nunca chegava a concluir. Bug real
+# relatado 2026-09-16 (4 cliques seguidos em "Sincronizar intimações").
+#
+# A correção: `sincronizar()` é "single-flight" — uma chamada concorrente feita
+# enquanto outra já está em andamento NUNCA inicia uma nova tentativa; ela só
+# espera a que já está rodando terminar e reaproveita o MESMO resultado.
+_sync_lock = asyncio.Lock()
+_sync_task: asyncio.Task | None = None
+
+
+async def _sincronizar_impl() -> dict:
+    """Corpo real de uma sincronização completa — só chamado de dentro do
+    single-flight de `sincronizar()`, nunca diretamente. Tenta ler direto; se
+    a sessão estiver inativa, loga sozinho (quando o cofre estiver
+    destrancado e tiver credenciais salvas) e tenta ler de novo.
+
+    Roda inteiro sob `eproc_client._browser_lock` — a MESMA trava que
+    `eproc_client.abrir()` usa (por isso chama `ec._abrir_impl` diretamente,
+    o núcleo sem lock de `abrir()`, evitando deadlock de adquirir a trava não-
+    reentrante duas vezes). Sem isso, uma chamada a `abrir()` feita por outro
+    caminho (ex.: botão "Abrir e-proc / Login", ou a reconexão automática no
+    início do painel) podia rodar EM PARALELO com esta sincronização e fechar,
+    debaixo dela, a aba que a leitura de categorias estava usando — bug real
+    relatado 2026-09-18."""
+    from ingestao import eproc_client as ec
+    from services import cofre_service
+
+    async with ec._browser_lock:
+        res = await ler_todos()
+        if not res.get("ok"):
+            if not cofre_service.destrancado():
+                res["cofre_trancado"] = True
+                return res
+            creds = cofre_service.get_credenciais("eproc")
+            if creds:
+                usuario, senha = creds
+                await ec._abrir_impl(ec.EPROC_HOME, usuario, senha)
+                res = await ler_todos()
+    if res.get("ok"):
+        salvar(res)
+        return carregar()
+    return res
+
+
+async def sincronizar() -> dict:
+    """Sincroniza tudo — verifica a sessão, loga sozinho se preciso (cofre
+    destrancado + credenciais salvas), lê todas as categorias de Citações/
+    Intimações e persiste. Serializada (single-flight, ver comentário acima):
+    seguro chamar mais de uma vez em paralelo — todas as chamadas concorrentes
+    esperam a mesma execução e recebem o mesmo resultado, em vez de disputar a
+    aba do e-proc entre si.
+
+    Retorna o payload salvo (`eproc_intimacoes.carregar()`) em caso de
+    sucesso, ou `{"ok": False, "erro": ...}` (com `cofre_trancado: true`
+    quando for o caso) — mesmo formato que `ler_todos()` já devolvia."""
+    global _sync_task
+    async with _sync_lock:
+        if _sync_task is None or _sync_task.done():
+            _sync_task = asyncio.create_task(_sincronizar_impl())
+        task = _sync_task
+    return await task

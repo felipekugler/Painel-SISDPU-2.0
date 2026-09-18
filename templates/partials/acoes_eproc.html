@@ -66,20 +66,39 @@
             <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
                 <div class="ret-acao-titulo mb-0">Petição</div>
                 <div class="flex items-center gap-2">
-                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="gerandoIA" @click="gerarPeticaoIA()"
-                            title="Redige uma petição respondendo ao(s) ato(s) referenciado(s) do(s) prazo(s) marcados acima, e a anexa como 1º documento (tipo Petição, sem sigilo).">
+                    <!-- "Usar modelo" — Modelos de petição cadastrados em Configurações ›
+                         e-proc (texto padrão + placeholders [NOME]/[CPF]/[PROCESSO]/[PAJ]).
+                         Ao contrário de "Gerar petição com IA", INSERE no cursor — não
+                         substitui o que já estiver escrito na caixa. -->
+                    <div class="dropdown">
+                        <button type="button" tabindex="0" class="btn btn-xs btn-outline gap-1"
+                                :disabled="usandoModelo || !modelosPeticao.length"
+                                :title="modelosPeticao.length ? 'Insere o texto de um modelo cadastrado no cursor, com PROCESSO/PAJ (e NOME/CPF, se houver PAJ vinculado) já preenchidos.' : 'Nenhum modelo cadastrado — cadastre em Configurações › e-proc.'">
+                            <span x-show="usandoModelo" class="loading loading-spinner loading-xs"></span>
+                            <span x-show="!usandoModelo">📋 Usar modelo</span>
+                            <span x-show="usandoModelo">Inserindo…</span>
+                        </button>
+                        <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-64 p-1 shadow border border-base-300" x-show="modelosPeticao.length">
+                            <template x-for="m in modelosPeticao" :key="m.id">
+                                <li><a @click="usarModeloPeticao(m.id)" x-text="m.nome"></a></li>
+                            </template>
+                        </ul>
+                    </div>
+                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="gerandoIA || !pajNorm" @click="gerarPeticaoIA()"
+                            :title="!pajNorm ? 'Precisa de um PAJ vinculado (petição avulsa, só pelo número do processo, não tem onde salvar o arquivo gerado) — use Adicionar Externo.' : 'Redige uma petição respondendo ao(s) ato(s) referenciado(s) do(s) prazo(s) marcados acima, e a anexa como 1º documento (tipo Petição, sem sigilo).'">
                         <span x-show="gerandoIA" class="loading loading-spinner loading-xs"></span>
                         <span x-show="!gerandoIA">✨ Gerar petição com IA</span>
                         <span x-show="gerandoIA">Aguardando resposta da IA…</span>
                     </button>
-                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="incluindoAnexo" @click="incluirPeticaoAnexo()"
-                            title="Formata o texto ATUAL desta caixa (útil depois de ajustar manualmente) no padrão de petição da DPU, salva em PDF e anexa/atualiza como 1º documento — sem chamar IA.">
+                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="incluindoAnexo || !pajNorm" @click="incluirPeticaoAnexo()"
+                            :title="!pajNorm ? 'Precisa de um PAJ vinculado (petição avulsa, só pelo número do processo, não tem onde salvar o arquivo gerado) — use Adicionar Externo.' : 'Formata o texto ATUAL desta caixa (útil depois de ajustar manualmente) no padrão de petição da DPU, salva em PDF e anexa/atualiza como 1º documento — sem chamar IA.'">
                         <span x-show="incluindoAnexo" class="loading loading-spinner loading-xs"></span>
                         <span x-show="!incluindoAnexo">Incluir petição nos anexos</span>
                         <span x-show="incluindoAnexo">Formatando…</span>
                     </button>
                 </div>
             </div>
+            <div class="text-[11px] text-error mb-1" x-show="erroUsarModelo" x-text="erroUsarModelo"></div>
             <div class="text-[11px] text-error mb-1" x-show="erroGerarIA" x-text="erroGerarIA"></div>
             <div class="text-[11px] text-error mb-1" x-show="erroIncluirAnexo" x-text="erroIncluirAnexo"></div>
             <div :id="uidPeticao" x-show="quillPeticaoOk"></div>
@@ -94,13 +113,15 @@
             <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
                 <div class="ret-acao-titulo mb-0">Anexos</div>
                 <div class="flex gap-2">
-                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="eventoSemAnexo()" @click="abrirModalDocs()">
+                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="eventoSemAnexo() || !pajNorm" @click="abrirModalDocs()"
+                            :title="!pajNorm ? 'Precisa de um PAJ vinculado — esta petição é avulsa, só pelo número do processo.' : ''">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                         </svg>
                         Adicionar do SISDPU
                     </button>
-                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="eventoSemAnexo()" @click="abrirModalPecasIa()">
+                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="eventoSemAnexo() || !pajNorm" @click="abrirModalPecasIa()"
+                            :title="!pajNorm ? 'Precisa de um PAJ vinculado — esta petição é avulsa, só pelo número do processo.' : ''">
                         <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                         </svg>
@@ -537,7 +558,10 @@
                                 <div class="text-error">⚠ Falha ao gravar a movimentação pendente no SISDPU: <span x-text="execMovimentacaoSisdpu.mensagem"></span></div>
                             </template>
                             <template x-if="execMovimentacaoSisdpu && execMovimentacaoSisdpu.ok">
-                                <div class="text-success">✓ Movimentação gravada como PENDENTE no SISDPU (fase: <span x-text="execMovimentacaoSisdpu.fase"></span>) — ainda falta executá-la de fato em "Ações no SISDPU" ou em "Movimentações pendentes".</div>
+                                <div>
+                                    <div class="text-success">✓ Movimentação gravada como PENDENTE no SISDPU (fase: <span x-text="execMovimentacaoSisdpu.fase"></span>) — ainda falta executá-la de fato em "Ações no SISDPU" ou em "Movimentações pendentes".</div>
+                                    <div class="text-warning text-[11px] mt-1" x-show="execMovimentacaoSisdpu.aviso" x-text="'⚠ ' + execMovimentacaoSisdpu.aviso"></div>
+                                </div>
                             </template>
                         </div>
                     </div>
@@ -549,7 +573,7 @@
                             x-text="execEtapa === 'confirmado' ? 'Fechar' : 'Cancelar'"></button>
                     <button type="button" class="btn btn-sm btn-outline btn-success gap-1"
                             @click="gravarMovimentacaoSisdpuNoResumo()"
-                            x-show="execEtapa === 'confirmado' && execResultado.provavel_sucesso && !(execMovimentacaoSisdpu && execMovimentacaoSisdpu.ok)"
+                            x-show="execEtapa === 'confirmado' && execResultado.provavel_sucesso && pajNorm && !(execMovimentacaoSisdpu && execMovimentacaoSisdpu.ok)"
                             :disabled="gravandoMovSisdpu"
                             title="Grava a fase, descrição e anexos desta petição como movimentação PENDENTE no SISDPU — a execução de fato continua em 'Ações no SISDPU' ou 'Movimentações pendentes'.">
                         <span x-show="gravandoMovSisdpu" class="loading loading-spinner loading-xs"></span>

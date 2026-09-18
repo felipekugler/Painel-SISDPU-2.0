@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% from "partials/_macro_minimenu_paj.html" import itens_minimenu_paj %}
+{% from "partials/_macro_minimenu_processo.html" import itens_minimenu_processo %}
 {% block title %}Prazos{% endblock %}
 
 {% block content_class %}flex flex-col flex-1 p-0{% endblock %}
@@ -51,8 +53,6 @@
 
 {% block content %}
 <div x-data="prazosEprocApp()" x-init="init()" x-cloak class="flex flex-col flex-1">
-
-  {% include "partials/sync_modal.html" %}
 
   <!-- Banner de ambiente -->
   {% if ambiente and ambiente.avisos %}
@@ -187,7 +187,7 @@
               </tr>
             </thead>
             <tbody>
-              <template x-for="c in casosDe(item.chave)" :key="item.chave + '-' + c.processo">
+              <template x-for="c in casosDe(item.chave)" :key="item.chave + '-' + c.processo + '-' + (c._prazoIdx ?? 0)">
                 <tr :class="c.cor ? 'linha-eproc' : ''" :style="c.cor ? ('background-color:' + c.cor) : ''">
                   <td class="max-w-[15rem]">
                     <div class="font-mono text-xs whitespace-nowrap">
@@ -202,9 +202,9 @@
                       <template x-if="c.novo">
                         <span class="badge badge-success badge-sm ml-1" title="Nova desde a última sincronização">novo</span>
                       </template>
-                      <template x-if="c.n_prazos > 1">
-                        <span class="badge badge-warning badge-sm ml-1" :title="c.n_prazos + ' prazos neste processo'"
-                              x-text="c.n_prazos + ' prazos'"></span>
+                      <template x-if="c._totalPrazos > 1">
+                        <span class="badge badge-success badge-sm ml-1" :title="rotuloBadgePrazos(c).titulo"
+                              x-text="rotuloBadgePrazos(c).texto"></span>
                       </template>
                       <template x-if="(c.lembrete_itens || []).length">
                         <svg class="lembrete-icon inline-block ml-1" width="15" height="15" viewBox="0 0 16 16"
@@ -216,17 +216,17 @@
                       </template>
                     </div>
                     <div class="text-[10px] text-base-content/40" x-show="c.juizo" x-text="'Juízo: ' + c.juizo"></div>
-                    <template x-if="c.partes">
+                    <template x-if="partesDe(c)">
                       <div class="text-xs cell-wrap mt-1 leading-tight text-center">
-                        <div class="font-bold" x-text="papelAtivo(c.partes)"></div>
-                        <div class="autor-nome" x-text="nomeAtivo(c.partes)"></div>
-                        <template x-if="poloPassivo(c.partes)">
+                        <div class="font-bold" x-text="papelAtivo(partesDe(c))"></div>
+                        <div class="autor-nome" x-text="nomeAtivo(partesDe(c))"></div>
+                        <template x-if="poloPassivo(partesDe(c))">
                           <div class="my-0.5">x</div>
                         </template>
-                        <template x-if="poloPassivo(c.partes)">
-                          <div class="font-bold" x-text="papelPassivo(c.partes)"></div>
+                        <template x-if="poloPassivo(partesDe(c))">
+                          <div class="font-bold" x-text="papelPassivo(partesDe(c))"></div>
                         </template>
-                        <div x-show="poloPassivo(c.partes)" x-text="nomePassivo(c.partes)"></div>
+                        <div x-show="poloPassivo(partesDe(c))" x-text="nomePassivo(partesDe(c))"></div>
                       </div>
                     </template>
                   </td>
@@ -234,9 +234,8 @@
                     <template x-if="c.paj">
                       <div class="dropdown">
                         <div tabindex="0" role="button" class="link link-primary" title="Escolher onde abrir o PAJ" x-text="c.paj"></div>
-                        <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-44 p-1 shadow border border-base-300">
-                          <li><a @click="abrirPajPainel(pajExibicaoParaNorm(c.paj))">Abrir no Painel</a></li>
-                          <li><a @click="abrirPajNavegador(c.paj)">Abrir no navegador</a></li>
+                        <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-48 p-1 shadow border border-base-300">
+                          {{ itens_minimenu_paj('pajExibicaoParaNorm(c.paj)', 'c.paj', stop=false) }}
                         </ul>
                       </div>
                     </template>
@@ -293,16 +292,23 @@
     </tbody></table>
   </div>
 
-  <!-- Menu global único (processo): sempre o mesmo elemento, reposicionado por clique. -->
+  <!-- Menu global único (processo): sempre o mesmo elemento, reposicionado por clique.
+       Unificado com as demais páginas (dashboard/intimações/retornos) — mesmo texto/
+       função (consultarProcessoMcp/abrirProcessoNavegador), em vez das locais
+       verNoPainel()/abrirProcesso() que existiam só aqui (pedido do usuário
+       2026-09-11). "Abrir no navegador" deixa de exigir processo_url pré-conhecido —
+       a global resolve pelo NÚMERO do processo, igual às outras páginas. -->
   <template x-teleport="body">
     <ul x-show="menuAbertoProc !== null" x-cloak
         @click.outside="menuAbertoProc = null"
         :style="'position:fixed; top:' + posMenu.top + 'px; left:' + posMenu.left + 'px;'"
-        class="menu menu-xs bg-base-100 rounded-box z-[1000] w-44 p-1 shadow border border-base-300">
-      <li><a @click.stop="verNoPainel(menuAbertoProcObj); menuAbertoProc = null">Ver no Painel</a></li>
-      <template x-if="menuAbertoProcObj && menuAbertoProcObj.processo_url">
-        <li><a @click.stop="abrirProcesso(menuAbertoProcObj); menuAbertoProc = null">Ver no navegador</a></li>
-      </template>
+        class="menu menu-xs bg-base-100 rounded-box z-[1000] w-52 p-1 shadow border border-base-300">
+      {{ itens_minimenu_processo("consultarProcessoMcp(menuAbertoProcObj.processo)",
+                                  "abrirProcessoNavegador(menuAbertoProcObj.processo, $event.target)",
+                                  "movimentarNoEproc(menuAbertoProcObj.processo, pajExibicaoParaNorm(menuAbertoProcObj.paj), menuAbertoProcObj.paj)",
+                                  "movimentarConjunto(menuAbertoProcObj.processo, pajExibicaoParaNorm(menuAbertoProcObj.paj))",
+                                  "abrirGerenciarProcesso(menuAbertoProcObj.processo)",
+                                  after='menuAbertoProc = null') }}
     </ul>
   </template>
 
@@ -388,18 +394,6 @@ function prazosEprocApp() {
       this.saidas = r.saidas || [];
     },
 
-    // Abre o processo no e-proc (aba nova da janela do e-proc)
-    async abrirProcesso(c) {
-      if (!c.processo_url) return;
-      try { await fetch('/api/prazos/abrir-processo?url=' + encodeURIComponent(c.processo_url)); }
-      catch (e) { /* silencioso */ }
-    },
-    // Remissão direta à página "Consultar processo" (íntegra via MCP, na mesma tela)
-    verNoPainel(c) {
-      const qs = new URLSearchParams({ numero: c.processo, instancia: 1 });
-      window.location.href = '/eproc/consultar?' + qs.toString();
-    },
-
     // Tooltip do lembrete (post-it) — posiciona ao lado do ícone
     mostrarLembrete(ev, c) {
       const r = ev.currentTarget.getBoundingClientRect();
@@ -415,6 +409,12 @@ function prazosEprocApp() {
       if (el) el.scrollIntoView({ behavior: 'smooth', block: 'start' });
     },
 
+    // Legenda de partes de UMA LINHA (não do processo inteiro): prefere o
+    // texto de partes do PRÓPRIO prazo exibido (`p.parte`, gravado por
+    // intimação — mais preciso quando o processo tem prazos "simultâneos" de
+    // pessoas diferentes), caindo pro texto do caso (`c.partes`) só quando o
+    // prazo não tiver o campo (compatibilidade com dado antigo).
+    partesDe(c) { const p = c.prazos && c.prazos[0]; return (p && p.parte) || c.partes; },
     // Partes → polo ativo (autor) / polo passivo (réu), separados por " X "
     poloAtivo(p) { const i = (p || '').indexOf(' X '); return i < 0 ? (p || '') : p.slice(0, i).trim(); },
     poloPassivo(p) { const i = (p || '').indexOf(' X '); return i < 0 ? '' : p.slice(i + 3).trim(); },
@@ -436,8 +436,56 @@ function prazosEprocApp() {
       const m = (v || '').match(/(\d{2})\/(\d{2})\/(\d{4})(?:\s+(\d{2}):(\d{2}))?/);
       return m ? (m[3] + m[2] + m[1] + (m[4] || '00') + (m[5] || '00')) : '';
     },
+    // Expande um caso (1 processo) em uma linha POR PRAZO, cada uma com suas
+    // PRÓPRIAS datas (Enviado/Início/Final) — em vez de aglutinar tudo numa
+    // linha só que só mostrava as datas do 1º prazo (`_p0(c)` = `c.prazos[0]`)
+    // e escondia por completo as datas dos demais. Caso real que motivou isso
+    // (2026-09-17): processo 5038095-06.2026.4.04.7000 (PAJ 2026/029-01856)
+    // tinha uma Sentença E uma Requisição de Pagamento pendentes ao mesmo
+    // tempo — duas intimações independentes, cada uma com prazo próprio.
+    //
+    // NUNCA colapsa/deduplica prazos "idênticos" — tentei isso (2026-09-18,
+    // chave evento+data+dias+parte) e um caso real provou a suposição errada:
+    // processo 5011863-54.2026.4.04.7000 tem DUAS intimações REAIS e ATIVAS
+    // (confirmado na triagem MCP — eventos 46 e 47, uma pra cada autor
+    // co-representado, MARCOS FELIPE e SAMUEL) cujas linhas raspadas do
+    // Painel do Procurador são byte-a-byte IDÊNTICAS, inclusive o campo
+    // "parte" (o Painel só mostra o 1º autor do processo na legenda, nunca o
+    // nome do co-litigante específico daquela linha) — minha dedup escondia a
+    // 2ª intimação real por engano. Como o dado raspado não tem NENHUM campo
+    // que distinga com segurança "duplicata de raspagem" (mesma intimação
+    // listada em 2 categorias ao mesmo tempo) de "2 intimações reais e
+    // idênticas em texto" (mesmo ato, mais de um co-representado), e esconder
+    // um prazo real é o pior erro possível aqui, a escolha segura é NUNCA
+    // colapsar — sempre mostrar cada linha raspada, mesmo que o texto da
+    // coluna Parte fique repetido (limitação do dado de origem, não dá pra
+    // saber QUAL co-litigante é cada linha só com isso).
+    //
+    // O badge só CLASSIFICA o motivo de haver mais de uma linha:
+    //   - MESMO evento+data+dias em todas = mesmo ATO intimando mais de uma
+    //     parte representada ao mesmo tempo → "N prazos simultâneos".
+    //   - Qualquer evento/data/dias diferente = atos INDEPENDENTES (ex.:
+    //     Sentença depois RPV) → "N prazos autônomos".
+    _chaveAto(p) { return [p.evento || '', p.data_envio || '', p.prazo_dias || ''].join('|'); },
+    _expandirCaso(c) {
+      const linhas = c.prazos || [];
+      if (linhas.length <= 1) return [{ ...c, prazos: linhas }];
+
+      const atosDistintos = new Set(linhas.map((p) => this._chaveAto(p)));
+      const tipo = atosDistintos.size === 1 ? 'simultaneos' : 'autonomos';
+      return linhas.map((p, i) => ({
+        ...c, prazos: [p], _prazoIdx: i, _totalPrazos: linhas.length, _tipoPrazos: tipo,
+      }));
+    },
+    rotuloBadgePrazos(c) {
+      const n = c._totalPrazos;
+      if (c._tipoPrazos === 'simultaneos') {
+        return { texto: n + ' Simultâneos', titulo: n + ' intimações do MESMO ato, endereçadas a mais de uma parte representada neste polo.' };
+      }
+      return { texto: n + ' Autônomos', titulo: n + ' intimações de atos DIFERENTES e independentes neste processo.' };
+    },
     casosDe(chave) {
-      let arr = (this.secoes[chave] || []).slice();
+      let arr = (this.secoes[chave] || []).flatMap((c) => this._expandirCaso(c));
       if (this.sortCampo) {
         // ordena pelo valor REAL; na ausência (prazo ainda não aberto), usa a
         // ESTIMATIVA como fallback — permite classificar as tabelas "pendente"

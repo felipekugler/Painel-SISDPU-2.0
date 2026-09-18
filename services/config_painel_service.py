@@ -9,6 +9,7 @@ import json
 import os
 import re
 import unicodedata
+import uuid
 from pathlib import Path
 
 _CONFIG_FILE = Path(__file__).parent.parent / "painel_config.json"
@@ -487,6 +488,106 @@ def set_eproc_procuradores_prefs(d: dict) -> dict:
         )
     _salvar_raw(raw)
     return get_eproc_procuradores_prefs()
+
+
+# --- Modelos de texto padrão (Ações no Eproc / Ações no SISDPU) ------------
+# Textos padrão reutilizáveis — "Modelos de petição" (peticionamento no e-proc:
+# aceitação de acordo, juntada de documento, ciência de RPV/precatório etc.) e
+# "Despachos padrão" (movimentação no SISDPU) — mesmo formato {id, nome, texto},
+# cadastrados manualmente pelo usuário (não vem de importação nenhuma) — CRUD
+# simples, lista completa substituída a cada "Salvar" (curadoria feita inteira
+# no front). Placeholders no texto ([NOME]/[CPF]/[PROCESSO]/[PAJ]/[LOCAL]/
+# [DATA]) são resolvidos no FRONT na hora de usar (ver static/js/acoes_eproc.js
+# e acoes_sisdpu.js), não aqui — aqui é só armazenamento.
+def _get_modelos_texto(chave: str) -> list[dict]:
+    raw = _ler_raw()
+    return raw.get(chave) or []
+
+
+def _set_modelos_texto(chave: str, modelos: list[dict]) -> list[dict]:
+    """Substitui a lista COMPLETA de modelos — gera `id` pros itens novos
+    (vêm do front sem id, ou com id vazio); descarta item sem nome."""
+    raw = _ler_raw()
+    limpos: list[dict] = []
+    for m in modelos or []:
+        if not isinstance(m, dict):
+            continue
+        nome = str(m.get("nome") or "").strip()
+        if not nome:
+            continue
+        limpos.append({
+            "id": str(m.get("id") or "").strip() or uuid.uuid4().hex[:8],
+            "nome": nome,
+            "texto": str(m.get("texto") or ""),
+        })
+    raw[chave] = limpos
+    _salvar_raw(raw)
+    return limpos
+
+
+def get_eproc_modelos_peticao() -> list[dict]:
+    return _get_modelos_texto("eproc_modelos_peticao")
+
+
+def set_eproc_modelos_peticao(modelos: list[dict]) -> list[dict]:
+    return _set_modelos_texto("eproc_modelos_peticao", modelos)
+
+
+def get_sisdpu_modelos_despacho() -> list[dict]:
+    return _get_modelos_texto("sisdpu_modelos_despacho")
+
+
+def set_sisdpu_modelos_despacho(modelos: list[dict]) -> list[dict]:
+    return _set_modelos_texto("sisdpu_modelos_despacho", modelos)
+
+
+# --- Identificação do Ofício/Defensor (aba Geral das Configurações) ---
+# 4 campos livres — Ofício, Unidade da DPU, Nome do defensor, Cargo do
+# defensor — usados em 2 lugares: (1) compõem o texto sob "Painel SISDPU" na
+# sidebar (ver base.html/app.py), substituindo o antigo OFICIO_DESCRICAO fixo
+# no .env; (2) alimentam os placeholders [OFICIO]/[UNIDADE]/[DEFENSOR]/
+# [CARGO] dos "Modelos de petição" (Ações no Eproc) e "despachos padrão"
+# (Ações no SISDPU) — ver static/js/acoes_eproc.js/acoes_sisdpu.js. Pedido
+# do usuário 2026-09-18.
+#
+# NÃO confundir com `_OFICIOS_SIGLAS_DEFAULT` acima: aquela é uma tabela
+# nome->sigla usada pra ABREVIAR o ofício de CADA PAJ (podem ser vários,
+# de qualquer unidade) nas listagens; esta aqui é um dado ÚNICO — a
+# identificação do Defensor/ofício deste painel — sem relação uma com a
+# outra além de descreverem, por coincidência, o mesmo tipo de informação.
+_IDENTIFICACAO_ORGAO_CAMPOS = ("oficio", "unidade", "defensor_nome", "defensor_cargo")
+
+
+def get_identificacao_orgao() -> dict:
+    """{"oficio", "unidade", "defensor_nome", "defensor_cargo"} — todos string,
+    "" se nunca configurado. Se o painel NUNCA foi configurado por aqui (chave
+    ausente do painel_config.json) e existir o antigo `OFICIO_DESCRICAO` no
+    .env, faz um best-effort de migração: tenta separar em "Ofício - Unidade"
+    (formato usado até 2026-09-18, ex.: "4º Ofício Previdenciário - DPU
+    Curitiba") só para PRÉ-PREENCHER a tela na primeira vez — não grava nada
+    sozinho, o usuário confirma salvando."""
+    v = _ler_raw().get("identificacao_orgao")
+    if isinstance(v, dict):
+        return {c: str(v.get(c) or "") for c in _IDENTIFICACAO_ORGAO_CAMPOS}
+
+    oficio, unidade = "", ""
+    with contextlib.suppress(Exception):
+        import config as _config
+
+        legado = (getattr(_config, "OFICIO_DESCRICAO", "") or "").strip()
+        if legado and legado != "Defensoria Pública da União":
+            partes = legado.split(" - ", 1)
+            oficio = partes[0].strip()
+            unidade = partes[1].strip() if len(partes) > 1 else ""
+    return {"oficio": oficio, "unidade": unidade, "defensor_nome": "", "defensor_cargo": ""}
+
+
+def set_identificacao_orgao(dados: dict) -> dict:
+    limpo = {c: str((dados or {}).get(c) or "").strip() for c in _IDENTIFICACAO_ORGAO_CAMPOS}
+    raw = _ler_raw()
+    raw["identificacao_orgao"] = limpo
+    _salvar_raw(raw)
+    return limpo
 
 
 # --- Tabela de Ofícios: nome completo -> SIGLA (padronização de exibição) ---

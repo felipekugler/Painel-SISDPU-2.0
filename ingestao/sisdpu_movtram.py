@@ -31,6 +31,7 @@ _get_page = _sc._get_page
 _ensure_logged_in = _sc._ensure_logged_in
 _wait_pf_ajax = _sc._wait_pf_ajax
 _log = _sc._log
+_dump_debug_paj = _sc._dump_debug_paj
 
 # --- constantes de formulário / negócio ---
 _MOV_FORM = "formHonorario"
@@ -146,6 +147,14 @@ _JS_TRAMITE_NA_CAIXA = r"""(idt) => {
     const t = document.querySelector('[id="tabView:caixaEntradaTab1Form:tramites"]');
     return !!(t && t.querySelector('tbody tr[data-rk="'+idt+'"]'));
 }"""
+# Marcar checkbox + botão "Concluir" em lote — MESMO mecanismo usado pelo
+# módulo "Ações no SISDPU" (via este mesmo `concluir_paj()`, reaproveitado
+# por `acoes_sisdpu_service.py`) e por isso o caminho PROVADO/estável do
+# painel; NÃO troque por outro sem confirmar antes com o usuário (pedido
+# explícito 2026-09-18, depois de uma tentativa mal-sucedida de substituir
+# isso pelo ícone "Concluir este processo" por linha — o ícone TAMBÉM não
+# concluiu o trâmite do PAJ-2024-029-03427/id 63512639, então o problema
+# nesse caso específico não está no mecanismo de clique em si).
 _JS_MARCA_CHECKBOX = r"""(idt) => {
     const box = document.querySelector('[id="tabView:caixaEntradaTab1Form:tramites_'+idt+'_checkbox"]');
     if (!box) return false;
@@ -155,6 +164,49 @@ _JS_MARCA_CHECKBOX = r"""(idt) => {
 _JS_CLICA_BTN_CONCLUIR = r"""() => {
     const b = document.querySelector('[id="tabView:caixaEntradaTab1Form:btnConcluir"]');
     if (!b) return false; b.click(); return true;
+}"""
+# CAUSA RAIZ real do "clica em Concluir e nada acontece" (achada 2026-09-18 via
+# dump de debug no PAJ-2024-029-03427/id 63512639): quando o PAJ NÃO tem um
+# decurso de prazo ativo (ex.: acabou de ser desarquivado — o decurso anterior
+# é cancelado automaticamente no arquivamento), o clique em "Concluir" abre um
+# diálogo "Atenção" (`tabView:decursoForm:dialogoConfirmacaoInclusaoDecurso`)
+# perguntando se o novo decurso será "Manual" ou "Automático" — SEM responder,
+# a conclusão nunca se efetiva (sem erro nenhum, sem growl — só fica parada
+# ali). Pedido do usuário 2026-09-18: sempre responder "Automático" por
+# padrão, sem pausar a automação pra perguntar.
+_JS_FECHAR_DIALOGO_DECURSO_AUTOMATICO = r"""() => {
+    const dlg = document.querySelector('[id="tabView:decursoForm:dialogoConfirmacaoInclusaoDecurso"]');
+    if (!dlg) return false;
+    // offsetParent falha (retorna null) pra elementos position:fixed mesmo
+    // visíveis — bug real encontrado 2026-09-18 (o diálogo aparecia no dump
+    // mas esta função nunca detectava). getComputedStyle é imune a isso.
+    const cs = window.getComputedStyle(dlg);
+    if (cs.display === 'none' || cs.visibility === 'hidden') return false;
+    for (const b of dlg.querySelectorAll('button')) {
+        if ((b.textContent||'').trim().toLowerCase() === 'automático') { b.click(); return true; }
+    }
+    return false;
+}"""
+# Lê qualquer feedback visível na tela IMEDIATAMENTE após o clique em
+# "Concluir" (growl, dialog aberto) — sem isso o log só sabia "cliquei" ou
+# "não cliquei", nunca O QUE o SISDPU respondeu.
+_JS_LER_FEEDBACK = r"""() => {
+    const out = {growl: [], dialog: null};
+    for (const g of document.querySelectorAll('.ui-growl-item-container, .ui-growl-message')) {
+        const t = (g.textContent||'').replace(/\s+/g,' ').trim();
+        if (t) out.growl.push(t);
+    }
+    for (const d of document.querySelectorAll('.ui-dialog')) {
+        if (d.offsetParent === null) continue;  // dialog fechado/oculto
+        const titulo = d.querySelector('.ui-dialog-title');
+        out.dialog = {
+            id: d.id,
+            titulo: titulo ? (titulo.textContent||'').trim() : '',
+            texto: (d.textContent||'').replace(/\s+/g,' ').trim().slice(0, 500),
+        };
+        break;
+    }
+    return out;
 }"""
 
 # Extrai a caixa de entrada do usuário por linha (data-rk = id_tramite). Colunas do
@@ -497,6 +549,22 @@ async def movimentar_paj(
     anexados: list[str] = []
     if anexos and not dry_run:
         anexados = await _anexar_documentos_movimentacao(page, anexos, tipo_arquivo)
+        # O popup de anexo (dlgModalArquivos) já tenta se fechar sozinho no fim de
+        # _anexar_documentos_movimentacao (Fechar / hide via JS / Escape), mas se
+        # nenhum desses funcionar, um overlay residual (.ui-widget-overlay) some
+        # visualmente mas INTERCEPTA o clique em "Movimentar" logo abaixo — sem
+        # levantar erro nenhum hoje, porque aquele clique é suprimido (ver adiante).
+        # Investigado ao vivo em 2026-09-09 (PAJ 2026/029-01593, fase "Petição
+        # inicial" + 1 anexo, falhou 2x com "sem growl de sucesso" sem exceção
+        # visível) — checagem extra de segurança antes do clique principal.
+        with contextlib.suppress(Exception):
+            overlay_visivel = await page.evaluate(
+                "()=>{const o=document.querySelector('.ui-widget-overlay');"
+                "if(!o)return false;const s=getComputedStyle(o);"
+                "return s.display!=='none'&&s.visibility!=='hidden';}")
+            if overlay_visivel:
+                await page.keyboard.press("Escape")
+                await page.wait_for_timeout(300)
 
     if dry_run:
         n_anexos = len([a for a in (anexos or []) if a])
@@ -504,8 +572,17 @@ async def movimentar_paj(
                 "detalhe": f"[dry_run] Movimentaria {numeros} (fase {fase!r}, {n_anexos} anexo(s)).",
                 "pajs": numeros}
 
-    with contextlib.suppress(Exception):
-        await page.get_by_role("button", name="Movimentar", exact=True).first.click()
+    # ANTES: o clique era envolto em contextlib.suppress(Exception) — se o
+    # Playwright recusasse o clique (ex.: elemento interceptado por um overlay
+    # residual), o erro sumia e o resultado ficava indistinguível de "cliquei
+    # mas o SISDPU não confirmou". Agora o erro é capturado e anexado ao
+    # `detalhe` final quando não há growl de sucesso, pra diagnosticar de
+    # verdade da próxima vez (ver nota acima).
+    erro_click_movimentar = ""
+    try:
+        await page.get_by_role("button", name="Movimentar", exact=True).first.click(timeout=8000)
+    except Exception as e:  # noqa: BLE001
+        erro_click_movimentar = f"{type(e).__name__}: {str(e)[:200]}"
     await _wait_pf_ajax(page)
     await page.wait_for_timeout(900)
     body = await page.evaluate("()=>document.body.innerText||''")
@@ -541,6 +618,8 @@ async def movimentar_paj(
     if not ok and "detalhamentoProcesso" in page.url:
         ok = True
     detalhe = "Movimentação registrada com sucesso." if ok else "Não confirmei a movimentação (sem growl de sucesso)."
+    if not ok and erro_click_movimentar:
+        detalhe += f" O clique em \"Movimentar\" falhou: {erro_click_movimentar}"
     if anexados:
         detalhe += f" Anexos: {len(anexados)}."
     # Sinal extra específico de ARQUIVAMENTO: o cabeçalho do PAJ passa a mostrar
@@ -694,10 +773,13 @@ async def concluir_paj(id_tramites: list[str], dry_run: bool = False) -> dict:
     await page.evaluate(_JS_ATIVA_ABA_GRUPO)
     await _wait_pf_ajax(page); await page.wait_for_timeout(900)
     visto: dict[str, bool] = {i: False for i in ids}
+    achou_grupo: dict[str, bool] = {i: False for i in ids}
+    achou_caixa_antes: dict[str, bool] = {i: False for i in ids}
     for i in ids:
         try:
             if await page.evaluate(_JS_TRAMITE_NO_GRUPO, i):
                 visto[i] = True
+                achou_grupo[i] = True
                 if await page.evaluate(_JS_ADMITIR_TRAMITE, i):
                     await _wait_pf_ajax(page, timeout=15000); await page.wait_for_timeout(800)
                     res[i]["admitido"] = True
@@ -709,18 +791,37 @@ async def concluir_paj(id_tramites: list[str], dry_run: bool = False) -> dict:
     await page.goto(cx_url, wait_until="domcontentloaded", timeout=30000)
     await _wait_pf_ajax(page); await page.wait_for_timeout(700)
     marcados = 0
+    marcou_checkbox: dict[str, bool] = {i: False for i in ids}
     for i in ids:
         try:
             achou_caixa = await page.evaluate(_JS_TRAMITE_NA_CAIXA, i)
+            achou_caixa_antes[i] = bool(achou_caixa)
             if achou_caixa:
                 visto[i] = True
                 if await page.evaluate(_JS_MARCA_CHECKBOX, i):
                     marcados += 1
+                    marcou_checkbox[i] = True
         except Exception as e:  # noqa: BLE001
             _log.warning("concluir_paj: marcar %s falhou: %s", i, e)
     if marcados:
         await page.evaluate(_JS_CLICA_BTN_CONCLUIR)
         await _wait_pf_ajax(page, timeout=15000); await page.wait_for_timeout(1300)
+        # PAJ sem decurso ativo — ver _JS_FECHAR_DIALOGO_DECURSO_AUTOMATICO.
+        # Sem isso, o diálogo fica aberto e a conclusão nunca se efetiva.
+        with contextlib.suppress(Exception):
+            if await page.evaluate(_JS_FECHAR_DIALOGO_DECURSO_AUTOMATICO):
+                _log.info("concluir_paj: diálogo 'PAJ sem decurso' apareceu — respondido com 'Automático'")
+                await _wait_pf_ajax(page, timeout=15000); await page.wait_for_timeout(1000)
+        # Lê o feedback ANTES de qualquer goto() subsequente apagar o estado
+        # transiente (growl/dialog) — ver _JS_LER_FEEDBACK. Só leitura, não
+        # muda o que foi clicado — adicionado 2026-09-18 pra finalmente ver O
+        # QUE o SISDPU respondeu quando a conclusão não "pega".
+        with contextlib.suppress(Exception):
+            feedback = await page.evaluate(_JS_LER_FEEDBACK)
+            if feedback.get("growl") or feedback.get("dialog"):
+                _log.info("concluir_paj: feedback pós-clique em Concluir: %s", feedback)
+            with contextlib.suppress(Exception):
+                await _dump_debug_paj(page, "-".join(ids), "concluir_paj:pos-clique")
 
     await page.goto(cx_url, wait_until="domcontentloaded", timeout=30000)
     await _wait_pf_ajax(page); await page.wait_for_timeout(600)
@@ -755,6 +856,28 @@ async def concluir_paj(id_tramites: list[str], dry_run: bool = False) -> dict:
     else:
         status, ok = "falha", False
         detalhe = f"{len(concluidos)}/{len(ids)} trâmite(s) concluído(s)."
+
+    # Log final com o detalhamento POR ETAPA de cada id — sem isso o log só
+    # mostrava "concluir_paj([...]) dry=False" no início, sem nenhum jeito de
+    # saber depois o que de fato aconteceu (visto/admitido/marcado/removido) —
+    # bug real relatado 2026-09-18 (PAJ-2024-029-03427, id_tramite=63512639,
+    # "falha" silenciosa: clicado 2x, sem erro no log, sem mudança na caixa).
+    for i in ids:
+        _log.info(
+            "concluir_paj: id=%s achou_grupo=%s admitido=%s achou_caixa_antes=%s "
+            "marcou_checkbox=%s na_caixa_depois=%s no_grupo_depois=%s -> %s",
+            i, achou_grupo[i], res[i]["admitido"], achou_caixa_antes[i],
+            marcou_checkbox[i], na_caixa[i], no_grupo[i],
+            "concluido" if res[i]["concluido"] else ("ja_ausente" if res[i]["ja_ausente"] else "NAO concluido"),
+        )
+    _log.info("concluir_paj(%s) resultado: status=%s ok=%s detalhe=%s", ids, status, ok, detalhe)
+    if status in ("falha", "parcial"):
+        # Screenshot + HTML da caixa no estado final — só assim dá pra ver se o
+        # trâmite realmente ficou visível na tela (ex.: paginação, aba errada,
+        # growl de erro do SISDPU) sem precisar reproduzir o problema de novo.
+        with contextlib.suppress(Exception):
+            await _dump_debug_paj(page, "-".join(ids), f"concluir_paj:{status}")
+
     return {"ok": ok, "status": status, "detalhe": detalhe, "resultados": res}
 
 

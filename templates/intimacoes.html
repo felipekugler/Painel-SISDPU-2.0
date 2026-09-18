@@ -1,0 +1,609 @@
+{% extends "base.html" %}
+{% from "partials/_macro_minimenu_paj.html" import itens_minimenu_paj %}
+{% from "partials/_macro_minimenu_processo.html" import itens_minimenu_processo %}
+
+{% block title %}Intimações{% endblock %}
+
+{% block content %}
+<style>
+    /* Badges de classificação da Triagem Inteligente de Intimações — mesmo
+       shape de .pretensao-badge/.area-badge (base.html), paleta própria por
+       não se sobrepor semanticamente a nenhuma delas. */
+    .classif-badge {
+        display: inline-block; padding: 3px 10px; border-radius: 5px;
+        font-size: 12px; font-weight: 700; white-space: nowrap;
+    }
+    /* Bug real (2026-08-28): tipos de intimação longos (ex.: "Requisição de
+       Pagamento Expedida para Conferência") com `white-space: nowrap` (regra
+       acima, pensada pros rótulos CURTOS de classificação) vazavam pra fora
+       da própria célula e sobrepunham a coluna "Prazo final" ao lado — a
+       célula não corta conteúdo inline sem `overflow:hidden`. Sobrescreve só
+       pro badge de TIPO: permite quebrar linha dentro da própria coluna
+       (agora maior/auto-ajustável), sem vazar pra célula vizinha. */
+    .classif-badge.tipo-sentenca, .classif-badge.tipo-audiencia, .classif-badge.tipo-contrarrazoes,
+    .classif-badge.tipo-despacho, .classif-badge.tipo-rpv, .classif-badge.tipo-regularizar,
+    .classif-badge.tipo-geral, .classif-badge.tipo-outro {
+        white-space: normal; max-width: 100%;
+    }
+    .classif-badge.ciencia { background: rgba(22,163,74,0.14); color:#16a34a; border:1px solid rgba(22,163,74,0.3); }
+    :root[data-theme="dark"] .classif-badge.ciencia { background: rgba(74,222,128,0.18); color:#4ade80; border-color: rgba(74,222,128,0.3); }
+    /* Badge da coluna Status para "aguardando_revisao" (pedido do usuário,
+       2026-08-28) — caso já analisado, pronto pra conferência do Defensor. */
+    .classif-badge.analisada { background: rgba(22,163,74,0.14); color:#16a34a; border:1px solid rgba(22,163,74,0.3); }
+    :root[data-theme="dark"] .classif-badge.analisada { background: rgba(74,222,128,0.18); color:#4ade80; border-color: rgba(74,222,128,0.3); }
+    .classif-badge.peticionar { background: var(--accent-soft); color: var(--accent); border:1px solid rgba(0,95,184,0.3); }
+    :root[data-theme="dark"] .classif-badge.peticionar { background: rgba(96,165,250,0.18); color:#93c5fd; border-color: rgba(96,165,250,0.3); }
+    .classif-badge.diligencia { background: rgba(184,115,10,0.16); color:#b8730a; border:1px solid rgba(184,115,10,0.3); }
+    :root[data-theme="dark"] .classif-badge.diligencia { background: rgba(224,164,74,0.18); color:#e0a44a; border-color: rgba(224,164,74,0.3); }
+    .classif-badge.humana { background: rgba(220,38,38,0.14); color:#dc2626; border:1px solid rgba(220,38,38,0.3); }
+    :root[data-theme="dark"] .classif-badge.humana { background: rgba(248,113,113,0.18); color:#f87171; border-color: rgba(248,113,113,0.3); }
+    .classif-badge.pendente { background: rgba(107,114,128,0.10); color:#6b7280; border:1px dashed rgba(107,114,128,0.3); }
+    .classif-badge.laudo { background: rgba(124,58,237,0.14); color:#7c3aed; border:1px solid rgba(124,58,237,0.3); }
+    :root[data-theme="dark"] .classif-badge.laudo { background: rgba(167,139,250,0.18); color:#a78bfa; border-color: rgba(167,139,250,0.3); }
+    .classif-badge.rpv { background: rgba(217,119,6,0.14); color:#d97706; border:1px solid rgba(217,119,6,0.3); }
+    :root[data-theme="dark"] .classif-badge.rpv { background: rgba(251,191,36,0.18); color:#fbbf24; border-color: rgba(251,191,36,0.3); }
+    .classif-badge.sentenca { background: rgba(8,145,178,0.14); color:#0891b2; border:1px solid rgba(8,145,178,0.3); }
+    :root[data-theme="dark"] .classif-badge.sentenca { background: rgba(34,211,238,0.18); color:#22d3ee; border-color: rgba(34,211,238,0.3); }
+
+    /* Badges de TIPO de intimação (paleta própria, distinta da classificação
+       acima — evita confundir "o que é a intimação" com "o que fazer sobre
+       ela"). Extraído no backend a partir do texto bruto do evento raspado
+       de Prazos e-proc, disponível ANTES de qualquer análise. */
+    .classif-badge.tipo-sentenca { background: rgba(37,99,235,0.14); color:#2563eb; border:1px solid rgba(37,99,235,0.3); }
+    :root[data-theme="dark"] .classif-badge.tipo-sentenca { background: rgba(96,165,250,0.18); color:#93c5fd; border-color: rgba(96,165,250,0.3); }
+    .classif-badge.tipo-audiencia { background: rgba(124,58,237,0.14); color:#7c3aed; border:1px solid rgba(124,58,237,0.3); }
+    :root[data-theme="dark"] .classif-badge.tipo-audiencia { background: rgba(167,139,250,0.18); color:#a78bfa; border-color: rgba(167,139,250,0.3); }
+    .classif-badge.tipo-contrarrazoes { background: rgba(13,148,136,0.14); color:#0d9488; border:1px solid rgba(13,148,136,0.3); }
+    :root[data-theme="dark"] .classif-badge.tipo-contrarrazoes { background: rgba(45,212,191,0.18); color:#5eead4; border-color: rgba(45,212,191,0.3); }
+    .classif-badge.tipo-despacho { background: rgba(184,115,10,0.14); color:#b8730a; border:1px solid rgba(184,115,10,0.3); }
+    :root[data-theme="dark"] .classif-badge.tipo-despacho { background: rgba(224,164,74,0.18); color:#e0a44a; border-color: rgba(224,164,74,0.3); }
+    .classif-badge.tipo-rpv { background: rgba(217,119,6,0.14); color:#d97706; border:1px solid rgba(217,119,6,0.3); }
+    :root[data-theme="dark"] .classif-badge.tipo-rpv { background: rgba(251,191,36,0.18); color:#fbbf24; border-color: rgba(251,191,36,0.3); }
+    .classif-badge.tipo-regularizar { background: rgba(219,39,119,0.14); color:#db2777; border:1px solid rgba(219,39,119,0.3); }
+    :root[data-theme="dark"] .classif-badge.tipo-regularizar { background: rgba(244,114,182,0.18); color:#f472b6; border-color: rgba(244,114,182,0.3); }
+    .classif-badge.tipo-geral { background: rgba(107,114,128,0.10); color:#6b7280; border:1px dashed rgba(107,114,128,0.3); }
+    .classif-badge.tipo-outro { background: rgba(71,85,105,0.12); color:#475569; border:1px solid rgba(71,85,105,0.3); }
+    :root[data-theme="dark"] .classif-badge.tipo-outro { background: rgba(148,163,184,0.16); color:#cbd5e1; border-color: rgba(148,163,184,0.3); }
+
+    .intim-caret { transition: transform 0.15s ease; }
+    .intim-caret-open { transform: rotate(90deg); }
+    .intim-row-open { background: var(--layer-alt, rgba(0,0,0,0.02)); }
+
+    /* table-layout:auto (padrão) redistribui a largura das colunas com base
+       no CONTEÚDO — sem uma coluna "de crescimento" livre (a antiga "Resumo
+       da intimação", removida), os hints w-* do cabeçalho (`th`) deixam de
+       ser respeitados com precisão (bug real: "Nome" ficava mais estreito
+       que o w-52 pedido, "PAJ"/"Prazo" mais largos que o necessário).
+       `fixed` faz cada coluna respeitar EXATAMENTE a largura do `th`. */
+    .intim-table { table-layout: fixed; width: 100%; }
+
+    .intim-th-sort { cursor: pointer; user-select: none; white-space: nowrap; }
+    .intim-th-sort:hover { color: var(--accent); }
+    .intim-sort-arrow { display: inline-block; width: 10px; opacity: 0.35; }
+    .intim-sort-arrow.active { opacity: 1; color: var(--accent); }
+
+    /* Minimenu "Abrir no Painel/navegador" (DaisyUI .dropdown) — mesmo ajuste
+       de contraste usado em prazos.html, senão o dropdown herda cores erradas
+       do tema em fundo escuro. */
+    .intim-table .dropdown-content { background: var(--card) !important; border-color: var(--stroke-strong) !important; }
+    .intim-table .dropdown-content li > a { color: var(--text) !important; }
+    .intim-table .dropdown-content li > a:hover { background: var(--card-hover) !important; }
+
+    /* Ícone e tooltip do Lembrete — mesmo padrão (post-it estilo e-proc) de
+       templates/prazos.html, sem alterar nada. */
+    .lembrete-icon { cursor: help; vertical-align: middle; }
+    .lembrete-icon:hover { filter: brightness(0.93); }
+    .lembrete-pop { position: fixed; z-index: 1000; background: #fcf8db; border: 1px solid rgba(0,0,0,0.2);
+                    border-radius: 3px; box-shadow: 0 10px 20px rgba(0,0,0,0.19), 0 6px 6px rgba(0,0,0,0.23);
+                    font-family: Roboto, 'Segoe UI', sans-serif; font-size: 11px; color: #000; max-width: 30rem;
+                    pointer-events: none; }
+    .lembrete-pop table { border-collapse: collapse; }
+    .lembrete-pop td { padding: 3px 7px; vertical-align: top; }
+    .lembrete-pop td:first-child { text-align: center; color: #666; width: 1.6rem; }
+    .lembrete-pop tr:nth-of-type(even) { background: rgba(0,0,0,0.05); }
+</style>
+
+<div x-data="intimacoesPage()" x-init="init()">
+
+    <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <h2 class="text-2xl font-bold">
+            Intimações
+            <span class="text-base-content/50 text-lg" x-show="itens.length"
+                  x-text="tipoFiltro.length ? '(' + itensFiltrados().length + ' de ' + itens.length + ')' : '(' + itens.length + ')'"></span>
+        </h2>
+        <div class="flex items-center gap-2">
+            <button class="btn btn-ghost btn-sm gap-2 normal-case" @click="carregarLista()" :disabled="carregando">
+                <span x-show="carregando" class="loading loading-spinner loading-xs"></span>
+                <svg x-show="!carregando" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"></path></svg>
+                Atualizar lista
+            </button>
+            <button class="btn btn-sm btn-outline" @click="analisarSelecionados()" :disabled="filaRodando() || !qtdSelecionados()">
+                Analisar selecionados <span x-show="qtdSelecionados()" x-text="'(' + qtdSelecionados() + ')'"></span>
+            </button>
+            <button class="btn btn-sm btn-primary" @click="analisarTodos()" :disabled="filaRodando() || !temPendente()">
+                <span x-show="filaRodando()" class="loading loading-spinner loading-xs"></span>
+                Analisar todos os pendentes
+            </button>
+        </div>
+    </div>
+
+    <div class="text-sm text-base-content/60 mb-4">
+        Cruza as intimações já sincronizadas na aba <strong>Prazos e-proc</strong> com o PAJ vinculado
+        (só como identificador de onde salvar): resume a intimação e classifica o caso <strong>com base
+        somente nos atos do processo judicial</strong>, sugerindo minuta (petição ou despacho) quando
+        cabível — <strong>nunca analisa o PAJ</strong> (se precisar, é manual, pelo Defensor).
+        <strong>A análise em si nunca protocola ou movimenta nada</strong> — o resultado é sempre uma
+        minuta/diagnóstico para sua revisão; para executar de verdade, abra o PAJ e use os consoles
+        "Ações no e-proc"/"Ações no SISDPU" de sempre. A ÚNICA exceção é o botão
+        <strong>"Dar mera ciência"</strong>: dispara de fato, só para o processo daquela linha e só
+        depois de confirmação explícita, a ciência no e-proc + o Gerenciamento de Processo + a
+        movimentação no SISDPU.
+    </div>
+
+    <!-- Filtro por tipo de intimação (chips) — o tipo já vem pronto da
+         sincronização de Prazos e-proc (não depende de análise), o que
+         permite filtrar ANTES de analisar e disparar "Analisar todos os
+         pendentes"/"selecionados" só sobre os casos filtrados: facilita a
+         triagem de casos semelhantes (pedido do usuário 2026-08-28). -->
+    <div class="flex items-center gap-2 flex-wrap mb-3" x-show="!carregando && itens.length">
+        <span class="text-xs text-base-content/50 mr-1">Filtrar por tipo:</span>
+        <template x-for="tc in tiposDisponiveis()" :key="tc.tipo">
+            <button type="button" class="btn btn-xs normal-case gap-1"
+                    :class="tipoFiltro.includes(tc.tipo) ? 'btn-primary' : 'btn-outline'"
+                    @click="toggleTipoFiltro(tc.tipo)">
+                <span x-text="tc.tipo"></span>
+                <span class="opacity-70" x-text="'(' + tc.count + ')'"></span>
+            </button>
+        </template>
+        <button type="button" class="btn btn-xs btn-ghost normal-case" x-show="tipoFiltro.length"
+                @click="limparFiltroTipo()">
+            Limpar filtro
+        </button>
+    </div>
+
+    <div class="card bg-base-200 shadow mb-4" x-show="carregando || itens.length === 0">
+        <div class="card-body">
+            <div x-show="carregando" class="text-center py-6"><span class="loading loading-spinner"></span> Carregando…</div>
+            <div x-show="!carregando && itens.length === 0" class="text-center text-base-content/40 py-6">
+                Nenhuma intimação no cache de Prazos e-proc. Sincronize na aba <strong>Prazos</strong> primeiro.
+            </div>
+        </div>
+    </div>
+
+    <div class="card bg-base-200 shadow mb-4" x-show="!carregando && itens.length">
+        <div class="card-body p-0">
+            <!-- `overflow-y-hidden` explícito (não só deixar no padrão
+                 'visible') — bug real de navegador (2026-08-28): o
+                 `scrollHeight` de um `<table>` (e de qualquer ancestral que o
+                 contenha) vem inflado ~37px A MAIS que sua altura renderizada
+                 de verdade, SEMPRE, independente do nº de linhas (testado com
+                 1 e com 43) — não é conteúdo escondido, é só a métrica errada.
+                 Com `overflow-y` em 'visible' (padrão), a spec CSS força o
+                 par a virar 'auto' (porque 'overflow-x' aqui não é
+                 'visible'), e esse 'auto' abre uma 2ª barra de rolagem
+                 vertical SÓ da tabela por causa do número inflado — mesmo
+                 sem nenhum conteúdo real pra rolar. Com 'hidden' explícito
+                 (não 'visible'), a regra da spec não se aplica (só converte
+                 a partir de 'visible'), then 'hidden' fica hidden de
+                 verdade: sem barra, e sem cortar nada de real, já que a
+                 sobra de 37px não corresponde a conteúdo nenhum (confirmado:
+                 a borda inferior da tabela bate exatamente com a do
+                 container). Rolagem HORIZONTAL da tabela continua normal;
+                 vertical é só da página (pedido do usuário). -->
+            <div class="overflow-x-auto overflow-y-hidden">
+                <table class="table table-sm intim-table">
+                    <thead>
+                        <tr>
+                            <th class="w-6 text-center">
+                                <input type="checkbox" class="checkbox checkbox-xs"
+                                       :checked="todosSelecionados()" @click="alternarSelecionarTodos()"
+                                       title="Selecionar todos os visíveis">
+                            </th>
+                            <th class="w-6"></th>
+                            <th class="w-[238px] whitespace-nowrap intim-th-sort" @click="ordenarPor('processo')">
+                                Processo
+                                <span class="intim-sort-arrow" :class="sortBy === 'processo' ? 'active' : ''"
+                                      x-text="sortBy === 'processo' && sortDir === 'desc' ? '▼' : '▲'"></span>
+                            </th>
+                            <th class="w-[140px] whitespace-nowrap">PAJ</th>
+                            <th>Nome</th>
+                            <th class="intim-th-sort" @click="ordenarPor('tipo_intimacao')">
+                                Tipo de intimação
+                                <span class="intim-sort-arrow" :class="sortBy === 'tipo_intimacao' ? 'active' : ''"
+                                      x-text="sortBy === 'tipo_intimacao' && sortDir === 'desc' ? '▼' : '▲'"></span>
+                            </th>
+                            <th class="w-[90px] intim-th-sort" @click="ordenarPor('prazo_final')" title="Ordenar pelo prazo final">
+                                Prazo final
+                                <span class="intim-sort-arrow" :class="sortBy === 'prazo_final' ? 'active' : ''"
+                                      x-text="sortBy === 'prazo_final' && sortDir === 'desc' ? '▼' : '▲'"></span>
+                            </th>
+                            <th class="w-[132px] intim-th-sort" @click="ordenarPor('status_geral')">
+                                Status
+                                <span class="intim-sort-arrow" :class="sortBy === 'status_geral' ? 'active' : ''"
+                                      x-text="sortBy === 'status_geral' && sortDir === 'desc' ? '▼' : '▲'"></span>
+                            </th>
+                            <th class="w-[104px] text-center">Ações</th>
+                        </tr>
+                    </thead>
+                    <template x-for="it in itensOrdenados()" :key="it.chave_caso">
+                        <tbody :class="expandido[it.chave_caso] ? 'intim-row-open' : ''">
+                            <tr class="hover cursor-pointer" @click="toggle(it)">
+                                <td class="text-center align-top" @click.stop>
+                                    <input type="checkbox" class="checkbox checkbox-xs"
+                                           x-model="selecionados[it.chave_caso]">
+                                </td>
+                                <td class="text-center align-top">
+                                    <svg class="intim-caret" :class="expandido[it.chave_caso] ? 'intim-caret-open' : ''"
+                                         xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none"
+                                         stroke="currentColor" stroke-width="2" style="width:14px;height:14px">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="m9 5 7 7-7 7" />
+                                    </svg>
+                                </td>
+                                <td class="font-mono text-xs align-top whitespace-nowrap" @click.stop>
+                                    <div class="flex items-center gap-1">
+                                        <div class="dropdown" @click.stop>
+                                            <div tabindex="0" role="button" class="font-mono link whitespace-nowrap"
+                                                 title="Escolher onde consultar o processo" x-text="it.processo"></div>
+                                            <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-52 p-1 shadow border border-base-300">
+                                                {{ itens_minimenu_processo("consultarProcessoMcp(it.processo)",
+                                                                            "abrirProcessoNavegador(it.processo, $event.target)",
+                                                                            "movimentarNoEproc(it.processo, it.paj_norm, it.paj)",
+                                                                            "movimentarConjunto(it.processo, it.paj_norm)",
+                                                                            "abrirGerenciarProcesso(it.processo)") }}
+                                            </ul>
+                                        </div>
+                                        <!-- "N Simultâneos" (mesmo ato, mais de uma parte representada — este
+                                             item JÁ os trata em conjunto) / "N Autônomos" (este processo tem
+                                             outro(s) item(ns) independente(s) na lista — ver módulo
+                                             intimacao_service.py) — mesma linguagem visual de prazos.html. -->
+                                        <span x-show="it.n_simultaneos > 1" class="badge badge-success badge-xs"
+                                              :title="it.n_simultaneos + ' intimações do MESMO ato, tratadas em conjunto (ex.: litisconsórcio ativo).'"
+                                              x-text="it.n_simultaneos + ' Simultâneos'"></span>
+                                        <span x-show="it.n_atos_processo > 1" class="badge badge-success badge-xs"
+                                              :title="'Este processo tem ' + it.n_atos_processo + ' atos autônomos — cada um com sua própria análise/classificação/minuta, listados como itens separados.'"
+                                              x-text="it.n_atos_processo + ' Autônomos'"></span>
+                                        <button type="button" class="btn btn-ghost btn-xs p-1 h-auto min-h-0"
+                                                @click.stop="copiarProcesso(it)"
+                                                :title="it._copiado ? 'Copiado!' : 'Copiar número do processo'">
+                                            <svg x-show="!it._copiado" class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                                            </svg>
+                                            <span x-show="it._copiado" class="text-success">✓</span>
+                                        </button>
+                                        <template x-if="(it.lembrete_itens || []).length">
+                                            <svg class="lembrete-icon inline-block ml-1" width="15" height="15" viewBox="0 0 16 16"
+                                                 @mouseenter="mostrarLembrete($event, it)" @mouseleave="lembreteTip.show = false"
+                                                 title="Lembrete do processo">
+                                                <path d="M2 1.6h12A1.5 1.5 0 0 1 15.5 3.1v6.3A1.5 1.5 0 0 1 14 10.9H6.4L3.3 13.7v-2.8H2A1.5 1.5 0 0 1 .5 9.4V3.1A1.5 1.5 0 0 1 2 1.6z"
+                                                      fill="#fcfec4" stroke="#7c7a7c" stroke-width="1" stroke-linejoin="round"/>
+                                            </svg>
+                                        </template>
+                                    </div>
+                                </td>
+                                <td class="align-top whitespace-nowrap" @click.stop>
+                                    <template x-if="it.paj_norm">
+                                        <div class="flex items-center gap-1">
+                                            <div class="dropdown" @click.stop>
+                                                <div tabindex="0" role="button" class="link text-xs whitespace-nowrap" style="color:var(--accent)"
+                                                     title="Escolher onde abrir o PAJ" x-text="it.paj"></div>
+                                                <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-48 p-1 shadow border border-base-300">
+                                                    {{ itens_minimenu_paj('it.paj_norm', 'it.paj') }}
+                                                </ul>
+                                            </div>
+                                            <button type="button" class="btn btn-ghost btn-xs p-1 h-auto min-h-0"
+                                                    @click.stop="copiarPaj(it)"
+                                                    :title="it._pajCopiado ? 'Copiado!' : 'Copiar número do PAJ'">
+                                                <svg x-show="!it._pajCopiado" class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z"></path>
+                                                </svg>
+                                                <span x-show="it._pajCopiado" class="text-success">✓</span>
+                                            </button>
+                                        </div>
+                                    </template>
+                                    <template x-if="!it.paj_norm">
+                                        <div class="flex items-center gap-1">
+                                            <input type="text" class="input input-xs input-bordered w-28"
+                                                   placeholder="AAAA/UUU-NNNNN"
+                                                   x-model="vinculoInput[it.processo]" @keydown.enter="vincular(it)">
+                                            <button class="btn btn-xs btn-outline" @click="vincular(it)">Vincular</button>
+                                        </div>
+                                    </template>
+                                </td>
+                                <td class="align-top text-sm" x-text="nomeAssistido(it)"></td>
+                                <td class="align-top" @click.stop>
+                                    <!-- Ato(s) referenciado(s) — pedido explícito do usuário (2026-08-29):
+                                         "disponível direto, independentemente de qualquer análise", mesmo
+                                         padrão/endpoints já usados na página do PAJ em "Intimações
+                                         pendentes" (templates/partials/processo_judicial.html); reposicionado
+                                         (2026-08-29) pra MESMA LINHA do badge de tipo (sem coluna própria,
+                                         sem rótulo "Evento N" — pedido explícito do usuário). Carregado em
+                                         segundo plano por _carregarAtosReferenciados() — pode ainda não ter
+                                         chegado (it._atoRef === null) quando a lista acaba de renderizar. -->
+                                    <div class="flex flex-wrap items-center gap-1">
+                                        <span class="classif-badge" :class="tipoClasse(it)" x-text="tipoLabel(it)"></span>
+                                        <template x-for="ato in (it._atoRef || {}).atos_referenciados || []" :key="ato.numero">
+                                            <!-- `<span class="contents">` só existe pra dar UM único elemento
+                                                 raiz ao x-for (exigência do Alpine) sem afetar o layout flex
+                                                 (display:contents "some" da árvore de caixas, deixa os badges
+                                                 filhos fluindo direto no flex do pai). -->
+                                            <span class="contents">
+                                                <template x-if="(ato.arquivos_baixados || []).length">
+                                                    <template x-for="arq in ato.arquivos_baixados" :key="arq.arquivo">
+                                                        <a :href="linkArquivoAto(it, arq)" target="_blank"
+                                                           class="badge badge-sm gap-1 border border-black/15"
+                                                           :class="corBadgeDocumentoAto(arq.nome_arquivo)"
+                                                           :title="'Ler ' + arq.nome_arquivo">
+                                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                                            <span x-text="nomeDocumentoAto(arq.nome_arquivo)"></span>
+                                                        </a>
+                                                    </template>
+                                                </template>
+                                                <template x-if="!(ato.arquivos_baixados || []).length && (ato.documentos || []).length">
+                                                    <!-- 1 badge POR documento pendente (mesmo padrão da página
+                                                         do PAJ) — clicar em QUALQUER um baixa todos de uma vez
+                                                         (mesmo evento inteiro, ver baixarDocAto). -->
+                                                    <template x-for="(d, di) in ato.documentos" :key="di">
+                                                        <button type="button" @click="baixarDocAto(it, ato)"
+                                                                :disabled="baixandoAto[it.chave_caso + ':' + ato.numero]"
+                                                                class="badge badge-sm gap-1 border border-black/15 bg-base-200 text-base-content/60"
+                                                                :title="(d.sigla || d.nome || 'documento') + ' — clique p/ baixar'">
+                                                            <span x-show="baixandoAto[it.chave_caso + ':' + ato.numero]" class="loading loading-spinner loading-xs"></span>
+                                                            <svg x-show="!baixandoAto[it.chave_caso + ':' + ato.numero]" class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                                            <span x-text="d.sigla || d.nome || 'doc'"></span>
+                                                        </button>
+                                                    </template>
+                                                </template>
+                                            </span>
+                                        </template>
+                                    </div>
+                                </td>
+                                <td class="align-top text-xs" x-text="it.prazo_final ? it.prazo_final : '—'"></td>
+                                <td class="align-top text-xs">
+                                    <span class="classif-badge" :class="statusColunaClasse(it)" x-text="statusColunaLabel(it)"></span>
+                                </td>
+                                <td class="align-top text-center" @click.stop>
+                                    <button class="btn btn-xs btn-primary" @click="analisar(it)"
+                                            :disabled="jobRodando(it.chave_caso) || it.vinculo_status === 'pendente'"
+                                            :title="it.vinculo_status === 'pendente' ? 'Vincule um PAJ antes de analisar' : 'Rodar a triagem completa'">
+                                        <span x-show="jobRodando(it.chave_caso)" class="loading loading-spinner loading-xs"></span>
+                                        Analisar
+                                    </button>
+                                </td>
+                            </tr>
+                            <!-- `template x-if` (não `x-show`+`x-cloak`) — REMOVE a linha do DOM
+                                 de verdade quando recolhida, em vez de só aplicar `display:none`.
+                                 Bug real (2026-08-28): com ~43 linhas de detalhe escondidas via
+                                 `x-show`, cada `<tr display:none>` ainda deixava um resíduo de
+                                 poucas fileiras de pixel no `scrollHeight` da tabela (quirk de
+                                 navegador com linhas de tabela ocultas) — a soma acumulada (~1px
+                                 × nº de casos) abria uma 2ª barra de rolagem SÓ na tabela, além da
+                                 rolagem normal da página. Removendo a linha do DOM de fato (não só
+                                 escondendo), o navegador nunca conta esse resíduo. -->
+                            <template x-if="expandido[it.chave_caso]">
+                            <tr>
+                                <td></td>
+                                <td></td>
+                                <td colspan="7" class="bg-base-100">
+                                    <div class="py-3 pr-4 text-sm space-y-3">
+                                        <div>
+                                            <span class="classif-badge" :class="classifClasse(it)" x-text="classifLabel(it)"></span>
+                                        </div>
+                                        <!-- Resumo genérico (etapa a) — escondido pros fluxos
+                                             especializados que já têm seu próprio relatório
+                                             estruturado mais abaixo (sentença homologatória, RPV/
+                                             precatório): mostrá-lo junto seria informação
+                                             duplicada/desorganizada — pedido explícito do usuário
+                                             (2026-09-17, RPV: "o resumo está muito complexo, em
+                                             texto corrido"). -->
+                                        <template x-if="!['especializado_sentenca_homologatoria', 'especializado_rpv'].includes((it.escopo_verificacao || {}).modo)">
+                                            <div>
+                                                <div x-show="it.resumo_intimacao">
+                                                    <div class="font-semibold mb-1">Resumo da intimação</div>
+                                                    <div class="whitespace-pre-line text-base-content/80" x-text="it.resumo_intimacao"></div>
+                                                </div>
+                                                <div class="text-base-content/40" x-show="!it.resumo_intimacao">— ainda não analisado —</div>
+                                            </div>
+                                        </template>
+                                        <div x-show="it.escopo_verificacao">
+                                            <span class="classif-badge" :class="escopoClasse(it)" x-text="escopoLabel(it)"></span>
+                                            <span class="text-xs text-base-content/60 ml-1" x-text="(it.escopo_verificacao || {}).motivo"></span>
+                                            <div class="text-xs text-warning mt-1" x-show="(it.escopo_verificacao || {}).escalonado">
+                                                ⚠ Escalonado automaticamente para análise completa:
+                                                <span x-text="(it.escopo_verificacao || {}).motivo_escalonamento"></span>
+                                            </div>
+                                        </div>
+                                        <!-- Fluxo especializado de sentença homologatória (2026-08-29,
+                                             refinado 2026-09-17): pedido de mérito da inicial / dados da
+                                             proposta / aceitação do acordo / sentença, cada um numa seção
+                                             própria, ANTES da Conclusão — só existem quando `escopo_
+                                             verificacao.modo` é este fluxo (ver `intimacao_ia_service.
+                                             gerar_conferencia_sentenca_homologatoria`). -->
+                                        <template x-if="(it.escopo_verificacao || {}).modo === 'especializado_sentenca_homologatoria' && it.confronto">
+                                            <div class="space-y-3">
+                                                <div x-show="it.confronto.pedido_inicial">
+                                                    <div class="font-semibold mb-1">Pedido na petição inicial</div>
+                                                    <div class="whitespace-pre-line text-base-content/80" x-text="it.confronto.pedido_inicial"></div>
+                                                </div>
+                                                <div x-show="it.confronto.dados_proposta_acordo">
+                                                    <div class="font-semibold mb-1">Dados da proposta de acordo (INSS)</div>
+                                                    <div class="whitespace-pre-line text-base-content/80" x-text="it.confronto.dados_proposta_acordo"></div>
+                                                </div>
+                                                <div x-show="it.confronto.aceitacao_acordo">
+                                                    <div class="font-semibold mb-1">Aceitação do acordo</div>
+                                                    <div class="whitespace-pre-line text-base-content/80" x-text="it.confronto.aceitacao_acordo"></div>
+                                                </div>
+                                                <div x-show="it.confronto.dados_sentenca">
+                                                    <div class="font-semibold mb-1">Sentença</div>
+                                                    <div class="whitespace-pre-line text-base-content/80" x-text="it.confronto.dados_sentenca"></div>
+                                                </div>
+                                            </div>
+                                        </template>
+                                        <!-- Fluxo especializado de RPV/precatório (2026-08-28,
+                                             reestruturado 2026-09-17 — pedido explícito do usuário:
+                                             o resumo da intimação genérico, em texto corrido,
+                                             trazia informação demais e mal organizada. Tópicos
+                                             curtos e objetivos, cada um numa seção própria, ANTES
+                                             da Conclusão — ver `intimacao_ia_service.
+                                             gerar_conferencia_rpv`). -->
+                                        <template x-if="(it.escopo_verificacao || {}).modo === 'especializado_rpv' && it.confronto">
+                                            <div class="space-y-3">
+                                                <div x-show="it.confronto.expedicao">
+                                                    <div class="font-semibold mb-1">Expedição</div>
+                                                    <div class="whitespace-pre-line text-base-content/80" x-text="it.confronto.expedicao"></div>
+                                                </div>
+                                                <div x-show="it.confronto.beneficiarios">
+                                                    <div class="font-semibold mb-1">Beneficiários</div>
+                                                    <div class="whitespace-pre-line text-base-content/80" x-text="it.confronto.beneficiarios"></div>
+                                                </div>
+                                                <div x-show="it.confronto.andamentos_posteriores_rpv">
+                                                    <div class="font-semibold mb-1">Andamentos posteriores</div>
+                                                    <div class="whitespace-pre-line text-base-content/80" x-text="it.confronto.andamentos_posteriores_rpv"></div>
+                                                </div>
+                                                <div x-show="it.confronto.calculo_base">
+                                                    <div class="font-semibold mb-1">Cálculo base</div>
+                                                    <div class="whitespace-pre-line text-base-content/80" x-text="it.confronto.calculo_base"></div>
+                                                </div>
+                                                <div x-show="it.confronto.honorarios_sucumbenciais">
+                                                    <div class="font-semibold mb-1">Honorários sucumbenciais</div>
+                                                    <div class="whitespace-pre-line text-base-content/80" x-text="it.confronto.honorarios_sucumbenciais"></div>
+                                                </div>
+                                            </div>
+                                        </template>
+                                        <div x-show="it.confronto">
+                                            <div class="font-semibold mb-1"
+                                                 x-text="['especializado_sentenca_homologatoria', 'especializado_rpv'].includes((it.escopo_verificacao || {}).modo) ? 'Conclusão' : 'Justificativa da classificação'"></div>
+                                            <div class="whitespace-pre-line text-base-content/80" x-text="(it.confronto || {}).justificativa"></div>
+                                            <template x-if="(it.confronto || {}).diligencias && it.confronto.diligencias.length">
+                                                <div class="mt-2">
+                                                    <div class="font-semibold mb-1">Diligências pendentes</div>
+                                                    <ul class="list-disc list-inside">
+                                                        <template x-for="d in it.confronto.diligencias" :key="d">
+                                                            <li x-text="d"></li>
+                                                        </template>
+                                                    </ul>
+                                                    <div class="text-xs text-base-content/50 mt-1"
+                                                         x-show="it.confronto.destinatario_diligencia">
+                                                        Destinatário sugerido: <span x-text="it.confronto.destinatario_diligencia"></span>
+                                                    </div>
+                                                </div>
+                                            </template>
+                                        </div>
+                                        <div x-show="it.minuta">
+                                            <div class="font-semibold mb-1">
+                                                Minuta gerada (<span x-text="(it.minuta || {}).tipo"></span>) — rascunho para revisão
+                                            </div>
+                                            <div class="text-xs font-mono text-base-content/60" x-text="(it.minuta || {}).caminho"></div>
+                                        </div>
+                                        <div x-show="it.erro" class="alert alert-error text-sm py-2">
+                                            <span x-text="it.erro"></span>
+                                        </div>
+                                        <div class="pt-1 flex items-center gap-2 flex-wrap">
+                                            <a x-show="it.paj_norm" class="btn btn-xs btn-outline btn-info shrink-0" :href="'/paj/' + it.paj_norm" target="_blank">
+                                                Abrir PAJ (Ações no e-proc / Ações no SISDPU)
+                                            </a>
+                                            <!-- "Dar mera ciência" (2026-08-29, substitui o extinto
+                                                 "Gravar p/ mera ciência" + tela /lote-ciencia — pedido
+                                                 explícito do usuário: "não me senti seguro em fazer em
+                                                 lote"). DISPONÍVEL SEMPRE, independentemente de "Analisar"
+                                                 já ter rodado (pedido explícito do usuário 2026-08-29:
+                                                 "quero que o botão esteja disponível sempre") — só precisa
+                                                 saber qual evento fechar no e-proc, e isso já vem de
+                                                 `it._atoRef` (mesmo carregamento em segundo plano do badge
+                                                 "Ato referenciado", ver `_carregarAtosReferenciados`); some
+                                                 sozinho se o casamento de evento não for possível (ex.:
+                                                 processo sem intimação identificável). Dispara JÁ NESTE
+                                                 CLIQUE (com confirm() antes) as 3 ações reais e sempre
+                                                 iguais (ciência no e-proc + Gerenciamento de Processo +
+                                                 movimentação no SISDPU) — a caixa de texto ao lado é a
+                                                 descrição da movimentação, pré-preenchida com uma
+                                                 sugestão (`descricaoMovPadrao`) mas sempre editável antes
+                                                 de disparar. Ver `services.mera_ciencia_service`. -->
+                                            <div x-show="(it._atoRef || {}).evento_intimacao"
+                                                 class="flex items-center gap-2 flex-1 min-w-[260px]">
+                                                <button class="btn btn-xs btn-outline btn-success shrink-0" @click="darMeraCiencia(it)"
+                                                        :disabled="jobRodando(it.chave_caso)"
+                                                        title="Dispara agora: ciência no e-proc + Gerenciamento de Processo + movimentação no SISDPU">
+                                                    <span x-show="jobRodando(it.chave_caso)" class="loading loading-spinner loading-xs"></span>
+                                                    Dar mera ciência
+                                                </button>
+                                                <textarea class="textarea textarea-bordered textarea-xs flex-1 text-[12px]" rows="1"
+                                                          x-model="descricaoMov[it.chave_caso]"
+                                                          @input="_descricaoEditada[it.chave_caso] = true"
+                                                          placeholder="Descrição da movimentação no SISDPU"></textarea>
+                                            </div>
+                                            <button class="btn btn-xs btn-outline shrink-0" @click="descartar(it)" :disabled="jobRodando(it.chave_caso)">
+                                                Descartar
+                                            </button>
+                                        </div>
+                                    </div>
+                                </td>
+                            </tr>
+                            </template>
+                        </tbody>
+                    </template>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Tooltip do Lembrete (post-it estilo e-proc) — mesmo padrão de templates/prazos.html -->
+    <div class="lembrete-pop" x-show="lembreteTip.show" x-cloak
+         :style="`left:${lembreteTip.x}px; top:${lembreteTip.y}px`">
+        <table><tbody>
+            <template x-for="(it2, i) in lembreteTip.itens" :key="i">
+                <tr><td x-text="it2.seq"></td><td x-text="it2.texto"></td></tr>
+            </template>
+        </tbody></table>
+    </div>
+
+    <!-- Painel FLUTUANTE de análises em andamento — de propósito NÃO é modal:
+         a análise já roda inteira no servidor, independente desta tela, então
+         minimizar/fechar aqui nunca cancela nada, só para de acompanhar o log
+         ao vivo. Dá pra ter várias análises simultâneas (uma por linha, ou
+         "todos"/"selecionados"), cada uma com seu próprio card. -->
+    <div class="fixed bottom-4 right-4 z-[60] flex flex-col-reverse items-end gap-2 w-[48rem] max-w-[92vw]" x-cloak x-show="jobs.length">
+        <template x-for="job in jobs.filter(j => !j.minimizado)" :key="job.id">
+            <div class="card bg-base-100 shadow-xl border border-base-300 w-full">
+                <div class="card-body p-3 gap-2">
+                    <div class="flex items-center justify-between gap-2">
+                        <div class="flex items-center gap-2 min-w-0">
+                            <span x-show="job.status === 'rodando'" class="loading loading-spinner loading-xs"></span>
+                            <span x-show="job.status === 'ok'" class="text-success">✓</span>
+                            <span x-show="job.status === 'erro'" class="text-error">✗</span>
+                            <span class="text-sm font-semibold truncate" x-text="job.titulo"></span>
+                        </div>
+                        <div class="flex items-center gap-1 shrink-0">
+                            <button class="btn btn-ghost btn-xs px-1.5" @click="toggleJobMinimizado(job)"
+                                    title="Minimizar (continua rodando em segundo plano)">–</button>
+                            <button class="btn btn-ghost btn-xs px-1.5" @click="fecharJob(job)"
+                                    :title="job.status === 'rodando' ? 'Minimizar' : 'Fechar'">✕</button>
+                        </div>
+                    </div>
+                    <div class="bg-base-300 rounded p-2 text-[11px] leading-[1.6] font-mono h-[220px] overflow-y-auto"
+                         :id="'job-log-' + job.id">
+                        <template x-for="(l, i) in job.log" :key="i">
+                            <div :class="{'text-success': l.level==='ok', 'text-error': l.level==='erro',
+                                          'text-base-content/50': l.level==='muted', 'text-info': l.level==='info',
+                                          'text-primary font-semibold': l.level==='novo'}" x-text="l.msg"></div>
+                        </template>
+                    </div>
+                    <div class="text-xs" x-show="job.statusMsg" x-text="job.statusMsg"></div>
+                </div>
+            </div>
+        </template>
+        <!-- Pills dos jobs minimizados — clicar reabre o card, sem afetar o andamento. -->
+        <template x-for="job in jobs.filter(j => j.minimizado)" :key="'min-' + job.id">
+            <button class="btn btn-sm justify-start gap-2 normal-case shadow-xl" @click="toggleJobMinimizado(job)">
+                <span x-show="job.status === 'rodando'" class="loading loading-spinner loading-xs"></span>
+                <span x-show="job.status === 'ok'" class="text-success">✓</span>
+                <span x-show="job.status === 'erro'" class="text-error">✗</span>
+                <span class="truncate max-w-[220px]" x-text="job.titulo"></span>
+            </button>
+        </template>
+    </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/js/intimacoes.js?v={{ app_version }}"></script>
+{% endblock %}

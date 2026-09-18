@@ -3,6 +3,7 @@ reutilizável em qualquer página do painel — não depende da Retornos.
 
 - GET  /movimentacoes-pendentes          — página: lista os rascunhos salvos.
 - GET  /api/acoes-sisdpu/preferencias    — favoritas/frequentes de fases e caixas.
+- GET  /api/acoes-sisdpu/pecas-ia/{paj_norm} — arquivos da subpasta "Peças IA" do PAJ.
 - POST /api/acoes-sisdpu/anexo-externo   — upload de um anexo externo (staging).
 - POST /api/acoes-sisdpu/anexo-externo/remover — descarta um anexo externo staged.
 - GET/POST/DELETE /api/acoes-sisdpu/rascunho/{paj_norm} — rascunho de movimentação.
@@ -10,6 +11,8 @@ reutilizável em qualquer página do painel — não depende da Retornos.
 - GET  /api/acoes-sisdpu/executar        — SSE: executa mov→tram→conclui em um PAJ
   (conclui aceita `id_tramites` — lista JSON, 0/1/N trâmites da caixa — ou o par
   legado `id_tramite`+`concluir`).
+- GET  /api/acoes-sisdpu/executar-fila   — SSE: executa uma FILA de movimentações em
+  sequência (mesma sessão do SISDPU) — ver "Movimentações Pendentes".
 """
 
 from __future__ import annotations
@@ -35,9 +38,20 @@ async def pagina_movimentacoes_pendentes(request: Request):
 
 @router.get("/api/acoes-sisdpu/preferencias", response_class=JSONResponse)
 async def api_preferencias():
-    """Favoritas (dropdown) + frequentes (badges) de fases/caixas — do cache local
-    (instantâneo, sem navegar no SISDPU). Mesma fonte da aba Configurações › SISDPU."""
-    return JSONResponse(config_painel_service.get_sisdpu_prefs())
+    """Favoritas (dropdown) + frequentes (badges) de fases/caixas + despachos
+    padrão cadastrados — do cache local (instantâneo, sem navegar no SISDPU).
+    Mesma fonte da aba Configurações › SISDPU."""
+    return JSONResponse({
+        **config_painel_service.get_sisdpu_prefs(),
+        "modelos_despacho": config_painel_service.get_sisdpu_modelos_despacho(),
+    })
+
+
+@router.get("/api/acoes-sisdpu/pecas-ia/{paj_norm}", response_class=JSONResponse)
+async def api_pecas_ia(paj_norm: str):
+    """Arquivos da subpasta "Peças IA" do PAJ (petições/peças geradas pela análise
+    de pretensão) — alimenta o modal "Adicionar Petições IA"."""
+    return JSONResponse({"ok": True, "itens": acoes_sisdpu_service.listar_pecas_ia(paj_norm)})
 
 
 @router.post("/api/acoes-sisdpu/anexo-externo", response_class=JSONResponse)
@@ -64,6 +78,13 @@ async def api_anexo_externo_remover(paj_norm: str = Form(...), ref: str = Form(.
 async def api_listar_rascunhos():
     """Todos os rascunhos salvos — alimenta a página "Movimentações pendentes"."""
     return JSONResponse({"ok": True, "itens": acoes_sisdpu_service.listar_rascunhos()})
+
+
+@router.get("/api/acoes-sisdpu/rascunhos/count", response_class=JSONResponse)
+async def api_rascunhos_count():
+    """Contagem pro badge do submenu "Movimentações pendentes" — mesmo total
+    exibido no cabeçalho da própria página, sem tocar em nada."""
+    return {"count": len(acoes_sisdpu_service.listar_rascunhos())}
 
 
 @router.get("/api/acoes-sisdpu/rascunho/{paj_norm}", response_class=JSONResponse)
@@ -107,7 +128,7 @@ async def _stream_executar(id_processo: str, paj: str, paj_norm: str, fase: str,
 
 
 @router.get("/api/acoes-sisdpu/executar")
-async def executar(id_processo: str, paj: str = "", paj_norm: str = "", fase: str = "", descricao_mov: str = "",
+async def executar(paj: str = "", id_processo: str = "", paj_norm: str = "", fase: str = "", descricao_mov: str = "",
                    descricao_mov_html: int = 0, grupo: str = "", descricao_tram: str = "", prazo: int = 0,
                    prazo_data: str = "", id_tramite: str = "", concluir: int = 0, id_tramites: str = "",
                    dry: int = 0, anexos: str = ""):
@@ -118,7 +139,12 @@ async def executar(id_processo: str, paj: str = "", paj_norm: str = "", fase: st
     campo não é CKEditor) → conclui (se `id_tramites` — JSON de lista, ex.: '["123","456"]'
     — trouxer ao menos um id; OU, no par legado, se concluir=1 E id_tramite informado).
     Movimentar/tramitar/concluir são independentes entre si. Os dois despachos também
-    são independentes e podem ficar em branco — o SISDPU aceita ambos vazios."""
+    são independentes e podem ficar em branco — o SISDPU aceita ambos vazios.
+
+    `id_processo` agora é OPCIONAL: sem ele (PAJ ainda não sincronizado localmente —
+    "Adicionar movimentação" em Movimentações Pendentes), `executar_stream` resolve o
+    id automaticamente pelo número do PAJ (`paj`, obrigatório nesse caso) via busca
+    global no SISDPU (`services/paj_link_service.resolver`) antes de prosseguir."""
     try:
         anexos_list = json.loads(anexos) if anexos else []
         if not isinstance(anexos_list, list):
@@ -134,3 +160,41 @@ async def executar(id_processo: str, paj: str = "", paj_norm: str = "", fase: st
     return EventSourceResponse(_stream_executar(
         id_processo, paj, paj_norm, fase, descricao_mov, bool(int(descricao_mov_html)), grupo, descricao_tram,
         int(prazo), prazo_data, id_tramite, bool(int(concluir)), id_tramites_list, bool(int(dry)), anexos_list))
+
+
+async def _stream_executar_fila(id_processo: str, paj: str, paj_norm: str, itens: list, dry: bool):
+    async for ev in acoes_sisdpu_service.executar_fila_stream(
+        id_processo, paj=paj, paj_norm=paj_norm, itens=itens, dry_run=dry,
+    ):
+        if ev.get("done"):
+            yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
+        elif ev.get("item_done"):
+            yield {"event": "item_done", "data": json.dumps(
+                {"index": ev.get("index"), "ok": ev.get("ok"), "resultado": ev.get("resultado", {})},
+                ensure_ascii=False)}
+        else:
+            yield {"event": "log", "data": json.dumps(ev, ensure_ascii=False)}
+
+
+@router.get("/api/acoes-sisdpu/executar-fila")
+async def executar_fila(paj: str = "", id_processo: str = "", paj_norm: str = "", itens: str = "", dry: int = 0):
+    """SSE: executa uma FILA de movimentações (cada uma: mov→tram→conclui) em
+    SEQUÊNCIA, na MESMA sessão do SISDPU (resolve `id_processo` uma única vez pra
+    fila inteira — ver `executar_stream` sobre a resolução automática pelo número).
+
+    `itens`: JSON de lista de dicts, cada um com as mesmas chaves de uma execução
+    única (fase, descricao_mov, descricao_mov_html, grupo, descricao_tram, prazo,
+    prazo_data, id_tramites, anexos) — sem o par legado id_tramite/concluir (a fila
+    é um modelo novo, só usa a lista de trâmites por item).
+
+    PARA no primeiro item que falhar. Emite um evento `item_done` extra
+    ({index, ok, resultado}) depois de CADA item — o frontend usa isso pra ir
+    removendo da fila persistida só os itens que realmente terminaram, conforme a
+    execução avança, em vez de esperar o evento final `done` pra saber o que sobrou."""
+    try:
+        itens_list = json.loads(itens) if itens else []
+        if not isinstance(itens_list, list):
+            itens_list = []
+    except Exception:  # noqa: BLE001 — JSON malformado: trata como "fila vazia"
+        itens_list = []
+    return EventSourceResponse(_stream_executar_fila(id_processo, paj, paj_norm, itens_list, bool(int(dry))))

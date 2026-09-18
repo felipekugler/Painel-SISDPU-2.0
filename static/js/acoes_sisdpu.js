@@ -97,6 +97,13 @@ function acoesSisdpuBlock(cfg) {
         getDescricaoTram: getDescricaoTramFn,
         getValorInicialMov: getValorInicialMovFn,
         onExecutado: typeof cfg.onExecutado === 'function' ? cfg.onExecutado : () => {},
+        // (opcional) URL pra navegar em vez de recarregar a página ATUAL após
+        // execução bem-sucedida (ver reload no fim de executar()/executarFila())
+        // — usado por movimentar_conjunto.html pra abrir a página do PAJ já
+        // com as movimentações atualizadas, em vez de ficar na própria tela
+        // combinada (pedido do usuário 2026-09-14). Vazio (padrão) preserva o
+        // comportamento de sempre em todo outro lugar que usa este módulo.
+        aposExecutarIrPara: cfg.aposExecutarIrPara || '',
 
         fasesFav: [], fasesFreq: [], fasesTodas: [],
         caixasFav: [], caixasFreq: [], caixasTodas: [],
@@ -110,6 +117,19 @@ function acoesSisdpuBlock(cfg) {
         // simples como fallback.
         uidMov: 'qmov-' + Math.random().toString(36).slice(2, 9),
         _editorMov: null, quillMovOk: true, _montandoEditorMov: false,
+        // "Usar modelo" — despachos padrão cadastrados em Configurações › SISDPU
+        // (texto padrão + placeholders [NOME]/[CPF]/[PROCESSO]/[PAJ]/[DATA]),
+        // carregados junto das demais preferências (ver init() abaixo). Mesmo
+        // mecanismo de "Modelos de petição" em Ações no Eproc — ver
+        // usarModeloDespacho() mais abaixo e os helpers compartilhados em
+        // static/js/rich_editor.js (dataPorExtenso/paraHtmlSeTextoPuro/
+        // resolverPlaceholders). [PROCESSO]: este módulo não tem um seletor de
+        // "processo judicial ativo" como o "processoSelecionado" de Ações no
+        // Eproc (aqui o processo, se houver, vem resolvido pelo backend a
+        // partir do PAJ — só quando há exatamente 1 vinculado; com 0 ou 2+,
+        // fica vazio de propósito, sem escolher um arbitrariamente — pedido
+        // do usuário 2026-09-16).
+        modelosDespacho: [], usandoModeloDespacho: false, erroUsarModeloDespacho: '',
         prazo: 0, prazoData: '', concluir: true, exec: false,
 
         // Anexos da MOVIMENTAÇÃO — lista staged única, misturando origem 'externo'
@@ -124,6 +144,12 @@ function acoesSisdpuBlock(cfg) {
         tiposArquivoAnexo: TIPOS_ARQUIVO_ANEXO,  // exposto p/ o <select> no HTML (x-for)
         docsPaj: [], docsCarregados: false,
         modalPajAberto: false, modalPajSelecionados: {},
+        // "Adicionar Petições IA" — mesma tabela/modal de "Adicionar do SISDPU"
+        // acima, mas listando a subpasta "Peças IA" do PAJ (petições/peças geradas
+        // pela análise de pretensão) em vez de `Arquivos/` — mesmo padrão de
+        // "Ações no Eproc" (acoes_eproc.js/carregarPecasIa).
+        pecasIa: [], pecasIaCarregadas: false,
+        modalPecasIaAberto: false, modalPecasIaSelecionados: {},
 
         sseAberto: false, sseLog: [], sseStatus: '', sseTitulo: '',
 
@@ -133,7 +159,22 @@ function acoesSisdpuBlock(cfg) {
         // confirmado (ver _receberPeticaoEproc) — o usuário não precisa estar
         // com este console aberto no momento pra não perder o registro.
         rascunhoCarregado: false, rascunhoSalvoEm: '', gravando: false,
+        _rascunhoPromise: null,
         _descMovHtmlRascunho: '',
+
+        // Fila de movimentações sequenciais (2026-09-11) — permite montar VÁRIAS
+        // movimentações (cada uma com sua própria fase/despacho/tramitação/conclusão/
+        // anexos) pro MESMO PAJ e executá-las em sequência, na mesma sessão do
+        // SISDPU. Cada item: {fase, descricao_mov, descricao_mov_html (bool),
+        // grupo, descricao_tram, prazo, prazo_data, id_tramites (lista), anexos
+        // (shape completo de anexosStaged, pra reeditar com fidelidade)}.
+        // ADITIVO: quando `fila` está vazia, tudo funciona EXATAMENTE como antes —
+        // "Executar" roda o formulário atual diretamente (nenhuma mudança pra quem
+        // nunca usa fila, ex.: paj_detail.html isolado, retornos.html).
+        // `editandoFilaIndice`: != null quando "Editar" carregou um item de volta
+        // no formulário — "Adicionar à fila" vira "Salvar alteração" (atualiza no
+        // lugar em vez de acrescentar).
+        fila: [], editandoFilaIndice: null,
 
         async init() {
             try {
@@ -146,11 +187,23 @@ function acoesSisdpuBlock(cfg) {
                 this.caixasTodas = j.caixas_todas || [];
                 if (!this.fase) this.fase = j.fase_padrao || '';
                 if (!this.grupo) this.grupo = j.caixa_padrao || '';
+                this.modelosDespacho = j.modelos_despacho || [];
             } catch (e) {}
             await this.carregarDocsPaj();
             // Antes de montar o editor — precisa do HTML salvo (se houver) pra passar
             // como valorInicial já na criação do Quill (mesmo padrão do "Ações no Eproc").
-            if (!this.rascunhoCarregado) await this.carregarRascunho();
+            // SEMPRE chama (sem gate por `rascunhoCarregado` aqui) — carregarRascunho()
+            // agora cacheia sua PRÓPRIA promise (`_rascunhoPromise`), então a 2ª chamada
+            // concorrente (Alpine chama init() DUAS VEZES por instância — ver nota em
+            // _montarEditorMov) reaproveita e ESPERA a mesma promise em vez de só ver um
+            // flag booleano já "true" e seguir em frente sem os dados terem chegado —
+            // era exatamente esse gap (2ª chamada de init() pulava o await porque
+            // `rascunhoCarregado` já estava true, setado pela 1ª ANTES do fetch dela
+            // terminar) que causava _montarEditorMov() ler `_descMovHtmlRascunho` ainda
+            // vazio e montar o Quill sem o texto salvo — bug real 2026-09-11
+            // (Movimentações Pendentes: descrição da movimentação sumia ao reabrir,
+            // só a da tramitação — que não depende do Quill — sobrevivia).
+            await this.carregarRascunho();
             // "Gravar movimentação para o SISDPU" no resumo final de Ações no Eproc
             // recarrega a página de propósito (ver acoes_eproc.js:gravarMovimentacaoSisdpuNoResumo)
             // e usa sessionStorage (sobrevive ao reload, ao contrário de uma variável
@@ -191,25 +244,38 @@ function acoesSisdpuBlock(cfg) {
             }
         },
         // Carrega o rascunho salvo do PAJ (se houver) — fase, despachos, anexos,
-        // grupo/prazo. Roda uma vez por instância; silencioso se não houver
-        // rascunho ou a chamada falhar. Mesmo padrão de "Ações no Eproc".
-        async carregarRascunho() {
+        // grupo/prazo. Silencioso se não houver rascunho ou a chamada falhar. Mesmo
+        // padrão de "Ações no Eproc". Cacheia a PRÓPRIA promise em `_rascunhoPromise`
+        // (não só um flag booleano): chamadas concorrentes (Alpine roda init() DUAS
+        // VEZES por instância) devolvem a MESMA promise em vez de disparar um 2º
+        // fetch e/ou seguir adiante achando que já terminou — sem isso, a 2ª chamada
+        // podia ler `_descMovHtmlRascunho` ainda vazio (fetch da 1ª ainda em voo) e
+        // `_montarEditorMov()` montava o Quill sem o texto salvo (bug real
+        // 2026-09-11, ver nota em init()). `forcar=true` (usado por
+        // _receberPeticaoEproc) descarta qualquer promise em cache e busca de novo.
+        async carregarRascunho(forcar) {
+            if (forcar) this._rascunhoPromise = null;
+            if (this._rascunhoPromise) return this._rascunhoPromise;
             this.rascunhoCarregado = true;
-            if (!this.pajNorm) return;
-            try {
-                const j = await (await fetch('/api/acoes-sisdpu/rascunho/' + encodeURIComponent(this.pajNorm))).json();
-                const r = j.rascunho;
-                if (!r) return;
-                if (r.fase) this.fase = r.fase;
-                if (r.grupo) this.grupo = r.grupo;
-                if (r.prazo) this.prazo = r.prazo;
-                if (r.prazo_data) this.prazoData = r.prazo_data;
-                if (typeof r.concluir === 'boolean') this.concluir = r.concluir;
-                this._descMovHtmlRascunho = r.descricao_mov_html || '';
-                if (!this.getDescricaoTram) this.descTram = r.descricao_tram || this.descTram;
-                this.anexosStaged = r.anexos || [];
-                this.rascunhoSalvoEm = r.salvo_em || '';
-            } catch (e) {}
+            this._rascunhoPromise = (async () => {
+                if (!this.pajNorm) return;
+                try {
+                    const j = await (await fetch('/api/acoes-sisdpu/rascunho/' + encodeURIComponent(this.pajNorm))).json();
+                    const r = j.rascunho;
+                    if (!r) return;
+                    if (r.fase) this.fase = r.fase;
+                    if (r.grupo) this.grupo = r.grupo;
+                    if (r.prazo) this.prazo = r.prazo;
+                    if (r.prazo_data) this.prazoData = r.prazo_data;
+                    if (typeof r.concluir === 'boolean') this.concluir = r.concluir;
+                    this._descMovHtmlRascunho = r.descricao_mov_html || '';
+                    if (!this.getDescricaoTram) this.descTram = r.descricao_tram || this.descTram;
+                    this.anexosStaged = r.anexos || [];
+                    this.fila = r.fila || [];
+                    this.rascunhoSalvoEm = r.salvo_em || '';
+                } catch (e) {}
+            })();
+            return this._rascunhoPromise;
         },
         // "Gravar" — persiste o estado atual do console pra executar mais tarde
         // (ver botão ao lado de "Executar no SISDPU"). Mesmo padrão de "Ações no
@@ -226,6 +292,7 @@ function acoesSisdpuBlock(cfg) {
                         descricao_mov_html: this.getDescricaoMov ? '' : this.descMovEfetiva(),
                         descricao_tram: this.getDescricaoTram ? '' : this.descTramEfetiva(),
                         anexos: this.anexosStaged,
+                        fila: this.fila,
                     }),
                 });
                 const j = await resp.json();
@@ -250,8 +317,7 @@ function acoesSisdpuBlock(cfg) {
         // aberto (editor já existe), ainda assim empurra o HTML pra dentro dele.
         async _receberPeticaoEproc(d) {
             if (!d.pajNorm || d.pajNorm !== this.pajNorm) return;
-            this.rascunhoCarregado = false;
-            await this.carregarRascunho();
+            await this.carregarRascunho(true);
             if (!this.aberto) { await this.abrir(); return; }
             if (this._editorMov) this._editorMov.setHTML(this._descMovHtmlRascunho || '');
         },
@@ -288,6 +354,59 @@ function acoesSisdpuBlock(cfg) {
         // e formatado o texto no Quill NÃO sobrescreve nada sem o usuário clicar aqui.
         atualizarMovDaFonte() {
             if (this._editorMov && this.getValorInicialMov) this._editorMov.setText(this.getValorInicialMov() || '');
+        },
+        // "Usar modelo" (despachos padrão, Configurações › SISDPU) — insere no
+        // CURSOR do editor da Movimentação, NÃO substitui o que já estiver
+        // escrito (mesmo comportamento de "Usar modelo" em Ações no Eproc — ver
+        // static/js/acoes_eproc.js:usarModeloPeticao). Indisponível quando
+        // `getDescricaoMov` está configurado (ex.: Sugestão IA da Retornos) —
+        // nesse modo o módulo não desenha editor próprio, não há onde inserir.
+        async usarModeloDespacho(modeloId) {
+            const modelo = this.modelosDespacho.find((m) => m.id === modeloId);
+            if (!modelo || this.getDescricaoMov) return;
+            this.erroUsarModeloDespacho = '';
+            this.usandoModeloDespacho = true;
+            try {
+                const org = window._identificacaoOrgao || {};
+                const subs = {
+                    '[PAJ]': this.paj || '',
+                    // Não dependem de PAJ nenhum — sempre resolvem (ver
+                    // Configurações › Geral).
+                    '[DATA]': dataPorExtenso(),
+                    '[OFICIO]': org.oficio || '',
+                    '[UNIDADE]': org.unidade || '',
+                    '[DEFENSOR]': org.defensor_nome || '',
+                    '[CARGO]': org.defensor_cargo || '',
+                };
+                if (this.pajNorm) {
+                    try {
+                        const j = await (await fetch('/api/acoes-eproc/qualificacao/' + encodeURIComponent(this.pajNorm))).json();
+                        if (j.nome) subs['[NOME]'] = j.nome;
+                        if (j.cpf) subs['[CPF]'] = j.cpf;
+                        // Só resolve quando há EXATAMENTE 1 processo judicial
+                        // vinculado ao PAJ — com 0 ou 2+, o backend já devolve
+                        // vazio de propósito (nunca escolhe um arbitrariamente
+                        // entre vários); o placeholder fica literal na tela
+                        // pro usuário completar à mão nesse caso (pedido do
+                        // usuário 2026-09-16: manter [PROCESSO] mesmo sem
+                        // "processoSelecionado" próprio, como Ações no Eproc
+                        // tem — aqui não há esse seletor).
+                        if (j.processo) subs['[PROCESSO]'] = j.processo;
+                    } catch (e) {}
+                }
+                const htmlModelo = paraHtmlSeTextoPuro(modelo.texto);
+                const textoResolvido = resolverPlaceholders(htmlModelo, subs);
+                if (this._editorMov) {
+                    this._editorMov.insertHTML(textoResolvido);
+                } else {
+                    // Sem Quill (CDN fora do ar) — cai na textarea simples, só
+                    // acrescenta ao final (não dá pra saber a posição do cursor
+                    // sem o editor rico); tira as tags, é texto puro ali.
+                    this.descMov = (this.descMov ? this.descMov + '\n\n' : '') + htmlParaTextoSimples(textoResolvido);
+                }
+            } finally {
+                this.usandoModeloDespacho = false;
+            }
         },
         fasesDropdown() { return this.fasesFav.length ? this.fasesFav : this.fasesTodas; },
         // Garante que a fase ATUAL sempre apareça como opção do <select>, favorita
@@ -341,6 +460,111 @@ function acoesSisdpuBlock(cfg) {
             return this.tramitacoesCaixa !== null
                 ? this.idsTramiteSelecionadosArr().length > 0
                 : !!(this.idTramite && this.concluir);
+        },
+
+        // --- Fila de movimentações sequenciais ---
+        // Ids-a-concluir EFETIVOS do formulário atual, já reduzidos a uma lista
+        // simples (mesmo critério de concluirEfetivo(), mas devolvendo os ids em
+        // vez de só um booleano) — usado tanto pra capturar um item da fila quanto
+        // (indiretamente) pra saber se há algo preenchido antes de adicionar.
+        _idsConcluirFormulario() {
+            return this.tramitacoesCaixa !== null
+                ? this.idsTramiteSelecionadosArr()
+                : (this.concluir && this.idTramite ? [this.idTramite] : []);
+        },
+        // Snapshot do formulário atual num item de fila — auto-contido (guarda o
+        // HTML/texto já resolvido dos despachos, não uma referência ao editor Quill
+        // vivo, que vai ser reaproveitado/limpo pro PRÓXIMO item).
+        _capturarItemFormulario() {
+            return {
+                fase: this.fase,
+                descricao_mov: this.descMovEfetiva(),
+                descricao_mov_html: this.descMovEhHtml(),
+                grupo: this.grupo,
+                descricao_tram: this.descTramEfetiva(),
+                prazo: this.prazo,
+                prazo_data: this.prazoData,
+                id_tramites: this._idsConcluirFormulario(),
+                anexos: this.anexosStaged.map((a) => ({ ...a })),
+            };
+        },
+        // Limpa o formulário (fase/despachos/tramitação/conclusão/anexos) pra
+        // começar a próxima movimentação da fila do zero. NÃO mexe em `fila` nem
+        // em `editandoFilaIndice` — quem chama decide isso antes/depois.
+        _limparFormulario() {
+            this.fase = '';
+            if (this._editorMov) this._editorMov.setHTML('');
+            this.descMov = '';
+            this.grupo = '';
+            this.prazo = 0;
+            this.prazoData = '';
+            this.descTram = '';
+            this.concluir = true;
+            if (this.tramitacoesCaixa !== null) {
+                this.tramitacoesCaixa.forEach((t) => { this.idsTramiteSelecionados[t.id_tramite] = false; });
+            }
+            // NÃO apaga os arquivos externos já enviados (removerAnexoStaged() faria
+            // isso) — eles continuam referenciados pelo item recém-adicionado à fila
+            // e só serão removidos do disco quando aquele item de fato executar.
+            this.anexosStaged = [];
+        },
+        // "Adicionar à fila" (ou "Salvar alteração", se `editandoFilaIndice` estiver
+        // setado — ver editarItemFila()): captura o formulário atual como um item,
+        // limpa o formulário pro próximo, e persiste a fila no rascunho do PAJ
+        // (mesmo endpoint de sempre — `fila` é só mais um campo do rascunho).
+        async adicionarItemFila() {
+            const item = this._capturarItemFormulario();
+            if (!item.fase && !item.grupo && !item.id_tramites.length) {
+                alert('Preencha ao menos uma ação (movimentar, tramitar ou concluir) antes de adicionar à fila.');
+                return;
+            }
+            if (this.editandoFilaIndice !== null) {
+                this.fila.splice(this.editandoFilaIndice, 1, item);
+                this.editandoFilaIndice = null;
+            } else {
+                this.fila.push(item);
+            }
+            this._limparFormulario();
+            await this.gravarRascunho();
+        },
+        // Carrega um item da fila DE VOLTA no formulário pra ajustar — o item
+        // continua na fila (na mesma posição) até "Adicionar à fila" confirmar a
+        // alteração (vira "Salvar alteração" enquanto `editandoFilaIndice` != null).
+        editarItemFila(i) {
+            const item = this.fila[i];
+            if (!item) return;
+            this.fase = item.fase || '';
+            if (this._editorMov) this._editorMov.setHTML(item.descricao_mov || '');
+            else this.descMov = item.descricao_mov || '';
+            this.grupo = item.grupo || '';
+            this.prazo = item.prazo || 0;
+            this.prazoData = item.prazo_data || '';
+            this.descTram = item.descricao_tram || '';
+            const idsItem = new Set(item.id_tramites || []);
+            if (this.tramitacoesCaixa !== null) {
+                this.tramitacoesCaixa.forEach((t) => { this.idsTramiteSelecionados[t.id_tramite] = idsItem.has(t.id_tramite); });
+            } else {
+                this.concluir = idsItem.size > 0;
+                if (item.id_tramites && item.id_tramites[0]) this.idTramite = item.id_tramites[0];
+            }
+            this.anexosStaged = (item.anexos || []).map((a) => ({ ...a }));
+            this.editandoFilaIndice = i;
+        },
+        // Descarta a edição em curso (NÃO mexe na fila — o item editado continua
+        // como estava antes de "Editar" ser clicado) e limpa o formulário.
+        cancelarEdicaoFila() {
+            this.editandoFilaIndice = null;
+            this._limparFormulario();
+        },
+        async removerItemFila(i) {
+            this.fila.splice(i, 1);
+            if (this.editandoFilaIndice === i) {
+                this.editandoFilaIndice = null;
+                this._limparFormulario();
+            } else if (this.editandoFilaIndice !== null && this.editandoFilaIndice > i) {
+                this.editandoFilaIndice -= 1;
+            }
+            await this.gravarRascunho();
         },
 
         // --- Anexos da movimentação: upload externo (comum) + do PAJ via modal (raro) ---
@@ -404,6 +628,14 @@ function acoesSisdpuBlock(cfg) {
                 if (resp.ok) { const d = await resp.json(); this.docsPaj = d.anexos_sisdpu || []; }
             } catch (e) {}
         },
+        async carregarPecasIa() {
+            this.pecasIaCarregadas = true;
+            if (!this.pajNorm) return;
+            try {
+                const j = await (await fetch('/api/acoes-sisdpu/pecas-ia/' + encodeURIComponent(this.pajNorm))).json();
+                this.pecasIa = j.itens || [];
+            } catch (e) {}
+        },
         // `anexos_sisdpu` (mesma fonte da seção "Anexos SISDPU" da aba do PAJ):
         // {nome, tipo, tamanho, tem_ocr, caminho, caminho_ocr}.
         docKey(d) { return d.caminho || d.nome; },
@@ -438,6 +670,26 @@ function acoesSisdpuBlock(cfg) {
             });
             this.modalPajAberto = false;
         },
+        // --- modal "Adicionar Petições IA" (subpasta "Peças IA" do PAJ) ---
+        async abrirModalPecasIa() {
+            if (!this.pecasIaCarregadas) await this.carregarPecasIa();
+            this.modalPecasIaSelecionados = {};
+            this.modalPecasIaAberto = true;
+        },
+        fecharModalPecasIa() { this.modalPecasIaAberto = false; },
+        confirmarPecasIa() {
+            // Mesmo `ref`/origem 'paj' de confirmarAnexosPaj() acima — "Peças IA/<arquivo>"
+            // é só mais um caminho relativo dentro do PAJ, sem tratamento especial daqui
+            // pra frente (upload/execução tratam qualquer origem 'paj' igual).
+            const jaStaged = new Set(this.anexosStaged.filter(a => a.origem === 'paj').map(a => a.ref));
+            this.pecasIa.forEach((d) => {
+                const k = this.docKey(d);
+                if (!this.modalPecasIaSelecionados[k] || jaStaged.has(k)) return;
+                this.anexosStaged.push({ origem: 'paj', ref: k, nome: this.docLabel(d), tamanho: d.tamanho || 0, tipo: d.tipo || '',
+                                          descricao: this.semExtensao(this.docLabel(d)), tipoArquivo: 'Não informado' });
+            });
+            this.modalPecasIaAberto = false;
+        },
         // Remove um anexo staged. Se for externo (upload), descarta no servidor também
         // (evita lixo acumulando na pasta temporária — ver rota /anexo-externo/remover).
         removerAnexoStaged(item) {
@@ -467,7 +719,17 @@ function acoesSisdpuBlock(cfg) {
                 descricao: a.descricao || a.nome, tipo_arquivo: a.tipoArquivo || 'Não informado',
             }));
         },
-        async executar() {
+        // `pularConfirmacao` (opcional, default false): true quando quem chama já
+        // revisou tudo antes (ex.: resumo combinado da página "Movimentar Eproc +
+        // SISDPU" — ver movimentar_conjunto.html) — evita perguntar de novo o que
+        // já foi confirmado ali, mesmo espírito de outras confirmações redundantes
+        // já removidas neste projeto (pedido do usuário 2026-09-11).
+        async executar(pularConfirmacao) {
+            // Fila não-vazia — desvia pra executarFila() (roda os itens da fila em
+            // sequência, na mesma sessão do SISDPU) em vez do fluxo de execução
+            // única abaixo. O formulário atual (se houver algo digitado mas ainda
+            // não "Adicionado à fila") NÃO entra na execução — ver aviso na UI.
+            if (this.fila.length > 0) { await this.executarFila(pularConfirmacao); return; }
             const concluirEfetivo = this.concluirEfetivo();
             const idsSelecionados = this.idsTramiteSelecionadosArr();
             if (this.exec || (!this.fase && !this.grupo && !concluirEfetivo)) return;
@@ -481,7 +743,7 @@ function acoesSisdpuBlock(cfg) {
                 : this.tramitacoesCaixa !== null
                     ? '\nConcluir ' + idsSelecionados.length + ' trâmite(s) selecionado(s) (retira(m) da caixa)'
                     : '\nConcluir o trâmite (retira da caixa)';
-            if (!confirm('Executar no SISDPU — ' + (this.paj || this.idProcesso) + '?\n\n'
+            if (!pularConfirmacao && !confirm('Executar no SISDPU — ' + (this.paj || this.idProcesso) + '?\n\n'
                 + (this.fase ? 'Movimentar (fase: ' + this.fase + ')' : 'Sem movimentação')
                 + (anexosSel.length ? '\n+ ' + anexosSel.length + ' anexo(s)' : '')
                 + (this.grupo ? '\nTramitar para: ' + this.grupo + prazoTxt : '\nSem tramitação')
@@ -547,12 +809,84 @@ function acoesSisdpuBlock(cfg) {
                 // SEM esperar onExecutado, o reload derrubava a sincronização de
                 // movimentações no meio do caminho e a tabela continuava desatualizada.
                 await this.onExecutado(resultadoEnriquecido);
-                if (res.ok) window.location.reload();
+                if (res.ok) { if (this.aposExecutarIrPara) window.location.href = this.aposExecutarIrPara; else window.location.reload(); }
             });
             es.onerror = () => {
                 this.exec = false; es.close();
                 this.sseStatus = '— conexão perdida (verifique o PAJ)';
                 this.sseLog.push({ level: 'erro', msg: this._avisoConexaoPerdida() });
+                this.$nextTick(() => { const b = this.$refs.acoesSisdpuSseBox; if (b) b.scrollTop = b.scrollHeight; });
+            };
+        },
+        // Executa a FILA inteira em sequência (mesma sessão do SISDPU) — chamado por
+        // executar() quando `fila.length > 0`. Cada item concluído com sucesso é
+        // removido da fila (e a fila persistida no rascunho é atualizada) ASSIM QUE
+        // o evento `item_done` chega — não só no final — pra uma queda de conexão no
+        // meio não perder o progresso já feito: o que restou no rascunho é só o que
+        // ainda falta executar.
+        async executarFila(pularConfirmacao) {
+            if (this.exec) return;
+            const lote = this.fila.slice();  // snapshot — mesmas referências de objeto,
+            // usado pra mapear o índice ESTÁVEL que o backend reporta (posição no
+            // lote enviado, que não muda durante a execução) de volta pro item real
+            // em `this.fila` (que vai encolhendo conforme os itens terminam).
+            const resumo = lote.map((it, i) => (i + 1) + '. ' + (it.fase || 'sem movimentação')
+                + (it.grupo ? ' → ' + it.grupo : '')
+                + (it.id_tramites.length ? ' (conclui ' + it.id_tramites.length + ' trâmite(s))' : '')).join('\n');
+            if (!pularConfirmacao && !confirm('Executar a fila (' + lote.length + ' movimentação(ões)) no SISDPU — '
+                + (this.paj || this.idProcesso) + '?\n\n' + resumo)) return;
+            if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
+            this.exec = true;
+            this.sseTitulo = 'Executando fila (' + lote.length + ') no SISDPU — ' + (this.paj || this.idProcesso);
+            this.sseLog = []; this.sseStatus = ''; this.sseAberto = true;
+            const qs = new URLSearchParams({
+                id_processo: this.idProcesso, paj: this.paj || '', paj_norm: this.pajNorm || '',
+                itens: JSON.stringify(lote.map((it) => ({
+                    fase: it.fase, descricao_mov: it.descricao_mov,
+                    descricao_mov_html: it.descricao_mov_html ? '1' : '0',
+                    grupo: it.grupo, descricao_tram: it.descricao_tram,
+                    prazo: it.prazo, prazo_data: it.prazo_data,
+                    id_tramites: it.id_tramites,
+                    anexos: it.anexos.map((a) => ({
+                        origem: a.origem, ref: a.ref,
+                        descricao: a.descricao || a.nome, tipo_arquivo: a.tipoArquivo || 'Não informado',
+                    })),
+                }))),
+            });
+            const es = new EventSource('/api/acoes-sisdpu/executar-fila?' + qs.toString());
+            es.addEventListener('log', (ev) => {
+                try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {}
+                this.$nextTick(() => { const b = this.$refs.acoesSisdpuSseBox; if (b) b.scrollTop = b.scrollHeight; });
+            });
+            es.addEventListener('item_done', async (ev) => {
+                let d = {}; try { d = JSON.parse(ev.data); } catch (e) {}
+                if (d.ok && typeof d.index === 'number' && lote[d.index]) {
+                    const pos = this.fila.indexOf(lote[d.index]);
+                    if (pos >= 0) this.fila.splice(pos, 1);
+                    await this.gravarRascunho();
+                }
+            });
+            es.addEventListener('done', async (ev) => {
+                let res = {}; try { res = JSON.parse(ev.data); } catch (e) {}
+                this.sseStatus = res.ok ? '— fila executada ✓' : '— parou com aviso (veja o log)';
+                this.exec = false; es.close();
+                if (res.ok) {
+                    if (this.rascunhoSalvoEm) {
+                        this.rascunhoSalvoEm = '';
+                        fetch('/api/acoes-sisdpu/rascunho/' + encodeURIComponent(this.pajNorm), { method: 'DELETE' }).catch(() => {});
+                    }
+                    await new Promise((r) => setTimeout(r, 1200));
+                    this.sseAberto = false;
+                }
+                await this.onExecutado({ ...res, fila: true });
+                if (res.ok) { if (this.aposExecutarIrPara) window.location.href = this.aposExecutarIrPara; else window.location.reload(); }
+            });
+            es.onerror = () => {
+                this.exec = false; es.close();
+                this.sseStatus = '— conexão perdida (verifique o PAJ)';
+                this.sseLog.push({ level: 'erro', msg: 'Conexão perdida durante a execução da fila — os itens já '
+                    + 'removidos da lista acima foram executados com sucesso; os que restaram continuam salvos '
+                    + 'pra tentar de novo. Verifique o PAJ no SISDPU antes de executar de novo.' });
                 this.$nextTick(() => { const b = this.$refs.acoesSisdpuSseBox; if (b) b.scrollTop = b.scrollHeight; });
             };
         },

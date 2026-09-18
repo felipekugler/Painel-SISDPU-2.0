@@ -11,8 +11,13 @@ router = APIRouter()
 
 
 @router.post("/api/analise-pretensao/{tipo}/start/{paj_norm}")
-async def analise_pretensao_start(tipo: str, paj_norm: PajNorm):
-    result = analise_pretensao_service.iniciar(paj_norm, tipo)
+async def analise_pretensao_start(tipo: str, paj_norm: PajNorm, payload: dict = Body(default={})):
+    """Body opcional: {"orientacao": "..."} — orientação diretiva do Defensor
+    pra balizar a análise (ver botão "Analisar" em paj_detail.html), injetada
+    na instrução real mandada pra IA (ver
+    analise_pretensao_service._montar_instrucao_diagnostico)."""
+    orientacao = (payload.get("orientacao") or "").strip()
+    result = analise_pretensao_service.iniciar(paj_norm, tipo, orientacao=orientacao)
     return JSONResponse(result, status_code=200 if result.get("ok") else 400)
 
 

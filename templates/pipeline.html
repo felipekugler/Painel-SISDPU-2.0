@@ -164,8 +164,6 @@
     <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
   </dialog>
 
-  {% include "partials/sync_modal.html" %}
-
 </div>
 
 <script>
@@ -220,9 +218,9 @@ function pipelineMonitor() {
     },
 
     rodarSync() {
-      // Reusa o sync_modal e a funcao global sincronizarCaixa() definida em app.js
+      // Reusa o widget flutuante de sync e a funcao global sincronizarCaixa() definida em app.js
       if (typeof sincronizarCaixa === 'function') {
-        sincronizarCaixa(true);
+        sincronizarCaixa('completa');
       } else {
         alert('Função de sincronização não encontrada — recarregue a página.');
       }

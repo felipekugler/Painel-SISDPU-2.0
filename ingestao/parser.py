@@ -192,6 +192,12 @@ def parsear_movimentacoes_estruturadas(movs_brutos: list[dict]) -> list[dict]:
                 "usuario": mov_bruto.get("usuario", ""),
                 "links_decisao": mov_bruto.get("links_decisao", []),
                 "anexo": mov_bruto.get("anexo", ""),
+                # Indicador barato (sem popup) de que a coluna "Anexo" tem um
+                # icone clicavel — ver sisdpu_client.py (movimentacoes_paj/
+                # buscar_paj_global). Usado pra sinalizar "pode ter documento"
+                # antes mesmo de uma sincronizacao leve/completa ter extraido a
+                # relacao real (`documentos`, preenchido em sincronizador.py).
+                "tem_anexo_icone": bool(mov_bruto.get("tem_anexo_icone", False)),
                 "descricao_retorno": mov_bruto.get("descricao_retorno", ""),
             }
             movs.append(mov)

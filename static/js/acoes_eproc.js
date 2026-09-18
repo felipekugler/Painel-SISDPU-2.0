@@ -6,9 +6,22 @@
 //   </div>
 //
 // cfg:
-//   processos (opcional) — lista de {numero,...} vinculados ao PAJ (para achar prazos).
-//   paj       (opcional) — rótulo do PAJ.
-//   pajNorm   (opcional) — para carregar os documentos já anexados ao PAJ (anexos).
+//   processos (obrigatório em algum sentido — precisa de ao menos 1) — lista de
+//             {numero,...} a movimentar/peticionar (para achar prazos e resolver
+//             o evento). Pode ser um processo AVULSO, sem PAJ nenhum por trás —
+//             ver `pajNorm` abaixo.
+//   paj       (opcional) — rótulo do PAJ, só para exibição/mensagens.
+//   pajNorm   (opcional) — PAJ REAL sincronizado localmente. Só é usado por 3
+//             coisas que de fato precisam de uma pasta de PAJ em disco:
+//             "Adicionar do SISDPU" e "Adicionar Petições IA" (puxam arquivo já
+//             baixado) e o registro automático da movimentação pendente no
+//             SISDPU depois de peticionar. SEM `pajNorm` (petição avulsa, só
+//             pelo número do processo — ver `peticoes_pendentes.html` botão
+//             "+ Adicionar petição" / minimenu "Movimentar no eproc"), essas 3
+//             coisas ficam indisponíveis, mas o peticionamento em si funciona
+//             normalmente — o e-proc nunca exigiu PAJ, só o Painel usava um pra
+//             organizar rascunho/anexos (pedido do usuário 2026-09-11: mesma
+//             lógica de "Adicionar movimentação" do módulo Ações no SISDPU).
 //   aberto    (opcional) — estado inicial da seção retrátil (default: false).
 //
 // Favoritos/frequentes de EVENTO e TIPO DE DOCUMENTO, e o padrão de SIGILO, vêm de
@@ -38,6 +51,22 @@ function acoesEprocBlock(cfg) {
         // MAIS DE UM vinculado — evita movimentar/peticionar no processo errado).
         // Com só 1 (ou 0), fica vazio e carregarPrazos() usa todos os vinculados.
         processoSelecionado: '',
+
+        // Chave de armazenamento do RASCUNHO desta petição (evento/anexos/prazos
+        // marcados) — usada em TODAS as URLs `/api/acoes-eproc/rascunho/...` e na
+        // execução real. É o `pajNorm` quando existir (comportamento de sempre);
+        // sem PAJ (petição avulsa — ver nota de `pajNorm` acima), vira
+        // "PROC-<dígitos do processo>" — prefixo diferente de "PAJ-" garante que
+        // nunca colida com um paj_norm de verdade. Nunca usar `this.pajNorm`
+        // diretamente nessas chamadas — só esta função (as 3 funcionalidades que
+        // exigem PAJ de verdade continuam usando `this.pajNorm` puro).
+        chaveRascunho() {
+            if (this.pajNorm) return this.pajNorm;
+            const numero = this.processoSelecionado
+                || (this.processos[0] && this.processos[0].numero) || '';
+            const digitos = String(numero).replace(/\D/g, '');
+            return digitos ? ('PROC-' + digitos) : '';
+        },
 
         prazos: [], prazosSelecionados: {}, carregandoPrazos: false, prazosCarregados: false,
         evento: '', peticaoTexto: '',
@@ -82,6 +111,11 @@ function acoesEprocBlock(cfg) {
         // "Incluir petição nos anexos" — formata o texto ATUAL da caixa (sem IA)
         // e (re)anexa como PDF. Útil depois de ajustar manualmente o texto gerado.
         incluindoAnexo: false, erroIncluirAnexo: '',
+        // "Usar modelo" — modelos de petição cadastrados em Configurações › e-proc
+        // (texto padrão + placeholders [NOME]/[CPF]/[PROCESSO]/[PAJ]), carregados
+        // junto das demais preferências (ver carregarPreferencias). Ver
+        // usarModeloPeticao() mais abaixo.
+        modelosPeticao: [], usandoModelo: false, erroUsarModelo: '',
 
         // preferências (favoritos=dropdown, frequentes=badges) — cache local
         eventosFav: [], eventosFreq: [], eventosTodos: [],
@@ -132,6 +166,7 @@ function acoesEprocBlock(cfg) {
                 if (!this.evento) this.evento = j.evento_padrao || '';
                 this.procuradoresFav = j.procuradores_favoritos || [];
                 this.procuradoresTodos = j.procuradores_todos || [];
+                this.modelosPeticao = j.modelos_peticao || [];
                 // Pré-preenche o procurador destino padrão (Configurações › e-proc) só se
                 // ainda não houver nada escolhido — carregarRascunho() roda DEPOIS e
                 // sobrescreve com o que foi de fato salvo, se houver rascunho.
@@ -212,9 +247,9 @@ function acoesEprocBlock(cfg) {
         // abertura do console; silencioso se não houver rascunho ou a chamada falhar.
         async carregarRascunho() {
             this.rascunhoCarregado = true;
-            if (!this.pajNorm) return;
+            if (!this.chaveRascunho()) return;
             try {
-                const j = await (await fetch('/api/acoes-eproc/rascunho/' + encodeURIComponent(this.pajNorm))).json();
+                const j = await (await fetch('/api/acoes-eproc/rascunho/' + encodeURIComponent(this.chaveRascunho()))).json();
                 const r = j.rascunho;
                 if (!r) return;
                 if (r.processo) this.processoSelecionado = r.processo;
@@ -241,7 +276,7 @@ function acoesEprocBlock(cfg) {
                         const fd = new FormData();
                         fd.append('arquivo', a.arquivo);
                         try {
-                            const resp = await fetch('/api/acoes-eproc/rascunho/' + encodeURIComponent(this.pajNorm) + '/upload', {
+                            const resp = await fetch('/api/acoes-eproc/rascunho/' + encodeURIComponent(this.chaveRascunho()) + '/upload', {
                                 method: 'POST', body: fd,
                             });
                             const j = await resp.json();
@@ -264,10 +299,15 @@ function acoesEprocBlock(cfg) {
                              tamanho: a._rascunhoTamanho || (a.arquivo ? a.arquivo.size : 0),
                              tipo: a.tipo, sigilo: a.sigilo };
                 });
-                const resp = await fetch('/api/acoes-eproc/rascunho/' + encodeURIComponent(this.pajNorm), {
+                const resp = await fetch('/api/acoes-eproc/rascunho/' + encodeURIComponent(this.chaveRascunho()), {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         paj_label: this.paj,
+                        // PAJ REAL vinculado (pode ser vazio — petição avulsa, só pelo nº do
+                        // processo) — distinto da chave de armazenamento acima (que também
+                        // pode ser um "PROC-..." sem PAJ nenhum). "Petições pendentes" usa
+                        // este campo pra decidir se mostra link de "Abrir PAJ" ou não.
+                        paj_norm_vinculado: this.pajNorm || '',
                         processo: this.processoSelecionado || (this.processos[0] && this.processos[0].numero) || '',
                         evento: this.evento,
                         peticao_html: this.peticaoEfetiva(),
@@ -302,6 +342,65 @@ function acoesEprocBlock(cfg) {
         // Texto/HTML efetivo da petição — usado quando o peticionamento real for
         // implementado (Fase 4). Por ora nada consome isto ainda.
         peticaoEfetiva() { return this._editorPeticao ? this._editorPeticao.getHTML() : this.peticaoTexto; },
+
+        // --- "Usar modelo" (Modelos de petição, cadastrados em Configurações ›
+        // e-proc) --- Insere o texto do modelo NA POSIÇÃO DO CURSOR (não
+        // substitui o que já estiver escrito — pedido do usuário 2026-09-16,
+        // diferente de "Gerar petição com IA", que sobrescreve). Placeholders
+        // [PROCESSO]/[PAJ] resolvem localmente (já estão no estado do console);
+        // [NOME]/[CPF] exigem 1 chamada ao servidor (assistido PRINCIPAL do PAJ
+        // — ver services.peticao_ia_service.obter_qualificacao_principal) e só
+        // resolvem quando há PAJ vinculado (petição avulsa: ficam literais na
+        // tela, o usuário completa à mão). NÃO existe mais [LOCAL] (removido
+        // 2026-09-16 — vinha errado, "Previdenciário" em vez da cidade; não
+        // há hoje dado de cidade/comarca confiável no painel pra isso).
+        async usarModeloPeticao(modeloId) {
+            const modelo = this.modelosPeticao.find((m) => m.id === modeloId);
+            if (!modelo) return;
+            this.erroUsarModelo = '';
+            this.usandoModelo = true;
+            try {
+                const org = window._identificacaoOrgao || {};
+                const subs = {
+                    '[PROCESSO]': this.processoSelecionado
+                        || (this.processos[0] && this.processos[0].numero) || '',
+                    '[PAJ]': this.paj || '',
+                    // Não dependem de PAJ nenhum — sempre resolvem, mesmo em
+                    // petição avulsa (ver Configurações › Geral).
+                    '[DATA]': dataPorExtenso(),
+                    '[OFICIO]': org.oficio || '',
+                    '[UNIDADE]': org.unidade || '',
+                    '[DEFENSOR]': org.defensor_nome || '',
+                    '[CARGO]': org.defensor_cargo || '',
+                };
+                if (this.pajNorm) {
+                    try {
+                        const j = await (await fetch('/api/acoes-eproc/qualificacao/' + encodeURIComponent(this.pajNorm))).json();
+                        if (j.nome) subs['[NOME]'] = j.nome;
+                        if (j.cpf) subs['[CPF]'] = j.cpf;
+                    } catch (e) {}
+                }
+                // Modelos cadastrados no editor rico (Configurações › e-proc) já
+                // vêm em HTML — se algum modelo mais antigo ainda estiver em texto
+                // puro (sem tags), embrulha em <p> igual antes, pra não perder as
+                // quebras de linha ao inserir no Quill.
+                const htmlModelo = paraHtmlSeTextoPuro(modelo.texto);
+                const textoResolvido = resolverPlaceholders(htmlModelo, subs);
+                if (this._editorPeticao) {
+                    this._editorPeticao.insertHTML(textoResolvido);
+                } else {
+                    // Sem Quill (CDN fora do ar) — cai na textarea simples, só
+                    // acrescenta ao final (não dá pra saber a posição do cursor
+                    // sem o editor rico); tira as tags, é texto puro ali.
+                    this.peticaoTexto = (this.peticaoTexto ? this.peticaoTexto + '\n\n' : '') + htmlParaTextoSimples(textoResolvido);
+                }
+            } finally {
+                this.usandoModelo = false;
+            }
+        },
+        // dataPorExtenso()/paraHtmlSeTextoPuro()/resolverPlaceholders() — ver
+        // static/js/rich_editor.js (compartilhados com "Despachos padrão" de
+        // Ações no SISDPU, mesmo mecanismo de "Usar modelo").
 
         // --- "Gerar petição com IA" ---
         prazoIdsSelecionados() {
@@ -389,7 +488,13 @@ function acoesEprocBlock(cfg) {
         _inserirOuAtualizarAnexoPeticao(nomeArquivo, tamanho) {
             const existente = this.anexos.find((a) => a.origem === 'rascunho' && a.nomeArquivo === nomeArquivo);
             if (existente) { existente.tamanho = tamanho || 0; return; }
-            const tipoPeticao = this.tiposTodos.find((t) => this._normalizarTexto(t).includes('peticao')) || 'Petição';
+            // Match EXATO ("PETIÇÃO", ignorando acento/caixa) — NUNCA aproximado
+            // (.includes solto pegava "ANEXOS DA PETIÇÃO INICIAL", que vem antes
+            // na ordem alfabética do catálogo e também contém a palavra,
+            // classificando errado o que é sempre e só a petição em si — bug real
+            // 2026-08-20). Sem um tipo "Petição" exato no catálogo importado
+            // deste e-proc, cai direto no literal — nunca num tipo aproximado/errado.
+            const tipoPeticao = this.tiposTodos.find((t) => this._normalizarTexto(t) === 'peticao') || 'Petição';
             const semSigilo = this.sigilosTodos.find((s) => /sem sigilo/i.test(s)) || 'Sem Sigilo';
             // docLabelCache = o próprio nome real do arquivo (já vem com ".pdf" do
             // backend, ex.: "Petição-12-08-2026.pdf") — extensaoDe()/validarAnexo()
@@ -468,7 +573,7 @@ function acoesEprocBlock(cfg) {
         linkVisualizarAnexo(a) {
             if (a.origem === 'paj') return a.docPajKey ? ('/files/' + this.pajNorm + '/' + a.docPajKey) : '';
             if (a.origem === 'rascunho') return a.nomeArquivo
-                ? ('/api/acoes-eproc/rascunho/' + this.pajNorm + '/arquivo/' + encodeURIComponent(a.nomeArquivo)) : '';
+                ? ('/api/acoes-eproc/rascunho/' + this.chaveRascunho() + '/arquivo/' + encodeURIComponent(a.nomeArquivo)) : '';
             if (a.origem === 'upload' && a.arquivo) {
                 if (!a._blobUrl) a._blobUrl = URL.createObjectURL(a.arquivo);
                 return a._blobUrl;
@@ -726,7 +831,7 @@ function acoesEprocBlock(cfg) {
             this._refEventoAtual = '';
             this.modalExecutarAberto = true;
             try {
-                const j = await (await fetch('/api/acoes-eproc/executar/' + encodeURIComponent(this.pajNorm) + '/resumo')).json();
+                const j = await (await fetch('/api/acoes-eproc/executar/' + encodeURIComponent(this.chaveRascunho()) + '/resumo')).json();
                 if (!j.ok) { this.execErro = j.erro || 'Falha ao montar o resumo.'; return; }
                 this.execResumo = j;
             } catch (e) {
@@ -751,7 +856,7 @@ function acoesEprocBlock(cfg) {
             this.execErro = '';
             this.execEtapa = 'preparando';
             try {
-                const resp = await fetch('/api/acoes-eproc/executar/' + encodeURIComponent(this.pajNorm), { method: 'POST' });
+                const resp = await fetch('/api/acoes-eproc/executar/' + encodeURIComponent(this.chaveRascunho()), { method: 'POST' });
                 const j = await resp.json();
                 if (!j.ok) { this.execErro = j.erro || 'Falha ao preparar no e-proc.'; this.execEtapa = 'resumo'; return; }
                 this.execResultado = j;
@@ -766,7 +871,7 @@ function acoesEprocBlock(cfg) {
             this.execErro = '';
             this.execEtapa = 'confirmando';
             try {
-                const resp = await fetch('/api/acoes-eproc/executar/' + encodeURIComponent(this.pajNorm) + '/confirmar', {
+                const resp = await fetch('/api/acoes-eproc/executar/' + encodeURIComponent(this.chaveRascunho()) + '/confirmar', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ processo: this.execResultado.processo }),
                 });
@@ -833,15 +938,26 @@ function acoesEprocBlock(cfg) {
         // dependia do campo Petição estar preenchido com TEXTO, e falhava
         // silenciosamente — caindo num texto genérico, sem avisar — sempre que a
         // peça era um PDF pronto anexado em vez de texto digitado ali, como no caso
-        // real que motivou a troca). Nº do evento do protocolo + nome do evento
-        // lançado + conteúdo da Petição (se houver, convertido pra texto puro) +
-        // nome dos anexos (se houver).
+        // real que motivou a troca).
+        //
+        // 3 blocos, nesta ordem (pedido do usuário 2026-09-16, cada um separado
+        // por linha em branco — o \n\n vira <p> próprio mais abaixo):
+        //   1) conteúdo da petição protocolada (texto puro, sem a formatação rica
+        //      da caixa "Petição" — o campo de movimentação do SISDPU não é
+        //      CKEditor);
+        //   2) dados do peticionamento — nº do evento do protocolo + nome do
+        //      evento lançado (ex.: "Petição protocolada no e-proc — Evento 4
+        //      (PETIÇÃO).");
+        //   3) nome dos anexos da petição, se houver (evento de mera ciência
+        //      nunca tem — eventoSemAnexo() já zera `nomesAnexos` antes de
+        //      chegar aqui, ver _prepararMovimentacaoSisdpu).
         _montarDescricaoPosPeticionamento(refEvento, nomesAnexos) {
             const conteudoPeticao = htmlParaTextoSimples(this.peticaoEfetiva());
-            const linhas = ['Petição protocolada no e-proc'
-                + (refEvento ? (' — ' + refEvento) : '')
-                + (this.evento ? (' (' + this.evento + ')') : '') + '.'];
+            const linhas = [];
             if (conteudoPeticao) linhas.push(conteudoPeticao);
+            linhas.push('Petição protocolada no e-proc'
+                + (refEvento ? (' — ' + refEvento) : '')
+                + (this.evento ? (' (' + this.evento + ')') : '') + '.');
             if (nomesAnexos.length) linhas.push('Documentos anexados: ' + nomesAnexos.join(', ') + '.');
             return linhas.join('\n\n');
         },
@@ -852,6 +968,10 @@ function acoesEprocBlock(cfg) {
         // console já estiver na página (abrir e reler do disco), sem duplicar o
         // formato dos dados em dois lugares.
         async _prepararMovimentacaoSisdpu(refEvento) {
+            // Defensivo — o botão que chama isto já fica oculto sem `pajNorm` (ver
+            // template), mas sem PAJ não há "movimentação no SISDPU" possível
+            // (petição avulsa, só pelo número do processo).
+            if (!this.pajNorm) return { ok: false, mensagem: 'Esta petição não está vinculada a um PAJ — nada a gravar no SISDPU.' };
             const docs = (this.execResumo && this.execResumo.documentos) || [];
             const nomesAnexos = docs.map((d) => d.nome);
             const descricaoTexto = this._montarDescricaoPosPeticionamento(refEvento, nomesAnexos);
@@ -865,15 +985,33 @@ function acoesEprocBlock(cfg) {
             // anexo "Externo" pode só existir na pasta de rascunhos de Ações no
             // Eproc (fora da pasta do PAJ) — precisa ser copiado pra dentro dela
             // antes de virar uma referência 'paj' válida pro SISDPU.
+            // IMPORTANTE: erro aqui NÃO pode ficar em silêncio — era exatamente
+            // esse `catch` vazio que escondia o bug real (2026-09-16): o PDF da
+            // petição protocolada não chegava como anexo, sem aviso nenhum,
+            // porque copiar o arquivo pra dentro da pasta do PAJ falhava (ex.:
+            // antivírus/firewall bloqueando escrita) e a rota devolvia um 500
+            // puro (texto, não JSON) — o `.json()` abaixo lançava, caía no
+            // catch, e a função seguia como se nada tivesse acontecido.
             let anexosSisdpu = [];
+            let avisoAnexos = '';
             try {
                 const respAnexos = await fetch('/api/acoes-eproc/preparar-anexos-sisdpu/' + encodeURIComponent(this.pajNorm), {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ documentos: docs }),
                 });
                 const jAnexos = await respAnexos.json();
-                if (jAnexos.ok) anexosSisdpu = jAnexos.anexos || [];
-            } catch (e) {}
+                if (!jAnexos.ok) {
+                    return { ok: false, mensagem: 'Falha ao preparar os anexos da petição para o SISDPU: ' + (jAnexos.erro || 'erro desconhecido') };
+                }
+                anexosSisdpu = jAnexos.anexos || [];
+                const falhas = jAnexos.falhas || [];
+                if (falhas.length) {
+                    avisoAnexos = falhas.length + ' anexo(s) não puderam ser incluídos: '
+                        + falhas.map((f) => f.nome + ' (' + f.motivo + ')').join('; ') + '.';
+                }
+            } catch (e) {
+                return { ok: false, mensagem: 'Erro de rede ao preparar os anexos da petição para o SISDPU: ' + e };
+            }
             const descricaoHtml = '<p>' + descricaoTexto.replace(/\n+/g, '</p><p>') + '</p>';
 
             // Fase da movimentação no SISDPU depende do evento lançado no e-proc: um
@@ -906,7 +1044,9 @@ function acoesEprocBlock(cfg) {
             // a movimentação em si ainda depende de "Executar no SISDPU" no console
             // ao lado (ou na página, após o reload). O resumo final deixa isso claro
             // (ver template do modal) pra não parecer que já foi executada de fato.
-            return { ok: true, fase: faseMov };
+            // `aviso` (opcional): sucesso, mas 1+ anexo não pôde ser incluído —
+            // exibido junto no resumo, nunca escondido.
+            return { ok: true, fase: faseMov, aviso: avisoAnexos || '' };
         },
 
         // Executa de fato o Gerenciamento de Processo (substabelecimento) — chamado

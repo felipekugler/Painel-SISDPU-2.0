@@ -134,37 +134,12 @@ document.addEventListener('htmx:responseError', function(evt) {
     showToast('Erro na requisição: ' + evt.detail.xhr.status, 'error');
 });
 
-/* Sincronizacao da caixa SISDPU — streaming SSE */
-let _syncSource = null;
-
-function _syncBtnCancel(show) {
-    let btn = document.getElementById('sync-cancel-btn');
-    if (btn) btn.style.display = show ? '' : 'none';
-}
-
-function cancelarSync() {
-    let statusEl = document.getElementById('sync-status');
-    let btn = document.getElementById('sync-cancel-btn');
-    if (btn) { btn.disabled = true; btn.textContent = 'cancelando...'; }
-    if (statusEl) {
-        statusEl.textContent = 'cancelando...';
-        statusEl.className = 'badge badge-sm badge-warning';
-    }
-    fetch('/api/sync/cancel', {method: 'POST'})
-        .then(function(r) { return r.json(); })
-        .then(function(j) {
-            if (!j.ok) {
-                showToast('Sem sync rodando pra cancelar', 'info');
-                if (btn) { btn.disabled = false; btn.textContent = 'Cancelar'; }
-            } else {
-                showToast('Cancelamento solicitado — aguardando o PAJ atual terminar', 'warning');
-            }
-        })
-        .catch(function() {
-            showToast('Falha ao pedir cancelamento', 'error');
-            if (btn) { btn.disabled = false; btn.textContent = 'Cancelar'; }
-        });
-}
+/* Sincronizacao da caixa SISDPU — o widget flutuante compartilhado
+ * (static/js/sync_widget.js, objeto global `SyncWidget`) cuida da conexao
+ * SSE, do log, do cancelar e de sobreviver a navegacao entre paginas. As
+ * funcoes abaixo so' montam a URL/titulo de cada tipo de sincronizacao e
+ * decidem o que fazer quando ela termina (recarregar a pagina atual, so'
+ * avisar por toast, devolver dados frescos pra um componente Alpine etc). */
 
 /* Preferencia persistente "OCR simples" (padrao: desabilitado — so baixa os
  * anexos, sem rodar OCR de baixa qualidade na sincronizacao). Controlada por
@@ -194,119 +169,82 @@ document.addEventListener('DOMContentLoaded', function() {
     });
 });
 
-function sincronizarCaixa(baixarAnexos) {
-    if (typeof baixarAnexos === 'undefined') baixarAnexos = true;
-    let modal = document.getElementById('sync-modal');
-    let logEl = document.getElementById('sync-log');
-    let statusEl = document.getElementById('sync-status');
-    let closeBtn = document.getElementById('sync-close-btn');
-    if (!modal || !logEl) return;
-
-    logEl.textContent = '';
-    statusEl.textContent = baixarAnexos ? 'sincronizando...' : 'sincronizando (rápido)...';
-    statusEl.className = 'badge badge-sm badge-warning';
-    closeBtn.disabled = true;
-    const cancelBtn = document.getElementById('sync-cancel-btn');
-    if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.textContent = 'Cancelar'; }
-    _syncBtnCancel(true);
-    modal.showModal();
-
-    if (_syncSource) {
-        _syncSource.close();
-        _syncSource = null;
-    }
-
-    let url = baixarAnexos ? '/api/sync' : '/api/sync?anexos=0';
-    url = _syncUrlComOcr(url, !baixarAnexos);
-    _syncSource = new EventSource(url);
-
-    _syncSource.addEventListener('log', function(e) {
-        logEl.textContent += e.data + '\n';
-        logEl.scrollTop = logEl.scrollHeight;
-    });
-
-    _syncSource.addEventListener('done', function(e) {
-        logEl.textContent += '\n' + e.data + '\n';
-        logEl.scrollTop = logEl.scrollHeight;
-        if (_syncSource) { _syncSource.close(); _syncSource = null; }
-
-        const finalizarTudo = function() {
-            statusEl.textContent = 'concluído';
-            statusEl.className = 'badge badge-sm badge-success';
-            closeBtn.disabled = false;
-            _syncBtnCancel(false);
-            showToast('Caixa sincronizada — recarregando dashboard', 'success');
-            setTimeout(function() {
-                if (!modal.open) {
-                    window.location.reload();
-                } else {
-                    modal.addEventListener('close', function once() {
-                        modal.removeEventListener('close', once);
-                        window.location.reload();
-                    });
-                }
-            }, 500);
-        };
-
-        // Se o usuário cancelou a sync da caixa, não encadeia a 2ª fase —
-        // ela iniciaria um trabalho novo bem depois do pedido de parar.
-        if (logEl.textContent.indexOf('[CANCELADO]') !== -1) {
-            finalizarTudo();
-            return;
-        }
-
-        // Postura proativa: encadeia a sincronização leve (sem anexos) dos
-        // PAJs com prazo em aberto nas intimações do e-proc, na MESMA sessão
-        // de log/modal — só finaliza (toast + reload) depois dessa 2ª fase.
-        logEl.textContent += '\n' + '='.repeat(60) + '\n';
-        statusEl.textContent = 'sincronizando PAJs com prazo em aberto...';
-        _sincronizarPrazosAbertos(logEl, finalizarTudo);
-    });
-
-    _syncSource.onerror = function() {
-        statusEl.textContent = 'erro/desconectado';
-        statusEl.className = 'badge badge-sm badge-error';
-        closeBtn.disabled = false;
-        _syncBtnCancel(false);
-        if (_syncSource) { _syncSource.close(); _syncSource = null; }
-    };
+/* Preferencia persistente "usar sincronização Leve para PAJs com prazo
+ * judicial aberto" (padrao: DESABILITADO — pedido do usuario 2026-09-18: a
+ * 2a etapa da sincronizacao da caixa so' deve rodar se marcada
+ * expressamente, nunca por padrao). Mesmo padrao de localStorage/checkbox
+ * replicado do OCR simples acima. */
+function _prazosAbertosAtivo() {
+    return localStorage.getItem('prazosAbertosAtivo') === 'true';
 }
 
-/* 2ª fase da sincronização da caixa (chamada por sincronizarCaixa() acima):
- * sincroniza LEVE (sem anexos) todos os PAJs com prazo em aberto nas
- * intimações do e-proc — para que já fiquem tratáveis no painel sem precisar
- * abrir cada um manualmente. Reusa o mesmo elemento de log e o mesmo botão
- * "Cancelar" (compartilham o lock/cancelamento global do backend). Chama
- * `aoTerminar()` sempre, mesmo em erro/desconexão — a sync da caixa em si já
- * concluiu com sucesso; essa 2ª fase não deve travar o fluxo. */
-function _sincronizarPrazosAbertos(logEl, aoTerminar) {
-    let terminou = false;
-    const finalizar = function() {
-        if (terminou) return;
-        terminou = true;
-        aoTerminar();
-    };
-    let es;
-    try {
-        es = new EventSource('/api/sync/prazos-abertos');
-    } catch (e) {
-        finalizar();
-        return;
-    }
-    es.addEventListener('log', function(e) {
-        logEl.textContent += e.data + '\n';
-        logEl.scrollTop = logEl.scrollHeight;
+document.addEventListener('DOMContentLoaded', function() {
+    const checkboxes = document.querySelectorAll('.prazos-abertos-checkbox');
+    const ativo = _prazosAbertosAtivo();
+    checkboxes.forEach(function(cb) {
+        cb.checked = ativo;
+        cb.addEventListener('change', function() {
+            localStorage.setItem('prazosAbertosAtivo', cb.checked ? 'true' : 'false');
+            checkboxes.forEach(function(other) { other.checked = cb.checked; });
+        });
     });
-    es.addEventListener('done', function(e) {
-        logEl.textContent += e.data + '\n';
-        logEl.scrollTop = logEl.scrollHeight;
-        es.close();
-        finalizar();
+});
+
+/* `nivel`: 'levissima' | 'leve' | 'completa' (ver terminologia do projeto).
+ * Aceita tambem os booleanos antigos (true/false) por compat com quem ainda
+ * chama sincronizarCaixa(true) direto (ex.: botao de sync vazio do
+ * pipeline.html). Pedido do usuario 2026-09-18: a sincronizacao da caixa
+ * sempre roda em 1 UNICA etapa agora — a 2a etapa (prazos em aberto) so'
+ * roda se o toggle "Usar sincronização Leve para PAJs com prazo judicial
+ * aberto" estiver marcado (ver _prazosAbertosAtivo acima). */
+function sincronizarCaixa(nivel) {
+    if (typeof nivel === 'undefined' || nivel === true) nivel = 'completa';
+    if (nivel === false) nivel = 'levissima';
+
+    let anexos, documentos;
+    if (nivel === 'levissima') { anexos = 0; documentos = 0; }
+    else if (nivel === 'leve') { anexos = 0; documentos = 1; }
+    else { anexos = 1; documentos = 1; }
+
+    let url = '/api/sync?anexos=' + anexos + '&documentos=' + documentos;
+    url = _syncUrlComOcr(url, true);
+
+    const usarPrazosAbertos = _prazosAbertosAtivo();
+
+    SyncWidget.iniciar(url, {
+        titulo: 'Sincronizar caixa SISDPU',
+        onDone: function(status) {
+            // Se o usuário cancelou, não dispara a 2ª etapa — ela iniciaria
+            // um trabalho novo bem depois do pedido de parar.
+            const cancelado = status && status.log && status.log.some(function(l) {
+                return l.indexOf('[CANCELADO]') !== -1;
+            });
+            if (cancelado) {
+                showToast('Sincronização cancelada', 'warning');
+                return;
+            }
+            if (status && status.ok === false) {
+                showToast('Falha ao sincronizar a caixa — veja o log', 'error');
+                return;
+            }
+            // 2ª etapa opcional (leve, só PAJs com prazo em aberto), em modo
+            // "fire-and-forget" — SEM abrir SSE atado a esta página e SEM
+            // condicionar o reload do dashboard a ela. Motivo (2026-09-18):
+            // antes o reload ficava preso ao onDone dessa 2ª fase, e se a
+            // conexão SSE dela caísse (ex.: reinício do servidor no meio do
+            // stream, como aconteceu ao vivo), o front recebia `desconectado`
+            // e o dashboard nunca recarregava — mesmo com a caixa já salva em
+            // disco. Como `checarEmAndamento()` reconecta sozinha a qualquer
+            // sincronização em andamento em TODA página nova, a fase de
+            // prazos (quando disparada) continua visível no widget mesmo
+            // após o reload.
+            if (usarPrazosAbertos) {
+                fetch('/api/sync/prazos-abertos', { method: 'POST' }).catch(function() {});
+            }
+            showToast('Caixa sincronizada — recarregando dashboard', 'success');
+            setTimeout(function() { window.location.reload(); }, 500);
+        },
     });
-    es.onerror = function() {
-        es.close();
-        finalizar();
-    };
 }
 
 /* Atualizar caixa — reconciliacao rapida (1 pagina, sem abrir cada PAJ):
@@ -343,135 +281,58 @@ function atualizarCaixa() {
  * estarem na caixa de entrada). */
 function sincronizarWatchlist(baixarAnexos) {
     if (typeof baixarAnexos === 'undefined') baixarAnexos = true;
-    let modal = document.getElementById('sync-modal');
-    let logEl = document.getElementById('sync-log');
-    let statusEl = document.getElementById('sync-status');
-    let closeBtn = document.getElementById('sync-close-btn');
-    let titleEl = document.getElementById('sync-title');
-    if (!modal || !logEl) {
-        showToast('Modal de sync não encontrado na página', 'error');
-        return;
-    }
-
-    if (titleEl) titleEl.textContent = 'Sincronizar watchlist';
-    logEl.textContent = '';
-    statusEl.textContent = baixarAnexos ? 'sincronizando watchlist...' : 'sincronizando watchlist (rápido)...';
-    statusEl.className = 'badge badge-sm badge-warning';
-    closeBtn.disabled = true;
-    const cancelBtn = document.getElementById('sync-cancel-btn');
-    if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.textContent = 'Cancelar'; }
-    _syncBtnCancel(true);
-    modal.showModal();
-
-    if (_syncSource) {
-        _syncSource.close();
-        _syncSource = null;
-    }
 
     let url = '/api/sync/watchlist';
     if (!baixarAnexos) url += '?anexos=0';
     url = _syncUrlComOcr(url, !baixarAnexos);
-    _syncSource = new EventSource(url);
 
-    _syncSource.addEventListener('log', function(e) {
-        logEl.textContent += e.data + '\n';
-        logEl.scrollTop = logEl.scrollHeight;
-    });
-
-    _syncSource.addEventListener('done', function(e) {
-        logEl.textContent += '\n' + e.data + '\n';
-        logEl.scrollTop = logEl.scrollHeight;
-        statusEl.textContent = 'concluído';
-        statusEl.className = 'badge badge-sm badge-success';
-        closeBtn.disabled = false;
-        _syncBtnCancel(false);
-        if (_syncSource) { _syncSource.close(); _syncSource = null; }
-        showToast('Watchlist sincronizada — recarregando', 'success');
-        setTimeout(function() {
-            if (!modal.open) {
-                window.location.reload();
-            } else {
-                modal.addEventListener('close', function once() {
-                    modal.removeEventListener('close', once);
-                    window.location.reload();
-                });
+    SyncWidget.iniciar(url, {
+        titulo: 'Sincronizar watchlist',
+        onDone: function(status) {
+            if (status && status.ok === false) {
+                showToast('Falha ao sincronizar a watchlist — veja o log', 'error');
+                return;
             }
-        }, 500);
+            showToast('Watchlist sincronizada — recarregando', 'success');
+            setTimeout(function() { window.location.reload(); }, 500);
+        },
     });
-
-    _syncSource.onerror = function() {
-        statusEl.textContent = 'erro/desconectado';
-        statusEl.className = 'badge badge-sm badge-error';
-        closeBtn.disabled = false;
-        _syncBtnCancel(false);
-        if (_syncSource) { _syncSource.close(); _syncSource = null; }
-    };
 }
 
-/* Sincronizacao de UM unico PAJ — mesmo modal, endpoint /api/sync/paj/{paj} */
-function sincronizarPaj(pajNorm, baixarAnexos) {
-    if (typeof baixarAnexos === 'undefined') baixarAnexos = true;
-    let modal = document.getElementById('sync-modal');
-    let logEl = document.getElementById('sync-log');
-    let statusEl = document.getElementById('sync-status');
-    let closeBtn = document.getElementById('sync-close-btn');
-    if (!modal || !logEl) {
-        showToast('Modal de sync não encontrado na página', 'error');
-        return;
-    }
+/* Sincronizacao de UM unico PAJ — mesmo modal, endpoint /api/sync/paj/{paj}.
+ * `nivel`: 'levissima' | 'leve' | 'completa' (mesma terminologia/3 hipoteses
+ * do botao "Sincronizar caixa" do dashboard — ver sincronizarCaixa() acima).
+ * Aceita tambem os booleanos antigos (true/false) por compat. */
+function sincronizarPaj(pajNorm, nivel) {
+    if (typeof nivel === 'undefined' || nivel === true) nivel = 'completa';
+    if (nivel === false) nivel = 'levissima';
 
-    logEl.textContent = '';
-    statusEl.textContent = (baixarAnexos ? 'sincronizando ' : 'sincronizando (rápido) ') + pajNorm + '...';
-    statusEl.className = 'badge badge-sm badge-warning';
-    closeBtn.disabled = true;
-    const cancelBtn2 = document.getElementById('sync-cancel-btn');
-    if (cancelBtn2) { cancelBtn2.disabled = false; cancelBtn2.textContent = 'Cancelar'; }
-    _syncBtnCancel(true);
-    modal.showModal();
+    let anexos, documentos;
+    if (nivel === 'levissima') { anexos = 0; documentos = 0; }
+    else if (nivel === 'leve') { anexos = 0; documentos = 1; }
+    else { anexos = 1; documentos = 1; }
 
-    if (_syncSource) {
-        _syncSource.close();
-        _syncSource = null;
-    }
+    let url = '/api/sync/paj/' + encodeURIComponent(pajNorm) + '?anexos=' + anexos + '&documentos=' + documentos;
+    url = _syncUrlComOcr(url, true);
 
-    let url = '/api/sync/paj/' + encodeURIComponent(pajNorm);
-    if (!baixarAnexos) url += '?anexos=0';
-    url = _syncUrlComOcr(url, !baixarAnexos);
-    _syncSource = new EventSource(url);
-
-    _syncSource.addEventListener('log', function(e) {
-        logEl.textContent += e.data + '\n';
-        logEl.scrollTop = logEl.scrollHeight;
-    });
-
-    _syncSource.addEventListener('done', function(e) {
-        logEl.textContent += '\n' + e.data + '\n';
-        logEl.scrollTop = logEl.scrollHeight;
-        statusEl.textContent = 'concluído';
-        statusEl.className = 'badge badge-sm badge-success';
-        closeBtn.disabled = false;
-        _syncBtnCancel(false);
-        if (_syncSource) { _syncSource.close(); _syncSource = null; }
-        showToast('PAJ sincronizado — recarregando página', 'success');
-        setTimeout(function() {
-            if (!modal.open) {
-                window.location.reload();
-            } else {
-                modal.addEventListener('close', function once() {
-                    modal.removeEventListener('close', once);
-                    window.location.reload();
-                });
+    SyncWidget.iniciar(url, {
+        titulo: 'Sincronizar ' + pajNorm,
+        onDone: function(status) {
+            if (status && status.ok === false) {
+                showToast('Falha ao sincronizar ' + pajNorm + ' — veja o log', 'error');
+                return;
             }
-        }, 500);
+            showToast('PAJ sincronizado', 'success');
+            // So' recarrega se ainda estivermos na pagina desse PAJ — se o
+            // usuario navegou pra outro lugar no meio, este callback nem
+            // chega a rodar (o contexto JS da pagina anterior foi destruido);
+            // esta checagem e' so' pro caso de ele ter voltado pra ca antes
+            // de terminar, ou simplesmente nunca saido.
+            if (window.location.pathname.indexOf(pajNorm) !== -1) {
+                window.location.reload();
+            }
+        },
     });
-
-    _syncSource.onerror = function() {
-        statusEl.textContent = 'erro/desconectado';
-        statusEl.className = 'badge badge-sm badge-error';
-        closeBtn.disabled = false;
-        _syncBtnCancel(false);
-        if (_syncSource) { _syncSource.close(); _syncSource = null; }
-    };
 }
 
 /* Download seletivo de documentos (sincronizacao parcial por seq) — usado
@@ -482,68 +343,93 @@ function sincronizarPaj(pajNorm, baixarAnexos) {
  * `anexos_sisdpu` atualizada, ou null se deu erro/cancelou. */
 function baixarDocumentosPaj(pajNorm, ids) {
     return new Promise(function(resolve) {
-        let modal = document.getElementById('sync-modal');
-        let logEl = document.getElementById('sync-log');
-        let statusEl = document.getElementById('sync-status');
-        let closeBtn = document.getElementById('sync-close-btn');
-        let titleEl = document.getElementById('sync-title');
-        if (!modal || !logEl) {
-            showToast('Modal de sync não encontrado na página', 'error');
-            resolve(null);
-            return;
-        }
-
-        if (titleEl) titleEl.textContent = 'Baixar documento(s) selecionado(s)';
-        logEl.textContent = '';
-        statusEl.textContent = 'baixando ' + ids.length + ' documento(s)...';
-        statusEl.className = 'badge badge-sm badge-warning';
-        closeBtn.disabled = true;
-        const cancelBtn = document.getElementById('sync-cancel-btn');
-        if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.textContent = 'Cancelar'; }
-        _syncBtnCancel(true);
-        modal.showModal();
-
-        if (_syncSource) {
-            _syncSource.close();
-            _syncSource = null;
-        }
-
         let url = '/api/sync/paj/' + encodeURIComponent(pajNorm)
                 + '/baixar-documentos?ids=' + encodeURIComponent(ids.join(','));
-        _syncSource = new EventSource(url);
 
-        function atualizarAnexosEResolver() {
-            fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes')
-                .then(function(r) { return r.json(); })
-                .then(function(data) { resolve(data.anexos_sisdpu || []); })
-                .catch(function() { resolve(null); });
-        }
-
-        _syncSource.addEventListener('log', function(e) {
-            logEl.textContent += e.data + '\n';
-            logEl.scrollTop = logEl.scrollHeight;
+        SyncWidget.iniciar(url, {
+            titulo: 'Baixar documento(s) — ' + pajNorm,
+            minimizado: true,
+            onDone: function(status) {
+                if (status && status.ok === false) {
+                    showToast('Falha ao baixar documento(s) — veja o log', 'error');
+                    resolve(null);
+                    return;
+                }
+                showToast('Documento(s) baixado(s)', 'success');
+                fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes')
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) { resolve(data.anexos_sisdpu || []); })
+                    .catch(function() { resolve(null); });
+            },
+        }).then(function(iniciou) {
+            if (!iniciou) resolve(null);
         });
+    });
+}
 
-        _syncSource.addEventListener('done', function(e) {
-            logEl.textContent += '\n' + e.data + '\n';
-            logEl.scrollTop = logEl.scrollHeight;
-            statusEl.textContent = 'concluído';
-            statusEl.className = 'badge badge-sm badge-success';
-            closeBtn.disabled = false;
-            _syncBtnCancel(false);
-            if (_syncSource) { _syncSource.close(); _syncSource = null; }
-            showToast('Documento(s) baixado(s)', 'success');
-            atualizarAnexosEResolver();
+/* Obtem a relação de documentos de UM seq específico, sem baixar nada —
+ * usado pelo minimenu do clipe de anexo na coluna Documentos (ver
+ * movimentacoes_tabela.html/movimentacoes.js), quando o ícone
+ * (`mov.tem_anexo_icone`) sinaliza que aquele seq pode ter documento mas a
+ * relação ainda não foi obtida. Bem mais barato que "Atualizar
+ * movimentações" (reprocessa TODA seq nova, não só a pedida). Ao concluir,
+ * busca as movimentações frescas (o seq pedido já vem com `documentos`
+ * preenchido) e devolve pro componente Alpine substituir no lugar — mesmo
+ * padrão de atualizarMovimentacoesPaj()/baixarDocumentosPaj() acima. */
+function obterDocumentosSeqPaj(pajNorm, seq) {
+    return new Promise(function(resolve) {
+        let url = '/api/sync/paj/' + encodeURIComponent(pajNorm)
+                + '/seq/' + encodeURIComponent(seq) + '/documentos';
+
+        SyncWidget.iniciar(url, {
+            titulo: 'Obter documentos — ' + pajNorm + ' (seq ' + seq + ')',
+            minimizado: true,
+            onDone: function(status) {
+                if (status && status.ok === false) {
+                    showToast('Falha ao obter a relação de documentos — veja o log', 'error');
+                    resolve(null);
+                    return;
+                }
+                showToast('Relação de documentos obtida', 'success');
+                fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes')
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) { resolve(data.ok === false ? null : data); })
+                    .catch(function() { resolve(null); });
+            },
+        }).then(function(iniciou) {
+            if (!iniciou) resolve(null);
         });
+    });
+}
 
-        _syncSource.onerror = function() {
-            statusEl.textContent = 'erro/desconectado';
-            statusEl.className = 'badge badge-sm badge-error';
-            closeBtn.disabled = false;
-            _syncBtnCancel(false);
-            if (_syncSource) { _syncSource.close(); _syncSource = null; }
-            resolve(null);
-        };
+/* Baixa os documentos de UM seq específico — um clique só: se a relação
+ * ainda não for conhecida, o backend obtém primeiro (mesmo passo da função
+ * acima) e já encadeia pro download, tudo numa única sincronização em
+ * segundo plano (ver sincronizador.rodar_baixar_documentos_seq). Segunda
+ * opção do minimenu do clipe de anexo ("Baixar documentos"). */
+function baixarDocumentosSeqPaj(pajNorm, seq) {
+    return new Promise(function(resolve) {
+        let url = '/api/sync/paj/' + encodeURIComponent(pajNorm)
+                + '/seq/' + encodeURIComponent(seq) + '/baixar-documentos';
+
+        SyncWidget.iniciar(url, {
+            titulo: 'Baixar documentos — ' + pajNorm + ' (seq ' + seq + ')',
+            minimizado: true,
+            onDone: function(status) {
+                if (status && status.ok === false) {
+                    showToast('Falha ao baixar documentos desta seq — veja o log', 'error');
+                    resolve(null);
+                    return;
+                }
+                showToast('Documentos da seq baixados', 'success');
+                fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes')
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) { resolve(data.ok === false ? null : data); })
+                    .catch(function() { resolve(null); });
+            },
+        }).then(function(iniciou) {
+            if (!iniciou) resolve(null);
+        });
     });
 }
 
@@ -552,73 +438,31 @@ function baixarDocumentosPaj(pajNorm, ids) {
  * movimentacoes no SISDPU, mas so' abre popup de anexo pras movimentacoes
  * REALMENTE novas (as ja conhecidas mantem os documentos ja indexados); nao
  * baixa PDF, nao recarrega a pagina. Mesmo padrao de baixarDocumentosPaj:
- * reusa o #sync-modal e devolve os dados frescos pro componente Alpine
- * trocar so' o conteudo da tabela. Resolve {movimentacoes, anexos_sisdpu,
+ * reusa o widget flutuante de sync e devolve os dados frescos pro componente
+ * Alpine trocar so' o conteudo da tabela. Resolve {movimentacoes, anexos_sisdpu,
  * max_seq} ou null se deu erro/cancelou. */
 function atualizarMovimentacoesPaj(pajNorm) {
     return new Promise(function(resolve) {
-        let modal = document.getElementById('sync-modal');
-        let logEl = document.getElementById('sync-log');
-        let statusEl = document.getElementById('sync-status');
-        let closeBtn = document.getElementById('sync-close-btn');
-        let titleEl = document.getElementById('sync-title');
-        if (!modal || !logEl) {
-            showToast('Modal de sync não encontrado na página', 'error');
-            resolve(null);
-            return;
-        }
-
-        if (titleEl) titleEl.textContent = 'Atualizar movimentações';
-        logEl.textContent = '';
-        statusEl.textContent = 'atualizando movimentações de ' + pajNorm + '...';
-        statusEl.className = 'badge badge-sm badge-warning';
-        closeBtn.disabled = true;
-        const cancelBtn = document.getElementById('sync-cancel-btn');
-        if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.textContent = 'Cancelar'; }
-        _syncBtnCancel(true);
-        modal.showModal();
-
-        if (_syncSource) {
-            _syncSource.close();
-            _syncSource = null;
-        }
-
         let url = '/api/sync/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes';
-        _syncSource = new EventSource(url);
 
-        function buscarMovsEResolver() {
-            fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes')
-                .then(function(r) { return r.json(); })
-                .then(function(data) { resolve(data.ok === false ? null : data); })
-                .catch(function() { resolve(null); });
-        }
-
-        _syncSource.addEventListener('log', function(e) {
-            logEl.textContent += e.data + '\n';
-            logEl.scrollTop = logEl.scrollHeight;
+        SyncWidget.iniciar(url, {
+            titulo: 'Atualizar movimentações — ' + pajNorm,
+            minimizado: true,
+            onDone: function(status) {
+                if (status && status.ok === false) {
+                    showToast('Falha ao atualizar movimentações', 'error');
+                    resolve(null);
+                    return;
+                }
+                showToast('Movimentações atualizadas', 'success');
+                fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes')
+                    .then(function(r) { return r.json(); })
+                    .then(function(data) { resolve(data.ok === false ? null : data); })
+                    .catch(function() { resolve(null); });
+            },
+        }).then(function(iniciou) {
+            if (!iniciou) resolve(null);
         });
-
-        _syncSource.addEventListener('done', function(e) {
-            logEl.textContent += '\n' + e.data + '\n';
-            logEl.scrollTop = logEl.scrollHeight;
-            statusEl.textContent = 'concluído';
-            statusEl.className = 'badge badge-sm badge-success';
-            closeBtn.disabled = false;
-            _syncBtnCancel(false);
-            if (_syncSource) { _syncSource.close(); _syncSource = null; }
-            showToast('Movimentações atualizadas', 'success');
-            buscarMovsEResolver();
-        });
-
-        _syncSource.onerror = function() {
-            statusEl.textContent = 'erro/desconectado';
-            statusEl.className = 'badge badge-sm badge-error';
-            closeBtn.disabled = false;
-            _syncBtnCancel(false);
-            if (_syncSource) { _syncSource.close(); _syncSource = null; }
-            showToast('Falha ao atualizar movimentações', 'error');
-            resolve(null);
-        };
     });
 }
 
@@ -663,7 +507,7 @@ async function baixarPajCompleto(pajNorm, btn) {
             'com download dos documentos. Deseja fazer a sincronização completa agora?'
         );
         if (querSincronizar) {
-            sincronizarPaj(pajNorm, true);
+            sincronizarPaj(pajNorm, 'completa');
         }
         return;
     }
@@ -689,7 +533,7 @@ async function baixarPajCompleto(pajNorm, btn) {
 }
 
 /* Baixar anexos antigos a partir de uma data — completa overflow do sync padrao.
-   Reusa o modal de sync (sync-modal) para o log SSE. */
+   Reusa o widget flutuante de sync para o log SSE. */
 function baixarAnexosDesde(pajNorm) {
     let input = document.getElementById('anexos-desde-data');
     let data = (input && input.value || '').trim();
@@ -698,62 +542,24 @@ function baixarAnexosDesde(pajNorm) {
         return;
     }
 
-    let modal = document.getElementById('sync-modal');
-    let logEl = document.getElementById('sync-log');
-    let statusEl = document.getElementById('sync-status');
-    let titleEl = document.getElementById('sync-title');
-    let closeBtn = document.getElementById('sync-close-btn');
-    if (!modal || !logEl) {
-        showToast('Modal de sync não encontrado na página', 'error');
-        return;
-    }
-
-    logEl.textContent = '';
-    if (titleEl) titleEl.textContent = 'Baixar anexos a partir de ' + data;
-    statusEl.textContent = 'baixando...';
-    statusEl.className = 'badge badge-sm badge-warning';
-    closeBtn.disabled = true;
-    _syncBtnCancel(false);  // este endpoint nao suporta cancel — esconde o botao
-    modal.showModal();
-
-    if (_syncSource) { _syncSource.close(); _syncSource = null; }
-
     let url = '/api/sync/paj/' + encodeURIComponent(pajNorm)
             + '/anexos-desde?data=' + encodeURIComponent(data);
     url = _syncUrlComOcr(url, true);
-    _syncSource = new EventSource(url);
 
-    _syncSource.addEventListener('log', function(e) {
-        logEl.textContent += e.data + '\n';
-        logEl.scrollTop = logEl.scrollHeight;
-    });
-
-    _syncSource.addEventListener('done', function(e) {
-        logEl.textContent += '\n' + e.data + '\n';
-        logEl.scrollTop = logEl.scrollHeight;
-        statusEl.textContent = 'concluído';
-        statusEl.className = 'badge badge-sm badge-success';
-        closeBtn.disabled = false;
-        if (_syncSource) { _syncSource.close(); _syncSource = null; }
-        showToast('Anexos baixados — recarregando página', 'success');
-        setTimeout(function() {
-            if (!modal.open) {
-                window.location.reload();
-            } else {
-                modal.addEventListener('close', function once() {
-                    modal.removeEventListener('close', once);
-                    window.location.reload();
-                });
+    SyncWidget.iniciar(url, {
+        titulo: 'Baixar anexos a partir de ' + data + ' — ' + pajNorm,
+        semCancelar: true,  // este endpoint nao suporta cancel — esconde o botao
+        onDone: function(status) {
+            if (status && status.ok === false) {
+                showToast('Falha ao baixar anexos — veja o log', 'error');
+                return;
             }
-        }, 500);
+            showToast('Anexos baixados', 'success');
+            if (window.location.pathname.indexOf(pajNorm) !== -1) {
+                window.location.reload();
+            }
+        },
     });
-
-    _syncSource.onerror = function() {
-        statusEl.textContent = 'erro/desconectado';
-        statusEl.className = 'badge badge-sm badge-error';
-        closeBtn.disabled = false;
-        if (_syncSource) { _syncSource.close(); _syncSource = null; }
-    };
 }
 
 /** Chamado após o console genérico "Ações no SISDPU" (movimentar/tramitar/
@@ -797,7 +603,7 @@ async function posExecucaoPaj(pajNorm, resultado) {
 /* Concluir PAJ da Caixa de Entrada — atalho no cabeçalho do PAJ pra retirar o
    trâmite da caixa sem precisar abrir o console completo "Ações no SISDPU".
    Reusa o mesmo endpoint (/api/acoes-sisdpu/executar, so' com concluir=1 —
-   sem movimentar/tramitar) e o modal de sync (sync-modal) pro log SSE, mesmo
+   sem movimentar/tramitar) e o widget flutuante de sync pro log SSE, mesmo
    padrão de baixarAnexosDesde() acima. */
 /** Alpine do botão "Concluir PAJ da Caixa de Entrada" do cabeçalho — decide
  * entre o caminho simples (0-1 trâmite, usa concluirPajCaixa() abaixo, com
@@ -892,82 +698,44 @@ async function concluirPajCaixa(pajNorm, idProcesso, paj, idTramite) {
     }
     if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
 
-    let modal = document.getElementById('sync-modal');
-    let logEl = document.getElementById('sync-log');
-    let statusEl = document.getElementById('sync-status');
-    let titleEl = document.getElementById('sync-title');
-    let closeBtn = document.getElementById('sync-close-btn');
-    if (!modal || !logEl) {
-        showToast('Modal de sync não encontrado na página', 'error');
-        return;
-    }
-
-    logEl.textContent = '';
-    if (titleEl) titleEl.textContent = 'Concluir PAJ da Caixa de Entrada — ' + (paj || pajNorm);
-    statusEl.textContent = 'executando...';
-    statusEl.className = 'badge badge-sm badge-warning';
-    closeBtn.disabled = true;
-    _syncBtnCancel(false);  // este endpoint nao suporta cancel — esconde o botao
-    modal.showModal();
-
-    if (_syncSource) { _syncSource.close(); _syncSource = null; }
-
     const qs = new URLSearchParams({
         id_processo: idProcesso || '', paj: paj || '', paj_norm: pajNorm || '',
         fase: '', descricao_mov: '', descricao_mov_html: '0',
         grupo: '', descricao_tram: '', prazo: '0', prazo_data: '',
         id_tramite: idTramite, concluir: '1', anexos: '[]',
     });
-    _syncSource = new EventSource('/api/acoes-sisdpu/executar?' + qs.toString());
+    const es = new EventSource('/api/acoes-sisdpu/executar?' + qs.toString());
+    let ultimoRes = {};
 
-    _syncSource.addEventListener('log', function (e) {
-        try {
-            const d = JSON.parse(e.data);
-            logEl.textContent += (d.msg || e.data) + '\n';
-        } catch (err) {
-            logEl.textContent += e.data + '\n';
-        }
-        logEl.scrollTop = logEl.scrollHeight;
-    });
-
-    _syncSource.addEventListener('done', async function (e) {
-        let res = {};
-        try { res = JSON.parse(e.data); } catch (err) {}
-        const ok = res.ok !== false;
-        logEl.textContent += '\nFinalizado.\n';
-        logEl.scrollTop = logEl.scrollHeight;
-        statusEl.textContent = res.status === 'ja_ausente' ? 'já estava concluído' : (ok ? 'concluído' : 'com aviso');
-        statusEl.className = 'badge badge-sm ' + (ok ? 'badge-success' : 'badge-error');
-        closeBtn.disabled = false;
-        if (_syncSource) { _syncSource.close(); _syncSource = null; }
-        // Registra no Histórico + tira da caixa (em_caixa_atual=false) — SÓ se não
-        // restar nenhum outro trâmite aberto deste PAJ (comum ter mais de um ao
-        // mesmo tempo; concluir aqui só afeta o trâmite específico deste botão).
-        const pos = await posExecucaoPaj(pajNorm, { ...res, idTramite: idTramite });
-        let msg = ok ? 'PAJ concluído na caixa de entrada — recarregando' : 'Concluído com aviso — recarregando';
-        if (ok && pos && pos.outros_tramites_abertos) {
-            msg = 'Trâmite concluído — mas o PAJ ainda tem ' + pos.outros_tramites_abertos
-                + ' outro(s) trâmite(s) aberto(s) na caixa — recarregando';
-        }
-        showToast(msg, ok ? 'success' : 'warning');
-        setTimeout(function () {
-            if (!modal.open) {
-                window.location.reload();
-            } else {
-                modal.addEventListener('close', function once() {
-                    modal.removeEventListener('close', once);
-                    window.location.reload();
-                });
+    SyncWidget.conectar({
+        es: es,
+        titulo: 'Concluir PAJ da Caixa de Entrada — ' + (paj || pajNorm),
+        semCancelar: true,
+        transformarLinha: function (dadoCru) {
+            try {
+                const d = JSON.parse(dadoCru);
+                ultimoRes = d;
+                return d.msg || dadoCru;
+            } catch (err) {
+                return dadoCru;
             }
-        }, 500);
+        },
+        onDone: async function () {
+            const res = ultimoRes;
+            const ok = res.ok !== false;
+            // Registra no Histórico + tira da caixa (em_caixa_atual=false) — SÓ se não
+            // restar nenhum outro trâmite aberto deste PAJ (comum ter mais de um ao
+            // mesmo tempo; concluir aqui só afeta o trâmite específico deste botão).
+            const pos = await posExecucaoPaj(pajNorm, { ...res, idTramite: idTramite });
+            let msg = ok ? 'PAJ concluído na caixa de entrada — recarregando' : 'Concluído com aviso — recarregando';
+            if (ok && pos && pos.outros_tramites_abertos) {
+                msg = 'Trâmite concluído — mas o PAJ ainda tem ' + pos.outros_tramites_abertos
+                    + ' outro(s) trâmite(s) aberto(s) na caixa — recarregando';
+            }
+            showToast(msg, ok ? 'success' : 'warning');
+            setTimeout(function () { window.location.reload(); }, 500);
+        },
     });
-
-    _syncSource.onerror = function () {
-        statusEl.textContent = 'erro/desconectado';
-        statusEl.className = 'badge badge-sm badge-error';
-        closeBtn.disabled = false;
-        if (_syncSource) { _syncSource.close(); _syncSource = null; }
-    };
 }
 
 /* Desarquivar PAJ — botão do banner "PAJ arquivado" no cabeçalho (ver
@@ -983,77 +751,58 @@ async function desarquivarPaj(pajNorm, idProcesso, paj) {
     if (!confirm('Desarquivar ' + (paj || pajNorm) + '?\n\nIsso lança a fase "Paj desarquivado" no SISDPU (sem descrição, tramitação ou conclusão de trâmite).')) return;
     if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
 
-    let modal = document.getElementById('sync-modal');
-    let logEl = document.getElementById('sync-log');
-    let statusEl = document.getElementById('sync-status');
-    let titleEl = document.getElementById('sync-title');
-    let closeBtn = document.getElementById('sync-close-btn');
-    if (!modal || !logEl) {
-        showToast('Modal de sync não encontrado na página', 'error');
-        return;
-    }
-
-    logEl.textContent = '';
-    if (titleEl) titleEl.textContent = 'Desarquivar PAJ — ' + (paj || pajNorm);
-    statusEl.textContent = 'executando...';
-    statusEl.className = 'badge badge-sm badge-warning';
-    closeBtn.disabled = true;
-    _syncBtnCancel(false);  // este endpoint nao suporta cancel — esconde o botao
-    modal.showModal();
-
-    if (_syncSource) { _syncSource.close(); _syncSource = null; }
-
     const qs = new URLSearchParams({
         id_processo: idProcesso || '', paj: paj || '', paj_norm: pajNorm || '',
         fase: 'Paj desarquivado', descricao_mov: '', descricao_mov_html: '0',
         grupo: '', descricao_tram: '', prazo: '0', prazo_data: '',
         id_tramite: '', concluir: '0', anexos: '[]',
     });
-    _syncSource = new EventSource('/api/acoes-sisdpu/executar?' + qs.toString());
+    const es = new EventSource('/api/acoes-sisdpu/executar?' + qs.toString());
+    let ultimoRes = {};
 
-    _syncSource.addEventListener('log', function (e) {
-        try {
-            const d = JSON.parse(e.data);
-            logEl.textContent += (d.msg || e.data) + '\n';
-        } catch (err) {
-            logEl.textContent += e.data + '\n';
-        }
-        logEl.scrollTop = logEl.scrollHeight;
+    // Garante o refresh "ao final" MESMO se a conexão SSE cair antes do
+    // evento `done` (ex.: instabilidade de rede/servidor) — sem isso o
+    // usuário fica com o banner "PAJ Arquivado" na tela sem saber se a
+    // ação realmente aconteceu (pedido do usuário 2026-09-18; mesma classe
+    // de bug encontrada e corrigida em sincronizarCaixa()/prazos-abertos).
+    // `SyncWidget.conectar` reatribui `es.onerror` internamente, então o
+    // fallback abaixo usa `addEventListener` (listener adicional, não
+    // sobrescreve o do widget) — os dois disparam juntos no mesmo evento.
+    let jaFinalizado = false;
+    function finalizarComReload(msg, tipo) {
+        if (jaFinalizado) return;
+        jaFinalizado = true;
+        showToast(msg, tipo);
+        setTimeout(function () { window.location.reload(); }, 500);
+    }
+    es.addEventListener('error', function () {
+        finalizarComReload('Conexão perdida ao desarquivar — recarregando para confirmar', 'warning');
     });
 
-    _syncSource.addEventListener('done', async function (e) {
-        let res = {};
-        try { res = JSON.parse(e.data); } catch (err) {}
-        const ok = res.ok !== false;
-        logEl.textContent += '\nFinalizado.\n';
-        logEl.scrollTop = logEl.scrollHeight;
-        statusEl.textContent = ok ? 'concluído' : 'com aviso';
-        statusEl.className = 'badge badge-sm ' + (ok ? 'badge-success' : 'badge-error');
-        closeBtn.disabled = false;
-        if (_syncSource) { _syncSource.close(); _syncSource = null; }
-        // Atualiza movimentações + registra no Histórico (mesmo passo de
-        // concluirPajCaixa) — sem isso a tabela de Movimentações e o banner
-        // do cabeçalho só refletiriam a fase nova depois de outra sync manual.
-        await posExecucaoPaj(pajNorm, res);
-        showToast(ok ? 'PAJ desarquivado — recarregando' : 'Concluído com aviso — recarregando', ok ? 'success' : 'warning');
-        setTimeout(function () {
-            if (!modal.open) {
-                window.location.reload();
-            } else {
-                modal.addEventListener('close', function once() {
-                    modal.removeEventListener('close', once);
-                    window.location.reload();
-                });
+    SyncWidget.conectar({
+        es: es,
+        titulo: 'Desarquivar PAJ — ' + (paj || pajNorm),
+        semCancelar: true,
+        transformarLinha: function (dadoCru) {
+            try {
+                const d = JSON.parse(dadoCru);
+                ultimoRes = d;
+                return d.msg || dadoCru;
+            } catch (err) {
+                return dadoCru;
             }
-        }, 500);
+        },
+        onDone: async function () {
+            const res = ultimoRes;
+            const ok = res.ok !== false;
+            // Atualiza movimentações + registra no Histórico (mesmo passo de
+            // concluirPajCaixa) — sem isso a tabela de Movimentações e o
+            // banner do cabeçalho só refletiriam a fase nova depois de outra
+            // sync manual.
+            await posExecucaoPaj(pajNorm, res);
+            finalizarComReload(ok ? 'PAJ desarquivado — recarregando' : 'Concluído com aviso — recarregando', ok ? 'success' : 'warning');
+        },
     });
-
-    _syncSource.onerror = function () {
-        statusEl.textContent = 'erro/desconectado';
-        statusEl.className = 'badge badge-sm badge-error';
-        closeBtn.disabled = false;
-        if (_syncSource) { _syncSource.close(); _syncSource = null; }
-    };
 }
 
 /* Docgen — streaming SSE do gerar_docx.py / gerar_peticao.py */
@@ -2031,93 +1780,315 @@ async function abrirPajPainel(pajNorm) {
 
 /* Sincronização avulsa e LEVE de um único PAJ, usada como passo intermediário
    de abrirPajPainel() acima quando o PAJ ainda não existe localmente. Reusa
-   o MESMO modal/log das outras sincronizações (partials/sync_modal.html) —
-   se a página atual não tiver esse modal incluído, cai num fallback sem UI
-   (só aguarda e confere no fim), pra não quebrar em nenhuma página que use
-   abrirPajPainel(). Resolve `true`/`false`. */
+   o widget flutuante compartilhado (sempre presente, ver base.html) —
+   minimizado, já que o usuário está esperando ativamente (o toast/resolve
+   já avisa quando terminar). Resolve `true`/`false`. */
 function _sincronizarPajAvulsoComModal(pajNorm) {
-    const modal = document.getElementById('sync-modal');
-    const logEl = document.getElementById('sync-log');
-    if (!modal || !logEl) return _sincronizarPajAvulsoSemModal(pajNorm);
-
-    const statusEl = document.getElementById('sync-status');
-    const closeBtn = document.getElementById('sync-close-btn');
-    const titleEl = document.getElementById('sync-title');
-    const cancelBtn = document.getElementById('sync-cancel-btn');
-
-    if (titleEl) titleEl.textContent = 'Sincronizar PAJ ' + formatarPajNorm(pajNorm) + ' (avulso)';
-    logEl.textContent = 'PAJ ainda não sincronizado no painel — buscando no SISDPU...\n';
-    if (statusEl) { statusEl.textContent = 'sincronizando...'; statusEl.className = 'badge badge-sm badge-warning'; }
-    if (closeBtn) closeBtn.disabled = true;
-    if (cancelBtn) { cancelBtn.disabled = false; cancelBtn.textContent = 'Cancelar'; }
-    _syncBtnCancel(true);
-    modal.showModal();
-
+    const url = '/api/sync/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes';
     return new Promise((resolve) => {
-        let terminou = false;
-        const es = new EventSource('/api/sync/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes');
-        const finalizar = async () => {
-            if (terminou) return;
-            terminou = true;
-            es.close();
-            _syncBtnCancel(false);
-            if (closeBtn) closeBtn.disabled = false;
-            let ok = false;
-            try {
-                const r = await fetch('/api/paj/' + encodeURIComponent(pajNorm));
-                ok = r.status !== 404;
-            } catch (e) { /* ok fica false */ }
-            if (statusEl) {
-                statusEl.textContent = ok ? 'concluído' : 'erro';
-                statusEl.className = 'badge badge-sm ' + (ok ? 'badge-success' : 'badge-error');
-            }
-            logEl.textContent += '\n' + (ok ? 'PAJ sincronizado.' : 'Não foi possível sincronizar este PAJ.') + '\n';
-            logEl.scrollTop = logEl.scrollHeight;
-            // Fecha sozinho em caso de sucesso (some da frente antes de abrir a
-            // página do PAJ); em erro, deixa aberto pra o usuário ler o log.
-            if (ok) {
-                setTimeout(function() {
-                    if (modal.open) modal.close();
-                    resolve(true);
-                }, 400);
-            } else {
-                resolve(false);
-            }
+        let resolvido = false;
+        let pollTimer = null;
+        const finalizar = (ok) => {
+            if (resolvido) return;
+            resolvido = true;
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+            if (!ok) showToast('Não foi possível sincronizar este PAJ.', 'error');
+            resolve(ok);
         };
-        es.addEventListener('log', function(e) {
-            logEl.textContent += e.data + '\n';
-            logEl.scrollTop = logEl.scrollHeight;
+        SyncWidget.iniciar(url, {
+            titulo: 'Sincronizar PAJ ' + formatarPajNorm(pajNorm) + ' (avulso)',
+            minimizado: true,
+            onDone: async function () {
+                let ok = false;
+                try {
+                    const r = await fetch('/api/paj/' + encodeURIComponent(pajNorm));
+                    ok = r.status !== 404;
+                } catch (e) { /* ok fica false */ }
+                finalizar(ok);
+            },
+        }).then(function (iniciou) {
+            if (!iniciou) { finalizar(false); return; }
+            // Mesma salvaguarda de pajCarregandoApp() — se a conexão SSE do
+            // widget cair no meio, `onDone` nunca dispara e este Promise ficava
+            // pendurado pra sempre (o "Abrir PAJ" parecia não fazer nada).
+            // 3s × 20 = 1 minuto — tempo mais que suficiente pra sincronização
+            // LEVÍSSIMA usada aqui (pedido do usuário 2026-09-18).
+            let tentativas = 0;
+            pollTimer = setInterval(async () => {
+                tentativas++;
+                if (tentativas > 20) { finalizar(false); return; }
+                try {
+                    const r = await fetch('/api/paj/' + encodeURIComponent(pajNorm));
+                    if (r.status !== 404) finalizar(true);
+                } catch (e) { /* tenta de novo no proximo tick */ }
+            }, 3000);
         });
-        es.addEventListener('done', finalizar);
-        es.onerror = finalizar;
-    });
-}
-
-/* Fallback sem UI de modal (páginas que usem abrirPajPainel() sem incluir
-   partials/sync_modal.html) — mesmo endpoint leve, só espera terminar. */
-function _sincronizarPajAvulsoSemModal(pajNorm) {
-    showToast('PAJ ainda não sincronizado no painel — sincronizando agora...', 'info');
-    return new Promise((resolve) => {
-        let terminou = false;
-        const es = new EventSource('/api/sync/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes');
-        const finalizar = async () => {
-            if (terminou) return;
-            terminou = true;
-            es.close();
-            try {
-                const r = await fetch('/api/paj/' + encodeURIComponent(pajNorm));
-                resolve(r.status !== 404);
-            } catch (e) {
-                resolve(false);
-            }
-        };
-        es.addEventListener('done', finalizar);
-        es.onerror = finalizar;
     });
 }
 function abrirPajNavegador(pajDisplay) {
     if (!pajDisplay) return;
     window.open('/api/prazos/abrir-paj?paj=' + encodeURIComponent(pajDisplay), '_blank');
+}
+
+/* 3ª opção do MESMO minimenu "Abrir PAJ" (ver acima) — "Adicionar movimentação":
+   leva pra "Movimentações Pendentes" já com o número do PAJ pré-preenchido
+   (?novo_paj=...), abrindo direto o modal de criação (ver movimentacoesPendentesApp()
+   em templates/movimentacoes_pendentes.html). Mesma aba (não é _blank) — o usuário
+   volta com o botão do navegador quando terminar, como qualquer outra navegação
+   normal do painel. NÃO precisa que o PAJ já esteja sincronizado — é exatamente
+   o caso de uso (registrar a movimentação agora, executar quando o SISDPU voltar). */
+function adicionarMovimentacaoPendente(pajDisplay) {
+    if (!pajDisplay) return;
+    window.location.href = '/movimentacoes-pendentes?novo_paj=' + encodeURIComponent(pajDisplay);
+}
+
+/* Item "Movimentar no eproc" do minimenu do NÚMERO DO PROCESSO (não do PAJ —
+   ver partials/_macro_minimenu_processo.html) — mesmo espírito de
+   adicionarMovimentacaoPendente() acima, mas pra "Petições pendentes": leva
+   pra lá já com o número do processo pré-preenchido (?novo_processo=...),
+   abrindo direto o modal "Adicionar petição" (ver peticoesPendentesApp() em
+   templates/peticoes_pendentes.html). NÃO precisa de PAJ nenhum — peticionar/
+   lançar evento no e-proc só exige o número do processo (pedido do usuário
+   2026-09-11, mesma lógica de "Adicionar movimentação" acima).
+
+   `pajNorm`/`pajLabel` (opcionais) — quando a página de origem JÁ SABE o PAJ
+   correlacionado a este processo (dashboard/intimações/retornos/prazos/
+   eproc_consultar/paj_detail sempre sabem, cada uma à sua maneira), repassa
+   pra pré-preencher — sem isso, a petição nascia "sem PAJ" mesmo quando havia
+   um vínculo óbvio na tela de origem, e ficava sem trazer essa informação pra
+   uma eventual movimentação no SISDPU (bug real 2026-09-11, PAJ 2026/029-00897,
+   processo 5014914-73.2026.4.04.7000). */
+function movimentarNoEproc(numeroProcesso, pajNorm, pajLabel) {
+    if (!numeroProcesso) return;
+    const qs = new URLSearchParams({ novo_processo: numeroProcesso });
+    if (pajNorm) qs.set('paj_norm', pajNorm);
+    if (pajLabel) qs.set('paj_label', pajLabel);
+    window.location.href = '/peticoes-pendentes?' + qs.toString();
+}
+
+/* Item "Movimentar Eproc + Sisdpu" — presente nos DOIS minimenus (do PAJ e do
+   número do processo — ver _macro_minimenu_paj.html/_macro_minimenu_processo.html).
+   Leva pra "Movimentar Eproc + SISDPU" (peticionar/lançar evento no e-proc E
+   registrar a movimentação no SISDPU numa única execução — ver
+   templates/movimentar_conjunto.html) já com o(s) identificador(es) que a
+   página de origem conhecer. Quando só UM vier informado (caso comum — cada
+   minimenu só conhece de fato o seu próprio, o outro é um bônus quando a linha
+   de origem já carrega os dois juntos), a página resolve o outro sozinha,
+   cruzando intimações/prazos/cadastro do PAJ (ver
+   services.paj_processo_link_service) — pedido do usuário 2026-09-11.
+   `paj` aceita tanto "AAAA/UUU-NNNNN" quanto "PAJ-AAAA-UUU-NNNNN". */
+function movimentarConjunto(numeroProcesso, paj) {
+    if (!numeroProcesso && !paj) return;
+    const qs = new URLSearchParams();
+    if (numeroProcesso) qs.set('processo', numeroProcesso);
+    if (paj) qs.set('paj', paj);
+    window.location.href = '/movimentar-conjunto?' + qs.toString();
+}
+
+/* Caixa de pesquisa rápida de PAJ no rodapé do menu lateral (ver
+   templates/base.html, acima de Histórico/Pipeline/Configurações) — mesmo
+   espírito da busca nativa do SISDPU. Abre o detalhe numa aba NOVA
+   IMEDIATAMENTE (window.open tem que ficar colado no gesto de clique/Enter,
+   sem nenhum await antes, senão o navegador bloqueia como pop-up) — se o
+   PAJ ainda não estiver sincronizado localmente, a própria aba nova mostra
+   a tela de carregamento (ver pajCarregandoApp() abaixo e
+   templates/paj_carregando.html) que sincroniza sozinha e recarrega. */
+function pesquisarPajMenu(pajDisplay) {
+    const norm = pajExibicaoParaNorm(pajDisplay);
+    if (!norm) {
+        showToast('Número de PAJ incompleto — use o formato AAAA/UUU-NNNNN.', 'warning');
+        return;
+    }
+    window.open('/paj/' + norm, '_blank');
+}
+
+/* x-data da tela de carregamento (templates/paj_carregando.html) — servida
+   pela própria rota /paj/{paj_norm} quando o PAJ pedido (ex.: pela caixa de
+   pesquisa acima, ou por um link/favorito antigo) ainda não foi sincronizado
+   localmente. Dispara a MESMA sincronização avulsa LEVÍSSIMA usada pelo
+   minimenu "Abrir PAJ" (ver abrirPajPainel()/_sincronizarPajAvulsoComModal()
+   — sem extração de documentos por evento, sem download de anexos, ver
+   services/sync_service.rodar_sync_movimentacoes) e recarrega esta mesma
+   página quando terminar — a rota então já encontra o PAJ e devolve a
+   página de detalhe de verdade, sem exigir nenhuma ação do usuário. */
+function pajCarregandoApp(pajNorm) {
+    return {
+        pajNorm: pajNorm,
+        erro: '',
+        _pollTimer: null,
+        _pararPoll() {
+            if (this._pollTimer) { clearInterval(this._pollTimer); this._pollTimer = null; }
+        },
+        iniciar() {
+            this.erro = '';
+            this._pararPoll();
+            const url = '/api/sync/paj/' + encodeURIComponent(this.pajNorm) + '/movimentacoes';
+            SyncWidget.iniciar(url, {
+                titulo: 'Sincronizando PAJ ' + formatarPajNorm(this.pajNorm),
+                minimizado: true,
+                onDone: (status) => {
+                    this._pararPoll();
+                    if (status && status.ok === false) {
+                        this.erro = 'Não foi possível sincronizar este PAJ — confira o número ou tente abrir direto no SISDPU.';
+                        return;
+                    }
+                    fetch('/api/paj/' + encodeURIComponent(this.pajNorm))
+                        .then((r) => {
+                            if (r.status === 404) throw new Error('not_found');
+                            window.location.reload();
+                        })
+                        .catch(() => {
+                            this.erro = 'PAJ não encontrado no SISDPU — confira o número.';
+                        });
+                },
+            }).then((iniciou) => {
+                if (!iniciou) {
+                    this.erro = 'Não foi possível iniciar a sincronização (pode já haver outra rodando — aguarde um pouco e tente de novo).';
+                    return;
+                }
+                // Salvaguarda INDEPENDENTE do SSE do widget: se a conexão cair no
+                // meio (reinício do servidor, instabilidade de rede — mesma classe
+                // de bug já corrigida em sincronizarCaixa()/prazos-abertos e em
+                // desarquivarPaj()), o `onDone` acima nunca dispara e esta página
+                // ficava presa em "sincronizando" pra sempre, só resolvendo com F5
+                // manual (relatado pelo usuário 2026-09-18). Este poll roda em
+                // paralelo e recarrega assim que o PAJ aparecer, mesmo sem o
+                // widget ter avisado — até 1 minuto (20×3s, tempo mais que
+                // suficiente pra sincronização LEVÍSSIMA usada aqui — pedido do
+                // usuário 2026-09-18), depois desiste e mostra erro em vez de
+                // ficar pendurado pra sempre.
+                let tentativas = 0;
+                this._pollTimer = setInterval(() => {
+                    tentativas++;
+                    if (tentativas > 20) {
+                        this._pararPoll();
+                        this.erro = 'A sincronização está demorando demais — confira o número ou tente abrir direto no SISDPU.';
+                        return;
+                    }
+                    fetch('/api/paj/' + encodeURIComponent(this.pajNorm))
+                        .then((r) => {
+                            if (r.status !== 404) {
+                                this._pararPoll();
+                                window.location.reload();
+                            }
+                        })
+                        .catch(() => {});
+                }, 3000);
+            });
+        },
+        abrirNoSisdpu() {
+            abrirPajNavegador(formatarPajNorm(this.pajNorm));
+        },
+    };
+}
+
+/* Item "Gerenciar processo" do minimenu do número do processo — abre o modal
+   GLOBAL de gerenciamento avulso (ver templates/base.html:gerenciarProcessoApp
+   — montado uma vez, sempre presente em toda página). Ação isolada de
+   propósito (2026-09-11): gerenciamento no e-proc já é um único POST
+   (tipo + procurador), sem rascunho/preparar-depois-confirmar como peticionar
+   — não precisa da tela cheia de "Ações no Eproc" só pra isso. Motivado por um
+   gerenciamento configurado numa "Movimentar Eproc + SISDPU" ter falhado (bug
+   corrigido à parte) e não ter, até então, nenhuma forma de rodar de novo
+   isolado pro mesmo processo já peticionado. */
+function abrirGerenciarProcesso(numeroProcesso) {
+    if (!numeroProcesso) return;
+    window.dispatchEvent(new CustomEvent('abrir-gerenciar-processo', { detail: { processo: numeroProcesso } }));
+}
+
+function gerenciarProcessoApp() {
+    return {
+        aberto: false, processo: '', executando: false, erro: '',
+        tipo: 'S', procuradorValor: '', procuradorRotulo: '',
+        // Resultado da execução, mostrado DENTRO do modal (sem alert() — pedido do
+        // usuário 2026-09-16): { tipo: 'sucesso'|'erro'|'indefinido', mensagem,
+        // detalhes?: string[] }. Enquanto null, o formulário fica visível; uma vez
+        // preenchido, o formulário some e só resta o banner + botão "Fechar".
+        resultado: null,
+        // Mesma lista estática de sempre (ver acoes_eproc.js:tiposGerenciamento —
+        // duplicada aqui de propósito: este modal é intencionalmente
+        // independente do módulo grande "Ações no Eproc", sem compartilhar
+        // estado com ele).
+        tiposGerenciamento: [
+            { valor: 'S', rotulo: 'Substituir procurador' },
+            { valor: 'C', rotulo: 'Associar procurador' },
+            { valor: 'D', rotulo: 'Desassociar procurador' },
+            { valor: 'T', rotulo: 'Substituição Transitória' },
+        ],
+        procuradoresFav: [], procuradoresTodos: [],
+        async init() {
+            try {
+                const j = await (await fetch('/api/acoes-eproc/preferencias')).json();
+                this.procuradoresFav = j.procuradores_favoritos || [];
+                this.procuradoresTodos = j.procuradores_todos || [];
+                if (j.procurador_padrao) {
+                    this.procuradorValor = j.procurador_padrao.valor || '';
+                    this.procuradorRotulo = j.procurador_padrao.rotulo || '';
+                }
+            } catch (e) {}
+        },
+        procuradoresDropdown() { return this.procuradoresFav.length ? this.procuradoresFav : this.procuradoresTodos; },
+        onTrocarProcurador() {
+            const p = this.procuradoresDropdown().find((p) => p.valor === this.procuradorValor);
+            this.procuradorRotulo = p ? p.rotulo : '';
+        },
+        abrir(processo) {
+            if (!processo) return;
+            this.processo = processo;
+            this.erro = ''; this.executando = false; this.resultado = null;
+            this.aberto = true;
+        },
+        // Sem confirm() nativo aqui de propósito (2026-09-16, pedido do usuário):
+        // o próprio modal JÁ é a confirmação — mostra processo/tipo/procurador,
+        // o aviso fixo "Ação IRREVERSÍVEL" e um botão "Cancelar" ao lado. Um
+        // segundo diálogo de confirmação depois de já clicar "Executar
+        // gerenciamento" era redundante.
+        async executar() {
+            this.executando = true; this.erro = ''; this.resultado = null;
+            try {
+                const resp = await fetch('/api/acoes-eproc/gerenciar', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                        processo: this.processo, tipo: this.tipo,
+                        procurador_valor: this.tipo === 'D' ? '' : this.procuradorValor,
+                    }),
+                });
+                const j = await resp.json();
+                if (!j.ok) { this.erro = j.erro || 'Falha ao gerenciar o processo.'; return; }
+                // Mesma checagem rigorosa de sempre — provavel_sucesso só é True se
+                // TODAS as partes marcadas mostrarem a mensagem exata de sucesso
+                // (ver eproc_client.gerenciar_processo); erro parcial nunca fica
+                // mascarado atrás de um sucesso geral. Resultado fica no próprio
+                // modal (sem alert() — pedido do usuário 2026-09-16), com "Fechar".
+                const comErro = j.partes_com_erro || [];
+                if (j.provavel_sucesso) {
+                    this.resultado = {
+                        tipo: 'sucesso',
+                        mensagem: 'Gerenciamento executado com sucesso no e-proc para ' + (j.partes_marcadas || []).length + ' parte(s).',
+                    };
+                } else if (comErro.length) {
+                    this.resultado = {
+                        tipo: 'erro',
+                        mensagem: 'ATENÇÃO — nem todas as partes foram gerenciadas com sucesso. Confira e tome providências:',
+                        detalhes: comErro.map((b) => b.parte_label + ': ' + b.status),
+                    };
+                } else {
+                    this.resultado = {
+                        tipo: 'indefinido',
+                        mensagem: 'O gerenciamento foi executado, mas o resultado não pôde ser confirmado automaticamente — confira a aba do e-proc.',
+                    };
+                }
+            } catch (e) {
+                this.erro = 'Erro de rede: ' + e;
+            } finally {
+                this.executando = false;
+            }
+        },
+        fechar() {
+            this.aberto = false;
+            this.resultado = null;
+        },
+    };
 }
 
 /* =========================================================

@@ -18,7 +18,6 @@ import uvicorn
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
 
-from config import OFICIO_DESCRICAO
 from routes.busca import router as busca_router
 from routes.chat import router as chat_router
 from routes.chat_livre import router as chat_livre_router
@@ -28,11 +27,14 @@ from routes.acoes_sisdpu import router as acoes_sisdpu_router
 from routes.agenda import router as agenda_router
 from routes.analise_pretensao import router as analise_pretensao_router
 from routes.configuracoes import router as configuracoes_router
+from routes.calcular_cnis import router as calcular_cnis_router
 from routes.dashboard import router as dashboard_router
 from routes.docgen import router as docgen_router
 from routes.files import router as files_router
 from routes.historico import router as historico_router
+from routes.intimacoes import router as intimacoes_router
 from routes.minutas import router as minutas_router
+from routes.movimentar_conjunto import router as movimentar_conjunto_router
 from routes.paj import router as paj_router
 from routes.eproc_consulta import router as eproc_consulta_router
 from routes.eproc_mcp import router as eproc_mcp_router
@@ -77,7 +79,7 @@ _configurar_logging()
 # Versao do painel — fonte unica. Usada pelo FastAPI (OpenAPI/docs) e tambem
 # exposta a todos os templates via Jinja globals (renderizada no rodape da
 # sidebar). Para incrementar: mude aqui e so aqui.
-APP_VERSION = "0.4.56"
+APP_VERSION = "0.4.86"
 
 app = FastAPI(title="oficio-geral-ui", version=APP_VERSION)
 app.state.jinja = jinja2.Environment(
@@ -87,8 +89,35 @@ app.state.jinja = jinja2.Environment(
 )
 # Expoe a versao a todos os templates sem precisar passar no render() de cada rota
 app.state.jinja.globals["app_version"] = APP_VERSION
-# Descricao da unidade (sub-titulo na sidebar) — configuravel via OFICIO_DESCRICAO no .env
-app.state.jinja.globals["oficio_descricao"] = OFICIO_DESCRICAO
+
+# Identificacao do Oficio/Defensor (aba Geral das Configuracoes) — Ofício,
+# Unidade da DPU, Nome do defensor, Cargo do defensor. Substitui o antigo
+# OFICIO_DESCRICAO fixo do .env (ainda usado só como migracao best-effort na
+# 1a leitura, ver config_painel_service.get_identificacao_orgao). Registrada
+# como FUNCAO (nao string fixa) nos globals do Jinja pra reler o
+# painel_config.json a cada render — editar em Configuracoes tem efeito
+# imediato, sem reiniciar o painel. `oficio_descricao()` compoe o mesmo
+# texto "Ofício - Unidade" que aparecia embaixo de "Painel SISDPU" na
+# sidebar (ver base.html); `identificacao_orgao()` expoe os 4 campos crus,
+# injetados em toda pagina como `window._identificacaoOrgao` (ver base.html)
+# pros placeholders [OFICIO]/[UNIDADE]/[DEFENSOR]/[CARGO] dos modelos de
+# petição/despacho (ver static/js/acoes_eproc.js/acoes_sisdpu.js).
+from services import config_painel_service  # noqa: E402
+
+
+def _oficio_descricao_atual() -> str:
+    """Ofício e Unidade em LINHAS SEPARADAS (pedido do usuário 2026-09-18 —
+    antes vinha "Ofício - Unidade" numa linha só). O `\\n` literal funciona
+    como quebra de linha visual porque o `<p>` na sidebar tem
+    `white-space: pre-line` (ver base.html) — sem isso, HTML colapsaria a
+    quebra de linha crua num espaço."""
+    info = config_painel_service.get_identificacao_orgao()
+    partes = [p for p in (info.get("oficio", ""), info.get("unidade", "")) if p]
+    return "\n".join(partes) if partes else "Defensoria Pública da União"
+
+
+app.state.jinja.globals["oficio_descricao"] = _oficio_descricao_atual
+app.state.jinja.globals["identificacao_orgao"] = config_painel_service.get_identificacao_orgao
 
 # Mapeamento de exibicao para nomes de area (foro). Os valores armazenados em
 # metadata.json vem sem acentos (parser do SISDPU); o front-end formata para
@@ -236,6 +265,7 @@ app.include_router(acoes_eproc_router)
 app.include_router(acoes_sisdpu_router)
 app.include_router(agenda_router)
 app.include_router(analise_pretensao_router)
+app.include_router(calcular_cnis_router)
 app.include_router(dashboard_router)
 app.include_router(paj_router)
 app.include_router(files_router)
@@ -257,6 +287,8 @@ app.include_router(sat_router)
 app.include_router(retornos_router)
 app.include_router(historico_router)
 app.include_router(minutas_router)
+app.include_router(intimacoes_router)
+app.include_router(movimentar_conjunto_router)
 
 # Healthcheck de dependencias externas — expoe em app.state.ambiente pra
 # o dashboard renderizar banner quando algo falta.

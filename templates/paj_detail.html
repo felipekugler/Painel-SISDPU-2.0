@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/_macro_minimenu_processo.html" import itens_minimenu_processo %}
 {% block title %}PAJ {{ dados.metadata.paj }} — {{ dados.metadata.assistido_caixa[:40] }}{% endblock %}
 
 {% block content %}
@@ -159,30 +160,21 @@
   }
 </style>
 
-{# Banner de sincronizacao incompleta — bloqueia elaboracao ate ressincronizar #}
+{# Aviso de sincronizacao incompleta — SÓ visual (sem botão de ação: o
+   usuário já tem o botão "Sincronizar PAJ"/dropdown com as 3 hipóteses no
+   cabeçalho pra decidir como re-sincronizar — pedido do usuário 2026-09-18,
+   o botão antigo aqui era redundante). Mesma altura/padding da barra
+   "Caixas onde o PAJ está aberto" (mais abaixo), vermelho vivo igual ao
+   banner "PAJ Arquivado". #}
 {% if meta.sync_incompleto %}
-<div class="alert alert-error mb-4 shadow-md">
-    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+<div class="alert alert-error mb-4 p-2 flex items-center flex-wrap gap-2 rounded-lg">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
     </svg>
-    <div class="flex-1">
-        <h3 class="font-bold">Sincronização incompleta</h3>
-        <p class="text-sm mt-1">
-            Este PAJ ficou com dados parciais —
-            {{ meta.sync_incompleto_motivo or 'sincronização interrompida' }}.
-            {% if meta.sync_incompleto_em %}
-            <span class="text-xs opacity-80">(em {{ meta.sync_incompleto_em | data_hora_br }})</span>
-            {% endif %}
-        </p>
-        <p class="text-sm mt-1">
-            <strong>Re-sincronize antes de elaborar peças ou pedir análise</strong> —
-            a base de fatos pode estar desatualizada.
-        </p>
-    </div>
-    <button class="btn btn-sm btn-warning"
-            onclick="sincronizarPaj('{{ paj_norm }}', true)">
-        Re-sincronizar agora
-    </button>
+    <span class="font-bold text-sm uppercase tracking-wide">Sincronização incompleta</span>
+    {% if meta.sync_incompleto_em %}
+    <span class="text-xs opacity-80">(em {{ meta.sync_incompleto_em | data_hora_br }})</span>
+    {% endif %}
 </div>
 {% endif %}
 
@@ -391,11 +383,15 @@
                  texto (whitespace-nowrap: nunca quebra linha), a coluna toda se
                  ajusta ao mais largo deles. -->
             <div class="shrink-0 flex flex-col items-stretch gap-2">
-                <!-- Sincronizar PAJ: split button (com anexos por padrão) -->
+                <!-- Sincronizar PAJ: split button (completa por padrão) — mesmas 3
+                     hipóteses (Levíssima/Leve/Completa) do botão "Sincronizar
+                     caixa" do dashboard; sem o toggle de prazos em aberto (esse é
+                     exclusivo da sincronização da caixa inteira, não faz sentido
+                     pra um único PAJ). -->
                 <div class="join w-full">
                     <button class="join-item btn btn-sm btn-outline btn-primary normal-case gap-1.5 whitespace-nowrap flex-1"
-                            onclick="sincronizarPaj('{{ paj_norm }}', true)"
-                            title="Sincroniza este PAJ com o SISDPU (movimentações, metadata e anexos)">
+                            onclick="sincronizarPaj('{{ paj_norm }}', 'levissima')"
+                            title="Sincroniza este PAJ com o SISDPU (dados básicos — movimentações e metadata)">
                         <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M19.5 12a7.5 7.5 0 0 1-13.05 5.07M4.5 12A7.5 7.5 0 0 1 17.55 6.93M4.5 4.5v4.5h4.5M19.5 19.5V15h-4.5"></path></svg>
                         Sincronizar PAJ
                     </button>
@@ -407,18 +403,26 @@
                         </div>
                         <ul tabindex="0" class="dropdown-content menu bg-base-200 rounded-box z-[1] w-64 p-2 shadow border border-base-content/10 mt-1">
                             <li>
-                                <a onclick="sincronizarPaj('{{ paj_norm }}', true)" class="text-sm">
+                                <a onclick="sincronizarPaj('{{ paj_norm }}', 'levissima')" class="text-sm">
                                     <div class="flex flex-col">
-                                        <span class="font-semibold">Sincronizar (com anexos)</span>
-                                        <span class="text-xs text-base-content/60">baixa os PDFs</span>
+                                        <span class="font-semibold">Levíssima</span>
+                                        <span class="text-xs text-base-content/60">dados básicos (movimentações e metadata)</span>
                                     </div>
                                 </a>
                             </li>
                             <li>
-                                <a onclick="sincronizarPaj('{{ paj_norm }}', false)" class="text-sm">
+                                <a onclick="sincronizarPaj('{{ paj_norm }}', 'leve')" class="text-sm">
                                     <div class="flex flex-col">
-                                        <span class="font-semibold">Sincronizar rápido (sem anexos)</span>
-                                        <span class="text-xs text-base-content/60">só movimentações e metadata</span>
+                                        <span class="font-semibold">Leve</span>
+                                        <span class="text-xs text-base-content/60">dados básicos + relação de documentos, sem baixar</span>
+                                    </div>
+                                </a>
+                            </li>
+                            <li>
+                                <a onclick="sincronizarPaj('{{ paj_norm }}', 'completa')" class="text-sm">
+                                    <div class="flex flex-col">
+                                        <span class="font-semibold">Completa</span>
+                                        <span class="text-xs text-base-content/60">dados básicos + relação de documentos + download</span>
                                     </div>
                                 </a>
                             </li>
@@ -426,7 +430,7 @@
                                 <label class="flex items-center justify-between gap-2 text-sm cursor-pointer">
                                     <div class="flex flex-col">
                                         <span class="font-semibold">OCR simples</span>
-                                        <span class="text-xs text-base-content/60">roda OCR rápido/fraco ao baixar — use "Melhorar OCR" depois se precisar</span>
+                                        <span class="text-xs text-base-content/60">Passar OCR rápido nos arquivos baixados</span>
                                     </div>
                                     <input type="checkbox" class="toggle toggle-xs toggle-primary ocr-simples-checkbox">
                                 </label>
@@ -573,7 +577,6 @@
 </div>
 {% endif %}
 
-{% include "partials/sync_modal.html" %}
 {% include "partials/limpeza_modal.html" %}
 
 <!-- Caixas onde o PAJ está aberto (idêntico ao módulo da Retornos — .ret-caixas
@@ -781,14 +784,14 @@
      próprias abaixo (2026-08-18), já que são módulos de sistemas externos,
      não passos do fluxo de IA. -->
 <div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3 mb-4"
-     x-data="{ mostrarGerarMinuta: false }">
+     x-data="{ mostrarGerarMinuta: false, tipoAnalise: '{{ tipo_ia_padrao }}', orientacaoDiretiva: '' }">
     <div class="flex items-center gap-2 mb-2.5">
         <svg xmlns="http://www.w3.org/2000/svg" class="w-4 h-4 text-base-content/50" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
             <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 13.5l10.5-11.25L12 10.5h8.25L9.75 21.75 12 13.5H3.75z" />
         </svg>
         <span class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Ações com IA</span>
     </div>
-    <div class="flex flex-wrap items-center gap-2">
+    <div class="flex flex-wrap items-center justify-center gap-2">
         <!-- Gerar Minuta: manifestação sobre documento(s) já nos autos do
              processo (laudo pericial, avaliação social etc.) OU sobre
              documento(s) já sincronizados do PAJ (SISDPU), via IA — ver
@@ -802,18 +805,33 @@
             📝 Gerar Minuta
         </button>
 
-        <!-- Analisar (IA): dropdown de pretensão/rota + botão único. Dispara o
-             diagnóstico na seção "Análise feita pela IA" abaixo, no tipo
-             escolhido no dropdown — SEMPRE visível (não depende mais da
-             pretensão cadastrada no SISDPU bater com alguma skill): "BPC/LOAS"
-             e "Benefício por Incapacidade" rodam o playbook de teses dedicado
-             (skills /SISDPU-AnalisarPAJ-BPC e /SISDPU-AnalisarPAJ-BI,
+        <!-- Analisar (IA): dropdown de pretensão/rota + campo de orientação
+             diretiva + botão único. Dispara o diagnóstico na seção "Análise
+             feita pela IA" abaixo, no tipo escolhido no dropdown — SEMPRE
+             visível (não depende mais da pretensão cadastrada no SISDPU
+             bater com alguma skill): "BPC/LOAS" e "Benefício por
+             Incapacidade" rodam o playbook de teses dedicado (skills
+             /SISDPU-AnalisarPAJ-BPC e /SISDPU-AnalisarPAJ-BI,
              respectivamente); "Análise ampla" é diagnóstico direto via
              PROMPT_MAX, sem playbook de área. Isso permite escolher a rota
              certa mesmo quando o PAJ está cadastrado no SISDPU com a
              pretensão errada. Pré-seleciona `tipo_ia_padrao` (calculado no
-             topo do arquivo). -->
-        <div class="join" x-data="{ tipoAnalise: '{{ tipo_ia_padrao }}' }">
+             topo do arquivo).
+
+             "Orientação diretiva para análise da IA" (pedido do usuário
+             2026-09-17): texto livre opcional pro Defensor já direcionar a
+             análise quando já tem uma direção definida pro caso (ex.: "já
+             decidi que vou pedir tutela de urgência, foque nisso") — evita a
+             IA percorrer abordagens que o Defensor já descartou. Vai JUNTO
+             no evento `iniciar-analise-ia` e é injetada na instrução real
+             mandada pra IA (ver services/analise_pretensao_service.py:
+             _montar_instrucao_diagnostico) — não é só cosmético. Fica numa
+             LINHA PRÓPRIA abaixo dos botões (textarea, não input — pedido do
+             usuário 2026-09-17: 70% da largura da seção, 3 linhas de altura),
+             ver abaixo do fechamento desta linha de botões; `tipoAnalise`/
+             `orientacaoDiretiva` moraram pro x-data do container externo da
+             seção pra essa segunda linha conseguir acessá-los também. -->
+        <div class="join">
             <select class="select select-bordered select-sm join-item"
                     x-model="tipoAnalise"
                     title="Escolha a pretensão/rota do diagnóstico por IA">
@@ -825,7 +843,7 @@
                     class="btn btn-sm btn-outline btn-warning join-item gap-1.5"
                     @click="
                         document.getElementById('secao-abas-paj').scrollIntoView({behavior:'smooth'});
-                        window.dispatchEvent(new CustomEvent('iniciar-analise-ia', {detail:{tipo: tipoAnalise}}));
+                        window.dispatchEvent(new CustomEvent('iniciar-analise-ia', {detail:{tipo: tipoAnalise, orientacao: orientacaoDiretiva}}));
                     "
                     title="Diagnostica este PAJ por IA — BPC/LOAS aplica o playbook de teses (skill /SISDPU-AnalisarPAJ-BPC); Benefício por Incapacidade aplica o parecer de viabilidade dedicado (skill /SISDPU-AnalisarPAJ-BI); Análise ampla é um diagnóstico jurídico geral via PROMPT_MAX, sem playbook de área específica">
                 <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z"></path></svg>
@@ -833,71 +851,111 @@
             </button>
         </div>
 
-        <!-- Elaborar (skills). Estado próprio via elaborarApp(). O botão "Ver
-             Resumo" foi removido definitivamente: quando há análise de IA,
-             ela já fica visível na seção retrátil "Análise feita pela IA". -->
-        <div class="flex items-center gap-2 flex-wrap" x-data="elaborarApp('{{ paj_norm }}')" x-init="init()">
-            {% if meta.sync_incompleto %}
-            <button class="btn btn-sm btn-disabled gap-1.5"
-                    disabled
-                    title="Re-sincronize este PAJ antes de elaborar — dados parciais.">
-                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" /></svg>
-                Elaborar (sincronize antes)
+        <!-- Calcular Tempo de Contribuição (skill /AnaliseCNIS): botão PRÓPRIO,
+             fora do dropdown "Analisar" acima — pedido explícito do usuário
+             (2026-09-18): esta tarefa precisa que o Defensor ESCOLHA qual
+             arquivo de CNIS usar (um PAJ pode ter mais de um extrato,
+             baixado em datas diferentes — calcular com o errado dá um
+             resultado silenciosamente incorreto), então abre um modal de
+             seleção em vez de rodar direto. Ver services/calcular_cnis_service.py
+             e static/js/calcular_cnis.js. -->
+        <div class="flex items-center gap-2 flex-wrap"
+             x-data="calcularCnisApp('{{ paj_norm }}')" x-init="init()">
+            <button type="button" class="btn btn-sm btn-outline gap-1.5"
+                    :disabled="status === 'running'"
+                    @click="abrirModal()"
+                    title="Escolhe um extrato CNIS anexado ao PAJ e calcula tempo de contribuição, carência e idade nos marcos temporais (skill /AnaliseCNIS) — gera um PDF em &quot;Peças IA&quot;">
+                <span x-show="status !== 'running'">🧮 Calcular Tempo de Contribuição</span>
+                <span x-show="status === 'running'" class="loading loading-spinner loading-xs"></span>
+                <span x-show="status === 'running'">Calculando…</span>
             </button>
-            {% else %}
-            <!-- Select de skill + botao Elaborar, contiguo (join) com icone de IA
-                 — mesmo estilo do "Analisar" acima. Disponivel em idle/error/done. -->
-            <template x-if="status !== 'running'">
-                <div class="join">
-                    <select class="select select-bordered select-sm join-item w-52"
-                            x-model="skillSlug"
-                            :disabled="skillsLoading">
-                        <option value="">Claude decide (automático)</option>
-                        <template x-for="grupo in grupos" :key="grupo">
-                            <optgroup :label="grupo">
-                                <template x-for="s in skillsDoGrupo(grupo)" :key="s.slug">
-                                    <option :value="s.slug"
-                                            :title="s.descricao"
-                                            x-text="s.destaque ? ('★ ' + s.label) : s.label">
-                                    </option>
+            <span class="text-[11px] text-base-content/50" x-show="status === 'done' && arquivoEmUso" x-text="'Último cálculo: ' + arquivoEmUso.replace('Arquivos/', '')"></span>
+
+            <dialog class="modal" :open="modalAberto" @close="fecharModal()">
+                <div class="modal-box max-w-lg">
+                    <!-- Passo 1: escolher o arquivo -->
+                    <template x-if="!arquivoPendente">
+                        <div>
+                            <h3 class="font-bold text-lg mb-1">Selecionar o extrato CNIS</h3>
+                            <p class="text-xs text-base-content/50 mb-3">
+                                Escolha qual arquivo de CNIS usar no cálculo — pode haver mais de um,
+                                extraído em datas diferentes.
+                            </p>
+
+                            <div class="flex justify-center py-6" x-show="carregandoArquivos">
+                                <span class="loading loading-spinner loading-md"></span>
+                            </div>
+                            <div class="text-sm text-base-content/50 text-center py-4" x-show="!carregandoArquivos && erroArquivos" x-text="erroArquivos"></div>
+
+                            <div class="flex flex-col gap-1.5" x-show="!carregandoArquivos && arquivos.length">
+                                <template x-for="a in arquivos" :key="a.caminho">
+                                    <button type="button"
+                                            class="btn btn-outline btn-sm justify-between normal-case font-normal"
+                                            @click="escolherArquivo(a)">
+                                        <span class="flex items-center gap-1.5 truncate">
+                                            <span class="badge badge-xs" :class="a.tipo === 'completo' ? 'badge-info' : 'badge-ghost'"
+                                                  x-text="a.tipo === 'completo' ? 'completo' : 'simples'"
+                                                  :title="a.tipo === 'completo' ? 'CNIS com remunerações por competência' : 'CNIS só com vínculos'"></span>
+                                            <span class="truncate" x-text="a.nome"></span>
+                                        </span>
+                                        <span class="text-[11px] text-base-content/50 whitespace-nowrap ml-2"
+                                              x-text="formatarData(a.modificado) + ' · ' + formatarTamanho(a.tamanho)"></span>
+                                    </button>
                                 </template>
-                            </optgroup>
-                        </template>
-                    </select>
-                    <button type="button" class="btn btn-sm btn-outline btn-primary join-item gap-1.5" @click="iniciar()"
-                            title="Elabora a peça/documento escolhido no dropdown para este PAJ">
-                        <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z"></path></svg>
-                        Elaborar
-                    </button>
+                            </div>
+
+                            <div class="modal-action">
+                                <button type="button" class="btn btn-sm" @click="fecharModal()">Fechar</button>
+                            </div>
+                        </div>
+                    </template>
+
+                    <!-- Passo 2 (só se o arquivo escolhido for CNIS completo): escolher o modo -->
+                    <template x-if="arquivoPendente">
+                        <div>
+                            <h3 class="font-bold text-lg mb-1">Este CNIS tem remunerações</h3>
+                            <p class="text-xs text-base-content/50 mb-4">
+                                <span class="font-medium" x-text="arquivoPendente.nome"></span> traz remunerações/
+                                contribuições por competência. Calcular também identifica competências abaixo do
+                                salário mínimo (mais lento); calcular simples ignora as remunerações (mais rápido).
+                            </p>
+                            <div class="flex flex-col gap-2">
+                                <button type="button" class="btn btn-outline btn-sm justify-start normal-case font-normal"
+                                        @click="escolherModo('completo')">
+                                    <span class="font-medium">Cálculo completo</span>
+                                    <span class="text-[11px] text-base-content/50 ml-1">— com análise de remunerações abaixo do mínimo</span>
+                                </button>
+                                <button type="button" class="btn btn-outline btn-sm justify-start normal-case font-normal"
+                                        @click="escolherModo('simples')">
+                                    <span class="font-medium">Cálculo simples</span>
+                                    <span class="text-[11px] text-base-content/50 ml-1">— só tempo/carência/idade, sem checar remunerações</span>
+                                </button>
+                            </div>
+                            <div class="modal-action">
+                                <button type="button" class="btn btn-sm" @click="arquivoPendente = null">Voltar</button>
+                            </div>
+                        </div>
+                    </template>
                 </div>
-            </template>
-            {% endif %}
-
-            <button class="btn btn-sm btn-warning"
-                    x-show="status === 'running'"
-                    disabled>
-                <span class="loading loading-spinner loading-xs"></span>
-                <span x-text="lastAction || 'trabalhando...'"></span>
-            </button>
-
-            <div x-show="status === 'error' && error" class="alert alert-error text-xs py-2 px-3">
-                <span x-text="error"></span>
-            </div>
+                <form method="dialog" class="modal-backdrop"><button @click="fecharModal()">fechar</button></form>
+            </dialog>
         </div>
 
-        <!-- Organizar Documentos para Ajuizamento (skill /SISDPU-OrganizarArquivos):
+        <!-- Organizar Pasta para Ajuizamento (skill /SISDPU-OrganizarArquivos):
              habilitado só depois que uma petição inicial existir na pasta do PAJ.
-             Último botão da seção (etapa final do fluxo de IA).
+             Fila da seção, agora centralizada com os demais botões (pedido
+             do usuário 2026-09-17) — antes ficava com ml-auto empurrado pra
+             direita, mas a seção toda passou a ser centralizada.
 
-             Estado via organizarAjuizamentoApp() (mesmo padrão de elaborarApp()
-             acima) — x-init consulta o status no CARREGAMENTO da página e já
-             retoma o spinner/polling se uma organização estiver em andamento
-             (ex.: iniciada antes de um reload, ou em outra aba). Sem isso, um
-             F5 no meio da tarefa (que agora roda em background via agente,
-             não mais instantânea) escondia qualquer sinal de progresso —
-             pareceu pro Felipe que a pasta "sumia e reaparecia sozinha"
-             (PAJ 2026/029-01658, 2026-08-21) quando na verdade a organização
-             seguia rodando sem indicação nenhuma na tela. -->
+             Estado via organizarAjuizamentoApp() — x-init consulta o status
+             no CARREGAMENTO da página e já retoma o spinner/polling se uma
+             organização estiver em andamento (ex.: iniciada antes de um
+             reload, ou em outra aba). Sem isso, um F5 no meio da tarefa (que
+             agora roda em background via agente, não mais instantânea)
+             escondia qualquer sinal de progresso — pareceu pro Felipe que a
+             pasta "sumia e reaparecia sozinha" (PAJ 2026/029-01658,
+             2026-08-21) quando na verdade a organização seguia rodando sem
+             indicação nenhuma na tela. -->
         <div class="flex items-center gap-2 flex-wrap"
              x-data="organizarAjuizamentoApp('{{ paj_norm }}')" x-init="init()">
             <template x-if="status !== 'running'">
@@ -907,7 +965,7 @@
                         {% if not dados.tem_peticao_inicial %}disabled{% endif %}
                         title="{% if dados.tem_peticao_inicial %}{% if dados.tem_pasta_ajuizamento %}Reorganiza{% else %}Organiza{% endif %} os documentos deste PAJ numa subpasta 'Ajuizamento', prontos para peticionamento (skill /SISDPU-OrganizarArquivos){% else %}Disponível depois que uma petição inicial for gerada para este PAJ{% endif %}">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0v6a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-6m-19.5 0h19.5M5.25 9.75V6a2.25 2.25 0 0 1 2.25-2.25h4.5a2.25 2.25 0 0 1 1.591.659l1.409 1.409a2.25 2.25 0 0 0 1.591.659H18a2.25 2.25 0 0 1 2.25 2.25v3.75"></path></svg>
-                    Organizar Documentos para Ajuizamento
+                    Organizar Pasta para Ajuizamento
                 </button>
             </template>
 
@@ -922,6 +980,21 @@
         </div>
     </div>
 
+    <!-- Orientação diretiva para análise da IA — linha própria abaixo dos
+         botões (pedido do usuário 2026-09-17): 70% da largura da seção, 3
+         linhas de altura, centralizada (flex justify-center) igual aos
+         botões acima. `orientacaoDiretiva` mora no x-data do container
+         externo da seção (topo deste bloco) — compartilhado com o botão
+         "Analisar" acima, que lê o valor na hora de disparar o evento
+         `iniciar-analise-ia`. -->
+    <div class="mt-2 flex justify-center">
+        <textarea x-model="orientacaoDiretiva"
+                  class="textarea textarea-bordered text-sm w-[70%]"
+                  rows="3"
+                  placeholder="Orientação diretiva para análise da IA (opcional)"
+                  title="Direcione a análise se já tiver uma linha definida pro caso — ex.: 'foque em tutela de urgência, já descartei acordo'. A IA usa isso como orientação, não como substituto da análise."></textarea>
+    </div>
+
     <!-- Console "Gerar Minuta" — oculto até clicar no botão acima. Sempre
          renderizado (sem processo judicial, window._paj_processos_judiciais_completo
          vem vazio/undefined — minutaIaApp trata isso normalmente, só a aba
@@ -933,79 +1006,136 @@
     </div>
 </div>
 
-<!-- Ações no SISDPU — seção própria (mesma cor/ícone do botão de antes:
-     outline verde, ícone de "enviar/tramitar"). Movimentar/tramitar/concluir
-     este PAJ diretamente no SISDPU (módulo compartilhado com a aba Retornos
-     — static/js/acoes_sisdpu.js). -->
-<!-- x-data no MESMO elemento que o x-show do console (não um wrapper externo
-     separado) — Quill só é montado quando `aberto` vira true (ver abrir()/
-     _montarEditorMov em acoes_sisdpu.js), e `criarEditorRico` exige o container
-     de verdade VISÍVEL pra medir certo (ver cabeçalho de rich_editor.js). Um
-     x-data externo com seu próprio toggle (`mostrarAcoesSisdpu`) não sobrevive
-     ao reload da página — cada reload voltava a `false`, mas o `aberto: true`
-     hardcoded no cfg do bloco interno mandava montar/colar o Quill ASSIM MESMO,
-     ainda escondido atrás do x-show do wrapper: bug real 2026-08-19, a
-     descrição da movimentação gerada automaticamente após peticionar no e-proc
-     não aparecia nos 2 últimos eventos gravados (o rascunho no disco estava
-     correto — só o Quill não conseguia colar o HTML inicial enquanto oculto). -->
-<div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3 mb-4"
-     x-data="acoesSisdpuBlock({
-                 idProcesso: '{{ dados.id_processo }}', paj: '{{ meta.paj }}', pajNorm: '{{ paj_norm }}',
-                 idTramite: '{{ dados.id_tramite }}', tramitacoesCaixa: window._paj_tramitacoes_caixa || [],
-                 onExecutado: (res) => posExecucaoPaj('{{ paj_norm }}', res),
-             })" x-init="init()">
-    <button type="button" @click="abrir()"
-            class="btn btn-sm btn-outline btn-success gap-1.5"
-            title="Movimentar, tramitar ou concluir este PAJ diretamente no SISDPU">
-        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5"></path></svg>
-        Ações no SISDPU
-    </button>
+<!-- Ações no SISDPU + Ações no e-proc — UNIFICADAS numa seção só (pedido do
+     usuário 2026-09-18, "otimizar espaço"): os dois botões ficam lado a
+     lado, com um botão de seta dupla (gradiente verde->azul) no meio que
+     dispara a movimentação SIMULTÂNEA nos dois sistemas — reaproveita
+     `movimentarConjunto()` (mesma função do minimenu "Movimentar Eproc +
+     SISDPU", que já leva pra /movimentar-conjunto e resolve o processo
+     sozinha a partir só do PAJ) — NENHUMA lógica de execução nova aqui, só
+     layout + um atalho de navegação.
 
-    <!-- Console "Ações no SISDPU" (movimentar/tramitar/concluir) — oculto até clicar no botão acima -->
-    <div x-show="aberto" x-transition x-cloak class="mt-3 pt-3 border-t border-base-300">
-        {% if dados.id_processo %}
-        {% include "partials/acoes_sisdpu.html" %}
-        {% else %}
-        <div class="alert alert-warning text-sm">
-            Não foi possível localizar o identificador do processo no SISDPU para este PAJ
-            (sincronize novamente para atualizar).
+     IMPORTANTE: cada bloco continua sendo seu PRÓPRIO x-data
+     (acoesSisdpuBlock/acoesEprocBlock) — não dá pra unificar os dois num
+     x-data só sem recriar o módulo inteiro. Por isso só a CASCA visual foi
+     unificada, e o x-data de cada bloco continua no MESMO elemento que o
+     x-show do respectivo console (Quill só monta com o container visível —
+     ver bug 2026-08-19 no histórico deste arquivo: um wrapper externo com
+     toggle próprio não sobrevive ao reload).
+
+     LAYOUT: CSS Grid de 3 colunas fixas (SISDPU | seta | e-proc), NÃO flex
+     com `order`/`basis-full` — essa 1ª versão (2026-09-18) desalinhava os
+     3 botões visualmente ao abrir um console (o item que "quebrava linha"
+     saía do centro, ficando torto — relatado pelo usuário com print). Com
+     grid, cada botão fica numa COLUNA FIXA que nunca muda de largura nem
+     posição; o console, quando aberto, ocupa `grid-column: 1 / -1` (a
+     largura inteira) numa NOVA LINHA do grid, sem afetar as colunas da
+     linha de botões. Cada bloco x-data usa `display: contents` — o próprio
+     `<div>` do x-data some do layout (não vira uma "caixa"), e os FILHOS
+     dele (o wrapper do botão e o console) entram direto como itens do grid
+     do pai, cada um com seu `grid-column` explícito.
+
+     IMPORTANTE: os 3 botões (SISDPU/seta/e-proc) têm `grid-row: 1` FIXO —
+     sem isso, o auto-placement do CSS Grid é "sparse" (não retrocede pra
+     preencher buracos): como o console do SISDPU (full-span) vem ANTES da
+     seta/botão do e-proc na ordem do DOM, ao abrir ele o algoritmo empurrava
+     a seta/e-proc pra uma 3ª linha, bem abaixo do console inteiro, em vez de
+     manterem a 1ª linha — bug real visto ao vivo (2026-09-18) só depois de
+     confirmar que o console realmente abre (ver nota de depuração abaixo).
+     Os consoles, de propósito, NÃO têm `grid-row` fixo — o auto-placement
+     encontra a próxima linha livre sozinho a partir da 2ª (a 1ª está toda
+     ocupada pelos botões), então se os dois consoles abrirem ao mesmo tempo,
+     cada um cai numa linha própria, sem sobrepor. -->
+<div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3 mb-4">
+    <div class="grid gap-3 items-start"
+         style="grid-template-columns: {% if dados.processos_judiciais %}1fr auto 1fr{% else %}1fr{% endif %};">
+        <!-- x-data no MESMO elemento que o x-show do console (ver comentário
+             acima) — Quill só é montado quando `aberto` vira true (ver
+             abrir()/_montarEditorMov em acoes_sisdpu.js), e `criarEditorRico`
+             exige o container de verdade VISÍVEL pra medir certo (ver
+             cabeçalho de rich_editor.js). `display:contents` tira este <div>
+             do layout — os filhos entram direto como itens do grid do pai. -->
+        <div style="display: contents;"
+             x-data="acoesSisdpuBlock({
+                         idProcesso: '{{ dados.id_processo }}', paj: '{{ meta.paj }}', pajNorm: '{{ paj_norm }}',
+                         idTramite: '{{ dados.id_tramite }}', tramitacoesCaixa: window._paj_tramitacoes_caixa || [],
+                         onExecutado: (res) => posExecucaoPaj('{{ paj_norm }}', res),
+                     })" x-init="init()">
+            <!-- justify-end quando há seta+e-proc (aproxima o botão do
+                 centro, em vez de centralizá-lo na coluna inteira, que pode
+                 ser bem larga — pedido do usuário 2026-09-18); mas
+                 justify-center quando é a ÚNICA coluna do grid (sem
+                 processo judicial vinculado, sem seta/e-proc) — sem esse
+                 `else`, o botão sozinho ficava jogado pro canto direito da
+                 seção (mesma classe `justify-end` valendo pros dois casos)
+                 — pedido do usuário 2026-09-18 (2ª parte). -->
+            <div class="flex {% if dados.processos_judiciais %}justify-end{% else %}justify-center{% endif %}" style="grid-column: 1; grid-row: 1;">
+                <button type="button" @click="abrir()"
+                        class="btn btn-sm btn-outline btn-success gap-1.5"
+                        title="Movimentar, tramitar ou concluir este PAJ diretamente no SISDPU">
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5"></path></svg>
+                    Ações no SISDPU
+                </button>
+            </div>
+
+            <!-- Console "Ações no SISDPU" (movimentar/tramitar/concluir) — oculto até clicar no botão acima -->
+            <div x-show="aberto" x-transition x-cloak class="mt-3 pt-3 border-t border-base-300" style="grid-column: 1 / -1;">
+                {% if dados.id_processo %}
+                {% include "partials/acoes_sisdpu.html" %}
+                {% else %}
+                <div class="alert alert-warning text-sm">
+                    Não foi possível localizar o identificador do processo no SISDPU para este PAJ
+                    (sincronize novamente para atualizar).
+                </div>
+                {% endif %}
+            </div>
+        </div>
+
+        {% if dados.processos_judiciais %}
+        <!-- Seta dupla (movimentação simultânea) — só existe quando há
+             processo judicial vinculado (mesma condição que já existia pro
+             bloco "Ações no e-proc" inteiro: sem processo não há o que
+             peticionar, logo não há "simultâneo" possível). Coluna 2 (fixa,
+             `auto`) — nunca se move. -->
+        <button type="button"
+                class="btn btn-sm btn-circle border-none shrink-0 self-center"
+                style="background: linear-gradient(90deg, #16a34a, #2563eb); grid-column: 2; grid-row: 1;"
+                @click="movimentarConjunto('', '{{ paj_norm }}')"
+                title="Movimentar Sisdpu e Eproc simultaneamente">
+            <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+            </svg>
+        </button>
+
+        <!-- x-data no MESMO elemento que o x-show do console — mesmo motivo
+             do bloco SISDPU acima. -->
+        <div style="display: contents;"
+             x-data="acoesEprocBlock({
+                         processos: window._paj_processos_judiciais || [],
+                         paj: '{{ meta.paj }}', pajNorm: '{{ paj_norm }}',
+                     })" x-init="init()">
+            <!-- justify-start (mesmo motivo do bloco SISDPU acima, espelhado). -->
+            <div class="flex justify-start" style="grid-column: 3; grid-row: 1;">
+                <button type="button" @click="abrir()"
+                        class="btn btn-sm btn-outline btn-info gap-1.5"
+                        title="Peticionar ou lançar evento no processo judicial (e-proc) vinculado a este PAJ">
+                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                        <circle cx="8.5" cy="9" r="6.5" fill-opacity="1"></circle>
+                        <circle cx="16" cy="10.5" r="4.5" fill-opacity="0.55"></circle>
+                        <circle cx="12.5" cy="16.5" r="3" fill-opacity="0.8"></circle>
+                    </svg>
+                    Ações no e-proc
+                </button>
+            </div>
+
+            <!-- Console "Ações no e-proc" (peticionamento) — oculto até clicar no botão acima. -->
+            <div x-show="aberto" x-transition x-cloak class="mt-3 pt-3 border-t border-base-300" style="grid-column: 1 / -1;">
+                {% include "partials/acoes_eproc.html" %}
+            </div>
         </div>
         {% endif %}
     </div>
 </div>
-
-<!-- Ações no e-proc — seção própria (mesma cor/ícone do botão de antes:
-     outline azul, logo do e-proc em círculos sobrepostos). Peticionar ou
-     lançar evento no processo judicial vinculado (módulo compartilhado com a
-     aba Retornos — static/js/acoes_eproc.js). Só existe quando o PAJ tem
-     processo judicial vinculado — sem processo não há o que peticionar. -->
-{% if dados.processos_judiciais %}
-<!-- x-data no MESMO elemento que o x-show do console — mesmo motivo/mesmo bug
-     corrigido no bloco "Ações no SISDPU" acima (ver comentário lá): um wrapper
-     externo com toggle próprio não sobrevive ao reload, e `aberto: true`
-     hardcoded no cfg montava o Quill da Petição escondido atrás dele. -->
-<div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3 mb-4"
-     x-data="acoesEprocBlock({
-                 processos: window._paj_processos_judiciais || [],
-                 paj: '{{ meta.paj }}', pajNorm: '{{ paj_norm }}',
-             })" x-init="init()">
-    <button type="button" @click="abrir()"
-            class="btn btn-sm btn-outline btn-info gap-1.5"
-            title="Peticionar ou lançar evento no processo judicial (e-proc) vinculado a este PAJ">
-        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
-            <circle cx="8.5" cy="9" r="6.5" fill-opacity="1"></circle>
-            <circle cx="16" cy="10.5" r="4.5" fill-opacity="0.55"></circle>
-            <circle cx="12.5" cy="16.5" r="3" fill-opacity="0.8"></circle>
-        </svg>
-        Ações no e-proc
-    </button>
-
-    <!-- Console "Ações no e-proc" (peticionamento) — oculto até clicar no botão acima. -->
-    <div x-show="aberto" x-transition x-cloak class="mt-3 pt-3 border-t border-base-300">
-        {% include "partials/acoes_eproc.html" %}
-    </div>
-</div>
-{% endif %}
 
 <!-- Seção com abas: Movimentações, Análise IA, Narrativa, Anexos SISDPU e Peças
      (aglutinadas aqui em 2026-08-19 — antes eram 5 seções retráteis
@@ -1023,7 +1153,7 @@
 <div id="secao-abas-paj" class="bg-base-200 border border-base-300 rounded-lg mb-6"
      x-data="{...analiseIaApp('{{ paj_norm }}', '{{ tipo_ia_padrao }}'), tab: 'movimentacoes'}"
      x-init="init()"
-     @iniciar-analise-ia.window="tab = 'analise_ia'; iniciar($event.detail && $event.detail.tipo)">
+     @iniciar-analise-ia.window="tab = 'analise_ia'; iniciar($event.detail && $event.detail.tipo, $event.detail && $event.detail.orientacao)">
     <div class="px-4 pt-3">
         <div role="tablist" class="tabs tabs-bordered mb-4">
             <a role="tab" class="tab" :class="tab === 'movimentacoes' && 'tab-active'" @click="tab = 'movimentacoes'">
@@ -1654,17 +1784,11 @@ async function baixarTodosDocumentos(pajNorm) {
         return;
     }
     var atualizados = await baixarDocumentosPaj(pajNorm, lista);
-    // Recarrega quando o usuário fechar o modal (a tabela de Anexos é server-rendered).
+    // A tabela de Anexos e' server-rendered — recarrega pra refletir os
+    // documentos recem-baixados (o widget flutuante nao bloqueia a pagina,
+    // entao nao ha modal nenhum pra esperar fechar antes disso).
     if (atualizados !== null) {
-        var modal = document.getElementById('sync-modal');
-        if (modal) {
-            modal.addEventListener('close', function onClose() {
-                modal.removeEventListener('close', onClose);
-                window.location.reload();
-            }, { once: true });
-        } else {
-            window.location.reload();
-        }
+        window.location.reload();
     }
 }
 

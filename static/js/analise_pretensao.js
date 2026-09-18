@@ -11,13 +11,18 @@
 //
 // Uso:
 //   <div x-data="analiseIaApp('{{ paj_norm }}', '{{ tipo_ia_padrao }}')" x-init="init()"
-//        @iniciar-analise-ia.window="iniciar($event.detail && $event.detail.tipo)">
+//        @iniciar-analise-ia.window="iniciar($event.detail && $event.detail.tipo, $event.detail && $event.detail.orientacao)">
 //     ...
 //   </div>
 //
-// O botão "Analisar" (+ dropdown de tipo) na barra de ações dispara
-// `window.dispatchEvent(new CustomEvent('iniciar-analise-ia', {detail:{tipo: tipoEscolhido}}))`
+// O botão "Analisar" (+ dropdown de tipo + campo "Orientação diretiva para
+// análise da IA") na barra de ações dispara
+// `window.dispatchEvent(new CustomEvent('iniciar-analise-ia', {detail:{tipo: tipoEscolhido, orientacao: textoLivre}}))`
 // — assim o componente não precisa ficar acoplado à barra de ações.
+// `orientacao` é opcional (texto livre do Defensor, direcionando a análise
+// quando já há uma linha definida pro caso) — repassada ao backend e
+// injetada na instrução real mandada pra IA (ver
+// services/analise_pretensao_service.py:_montar_instrucao_diagnostico).
 function analiseIaApp(pajNorm, tipoPadrao) {
     return {
         pajNorm: pajNorm,
@@ -63,7 +68,7 @@ function analiseIaApp(pajNorm, tipoPadrao) {
             }
         },
 
-        async iniciar(tipoForcado) {
+        async iniciar(tipoForcado, orientacao) {
             const tipo = tipoForcado || this.tipo;
             if (!tipo) {
                 showToast('Nenhuma skill de diagnóstico aplicável a este PAJ', 'warning');
@@ -81,6 +86,8 @@ function analiseIaApp(pajNorm, tipoPadrao) {
             try {
                 const r = await fetch('/api/analise-pretensao/' + tipo + '/start/' + this.pajNorm, {
                     method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ orientacao: (orientacao || '').trim() }),
                 });
                 const d = await r.json();
                 if (!d.ok) {

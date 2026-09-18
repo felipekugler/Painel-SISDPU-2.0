@@ -45,6 +45,24 @@ def _rascunho_json(paj_norm: str) -> Path:
     return RASCUNHOS_DIR / f"{paj_norm}.json"
 
 
+_RE_NUMERO_PAJ = re.compile(r"^(\d{4})/(\d{3})-(\d{5})$")
+
+
+def normalizar_numero_paj(numero: str) -> str | None:
+    """'2026/029-01593' -> 'PAJ-2026-029-01593'; None se o formato não bater
+    (AAAA/UUU-NNNNN). Usado por "Adicionar movimentação" (Movimentações
+    Pendentes) pra criar um rascunho a partir só do número digitado, SEM
+    precisar de nenhuma sincronização prévia — mesma regra de normalização já
+    duplicada em ingestao/sincronizador.py, services/retornos_service.py,
+    services/sat_service.py, services/sync_service.py, services/
+    intimacao_service.py (nenhuma delas centralizada em config.py; replicada
+    aqui em vez de importar uma daquelas pra não criar acoplamento novo)."""
+    numero = (numero or "").strip()
+    if not _RE_NUMERO_PAJ.match(numero):
+        return None
+    return "PAJ-" + numero.replace("/", "-")
+
+
 def salvar_rascunho(paj_norm: str, dados: dict) -> dict:
     """Grava/sobrescreve o rascunho de movimentação do PAJ (1 por PAJ) — fase,
     despachos (HTML da movimentação, texto puro da tramitação), anexos staged,
@@ -85,16 +103,35 @@ def listar_rascunhos() -> list[dict]:
     """Todos os rascunhos salvos — alimenta a página "Movimentações pendentes".
     Enriquece com o nome do assistido lido do metadata.json do PAJ (não fica
     salvo no rascunho em si, pra não ficar desatualizado se o PAJ mudar) — mesmo
-    padrão de `acoes_eproc_service.listar_rascunhos`."""
+    padrão de `acoes_eproc_service.listar_rascunhos`. Também enriquece com
+    `sincronizado` (bool) — False quando o PAJ ainda não tem `metadata.json`
+    local (criado via "Adicionar movimentação" enquanto o SISDPU estava fora
+    do ar, ou pelo fallback de mera_ciencia_service) — a UI usa isso pro selo
+    "PAJ ainda não sincronizado".
+
+    `par_eproc_processo`: número do processo de uma petição PENDENTE no
+    e-proc do MESMO PAJ, se houver (rascunho em `acoes_eproc_rascunhos/`
+    guardado sob esta mesma chave de PAJ) — normalmente as duas nasceram
+    juntas em "Movimentar Eproc + SISDPU" (movimentar_conjunto.html), mas a
+    checagem vale pra qualquer par pendente do mesmo PAJ, criado como for.
+    Alimenta o badge "Eproc + SISDPU" da tabela de pendentes (pedido do
+    usuário 2026-09-11 — sem ele, sair da página conjunta sem executar
+    "perdia" o caminho de volta pra revisar os dois juntos)."""
     if not RASCUNHOS_DIR.exists():
         return []
+    from services import acoes_eproc_service
+
     itens = []
     for f in RASCUNHOS_DIR.glob("*.json"):
         try:
             doc = json.loads(f.read_text(encoding="utf-8"))
         except Exception:
             continue
-        doc["assistido"] = _assistido_do_paj(doc.get("paj_norm", ""))
+        paj_norm = doc.get("paj_norm", "")
+        doc["assistido"] = _assistido_do_paj(paj_norm)
+        doc["sincronizado"] = (PAJS_DIR / paj_norm / "metadata.json").exists() if paj_norm else False
+        par_eproc = acoes_eproc_service.obter_rascunho(paj_norm) if paj_norm else None
+        doc["par_eproc_processo"] = (par_eproc or {}).get("processo") or ""
         itens.append(doc)
     itens.sort(key=lambda d: d.get("salvo_em", ""), reverse=True)
     return itens
@@ -109,6 +146,23 @@ def _assistido_do_paj(paj_norm: str) -> str:
         return meta.get("assistido_caixa") or meta.get("assistido") or ""
     except Exception:
         return ""
+
+
+def listar_pecas_ia(paj_norm: str) -> list[dict]:
+    """Arquivos da subpasta "Peças IA" do PAJ (petições/peças geradas pela análise
+    de pretensão — services/analise_pretensao_service.py) — alimenta o modal
+    "Adicionar Petições IA" em Ações no SISDPU. MESMA função de
+    acoes_eproc_service.listar_pecas_ia (duplicada aqui de propósito: cada módulo
+    "Ações no X" é autocontido/não depende do outro — ver docstring no topo deste
+    arquivo). Reaproveita `paj_service.ler_paj()`, que já separa "Peças IA/" do
+    resto de `pecas_geradas` pelo prefixo do `caminho` — sem escanear a pasta de
+    novo aqui."""
+    from services.paj_service import ler_paj
+
+    dados = ler_paj(paj_norm)
+    if not dados:
+        return []
+    return [p for p in (dados.get("pecas_geradas") or []) if (p.get("caminho") or "").startswith("Peças IA/")]
 
 
 def _ev(level: str, msg: str) -> dict:
@@ -129,14 +183,24 @@ def salvar_anexo_externo(paj_norm: str, nome_original: str, conteudo: bytes) -> 
     em disco no servidor, não um File do navegador direto. Fica ali até a movimentação
     de fato usá-lo (aí é removido — ver executar_stream) ou até o usuário desistir e
     remover da lista antes de executar (ver remover_anexo_externo).
+
+    A pasta do PAJ é criada aqui SE AINDA NÃO EXISTIR (PAJ nunca sincronizado
+    localmente — caso do fluxo "Adicionar movimentação" em Movimentações
+    Pendentes, pra registrar um trabalho enquanto o SISDPU está fora do ar).
+    Uma pasta "esqueleto" (sem metadata.json) é inofensiva: toda varredura de
+    PAJS_DIR no projeto já ignora pastas sem metadata.json válido (dashboard,
+    agenda, busca, chat, sincronizador — conferido antes de fazer esta
+    mudança). Quando a sincronização real acontecer depois, ela reusa a MESMA
+    pasta normalmente (idempotente, ver `_processar_paj_pos_detalhamento`).
     Retorna {ok, ref, nome, tamanho, tipo} ou {ok:False, detalhe}."""
     paj_norm = (paj_norm or "").strip()
     nome_original = (nome_original or "").strip()
     if not paj_norm or not nome_original:
         return {"ok": False, "detalhe": "paj_norm ou nome do arquivo ausente."}
+    if not re.match(r"^PAJ-\d{4}-\d{3}-\d{5}$", paj_norm):
+        return {"ok": False, "detalhe": f"paj_norm em formato inválido: {paj_norm!r}."}
     pasta_paj = PAJS_DIR / paj_norm
-    if not pasta_paj.exists():
-        return {"ok": False, "detalhe": "PAJ não encontrado localmente (sincronize antes)."}
+    pasta_paj.mkdir(parents=True, exist_ok=True)
     ext = Path(nome_original).suffix.lstrip(".").lower()
     if ext not in TIPOS_ANEXO_MOV_OK:
         aceitos = ", ".join(sorted(t.upper() for t in TIPOS_ANEXO_MOV_OK))
@@ -164,11 +228,23 @@ def _resolver_anexo_externo(paj_norm: str, ref: str) -> Path | None:
 def remover_anexo_externo(paj_norm: str, ref: str) -> dict:
     """Apaga um anexo externo staged — best-effort. Chamado quando o usuário remove da
     lista ANTES de executar (desiste dele), ou automaticamente depois que a movimentação
-    já o usou com sucesso (ver executar_stream)."""
+    já o usou com sucesso (ver executar_stream).
+
+    Também remove a pasta `_anexos_externos_tmp` em si, SE ficar vazia depois —
+    sem isso ela nunca desaparecia (só o arquivo era apagado), deixando uma
+    pasta fantasma na raiz do PAJ para sempre, mesmo depois de usado/descartado
+    todo anexo externo (relatado pelo usuário 2026-09-14 — investigado e
+    confirmado: NÃO é a rotina de organizar documentos para ajuizamento, é
+    esta, "Ações no SISDPU" / upload de anexo externo). `rmdir()` só remove
+    diretório vazio (levanta OSError se sobrar algo — outro anexo staged em
+    paralelo, por exemplo — daí o `contextlib.suppress`, idempotente e
+    seguro)."""
     caminho = _resolver_anexo_externo(paj_norm, ref)
     if caminho:
         with contextlib.suppress(Exception):
             caminho.unlink()
+        with contextlib.suppress(Exception):
+            caminho.parent.rmdir()
     return {"ok": True}
 
 
@@ -224,6 +300,43 @@ async def com_auto_reconexao(chamada):
     return resultado, excecao, eventos
 
 
+async def _resolver_id_processo(id_processo: str, paj: str) -> tuple[str | None, list[dict], str]:
+    """Resolve `id_processo` pelo NÚMERO do PAJ (`paj`) quando ele vem vazio — caso do
+    rascunho criado via "Adicionar movimentação" (Movimentações Pendentes) enquanto o
+    SISDPU estava fora do ar/inacessível: resolve AGORA, na hora de executar (quando o
+    SISDPU presumivelmente já está de volta), pela busca global do SISDPU — mesmo
+    mecanismo já usado em produção pra abrir um PAJ direto no navegador sem
+    sincronizar (`services/paj_link_service.resolver`, com cache próprio em
+    dados/_paj_urls.json). Sem id E sem número, não há como prosseguir de jeito nenhum.
+
+    Retorna (id_processo_resolvido_ou_None, eventos_para_yield, detalhe_erro_se_falhou)
+    — mesmo formato de retorno de `com_auto_reconexao` (tupla + eventos já prontos),
+    pra quem chama só fazer `for ev in eventos: yield ev`."""
+    id_processo = (id_processo or "").strip()
+    if id_processo:
+        return id_processo, [], ""
+    if not paj:
+        return None, [_ev("erro", "id_processo ausente.")], "id_processo ausente."
+    eventos = [_ev("info", f"Buscando {paj} no SISDPU pelo número…")]
+    from services import paj_link_service
+
+    try:
+        res_link = await paj_link_service.resolver(paj)
+    except Exception as e:  # noqa: BLE001
+        res_link = {"ok": False, "erro": f"{type(e).__name__}: {e}"}
+    if not res_link.get("ok"):
+        erro_busca = res_link.get("erro") or "PAJ não localizado no SISDPU."
+        eventos.append(_ev("erro", f"Não localizei o PAJ {paj} no SISDPU: {erro_busca}"))
+        return None, eventos, erro_busca
+    m_id_resolvido = re.search(r"[?&]id=(\d+)", res_link.get("url", "") or "")
+    if not m_id_resolvido:
+        eventos.append(_ev("erro", "PAJ localizado, mas não consegui extrair o id interno do SISDPU da URL."))
+        return None, eventos, "id_processo não encontrado na URL resolvida."
+    id_resolvido = m_id_resolvido.group(1)
+    eventos.append(_ev("ok", f"PAJ localizado no SISDPU — id interno {id_resolvido}."))
+    return id_resolvido, eventos, ""
+
+
 async def executar_stream(
     id_processo: str,
     paj: str = "",
@@ -274,18 +387,55 @@ async def executar_stream(
     (nada a anexar sem movimentação). "paj": `ref` é o caminho RELATIVO de um documento
     já baixado ("Anexos SISDPU"). "externo": `ref` é o token devolvido por
     salvar_anexo_externo() (upload do usuário) — removido do disco automaticamente
-    depois que a movimentação o usa com sucesso."""
-    fase = (fase or "").strip()
-    descricao_mov = (descricao_mov or "").strip()
-    descricao_tram = (descricao_tram or "").strip()
-    if not id_processo:
-        yield _ev("erro", "id_processo ausente.")
-        yield {"done": True, "resultado": {"ok": False, "detalhe": "id_processo ausente."}}
+    depois que a movimentação o usa com sucesso.
+
+    2026-09-11: a lógica de UM item (mov→tram→conclui) foi extraída para
+    `_executar_um_item_stream` — esta função virou um wrapper fino (resolve id_processo
+    + reduz o par legado id_tramite/concluir a uma lista + delega) pra poder ser
+    reaproveitada por `executar_fila_stream` (várias movimentações em sequência, MESMA
+    sessão) sem duplicar a orquestração Playwright. Comportamento EXTERNO desta função
+    (assinatura, eventos, resultado final) permanece idêntico ao de antes da extração."""
+    id_resolvido, eventos_id, erro_id = await _resolver_id_processo(id_processo, paj)
+    for ev in eventos_id:
+        yield ev
+    if not id_resolvido:
+        yield {"done": True, "resultado": {"ok": False, "detalhe": erro_id}}
         return
 
     ids_concluir = [str(i).strip() for i in (id_tramites or []) if str(i).strip()]
     if not ids_concluir and concluir and id_tramite:
         ids_concluir = [id_tramite]  # compat: par legado (Retornos)
+
+    async for ev in _executar_um_item_stream(
+        id_resolvido, paj, paj_norm, fase, descricao_mov, descricao_mov_html,
+        grupo, descricao_tram, prazo_dias, prazo_data, ids_concluir, dry_run, anexos,
+    ):
+        yield ev
+
+
+async def _executar_um_item_stream(
+    id_processo: str,
+    paj: str,
+    paj_norm: str,
+    fase: str,
+    descricao_mov: str,
+    descricao_mov_html: bool,
+    grupo: str | None,
+    descricao_tram: str,
+    prazo_dias: int,
+    prazo_data: str,
+    ids_concluir: list[str],
+    dry_run: bool,
+    anexos: list[dict] | None,
+) -> AsyncIterator[dict]:
+    """UM ciclo mov→tram→conclui — corpo original de `executar_stream` (movido daqui
+    2026-09-11 pra virar reutilizável por `executar_fila_stream`). `id_processo` já
+    vem RESOLVIDO (não tenta buscar pelo número aqui) e a conclusão já vem reduzida a
+    `ids_concluir` (lista simples — quem chama já decidiu entre o par legado e a lista
+    nova). Mesmos eventos/resultado final de antes."""
+    fase = (fase or "").strip()
+    descricao_mov = (descricao_mov or "").strip()
+    descricao_tram = (descricao_tram or "").strip()
     concluir_efetivo = bool(ids_concluir)
     if not fase and not grupo and not concluir_efetivo:
         yield _ev("erro", "Selecione ao menos uma ação: movimentar, tramitar ou concluir.")
@@ -438,3 +588,79 @@ async def executar_stream(
     yield {"done": True, "resultado": {"ok": True, "concluido": concluido,
                                        "tramitado_para": tram_caixa, "mov_seq": mv.get("mov_seq"),
                                        "concluidos": ids_para_remover_caixa}}
+
+
+async def executar_fila_stream(
+    id_processo: str,
+    paj: str = "",
+    paj_norm: str = "",
+    itens: list[dict] | None = None,
+    dry_run: bool = False,
+) -> AsyncIterator[dict]:
+    """Executa uma FILA de movimentações (cada uma: mov→tram→conclui) em SEQUÊNCIA,
+    todas na MESMA sessão do SISDPU — resolve `id_processo` uma ÚNICA vez pra fila
+    inteira (reaproveita `_resolver_id_processo`), depois chama
+    `_executar_um_item_stream` uma vez por item, em ordem.
+
+    Cada item de `itens` é um dict com as MESMAS chaves de `executar_stream` (exceto
+    id_processo/paj/paj_norm, compartilhados por toda a fila): fase, descricao_mov,
+    descricao_mov_html, grupo, descricao_tram, prazo, prazo_data, id_tramites, anexos.
+    Fila é um modelo NOVO — só usa a lista de trâmites (`id_tramites`), sem o par
+    legado id_tramite/concluir (não faz sentido pra vários itens de uma vez).
+
+    PARA no primeiro item que falhar (não segue às cegas pros seguintes) — emite um
+    evento {item_done: True, index, ok, resultado} depois de CADA item (sucesso ou
+    falha), pra quem chama (a rota SSE) ir podando a fila persistida conforme cada um
+    termina, e um evento final {done: True, resultado: {ok, itens_concluidos: [...]}}
+    — `itens_concluidos` são os ÍNDICES (0-based) que realmente terminaram (sucesso OU
+    'ja_ausente' — nesse caso não há mais nada a fazer com aquele item, então conta
+    como resolvido mesmo sem um `ok` estrito); o que sobrar na fila do chamador deve
+    ser só os índices FORA dessa lista."""
+    itens = itens or []
+    if not itens:
+        yield _ev("erro", "Fila vazia — nada a executar.")
+        yield {"done": True, "resultado": {"ok": False, "detalhe": "Fila vazia.", "itens_concluidos": []}}
+        return
+
+    id_resolvido, eventos_id, erro_id = await _resolver_id_processo(id_processo, paj)
+    for ev in eventos_id:
+        yield ev
+    if not id_resolvido:
+        yield {"done": True, "resultado": {"ok": False, "detalhe": erro_id, "itens_concluidos": []}}
+        return
+
+    total = len(itens)
+    concluidos: list[int] = []
+    for i, item in enumerate(itens):
+        item = item or {}
+        yield _ev("novo", f"— Movimentação {i + 1}/{total} —")
+        ids_concluir_item = [str(x).strip() for x in (item.get("id_tramites") or []) if str(x).strip()]
+        resultado_item: dict = {}
+        async for ev in _executar_um_item_stream(
+            id_resolvido, paj, paj_norm,
+            item.get("fase", ""), item.get("descricao_mov", ""), bool(item.get("descricao_mov_html")),
+            item.get("grupo") or None, item.get("descricao_tram", ""),
+            int(item.get("prazo") or 0), item.get("prazo_data", ""),
+            ids_concluir_item, dry_run, item.get("anexos") or [],
+        ):
+            if ev.get("done"):
+                resultado_item = ev.get("resultado") or {}
+            else:
+                yield ev
+        # 'ja_ausente' conta como "nada mais a fazer aqui" mesmo com ok=False — mesmo
+        # critério usado no resto do módulo (não é uma falha real, o trâmite já tinha
+        # saído da caixa antes desta execução).
+        ok_item = bool(resultado_item.get("ok")) or resultado_item.get("status") == "ja_ausente"
+        yield {"item_done": True, "index": i, "ok": ok_item, "resultado": resultado_item}
+        if not ok_item:
+            yield {"done": True, "resultado": {
+                "ok": False,
+                "detalhe": f"Movimentação {i + 1}/{total} falhou — execução da fila interrompida "
+                           f"({resultado_item.get('detalhe', '')}).",
+                "itens_concluidos": concluidos,
+            }}
+            return
+        concluidos.append(i)
+
+    yield _ev("ok", f"Fila concluída — {total}/{total} movimentação(ões) executada(s) com sucesso.")
+    yield {"done": True, "resultado": {"ok": True, "itens_concluidos": concluidos}}

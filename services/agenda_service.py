@@ -40,8 +40,40 @@ TIPOS_AFASTAMENTO: dict[str, str] = {
     "recesso": "Recesso forense",
     "suspensao_distribuicao": "Suspensão de distribuição",
     "licenca": "Licença",
+    "substituicao": "Substituição",
+    "feriado": "Feriado",
+    "plantao": "Plantão",
     "outro": "Outro",
 }
+
+
+def listar_tipos_afastamento() -> list[dict]:
+    """{value, label} de cada tipo, sempre em ordem alfabética pelo label — o
+    front-end busca daqui (em vez de fixar `<option>`s em HTML) pra um tipo
+    novo já nascer na posição certa sem precisar reordenar nada na tela."""
+    return [
+        {"value": chave, "label": label}
+        for chave, label in sorted(TIPOS_AFASTAMENTO.items(), key=lambda item: item[1])
+    ]
+
+# Paleta de cores pra "Compromisso"/"Cadastrar Evento" — 8 pares (matiz igual,
+# suave e forte). Fonte única de verdade: o front-end (templates/agenda.html)
+# usa a MESMA lista (mesma ordem) pra desenhar os círculos do seletor e pra
+# decidir texto claro/escuro em cima da cor. Validação aqui evita gravar um
+# hex arbitrário vindo de fora do seletor (mesmo padrão de
+# services/lembretes_service.py: cor fora da paleta -> cai pro padrão).
+CORES_EVENTO: list[str] = [
+    # suaves
+    "#FDE68A", "#FED7AA", "#FECACA", "#FBCFE8", "#E9D5FF", "#BFDBFE", "#99F6E4", "#BBF7D0",
+    # fortes (mesma ordem de matiz das suaves acima)
+    "#F59E0B", "#EA580C", "#DC2626", "#DB2777", "#9333EA", "#2563EB", "#0D9488", "#16A34A",
+]
+_CORES_FORTES = set(CORES_EVENTO[8:])
+
+
+def _validar_cor(cor: str | None) -> str:
+    cor = (cor or "").strip().upper()
+    return cor if cor in CORES_EVENTO else ""
 
 _RE_DATA_BR = re.compile(r"(\d{2})/(\d{2})/(\d{4})")
 _RE_HORA = re.compile(r"(\d{1,2}):(\d{2})")
@@ -127,16 +159,21 @@ def _listar_audiencias() -> list[dict]:
 def _listar_prazos() -> list[dict]:
     """Projeta o cache que a página "Prazos" mantém (dados/_eproc_intimacoes.json)
     em eventos de agenda — um por prazo com data final (real ou estimada).
-    Não dispara sincronização nenhuma; só lê o que já está em disco."""
+    Não dispara sincronização nenhuma; só lê o que já está em disco.
+
+    Agrupa por (PAJ, dia) antes de devolver: a tabela de "/prazos" trata cada
+    intimação separadamente (é o correto lá — cada uma pode ter origem/prazo
+    diferente), mas na Agenda várias intimações do MESMO PAJ vencendo no MESMO
+    dia devem aparecer como um único compromisso — ver `_agrupar_prazos_por_dia`."""
     from ingestao import eproc_intimacoes
 
-    eventos: list[dict] = []
+    brutos: list[dict] = []
     dados = eproc_intimacoes.carregar()
-    contador = 0  # id único global — um mesmo processo pode aparecer em mais
-    # de uma categoria do e-proc ao mesmo tempo (ex.: "prazo em aberto" e
-    # "decurso de prazo"), então reiniciar o índice por caso gerava ids
-    # duplicados entre categorias e quebrava o x-for (:key) do Alpine.
-    for chave, casos in (dados.get("secoes") or {}).items():
+    contador = 0  # desempate de chave — um mesmo processo pode aparecer em
+    # mais de uma categoria do e-proc ao mesmo tempo (ex.: "prazo em aberto" e
+    # "decurso de prazo"); sem isso, prazos sem PAJ/processo resolvido
+    # colidiriam na chave de agrupamento.
+    for casos in (dados.get("secoes") or {}).values():
         for caso in casos:
             processo = caso.get("processo", "")
             paj = caso.get("paj", "")
@@ -147,35 +184,77 @@ def _listar_prazos() -> list[dict]:
                 data_iso = _data_br_para_iso(final_real or final_estimado)
                 if not data_iso:
                     continue
-                estimado = not final_real
-                # Título curto pra exibir no calendário/tabela — o texto crú do
-                # e-proc (`evento`, ex.: "Expedida/certificada a intimação
-                # eletrônica...") é jurídico-processual, não serve de rótulo
-                # visual; fica preservado em `descricao` pra quem quiser o
-                # detalhe (tooltip da tabela).
-                if paj:
-                    titulo = f"Prazo judicial - PAJ {paj}"
-                elif processo:
-                    titulo = f"Prazo judicial - {processo}"
-                else:
-                    titulo = "Prazo judicial"
-                titulo += " (estimado)" if estimado else ""
                 contador += 1
-                eventos.append({
-                    "id": f"prazo-{chave}-{processo}-{contador}",
-                    "tipo": "prazo",
+                brutos.append({
                     "data_inicio": data_iso,
-                    "data_fim": data_iso,
-                    "hora_inicio": None,
-                    "titulo": titulo,
-                    "descricao": p.get("evento") or "Prazo final",
-                    "local": "",
-                    "paj_norm": paj,
+                    "paj": paj,
                     "processo": processo,
-                    "status": "estimado" if estimado else "aberto",
                     "urgente": urgente,
-                    "origem": "eproc",
+                    "estimado": not final_real,
+                    "evento": p.get("evento") or "Prazo final",
+                    "seq": contador,
                 })
+    return _agrupar_prazos_por_dia(brutos)
+
+
+def _agrupar_prazos_por_dia(brutos: list[dict]) -> list[dict]:
+    grupos: dict[tuple[str, str], list[dict]] = {}
+    for b in brutos:
+        chave_paj = b["paj"] or b["processo"] or f"sem-chave-{b['seq']}"
+        grupos.setdefault((chave_paj, b["data_inicio"]), []).append(b)
+
+    eventos: list[dict] = []
+    for (chave_paj, data_iso), itens in grupos.items():
+        paj = itens[0]["paj"]
+        urgente = any(i["urgente"] for i in itens)
+        estimado = all(i["estimado"] for i in itens)
+        # Só mostra o processo se TODOS os prazos do grupo forem do mesmo
+        # processo — um PAJ pode ter mais de um processo judicial vinculado,
+        # e escolher um dos processos "no chute" seria enganoso.
+        processos_unicos = {i["processo"] for i in itens if i["processo"]}
+        processo = next(iter(processos_unicos)) if len(processos_unicos) == 1 else ""
+
+        # Título curto pra exibir no calendário/tabela — o texto crú do e-proc
+        # (`evento`, ex.: "Expedida/certificada a intimação eletrônica...") é
+        # jurídico-processual, não serve de rótulo visual.
+        if paj:
+            titulo = f"Prazo judicial - PAJ {paj}"
+        elif processo:
+            titulo = f"Prazo judicial - {processo}"
+        else:
+            titulo = "Prazo judicial"
+        # Estimado (prazo ainda não aberto oficialmente no e-proc — só uma
+        # projeção pela regra de ciência tácita) marca com "*" no título, sem
+        # parênteses (ver legenda da página). Quantidade de prazos agrupados
+        # NÃO entra no título — não interessa pra quem só quer ver o
+        # calendário; fica só na descrição (tooltip), ver abaixo.
+        if estimado:
+            titulo += " *"
+
+        if len(itens) > 1:
+            descricao = (
+                f"{len(itens)} prazos com vencimento nesta data neste PAJ "
+                "— veja o detalhamento de cada um na página \"Prazos\"."
+            )
+        else:
+            descricao = itens[0]["evento"]
+
+        eventos.append({
+            "id": f"prazo-{chave_paj}-{data_iso}",
+            "tipo": "prazo",
+            "data_inicio": data_iso,
+            "data_fim": data_iso,
+            "hora_inicio": None,
+            "titulo": titulo,
+            "descricao": descricao,
+            "local": "",
+            "paj_norm": paj,
+            "processo": processo,
+            "status": "estimado" if estimado else "aberto",
+            "urgente": urgente,
+            "origem": "eproc",
+            "n_prazos": len(itens),
+        })
     return eventos
 
 
@@ -214,6 +293,7 @@ def criar_compromisso(
     paj_norm: str = "",
     processo: str = "",
     status: str = "agendado",
+    cor: str = "",
 ) -> dict:
     dados = _carregar()
     novo_id = uuid.uuid4().hex
@@ -226,6 +306,7 @@ def criar_compromisso(
         "paj_norm": (paj_norm or "").strip(),
         "processo": (processo or "").strip(),
         "status": (status or "agendado").strip(),
+        "cor": _validar_cor(cor),
         "criado_em": agora,
         "atualizado_em": agora,
     }
@@ -234,7 +315,7 @@ def criar_compromisso(
     return {"id": novo_id, **item}
 
 
-_CAMPOS_COMPROMISSO = ("titulo", "descricao", "data_inicio", "hora_inicio", "paj_norm", "processo", "status")
+_CAMPOS_COMPROMISSO = ("titulo", "descricao", "data_inicio", "hora_inicio", "paj_norm", "processo", "status", "cor")
 
 
 def atualizar_compromisso(compromisso_id: str, **campos) -> dict | None:
@@ -244,8 +325,11 @@ def atualizar_compromisso(compromisso_id: str, **campos) -> dict | None:
         return None
     for chave in _CAMPOS_COMPROMISSO:
         valor = campos.get(chave)
-        if valor is not None:
-            item[chave] = valor.strip() if isinstance(valor, str) else valor
+        if valor is None:
+            continue
+        if chave == "cor":
+            valor = _validar_cor(valor)
+        item[chave] = valor.strip() if isinstance(valor, str) else valor
     item["atualizado_em"] = datetime.now().isoformat(timespec="seconds")
     _salvar(dados)
     return {"id": compromisso_id, **item}
@@ -269,6 +353,7 @@ def criar_afastamento(
     data_fim: str,
     titulo: str = "",
     descricao: str = "",
+    cor: str = "",
 ) -> dict:
     dados = _carregar()
     novo_id = uuid.uuid4().hex
@@ -280,6 +365,7 @@ def criar_afastamento(
         "descricao": (descricao or "").strip(),
         "data_inicio": (data_inicio or "").strip(),
         "data_fim": (data_fim or "").strip(),
+        "cor": _validar_cor(cor),
         "criado_em": agora,
         "atualizado_em": agora,
     }
@@ -288,7 +374,7 @@ def criar_afastamento(
     return {"id": novo_id, **item}
 
 
-_CAMPOS_AFASTAMENTO = ("tipo_afastamento", "titulo", "descricao", "data_inicio", "data_fim")
+_CAMPOS_AFASTAMENTO = ("tipo_afastamento", "titulo", "descricao", "data_inicio", "data_fim", "cor")
 
 
 def atualizar_afastamento(afastamento_id: str, **campos) -> dict | None:
@@ -302,6 +388,8 @@ def atualizar_afastamento(afastamento_id: str, **campos) -> dict | None:
             continue
         if chave == "tipo_afastamento" and valor not in TIPOS_AFASTAMENTO:
             continue
+        if chave == "cor":
+            valor = _validar_cor(valor)
         item[chave] = valor.strip() if isinstance(valor, str) else valor
     item["atualizado_em"] = datetime.now().isoformat(timespec="seconds")
     _salvar(dados)
@@ -330,33 +418,45 @@ def listar_eventos(inicio: str | None = None, fim: str | None = None) -> list[di
 
     dados = _carregar()
     for cid, item in dados.get("compromissos", {}).items():
+        # Nome exibido = "Tipo - Título" (aqui o "tipo" é sempre "Compromisso"
+        # — não tem sub-tipo como o afastamento). Título é obrigatório no
+        # cadastro (ver routes/agenda.py CompromissoIn), então sempre existe.
+        titulo_usuario = item.get("titulo", "")
+        titulo = f"Compromisso - {titulo_usuario}" if titulo_usuario else "Compromisso"
         eventos.append({
             "id": cid,
             "tipo": "manual",
             "data_inicio": item.get("data_inicio", ""),
             "data_fim": item.get("data_inicio", ""),
             "hora_inicio": item.get("hora_inicio"),
-            "titulo": item.get("titulo", ""),
+            "titulo": titulo,
             "descricao": item.get("descricao", ""),
             "local": "",
             "paj_norm": item.get("paj_norm", ""),
             "processo": item.get("processo", ""),
             "status": item.get("status", ""),
+            "cor": item.get("cor", ""),
             "origem": "manual",
         })
     for aid, item in dados.get("afastamentos", {}).items():
+        # Nome exibido = "Tipo - Título" (ex.: "Feriado - Independência do
+        # Brasil"); título é opcional aqui, então sem ele fica só o tipo.
+        tipo_label = TIPOS_AFASTAMENTO.get(item.get("tipo_afastamento", ""), "Afastamento")
+        titulo_usuario = item.get("titulo", "")
+        titulo = f"{tipo_label} - {titulo_usuario}" if titulo_usuario else tipo_label
         eventos.append({
             "id": aid,
             "tipo": "afastamento",
             "data_inicio": item.get("data_inicio", ""),
             "data_fim": item.get("data_fim") or item.get("data_inicio", ""),
             "hora_inicio": None,
-            "titulo": item.get("titulo") or TIPOS_AFASTAMENTO.get(item.get("tipo_afastamento", ""), "Afastamento"),
+            "titulo": titulo,
             "descricao": item.get("descricao", ""),
             "local": "",
             "paj_norm": "",
             "processo": "",
             "status": "",
+            "cor": item.get("cor", ""),
             "tipo_afastamento": item.get("tipo_afastamento", ""),
             "origem": "manual",
         })

@@ -340,6 +340,7 @@ def _contexto_paj(paj_norm: str) -> dict:
     sisdpu_raw = meta.get("sisdpu_raw") or {}
     assistido = meta.get("assistido_caixa") or meta.get("assistido") or ""
     cpf = sisdpu_raw.get("cpf_assistido", "")
+    processo = _numero_processo_unico(meta)
 
     movs_raw = (meta.get("detalhes_sisdpu") or {}).get("movimentacoes") or sisdpu_raw.get("movimentacoes") or []
     movs_ordenadas = sorted(movs_raw, key=lambda m: m.get("seq", 0))
@@ -350,7 +351,66 @@ def _contexto_paj(paj_norm: str) -> dict:
         "descricao": _strip_html(m.get("descricao", ""))[:500],
     } for m in ultimas]
 
-    return {"assistido": assistido, "cpf": cpf, "movimentacoes": movimentacoes}
+    return {"assistido": assistido, "cpf": cpf, "processo": processo, "movimentacoes": movimentacoes}
+
+
+def _numero_processo_unico(meta: dict) -> str:
+    """Número do processo judicial vinculado ao PAJ — só quando há EXATAMENTE
+    UM (considera a lista `processos_judiciais` e o campo legado singular
+    `processo_judicial`, mesma informação em formato mais antigo do migrador
+    do SISDPU, normalizando pra dígitos antes de comparar pra não contar duas
+    vezes o mesmo processo grafado com/sem pontuação). PAJ sem processo
+    vinculado, ou com MAIS DE UM, devolve vazio de propósito — pedido do
+    usuário 2026-09-16: "[PROCESSO] deve permanecer; nos casos de mais de um
+    processo, pode trazer vazio" (não escolhe um arbitrariamente entre vários,
+    mesmo risco de ambiguidade que já tinha derrubado o [LOCAL])."""
+    candidatos: dict[str, str] = {}  # dígitos -> forma original (c/ pontuação)
+    for p in (meta.get("processos_judiciais") or []):
+        bruto = str(p.get("processo_judicial") or "").strip()
+        digitos = re.sub(r"\D", "", bruto)
+        if digitos:
+            candidatos.setdefault(digitos, bruto)
+    bruto_legado = str(meta.get("processo_judicial") or "").strip()
+    digitos_legado = re.sub(r"\D", "", bruto_legado)
+    if digitos_legado:
+        candidatos.setdefault(digitos_legado, bruto_legado)
+    if len(candidatos) != 1:
+        return ""
+    return next(iter(candidatos.values()))
+
+
+def obter_qualificacao_principal(paj_norm: str) -> dict:
+    """Nome + CPF do assistido PRINCIPAL do PAJ (ausência do ícone "Excluir" na
+    tabela do SISDPU — já resolvido na própria sincronização, ver
+    ingestao/sisdpu_client.py: assistidos_pf[].principal / cpf_assistido) + o
+    número do processo judicial, SE houver exatamente um vinculado (ver
+    `_numero_processo_unico` — vazio se não houver nenhum ou houver mais de
+    um, de propósito). Reaproveita `_contexto_paj` — usado pelos placeholders
+    [NOME]/[CPF]/[PROCESSO] dos "Modelos de petição" (Ações no Eproc) e
+    "Despachos padrão" (Ações no SISDPU) — ver routes/acoes_eproc.py;
+    [DATA] resolve no próprio front, não depende do PAJ.
+
+    NÃO tem mais um [LOCAL] (removido 2026-09-16): `metadata.foro_detectado`
+    (que alimentava esse placeholder) nunca foi um local geográfico de
+    verdade — é a ÁREA TEMÁTICA da pretensão (ex.: "Previdenciário"), vinda
+    de `derivar_foro()` em ingestao/parser.py ("primeira palavra da
+    pretensão normalizada"). Bug real relatado pelo usuário: [LOCAL] vinha
+    "Previdenciário" em vez do município de atuação ("Curitiba"). Não há
+    hoje nenhum campo de cidade/comarca estruturado no painel pra alimentar
+    isso corretamente (o único lugar com o nome da cidade é o texto livre
+    `OFICIO_DESCRICAO` do .env) — decisão do usuário: remover o placeholder
+    em vez de expor um dado errado ou de confiabilidade duvidosa. [PROCESSO]
+    é diferente: quando ambíguo (0 ou 2+ processos), some vazio (sem quebrar
+    nada, o usuário completa à mão) em vez de escolher um dado ERRADO — por
+    isso o usuário pediu pra mantê-lo, ao contrário do [LOCAL] (que sempre
+    vinha errado, nunca vazio).
+
+    Endereço NÃO é resolvido aqui — a sincronização baixa endereços por
+    assistido PF mas sem religar ao `idPessoa`/principal (ver
+    ingestao/sisdpu_client._extrair_contatos_pf), então não há hoje um
+    endereço confiável do principal pra expor como placeholder."""
+    ctx = _contexto_paj(paj_norm)
+    return {"nome": ctx["assistido"], "cpf": ctx["cpf"], "processo": ctx["processo"]}
 
 
 def _montar_prompt(paj_norm: str, atos: list[dict], docx_destino: Path) -> str:
@@ -542,6 +602,7 @@ def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, da
 
     doc, _ = novo_documento()
     linha_anterior_era_paj = False
+    linha_anterior_era_enderecamento = False
     for bloco in blocos:
         runs = _extrair_runs(bloco, NavigableString)
         texto_puro = "".join(t for t, _b, _i, _u in runs).strip()
@@ -552,7 +613,8 @@ def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, da
 
         eh_autos = bool(_RE_LINHA_AUTOS.match(texto_puro))
         eh_paj = bool(_RE_LINHA_PAJ.match(texto_puro))
-        sem_recuo = eh_autos or eh_paj or _RE_LINHA_ENDERECO.match(texto_puro)
+        eh_enderecamento = bool(_RE_LINHA_ENDERECO.match(texto_puro))
+        sem_recuo = eh_autos or eh_paj or eh_enderecamento
 
         # 3 quebras em branco ANTES do número dos autos, e 3 ANTES do
         # parágrafo de qualificação (o primeiro parágrafo comum logo após a
@@ -564,7 +626,19 @@ def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, da
         if linha_anterior_era_paj and not sem_recuo:
             for _ in range(3):
                 blank(doc)
+        # 8 quebras em branco ("EXCELENTÍSSIMO..." direto pro corpo, SEM
+        # linha de Autos/PAJ no meio — padrão de peças como a de impugnação
+        # de laudo pericial, cuja #ESTRUTURA_DA_PETIÇÃO vai direto do
+        # endereçamento pra qualificação). Mesmo total de `enderecamento()`
+        # em peticao_base.py (3 antes do Autos + 5 depois = 8) — aqui não há
+        # Autos/PAJ pra repartir, então os 8 vêm juntos. Só dispara quando a
+        # linha seguinte NÃO for Autos/PAJ (senão essas regras acima já
+        # cuidam do espaçamento delas, sem dobrar).
+        if linha_anterior_era_enderecamento and not sem_recuo:
+            for _ in range(8):
+                blank(doc)
         linha_anterior_era_paj = eh_paj
+        linha_anterior_era_enderecamento = eh_enderecamento
 
         p = par(doc, fi=(Cm(0) if sem_recuo else FI))
         for texto, bold, italic, underline in runs:

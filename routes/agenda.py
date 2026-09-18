@@ -27,6 +27,21 @@ async def api_listar_eventos(inicio: str | None = None, fim: str | None = None):
     return {"eventos": agenda_service.listar_eventos(inicio, fim)}
 
 
+@router.get("/api/agenda/cores", response_class=JSONResponse)
+async def api_listar_cores():
+    """Paleta de cores pra "Compromisso"/"Cadastrar Evento" — 8 pares (mesma
+    matiz, suave e forte). Fonte única de verdade em agenda_service.CORES_EVENTO;
+    o front-end busca daqui em vez de manter uma lista duplicada."""
+    return {"cores": agenda_service.CORES_EVENTO}
+
+
+@router.get("/api/agenda/tipos-afastamento", response_class=JSONResponse)
+async def api_listar_tipos_afastamento():
+    """Tipos do "Cadastrar Evento" (Férias, Feriado, Substituição, ...), já em
+    ordem alfabética — ver agenda_service.listar_tipos_afastamento()."""
+    return {"tipos": agenda_service.listar_tipos_afastamento()}
+
+
 class CompromissoIn(BaseModel):
     titulo: str = Field(..., min_length=1, max_length=200)
     descricao: str = Field("", max_length=2000)
@@ -35,6 +50,7 @@ class CompromissoIn(BaseModel):
     paj_norm: str = Field("", max_length=20)
     processo: str = Field("", max_length=30)
     status: str = Field("agendado", max_length=30)
+    cor: str = Field("", max_length=7)
 
 
 class CompromissoUpdateIn(BaseModel):
@@ -45,6 +61,7 @@ class CompromissoUpdateIn(BaseModel):
     paj_norm: str | None = Field(None, max_length=20)
     processo: str | None = Field(None, max_length=30)
     status: str | None = Field(None, max_length=30)
+    cor: str | None = Field(None, max_length=7)
 
 
 @router.post("/api/agenda/compromissos", response_class=JSONResponse)
@@ -74,6 +91,7 @@ class AfastamentoIn(BaseModel):
     data_fim: str = Field(..., min_length=8, max_length=10)
     titulo: str = Field("", max_length=200)
     descricao: str = Field("", max_length=2000)
+    cor: str = Field("", max_length=7)
 
 
 class AfastamentoUpdateIn(BaseModel):
@@ -82,6 +100,7 @@ class AfastamentoUpdateIn(BaseModel):
     data_fim: str | None = Field(None, max_length=10)
     titulo: str | None = Field(None, max_length=200)
     descricao: str | None = Field(None, max_length=2000)
+    cor: str | None = Field(None, max_length=7)
 
 
 @router.post("/api/agenda/afastamentos", response_class=JSONResponse)

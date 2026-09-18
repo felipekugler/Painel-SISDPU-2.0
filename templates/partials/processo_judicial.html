@@ -225,7 +225,14 @@
         @click.outside="menuAbertoProc = null"
         :style="'position:fixed; top:' + posMenu.top + 'px; left:' + posMenu.left + 'px;'"
         class="menu menu-xs bg-base-100 rounded-box z-[1000] w-52 p-1 shadow border border-base-300">
-        <li><a @click.stop="consultarProcessoMcp(menuAbertoProc); menuAbertoProc = null">Consultar processo (MCP)</a></li>
-        <li><a @click.stop="abrirProcessoNavegador(menuAbertoProc, $event.target); menuAbertoProc = null">Abrir no navegador</a></li>
+        {# Este partial só é usado dentro de paj_detail.html (uma página = um PAJ
+           fixo) — o PAJ desta petição é sempre o da própria página, sem
+           precisar resolver nada em JS. #}
+        {{ itens_minimenu_processo("consultarProcessoMcp(menuAbertoProc)",
+                                    "abrirProcessoNavegador(menuAbertoProc, $event.target)",
+                                    "movimentarNoEproc(menuAbertoProc, '" ~ paj_norm ~ "', '" ~ meta.paj ~ "')",
+                                    "movimentarConjunto(menuAbertoProc, '" ~ paj_norm ~ "')",
+                                    "abrirGerenciarProcesso(menuAbertoProc)",
+                                    after='menuAbertoProc = null') }}
     </ul>
 </template>

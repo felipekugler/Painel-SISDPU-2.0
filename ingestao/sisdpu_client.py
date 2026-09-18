@@ -158,6 +158,50 @@ async def _wait_pf_ajax(page: Page, timeout: int = 10000) -> None:
         await page.wait_for_timeout(1000)
 
 
+async def _esperar_tabela_movimentacoes_estavel(page: Page, esperas_curtas: bool = False) -> None:
+    """Espera a CONTAGEM de linhas da tabela de movimentacoes estabilizar antes
+    de extrair — `_wait_pf_ajax` (acima) so' confirma que a fila de AJAX do
+    PrimeFaces esvaziou, o que acontece quando o CABECALHO da tela de
+    detalhamento ja esta visivel; a propria tabela de movimentacoes pode
+    continuar POPULANDO linhas (AJAX proprio, disparado um instante depois)
+    sem que isso conte como fila pendente no momento em que checamos.
+
+    Sem isso, uma movimentacao lancada poucos segundos antes do clique em
+    "Atualizar movimentacoes" podia ficar de fora da extracao por pura
+    sorte de timing, principalmente no modo RAPIDO (`esperas_curtas=True`,
+    usado por esse botao) — os waits fixos apos a navegacao (`_t_click`
+    900ms) nem sempre bastam. BUG REAL confirmado 2026-09-15: PAJ
+    2026/029-02641, 2 movimentacoes novas (seq 15/16) ausentes numa 1a
+    tentativa e presentes numa 2a rodada poucos minutos depois, MESMO
+    codigo — nao e' um limite fixo de linhas renderizadas, e' uma corrida.
+
+    Poll leve: para assim que 2 leituras consecutivas trazem a MESMA
+    contagem de linhas validas (>= 8 celulas, mesmo criterio da extracao
+    real), com teto de tentativas pra nunca travar (PAJ sem nenhuma
+    movimentacao, ou tabela que nunca estabiliza por algum motivo alheio —
+    nesse caso so' seguimos com o que tiver na ultima leitura)."""
+    intervalo = 300 if esperas_curtas else 400
+    max_tentativas = 6 if esperas_curtas else 10
+    contagem_anterior = -1
+    leituras_iguais = 0
+    for _ in range(max_tentativas):
+        try:
+            contagem = await page.evaluate(
+                "() => [...document.querySelectorAll('table tbody tr')]"
+                ".filter((tr) => tr.querySelectorAll('td').length >= 8).length"
+            )
+        except Exception:
+            return
+        if contagem > 0 and contagem == contagem_anterior:
+            leituras_iguais += 1
+            if leituras_iguais >= 2:
+                return
+        else:
+            leituras_iguais = 0
+        contagem_anterior = contagem
+        await page.wait_for_timeout(intervalo)
+
+
 def _obter_credenciais() -> tuple[str, str]:
     """Credenciais do SISDPU: primeiro do COFRE cifrado (se destrancado); senão,
     fallback para o .env (SISDPU_USERNAME/PASSWORD) durante a transição. Levanta
@@ -522,6 +566,7 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
 
     await _wait_pf_ajax(page, timeout=15000)
     await page.wait_for_timeout(_t_click)
+    await _esperar_tabela_movimentacoes_estavel(page, esperas_curtas=esperas_curtas)
 
     dados = await page.evaluate(
         """
@@ -735,6 +780,17 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
                 if (cells.length >= 8) {
                     const seq = (cells[0]?.textContent || '').trim();
                     const anexo = (cells[1]?.textContent || '').trim();
+                    // Indicador BARATO de "tem anexo" — mesmo elemento clicavel que
+                    // extrair_documentos_movimentacoes.js/_abrir_popup_documentos_seq
+                    // usam pra decidir se abrem o popup daquele seq, so' que aqui e'
+                    // so' uma leitura de DOM (sem clicar em nada) — nao abre popup,
+                    // custo zero, roda ATE na sincronizacao levissima. `anexo` (acima)
+                    // fica sempre vazio (e' um icone, sem texto) — esse e' o sinal
+                    // real de presenca de anexo antes de qualquer sincronizacao de
+                    // documentos por seq.
+                    const temAnexoIcone = !!cells[1]?.querySelector(
+                        'a, button, [role="button"], [onclick], img[onclick], span[onclick]'
+                    );
                     const dataHora = (cells[2]?.textContent || '').trim();
                     const movimentacao = (cells[3]?.textContent || '').trim();
                     const fases = (cells[4]?.textContent || '').trim();
@@ -762,6 +818,7 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
                         movs.push({
                             seq: seq,
                             anexo: anexo,
+                            tem_anexo_icone: temAnexoIcone,
                             data: dataHora,
                             movimentacao: movimentacao,
                             fases: fases,
@@ -1521,6 +1578,11 @@ async def buscar_paj_global(
         _log.info("FIM(somente_url) url=%s", page_detalhe.url)
         return {"url": page_detalhe.url, "paj": paj_texto}
 
+    # Espera a tabela de movimentacoes estabilizar (ver docstring da funcao) —
+    # o cabecalho ja confirmado acima nao garante que ela tenha terminado de
+    # popular todas as linhas.
+    await _esperar_tabela_movimentacoes_estavel(page, esperas_curtas=esperas_curtas)
+
     # Extrai os campos do cabecalho do detalhamento. Estrategia hibrida:
     # (1) DOM-based para label/valor (mais robusto que regex no innerText)
     # (2) regex residual para padroes posicionais (numero CNJ, linha PAJ).
@@ -1707,6 +1769,11 @@ async def buscar_paj_global(
                 if (cells.length >= 8) {
                     const seq = (cells[0]?.textContent || '').trim();
                     const anexo = (cells[1]?.textContent || '').trim();
+                    // Indicador BARATO de "tem anexo" (ver mesmo comentario em
+                    // movimentacoes_paj acima) — sem clicar em nada, custo zero.
+                    const temAnexoIcone = !!cells[1]?.querySelector(
+                        'a, button, [role="button"], [onclick], img[onclick], span[onclick]'
+                    );
                     const dataHora = (cells[2]?.textContent || '').trim();
                     const movimentacao = (cells[3]?.textContent || '').trim();
                     const fases = (cells[4]?.textContent || '').trim();
@@ -1722,6 +1789,7 @@ async def buscar_paj_global(
                         movs.push({
                             seq: seq,
                             anexo: anexo,
+                            tem_anexo_icone: temAnexoIcone,
                             data: dataHora,
                             movimentacao: movimentacao,
                             fases: fases,

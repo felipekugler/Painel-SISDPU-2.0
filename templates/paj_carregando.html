@@ -1,0 +1,46 @@
+{% extends "base.html" %}
+{% block title %}Sincronizando PAJ{% endblock %}
+
+{# Servida por routes/paj.py (GET /paj/{paj_norm}) quando o PAJ ainda não
+   existe localmente — em vez do "PAJ não encontrado" morto de antes, dispara
+   sozinha uma sincronização avulsa LEVÍSSIMA (sem documentos/anexos, ver
+   pajCarregandoApp() em app.js) e recarrega quando terminar, virando a
+   página de detalhe de verdade. Chegar aqui é normal: PAJ pesquisado pela
+   caixa do menu, ou um link/favorito antigo pra um PAJ que nunca foi
+   sincronizado neste painel. #}
+{% block content %}
+<div class="max-w-lg mx-auto mt-16" x-data="pajCarregandoApp('{{ paj_norm }}')" x-init="iniciar()">
+    <div class="card bg-base-100 border border-base-300 shadow-sm">
+        <div class="card-body items-center text-center gap-4 py-10">
+            <template x-if="!erro">
+                <div class="flex flex-col items-center gap-4">
+                    <span class="loading loading-spinner loading-lg text-primary"></span>
+                    <div>
+                        <p class="font-semibold text-lg" x-text="'PAJ ' + formatarPajNorm(pajNorm)"></p>
+                        <p class="text-sm text-base-content/60 mt-2 max-w-sm">
+                            Este PAJ ainda não está sincronizado neste painel — buscando os
+                            dados agora (sincronização rápida, sem baixar documentos). A
+                            página recarrega sozinha quando terminar.
+                        </p>
+                    </div>
+                </div>
+            </template>
+            <template x-if="erro">
+                <div class="flex flex-col items-center gap-4">
+                    <svg class="w-10 h-10 text-error" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v3.75m0 3.75h.008M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                    </svg>
+                    <div>
+                        <p class="font-semibold text-lg" x-text="'PAJ ' + formatarPajNorm(pajNorm)"></p>
+                        <p class="text-sm text-base-content/60 mt-2 max-w-sm" x-text="erro"></p>
+                    </div>
+                    <div class="flex gap-2">
+                        <button type="button" class="btn btn-sm" @click="iniciar()">Tentar de novo</button>
+                        <button type="button" class="btn btn-sm btn-primary" @click="abrirNoSisdpu()">Abrir no SISDPU</button>
+                    </div>
+                </div>
+            </template>
+        </div>
+    </div>
+</div>
+{% endblock %}

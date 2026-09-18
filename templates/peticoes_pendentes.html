@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/_macro_minimenu_processo.html" import itens_minimenu_processo %}
 {% block title %}Petições pendentes{% endblock %}
 
 {% block content_class %}flex flex-col flex-1 p-0{% endblock %}
@@ -6,12 +7,19 @@
 {% block content %}
 <div x-data="peticoesPendentesApp()" x-init="init()" x-cloak class="flex flex-col flex-1">
 
-  <div class="px-8 pt-6 pb-2">
-    <h1 class="text-3xl font-semibold tracking-tight">Petições pendentes</h1>
-    <div class="text-xs text-base-content/50 mt-1">
-      Rascunhos gravados no módulo "Ações no Eproc" de cada PAJ — evento, petição e anexos ficam
-      guardados aqui até você voltar pra concluir e protocolar.
+  <div class="px-8 pt-6 pb-2 flex items-start justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-semibold tracking-tight">Petições pendentes</h1>
+      <div class="text-xs text-base-content/50 mt-1">
+        Rascunhos gravados para peticionamento no eproc.
+      </div>
     </div>
+    <button type="button" class="btn btn-sm btn-primary gap-1.5 whitespace-nowrap" @click="abrirModalNovo()">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+      </svg>
+      Adicionar petição
+    </button>
   </div>
 
   <div class="px-8 py-4">
@@ -38,12 +46,37 @@
             <tr class="hover:bg-base-300/30">
               <td x-text="it.assistido || '—'"></td>
               <td>
-                <a :href="'/paj/' + it.paj_norm" target="_blank" class="link font-mono text-xs" x-text="it.paj_label || it.paj_norm"></a>
+                <template x-if="pajRealDe(it)">
+                  <a :href="'/paj/' + pajRealDe(it)" target="_blank" class="link font-mono text-xs" x-text="it.paj_label || pajRealDe(it)"></a>
+                </template>
+                <span x-show="!pajRealDe(it)" class="badge badge-xs badge-ghost" title="Petição avulsa — só o número do processo, sem PAJ vinculado neste Painel.">
+                  sem PAJ
+                </span>
               </td>
-              <td class="font-mono text-xs" x-text="it.processo || '—'"></td>
+              <td class="font-mono text-xs">
+                <template x-if="it.processo">
+                  <div class="dropdown" @click.stop>
+                    <div tabindex="0" role="button" class="link" title="Escolher onde consultar o processo" x-text="it.processo"></div>
+                    <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-52 p-1 shadow border border-base-300">
+                      {{ itens_minimenu_processo("consultarProcessoMcp(it.processo)",
+                                                  "abrirProcessoNavegador(it.processo, $event.target)",
+                                                  "movimentarNoEproc(it.processo, pajRealDe(it), it.paj_label)",
+                                                  "movimentarConjunto(it.processo, it.par_sisdpu_paj_norm || pajRealDe(it))",
+                                                  "abrirGerenciarProcesso(it.processo)") }}
+                    </ul>
+                  </div>
+                </template>
+                <span x-show="!it.processo">—</span>
+                <span x-show="it.par_sisdpu_paj_norm" class="badge badge-xs badge-info gap-1 cursor-pointer ml-1 normal-case"
+                      title="Há uma movimentação pendente correlacionada no SISDPU — clique pra abrir as duas juntas em 'Movimentar Eproc + SISDPU'."
+                      @click="movimentarConjunto(it.processo, it.par_sisdpu_paj_norm)">
+                  SISDPU+Eproc
+                </span>
+              </td>
               <td x-text="it.evento || '—'"></td>
               <td class="text-xs whitespace-nowrap" x-text="formatarDataHora(it.salvo_em)"></td>
-              <td class="text-right">
+              <td class="text-right whitespace-nowrap">
+                <button type="button" class="btn btn-ghost btn-xs" @click="abrirModalNovo(it)">Abrir</button>
                 <button type="button" class="btn btn-ghost btn-xs text-error" @click="descartar(it.paj_norm)">Descartar</button>
               </td>
             </tr>
@@ -53,13 +86,86 @@
     </div>
   </div>
 
+  <!-- Modal "Adicionar petição" — pede só o número do processo (não precisa de
+       PAJ nenhum) e, uma vez confirmado, reabre o MESMO console "Ações no
+       Eproc" usado na página do PAJ (Gravar/Executar). Reabrir aqui pra um
+       processo que já tem rascunho salvo carrega o rascunho automaticamente
+       (carregarRascunho() do próprio console, sem nada novo) — por isso o
+       botão "Abrir" de cada linha da tabela usa exatamente este mesmo modal,
+       passando a linha inteira (preserva o PAJ vinculado, se a petição tiver
+       sido criada a partir da página de um PAJ). -->
+  <div class="modal" :class="{'modal-open': modalNovoAberto}">
+    <div class="modal-box w-[75vw] max-w-[75vw]">
+      <h3 class="font-bold text-lg mb-1">Adicionar petição</h3>
+      <template x-if="!numeroConfirmado">
+        <div class="flex flex-col gap-2">
+          <p class="text-xs text-base-content/60">
+            Informe o número do processo judicial. Não precisa de PAJ vinculado neste Painel — útil pra
+            peticionar/lançar evento direto num processo, sem depender de um PAJ sincronizado.
+          </p>
+          <input type="text" class="input input-bordered input-sm font-mono w-80" placeholder="ex.: 5000123-45.2026.4.04.7000"
+                 x-model="numeroDigitado" @keydown.enter="confirmarNumero()" x-ref="inputNumero">
+          <span class="text-error text-xs" x-show="erroNumero" x-text="erroNumero"></span>
+          <div class="modal-action">
+            <button type="button" class="btn btn-sm" @click="fecharModalNovo()">Cancelar</button>
+            <button type="button" class="btn btn-sm btn-primary" @click="confirmarNumero()">Continuar</button>
+          </div>
+        </div>
+      </template>
+      <template x-if="numeroConfirmado">
+        <div>
+          <div class="text-xs text-base-content/60 mb-2 flex items-center gap-2 flex-wrap">
+            <span>Processo: <span class="font-mono font-semibold" x-text="numeroConfirmado"></span></span>
+            <span x-show="pajNormAtual" class="badge badge-ghost badge-xs">
+              PAJ vinculado: <span class="font-mono ml-1" x-text="pajLabelAtual"></span>
+            </span>
+            <button type="button" class="btn btn-ghost btn-xs" @click="numeroConfirmado = ''">trocar número</button>
+          </div>
+          <template x-if="numeroConfirmado">
+            <div x-data="acoesEprocBlock({
+                     processos: [{ numero: numeroConfirmado }],
+                     paj: pajLabelAtual || numeroConfirmado, pajNorm: pajNormAtual,
+                     aberto: true,
+                 })" x-init="init()">
+              {% include "partials/acoes_eproc.html" %}
+            </div>
+          </template>
+          <div class="modal-action">
+            <button type="button" class="btn btn-sm" @click="fecharModalNovo()">Fechar</button>
+          </div>
+        </div>
+      </template>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button type="button" @click="fecharModalNovo()">fechar</button></form>
+  </div>
+
 </div>
 
 <script>
 function peticoesPendentesApp() {
   return {
     itens: [], carregando: false,
-    async init() { await this.carregar(); },
+    modalNovoAberto: false,
+    numeroDigitado: '', numeroConfirmado: '', pajNormAtual: '', pajLabelAtual: '', erroNumero: '',
+    async init() {
+      await this.carregar();
+      // "Movimentar no eproc" no minimenu do número do processo (dashboard,
+      // intimações, retornos, prazos, e-proc consultar, PAJ — ver
+      // movimentarNoEproc() em app.js) chega aqui via ?novo_processo=<número>,
+      // opcionalmente com ?paj_norm=/paj_label= quando a página de origem já
+      // sabia o PAJ correlacionado — abre o modal já confirmado, com o PAJ
+      // pré-preenchido quando houver, sem redigitação.
+      const params = new URLSearchParams(window.location.search);
+      const novoProcesso = params.get('novo_processo');
+      if (novoProcesso) {
+        this.abrirModalNovo({
+          processo: novoProcesso,
+          paj_norm_vinculado: params.get('paj_norm') || '',
+          paj_label: params.get('paj_label') || '',
+        });
+        history.replaceState(null, '', window.location.pathname);
+      }
+    },
     async carregar() {
       this.carregando = true;
       try {
@@ -68,18 +174,67 @@ function peticoesPendentesApp() {
       } catch (e) { this.itens = []; }
       finally { this.carregando = false; }
     },
-    async descartar(pajNorm) {
+    async descartar(chave) {
       if (!confirm('Descartar este rascunho de petição? Não pode ser desfeito.')) return;
       try {
-        await fetch('/api/acoes-eproc/rascunho/' + encodeURIComponent(pajNorm), { method: 'DELETE' });
-        this.itens = this.itens.filter((it) => it.paj_norm !== pajNorm);
+        await fetch('/api/acoes-eproc/rascunho/' + encodeURIComponent(chave), { method: 'DELETE' });
+        this.itens = this.itens.filter((it) => it.paj_norm !== chave);
       } catch (e) { alert('Falha ao descartar: ' + e); }
+    },
+    // Aceita: nada (botão "+ Adicionar petição", abre limpo pro input), uma
+    // STRING (número já digitado — vindo de ?novo_processo= ou do minimenu), ou
+    // o ITEM inteiro de uma linha da tabela (botão "Abrir" — preserva o PAJ
+    // vinculado dessa petição específica, se houver).
+    abrirModalNovo(numeroOuItem) {
+      let numero = '', pajNorm = '', pajLabel = '';
+      if (numeroOuItem && typeof numeroOuItem === 'object') {
+        numero = numeroOuItem.processo || '';
+        pajNorm = this.pajRealDe(numeroOuItem);
+        pajLabel = numeroOuItem.paj_label || '';
+      } else {
+        numero = numeroOuItem || '';
+      }
+      this.numeroDigitado = numero;
+      this.numeroConfirmado = '';
+      this.pajNormAtual = pajNorm;
+      this.pajLabelAtual = pajLabel;
+      this.erroNumero = '';
+      this.modalNovoAberto = true;
+      if (numero) {
+        this.confirmarNumero();
+      } else {
+        this.$nextTick(() => this.$refs.inputNumero && this.$refs.inputNumero.focus());
+      }
+    },
+    fecharModalNovo() {
+      this.modalNovoAberto = false;
+      this.numeroConfirmado = '';
+      this.pajNormAtual = ''; this.pajLabelAtual = '';
+      this.carregar();  // reflete o que foi gravado/descartado dentro do console
+    },
+    confirmarNumero() {
+      const numero = (this.numeroDigitado || '').trim();
+      if (!numero) {
+        this.erroNumero = 'Informe o número do processo.';
+        return;
+      }
+      this.erroNumero = '';
+      this.numeroConfirmado = numero;
     },
     formatarDataHora(iso) {
       if (!iso) return '—';
       const d = new Date(iso);
       if (isNaN(d.getTime())) return iso;
       return d.toLocaleString('pt-BR', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+    },
+    // PAJ real vinculado a um item da lista — `paj_norm_vinculado` é o campo
+    // novo (rascunhos gravados a partir de 2026-09-11); rascunhos MAIS ANTIGOS
+    // não têm esse campo, mas sempre usaram um PAJ de verdade como chave
+    // (`paj_norm`), então cai pra checar o formato dela ("PAJ-AAAA-UUU-NNNNN")
+    // — nunca bate com a chave "PROC-..." de uma petição avulsa nova.
+    pajRealDe(it) {
+      if (!it) return '';
+      return it.paj_norm_vinculado || (/^PAJ-/.test(it.paj_norm || '') ? it.paj_norm : '');
     },
   };
 }

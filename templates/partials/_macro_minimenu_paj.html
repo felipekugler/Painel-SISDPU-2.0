@@ -1,0 +1,38 @@
+{#
+  Itens do minimenu "Abrir PAJ" (clique no número do PAJ) — usado em ~8 páginas
+  (dashboard, intimações, prazos, retornos, histórico, watchlist, sat, eproc_consultar).
+  Antes de 2026-09-11 esses 3 (agora 3, eram 2) <li> estavam copiados/colados em cada
+  template, cada um com sua própria variável local pro número do PAJ — este macro
+  centraliza o ITEM (não o <div class="dropdown">/<ul> em volta, que continua em cada
+  template com sua própria classe/largura/trigger, porque o elemento que ABRE o menu
+  varia demais entre páginas: algumas têm um trigger por linha dentro de um x-for,
+  outras usam um único estado compartilhado tipo `menuAbertoPaj` setado por fora).
+
+  Uso: {% from "partials/_macro_minimenu_paj.html" import itens_minimenu_paj %}
+       depois, dentro do <ul class="dropdown-content menu ..."> de cada página:
+       {{ itens_minimenu_paj('paj.paj_norm', 'paj.paj') }}
+
+  expr_norm    — expressão JS (Alpine) que resolve pro paj_norm ("PAJ-AAAA-UUU-NNNNN"),
+                 usada por abrirPajPainel().
+  expr_display — expressão JS que resolve pro número "de exibição" ("AAAA/UUU-NNNNN"),
+                 usada por abrirPajNavegador() e adicionarMovimentacaoPendente().
+  after        — (opcional) statement JS extra a rodar depois de CADA clique, ex.:
+                 'menuAbertoPaj = null' (páginas com um único estado de menu
+                 compartilhado, que precisa ser fechado manualmente — historico.html,
+                 sat.html, watchlist.html).
+  stop         — (opcional, default true) usa "@click.stop" em vez de "@click" — false
+                 nas páginas onde o clique não precisa impedir a propagação (prazos.html,
+                 eproc_consultar.html já usavam @click puro antes deste macro).
+#}
+{% macro itens_minimenu_paj(expr_norm, expr_display, after='', stop=true) %}
+{%- set mod = '.stop' if stop else '' -%}
+{%- set suf = ('; ' + after) if after else '' -%}
+<li><a @click{{ mod }}="abrirPajPainel({{ expr_norm }}){{ suf }}">Abrir no Painel</a></li>
+<li><a @click{{ mod }}="abrirPajNavegador({{ expr_display }}){{ suf }}">Abrir no navegador</a></li>
+<li><a @click{{ mod }}="adicionarMovimentacaoPendente({{ expr_display }}){{ suf }}">Movimentar no SISDPU</a></li>
+{#- "Movimentar Eproc + Sisdpu" (2026-09-11) — só o PAJ é conhecido aqui (não
+    dá pra adivinhar QUAL processo vinculado, um PAJ pode ter mais de um); a
+    própria página "Movimentar Eproc + SISDPU" resolve o(s) candidato(s) —
+    ver services.paj_processo_link_service / static/js/app.js:movimentarConjunto. #}
+<li><a @click{{ mod }}="movimentarConjunto('', {{ expr_norm }}){{ suf }}">Movimentar Eproc + Sisdpu</a></li>
+{%- endmacro %}

@@ -12,7 +12,15 @@
  *
  * Schema esperado de cada movimentação (CANÔNICO, de metadata.detalhes_sisdpu.movimentacoes):
  *   { seq, data, data_original, descricao(HTML), movimentacao, fases, usuario,
- *     links_decisao[], anexo, descricao_retorno, documentos[] }
+ *     links_decisao[], anexo, tem_anexo_icone, descricao_retorno, documentos[] }
+ *
+ * `tem_anexo_icone` (novo): indicador barato (sem popup) de que a coluna
+ * "Anexo" do SISDPU tem um ícone clicável — calculado JÁ na sincronização
+ * levíssima (ver sisdpu_client.py). Quando true e `documentos` ainda vazio
+ * (a relação de verdade nunca foi obtida), a coluna Documentos mostra um
+ * clipe em vez do "-" — clique abre o minimenu (ver abrirMenuAnexoSeq()
+ * abaixo) com "Obter relação de documentos"/"Baixar documentos" pra AQUELE
+ * seq só, sem precisar sincronizar o PAJ inteiro.
  */
 function tabelaMovimentacoes() {
     return {
@@ -58,6 +66,19 @@ function tabelaMovimentacoes() {
         // "Gerar Minuta"), todos lendo o MESMO window.__movInicial via
         // bootstrap() — uma flag aqui vazaria pro seletor da minuta tambem.
         atualizando: false,
+
+        // Minimenu do clipe de anexo (coluna Documentos, ver
+        // movimentacoes_tabela.html) — mesmo padrão "menu único teleportado,
+        // reposicionado por linha" de prazos.html/processo_judicial.html.
+        // `menuAnexoSeq` guarda so' o seq (pra saber SE/QUAL linha esta com o
+        // menu aberto — comparado no x-show do template); `menuAnexoMov`
+        // guarda a movimentacao INTEIRA (as acoes do menu precisam do seq
+        // pra chamar a API, mas comparar por objeto seria fragil apos um
+        // refresh de `movs`).
+        menuAnexoSeq: null,
+        menuAnexoMov: null,
+        posMenuAnexo: { top: 0, left: 0 },
+        processandoAnexoSeq: false,
 
         // Hook de ciclo de vida do Alpine (chamado automaticamente ao
         // inicializar o componente, antes de x-init). O icone de atualizar
@@ -250,6 +271,61 @@ function tabelaMovimentacoes() {
                 }
             } finally {
                 this.atualizando = false;
+            }
+        },
+
+        // Abre/fecha o minimenu do clipe de anexo pra `mov` (chamado pelo
+        // @click do botão-clipe, ver movimentacoes_tabela.html). Reposiciona
+        // sempre no `$el` do botão clicado — mesmo padrão de posMenu em
+        // prazos.html/processo_judicial.html.
+        abrirMenuAnexoSeq(mov, ev) {
+            const el = (ev && (ev.currentTarget || ev.target)) || null;
+            if (this.menuAnexoSeq === mov.seq) {
+                this.menuAnexoSeq = null;
+                return;
+            }
+            this.menuAnexoMov = mov;
+            this.menuAnexoSeq = mov.seq;
+            if (el) {
+                const rect = el.getBoundingClientRect();
+                this.posMenuAnexo = { top: rect.bottom, left: rect.left };
+            }
+        },
+
+        // "Obter relação de documentos" do minimenu — só descobre os
+        // documentos daquele seq (sem baixar nada). Ao concluir, o seq
+        // pedido já vem com `documentos` preenchido na releitura de
+        // movimentações — substitui `movs`/`anexos` no lugar, sem recarregar
+        // a página (mesmo padrão de atualizarMovimentacoes() acima).
+        async obterRelacaoDocumentosSeq(mov) {
+            if (!mov || !this.pajNorm || this.processandoAnexoSeq) return;
+            this.processandoAnexoSeq = true;
+            try {
+                const dados = await obterDocumentosSeqPaj(this.pajNorm, mov.seq);
+                if (dados) {
+                    this.movs = dados.movimentacoes || [];
+                    this.anexos = dados.anexos_sisdpu || [];
+                    this.__mapaArquivoLocal = null;
+                }
+            } finally {
+                this.processandoAnexoSeq = false;
+            }
+        },
+
+        // "Baixar documentos" do minimenu — um clique só: obtém a relação
+        // (se ainda não conhecida) e já baixa tudo daquele seq.
+        async baixarDocumentosSeq(mov) {
+            if (!mov || !this.pajNorm || this.processandoAnexoSeq) return;
+            this.processandoAnexoSeq = true;
+            try {
+                const dados = await baixarDocumentosSeqPaj(this.pajNorm, mov.seq);
+                if (dados) {
+                    this.movs = dados.movimentacoes || [];
+                    this.anexos = dados.anexos_sisdpu || [];
+                    this.__mapaArquivoLocal = null;
+                }
+            } finally {
+                this.processandoAnexoSeq = false;
             }
         },
 

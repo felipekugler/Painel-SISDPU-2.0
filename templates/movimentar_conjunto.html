@@ -1,0 +1,473 @@
+{% extends "base.html" %}
+{% block title %}Movimentar Eproc + SISDPU{% endblock %}
+
+{% block content_class %}flex flex-col flex-1 p-0{% endblock %}
+
+{% block content %}
+<div x-data="movimentarConjuntoApp()" x-init="init()" x-cloak class="flex flex-col flex-1">
+
+  <div class="px-8 pt-6 pb-2">
+    <h1 class="text-3xl font-semibold tracking-tight">Movimentar Eproc + SISDPU</h1>
+    <div class="text-xs text-base-content/50 mt-1">
+      Defina os dois lados (peticionamento/evento no e-proc e movimentação no SISDPU) e execute os dois em
+      sequência com um clique só — sem precisar ir num sistema, voltar, e ir no outro.
+    </div>
+  </div>
+
+  <!-- Identificação: PAJ + processo, cada um resolvendo o outro quando só um é informado. -->
+  <div class="px-8 py-3">
+    <div class="bg-base-200 rounded-lg border border-base-300 p-4 flex flex-col gap-3">
+      <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <!-- Processo — à esquerda, alinhado com o card "Ações no Eproc" abaixo -->
+        <div class="flex flex-col gap-1">
+          <label class="text-xs font-semibold text-base-content/60">Processo judicial</label>
+          <div class="flex items-center gap-2">
+            <input type="text" class="input input-bordered input-sm font-mono flex-1" placeholder="ex.: 5000123-45.2026.4.04.7000"
+                   x-model="processoInput" @keydown.enter="confirmarProcesso()">
+            <button type="button" class="btn btn-sm btn-outline" @click="confirmarProcesso()" :disabled="processoResolvendo"
+                    title="Confirma o número digitado e, se o PAJ ainda não estiver informado, tenta descobri-lo automaticamente (cadastro do PAJ, Prazos e-proc, Intimações).">
+              <span x-show="processoResolvendo" class="loading loading-spinner loading-xs"></span>
+              <span x-show="!processoResolvendo">OK</span>
+            </button>
+          </div>
+          <div class="text-[11px] text-success" x-show="processoConfirmado">
+            Processo: <span class="font-mono" x-text="processoConfirmado"></span>
+          </div>
+          <div class="text-[11px] text-base-content/40" x-show="!processoConfirmado && !processoCandidatos.length && !processoResolvendo">
+            Sem processo informado — o card "Ações no Eproc" fica indisponível até informar um.
+          </div>
+        </div>
+        <!-- PAJ — à direita, alinhado com o card "Ações no SISDPU" abaixo -->
+        <div class="flex flex-col gap-1">
+          <label class="text-xs font-semibold text-base-content/60">PAJ</label>
+          <div class="flex items-center gap-2">
+            <input type="text" class="input input-bordered input-sm font-mono flex-1" placeholder="AAAA/UUU-NNNNN"
+                   x-model="pajInput" @keydown.enter="confirmarPaj()">
+            <button type="button" class="btn btn-sm btn-outline" @click="confirmarPaj()" :disabled="pajResolvendo"
+                    title="Confirma o PAJ digitado e, se o processo ainda não estiver informado, tenta descobri-lo automaticamente (cadastro do PAJ, Prazos e-proc, Intimações).">
+              <span x-show="pajResolvendo" class="loading loading-spinner loading-xs"></span>
+              <span x-show="!pajResolvendo">OK</span>
+            </button>
+          </div>
+          <div class="text-[11px] text-success" x-show="pajNorm">
+            PAJ vinculado: <span class="font-mono" x-text="pajLabel"></span>
+          </div>
+          <div class="text-[11px] text-base-content/40" x-show="!pajNorm && !pajCandidatos.length && !pajResolvendo">
+            Sem PAJ vinculado — o card "Ações no SISDPU" fica indisponível até informar um.
+          </div>
+        </div>
+      </div>
+
+      <!-- Ambiguidade: mais de um PAJ candidato pro processo informado -->
+      <div class="alert alert-error text-xs" x-show="pajCandidatos.length > 1">
+        <div class="flex flex-col gap-1 w-full">
+          <strong>⚠ Mais de um PAJ relacionado a este processo — confira e escolha o correto:</strong>
+          <select class="select select-bordered select-sm w-full max-w-md" x-model="pajNorm" @change="onEscolherPajCandidato()">
+            <option value="">Selecione…</option>
+            <template x-for="c in pajCandidatos" :key="c.paj_norm">
+              <option :value="c.paj_norm" x-text="c.paj_label + (c.juizo ? (' — ' + c.juizo) : '')"></option>
+            </template>
+          </select>
+        </div>
+      </div>
+
+      <!-- Ambiguidade: mais de um processo candidato pro PAJ informado -->
+      <div class="alert alert-error text-xs" x-show="processoCandidatos.length > 1">
+        <div class="flex flex-col gap-1 w-full">
+          <strong>⚠ Mais de um processo relacionado a este PAJ — confira e escolha o correto:</strong>
+          <select class="select select-bordered select-sm w-full max-w-md" x-model="processoConfirmado"
+                  @change="processoInput = processoConfirmado">
+            <option value="">Selecione…</option>
+            <template x-for="c in processoCandidatos" :key="c.numero">
+              <option :value="c.numero" x-text="c.numero + (c.juizo ? (' — ' + c.juizo) : '')"></option>
+            </template>
+          </select>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Dois cards lado a lado — mesma altura (items-stretch + h-full), tonalidade
+       leve por sistema (azulado = e-proc, esverdeado = SISDPU) só pra diferenciar
+       visualmente qual card é qual à primeira vista. -->
+  <div class="px-8 pb-4 grid grid-cols-1 lg:grid-cols-2 gap-4 items-stretch">
+    <!-- Ações no Eproc — só a MOLDURA externa leva a cor; a caixa interna do
+         módulo em si volta a ser bg-base-200 (como era antes), sólida o
+         bastante pra cobrir o fundo colorido atrás dela por completo. -->
+    <div class="bg-info/10 border border-info/30 rounded-lg p-3 h-full flex flex-col">
+      <div class="ret-card-label mb-2">Ações no Eproc</div>
+      <div class="bg-base-200 rounded-lg flex-1 flex flex-col p-3">
+        <template x-if="processoConfirmado">
+          <div class="flex-1" :key="processoConfirmado + '|' + pajNorm" id="eprocCard"
+               x-data="acoesEprocBlock({
+                           processos: [{ numero: processoConfirmado }],
+                           paj: pajLabel || processoConfirmado, pajNorm: pajNorm,
+                           aberto: true,
+                       })" x-init="init()">
+            {% include "partials/acoes_eproc.html" %}
+          </div>
+        </template>
+        <div x-show="!processoConfirmado" class="flex-1 flex items-center justify-center text-sm text-base-content/40 text-center">
+          Informe o número do processo acima.
+        </div>
+      </div>
+    </div>
+
+    <!-- Ações no SISDPU — mesma lógica: moldura externa colorida, caixa interna neutra. -->
+    <div class="bg-success/10 border border-success/30 rounded-lg p-3 h-full flex flex-col">
+      <div class="ret-card-label mb-2">Ações no SISDPU</div>
+      <div class="bg-base-200 rounded-lg flex-1 flex flex-col p-3">
+        <template x-if="pajNorm">
+          <div class="flex-1" :key="pajNorm" id="sisdpuCard"
+               x-data="acoesSisdpuBlock({
+                           idProcesso: '', paj: pajLabel, pajNorm: pajNorm,
+                           aberto: true,
+                           // Sem isso, a movimentação no SISDPU executada a partir
+                           // desta página NUNCA registrava no Histórico do painel
+                           // (posExecucaoPaj só roda se o chamador chamar — bug real
+                           // 2026-09-14) e, ao terminar, só recarregava esta MESMA
+                           // tela em vez de abrir a página do PAJ (pedido do usuário,
+                           // mesma data, pra já conferir as movimentações geradas).
+                           onExecutado: (resultado) => posExecucaoPaj(pajNorm, resultado),
+                           aposExecutarIrPara: '/paj/' + pajNorm,
+                       })" x-init="init()">
+            {% include "partials/acoes_sisdpu.html" %}
+          </div>
+        </template>
+        <div x-show="!pajNorm" class="flex-1 flex items-center justify-center text-sm text-base-content/40 text-center">
+          Informe o PAJ acima.
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Execução conjunta -->
+  <div class="px-8 pb-8 flex flex-col items-center gap-2">
+    <span class="text-xs text-error" x-show="resumoErro" x-text="resumoErro"></span>
+    <button type="button" class="btn btn-success gap-1.5" @click="prepararResumoConjunto()"
+            :disabled="!processoConfirmado || montandoResumo"
+            title="Grava os dois lados e mostra um resumo combinado antes de executar.">
+      <span x-show="montandoResumo" class="loading loading-spinner loading-xs"></span>
+      Revisar e executar
+    </button>
+  </div>
+
+  <!-- Modal: resumo combinado + execução -->
+  <div class="modal" :class="{'modal-open': modalResumoAberto}">
+    <div class="modal-box w-[75vw] max-w-[75vw]">
+      <h3 class="font-bold text-lg mb-1" x-text="etapaConjunta === 'concluido' ? 'Executado — Eproc + SISDPU' : 'Revisar antes de executar'"></h3>
+      <div class="text-[11px] text-error mb-2" x-show="erroExecucao" x-text="erroExecucao"></div>
+
+      <template x-if="etapaConjunta === 'resumo' && resumoEproc">
+        <div class="flex flex-col gap-4">
+          <div class="border border-info/30 bg-info/10 rounded p-3">
+            <div class="text-sm font-semibold mb-1">No e-proc</div>
+            <div class="text-sm">Processo: <span class="font-mono" x-text="resumoEproc.processo"></span></div>
+            <div class="text-sm">Evento: <span x-text="resumoEproc.evento"></span></div>
+            <div class="text-xs text-warning" x-show="resumoEproc.evento_sem_anexo">Este evento não aceita anexos.</div>
+            <div class="text-sm" x-show="(resumoEproc.prazos || []).length">
+              <strong>Prazo(s) a fechar:</strong>
+              <ul class="list-disc ml-5 mt-1">
+                <template x-for="p in resumoEproc.prazos" :key="p"><li class="text-xs" x-text="p"></li></template>
+              </ul>
+            </div>
+            <div class="text-xs" x-show="!resumoEproc.evento_sem_anexo && (resumoEproc.documentos || []).length">
+              <strong x-text="resumoEproc.documentos.length"></strong> documento(s):
+              <span x-text="resumoEproc.documentos.map(d => d.nome).join(', ')"></span>
+            </div>
+            <div class="text-xs text-base-content/60 mt-1" x-show="resumoEproc.gerenciamento && resumoEproc.gerenciamento.ativo">
+              + Gerenciamento de processo configurado (executa logo após peticionar).
+            </div>
+          </div>
+          <div class="border border-success/30 bg-success/10 rounded p-3" x-show="resumoSisdpu">
+            <div class="text-sm font-semibold mb-1">No SISDPU</div>
+            <!-- Fila (2+ movimentações em sequência) — "Adicionar à fila" no card à
+                 direita; ver static/js/acoes_sisdpu.js:executarFila. -->
+            <template x-if="resumoSisdpu && resumoSisdpu.fila.length">
+              <div class="text-sm">
+                <strong x-text="resumoSisdpu.fila.length"></strong> movimentação(ões) na fila:
+                <ul class="list-disc ml-5 mt-1">
+                  <template x-for="(item, i) in resumoSisdpu.fila" :key="i">
+                    <li class="text-xs">
+                      <span x-text="(item.fase || 'sem movimentar')"></span>
+                      <span x-show="item.grupo"> · tramitar p/ <span x-text="item.grupo"></span></span>
+                      <span x-show="(item.anexos || []).length"> · <span x-text="item.anexos.length"></span> anexo(s)</span>
+                    </li>
+                  </template>
+                </ul>
+              </div>
+            </template>
+            <!-- SEM fila, o formulário atual (fase/tramitar/concluir preenchidos
+                 direto no card, sem precisar de "Adicionar à fila") É a própria
+                 movimentação que vai executar — fila é só pra quando há MAIS de
+                 uma. Bug real corrigido (2026-09-18): antes isto aparecia como
+                 aviso de "não entra na execução" mesmo executando normalmente. -->
+            <template x-if="resumoSisdpu && !resumoSisdpu.fila.length && resumoSisdpu.formularioAtual">
+              <div class="text-sm">
+                <span x-text="resumoSisdpu.formularioAtual.fase ? ('Movimentar (fase): ' + resumoSisdpu.formularioAtual.fase) : 'Sem movimentação'"></span>
+                <span x-show="resumoSisdpu.formularioAtual.grupo"> · tramitar p/ <span x-text="resumoSisdpu.formularioAtual.grupo"></span></span>
+                <span x-show="(resumoSisdpu.formularioAtual.anexos || []).length"> · <span x-text="resumoSisdpu.formularioAtual.anexos.length"></span> anexo(s)</span>
+                <span x-show="resumoSisdpu.formularioAtual.concluir"> · vai concluir trâmite(s) da caixa</span>
+              </div>
+            </template>
+            <!-- COM fila já montada E o formulário editado de novo por cima — aí
+                 sim esse formulário extra é ignorado (fila.length > 0 sempre tem
+                 prioridade total sobre o formulário — ver acoes_sisdpu.js:executar()). -->
+            <div class="text-xs text-warning mt-1" x-show="resumoSisdpu && resumoSisdpu.fila.length && resumoSisdpu.formularioAtual">
+              ⚠ Há um formulário preenchido no card do SISDPU que ainda não foi adicionado à fila —
+              ele NÃO entra na execução, só o que está na lista acima. Volte lá e clique em "Adicionar à fila" se quiser incluí-lo também.
+            </div>
+            <div class="text-sm text-base-content/40" x-show="resumoSisdpu && !resumoSisdpu.fila.length && !resumoSisdpu.formularioAtual">
+              Sem movimentação configurada.
+            </div>
+          </div>
+          <div class="text-[11px] text-warning font-medium border border-warning/40 rounded p-2">
+            "Confirmar e executar tudo" protocola/lança o evento no e-proc e, em seguida, movimenta o SISDPU.
+            O peticionamento no e-proc é IRREVERSÍVEL.
+          </div>
+        </div>
+      </template>
+
+      <template x-if="etapaConjunta === 'executando'">
+        <div class="text-sm text-base-content/60 py-8 text-center">
+          <span class="loading loading-spinner loading-sm"></span> Executando — e-proc primeiro, depois SISDPU…
+        </div>
+      </template>
+
+      <template x-if="etapaConjunta === 'concluido'">
+        <div class="flex flex-col gap-3">
+          <div :class="resultadoEproc && resultadoEproc.provavel_sucesso ? 'text-success' : 'text-warning'" class="text-sm font-medium">
+            <span x-show="resultadoEproc && resultadoEproc.provavel_sucesso">✓ Peticionamento enviado no e-proc.</span>
+            <span x-show="!(resultadoEproc && resultadoEproc.provavel_sucesso)">⚠ Peticionar foi clicado, mas o resultado não pôde ser confirmado automaticamente — confira a aba do e-proc.</span>
+          </div>
+          <div x-show="resultadoGerenciamento" class="text-sm border-t border-base-300 pt-2">
+            <template x-if="resultadoGerenciamento && !resultadoGerenciamento.ok">
+              <div class="text-error">⚠ Falha ao gerenciar o processo: <span x-text="resultadoGerenciamento.mensagem"></span></div>
+            </template>
+            <template x-if="resultadoGerenciamento && resultadoGerenciamento.ok && resultadoGerenciamento.provavel_sucesso">
+              <div class="text-success">✓ Gerenciamento executado com sucesso.</div>
+            </template>
+          </div>
+          <div class="text-sm border-t border-base-300 pt-2" x-show="pajNorm">
+            A execução no SISDPU continua na aba própria do card à direita (progresso mostrado ali).
+          </div>
+          <div class="text-xs text-base-content/50">Feche este resumo e confira os dois cards acima.</div>
+        </div>
+      </template>
+
+      <div class="modal-action">
+        <button type="button" class="btn btn-sm" @click="modalResumoAberto = false"
+                x-show="etapaConjunta !== 'executando'"
+                x-text="etapaConjunta === 'concluido' ? 'Fechar' : 'Cancelar'"></button>
+        <button type="button" class="btn btn-sm btn-error" @click="confirmarExecucaoConjunta()"
+                x-show="etapaConjunta === 'resumo'">
+          Confirmar e executar tudo
+        </button>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+function movimentarConjuntoApp() {
+  return {
+    pajInput: '', pajNorm: '', pajLabel: '', pajCandidatos: [], pajResolvendo: false,
+    processoInput: '', processoConfirmado: '', processoCandidatos: [], processoResolvendo: false,
+
+    montandoResumo: false, resumoErro: '',
+    modalResumoAberto: false, etapaConjunta: 'resumo',
+    resumoEproc: null, resumoSisdpu: null,
+    resultadoEproc: null, resultadoGerenciamento: null, erroExecucao: '',
+
+    async init() {
+      const params = new URLSearchParams(window.location.search);
+      const paj = params.get('paj') || '';
+      const processo = params.get('processo') || '';
+      if (paj) { this.pajInput = paj; await this.confirmarPaj(); }
+      if (processo) { this.processoInput = processo; await this.confirmarProcesso(); }
+      // Só um dos dois veio (caso comum — minimenu conhece só um identificador):
+      // tenta resolver o outro automaticamente, cruzando intimações/prazos/cadastro
+      // do PAJ (ver services.paj_processo_link_service).
+      if (this.pajNorm && !this.processoConfirmado) await this.resolverProcessosDoPaj();
+      if (this.processoConfirmado && !this.pajNorm) await this.resolverPajsDoProcesso();
+    },
+
+    // --- PAJ ---
+    // Aceita tanto "AAAA/UUU-NNNNN" (digitado à mão) quanto já normalizado
+    // "PAJ-AAAA-UUU-NNNNN" (vindo do minimenu, via movimentarConjunto() —
+    // ver static/js/app.js) — o rótulo bonito é sempre DERIVADO do normalizado,
+    // nunca o contrário, pra nunca ficar com os dois fora de sincronia.
+    pajNormParaLabel(norm) {
+      const m = (norm || '').match(/^PAJ-(\d{4})-(\d{3})-(\d{5})$/);
+      return m ? (m[1] + '/' + m[2] + '-' + m[3]) : '';
+    },
+    async confirmarPaj() {
+      const raw = (this.pajInput || '').trim();
+      let norm = '';
+      const mBarra = raw.match(/^(\d{4})\/(\d{3})-(\d{5})$/);
+      if (mBarra) norm = 'PAJ-' + mBarra[1] + '-' + mBarra[2] + '-' + mBarra[3];
+      else if (/^PAJ-\d{4}-\d{3}-\d{5}$/.test(raw)) norm = raw;
+      if (!norm) { if (raw) alert('Formato de PAJ inválido — use AAAA/UUU-NNNNN.'); return; }
+      this.pajNorm = norm;
+      this.pajLabel = this.pajNormParaLabel(norm);
+      this.pajInput = this.pajLabel;
+      this.pajCandidatos = [];
+      if (!this.processoConfirmado) await this.resolverProcessosDoPaj();
+    },
+    async resolverProcessosDoPaj() {
+      if (!this.pajNorm) return;
+      this.processoResolvendo = true;
+      try {
+        const j = await (await fetch('/api/movimentar-conjunto/resolver-processos?paj=' + encodeURIComponent(this.pajNorm))).json();
+        const cand = j.candidatos || [];
+        this.processoCandidatos = cand;
+        if (cand.length === 1) { this.processoConfirmado = cand[0].numero; this.processoInput = cand[0].numero; }
+      } catch (e) {}
+      finally { this.processoResolvendo = false; }
+    },
+
+    // --- Processo ---
+    async confirmarProcesso() {
+      const numero = (this.processoInput || '').trim();
+      if (!numero) return;
+      this.processoConfirmado = numero;
+      this.processoCandidatos = [];
+      if (!this.pajNorm) await this.resolverPajsDoProcesso();
+    },
+    async resolverPajsDoProcesso() {
+      if (!this.processoConfirmado) return;
+      this.pajResolvendo = true;
+      try {
+        const j = await (await fetch('/api/movimentar-conjunto/resolver-pajs?processo=' + encodeURIComponent(this.processoConfirmado))).json();
+        const cand = j.candidatos || [];
+        this.pajCandidatos = cand;
+        if (cand.length === 1) { this.pajNorm = cand[0].paj_norm; this.pajLabel = cand[0].paj_label; this.pajInput = cand[0].paj_label; }
+      } catch (e) {}
+      finally { this.pajResolvendo = false; }
+    },
+    onEscolherPajCandidato() {
+      const c = this.pajCandidatos.find((x) => x.paj_norm === this.pajNorm);
+      this.pajLabel = c ? c.paj_label : '';
+      this.pajInput = this.pajLabel;
+    },
+
+    // --- Execução conjunta ---
+    // Pega os dados reativos de cada card DE FORA do seu próprio x-data — via
+    // `document.getElementById` (não `$refs`): `x-ref` no MESMO elemento que
+    // `x-data` registra o ref dentro do escopo do PRÓPRIO componente filho, não
+    // no escopo desta página (bug real 2026-09-11: "Cannot read properties of
+    // undefined (reading '_x_dataStack')" — `this.$refs.eprocCard` vinha
+    // indefinido). `id` + `getElementById` é DOM puro, sem essa ambiguidade.
+    eprocDados() {
+      const el = document.getElementById('eprocCard');
+      return el ? Alpine.$data(el) : null;
+    },
+    sisdpuDados() {
+      const el = this.pajNorm ? document.getElementById('sisdpuCard') : null;
+      return el ? Alpine.$data(el) : null;
+    },
+    async prepararResumoConjunto() {
+      this.resumoErro = '';
+      this.montandoResumo = true;
+      try {
+        const eprocData = this.eprocDados();
+        if (!eprocData) { this.resumoErro = 'Card "Ações no Eproc" ainda não está pronto — informe o processo acima.'; return; }
+        await eprocData.gravarRascunho();
+        const sisdpuData = this.sisdpuDados();
+        if (sisdpuData) await sisdpuData.gravarRascunho();
+        const j = await (await fetch('/api/acoes-eproc/executar/' + encodeURIComponent(eprocData.chaveRascunho()) + '/resumo')).json();
+        if (!j.ok) { this.resumoErro = j.erro || 'Falha ao montar o resumo do e-proc.'; return; }
+        this.resumoEproc = j;
+        // Reflete a FILA de movimentações (2+ em sequência — "Adicionar à fila"
+        // no card, ver static/js/acoes_sisdpu.js:executarFila), não só o
+        // formulário único de antes — sem isso, um SISDPU só com itens na fila
+        // (fase/grupo do formulário atual vazios) aparecia como "sem
+        // movimentação configurada" mesmo tendo o que executar (bug real
+        // 2026-09-11: usuário com 1 petição + 1 arquivamento na fila).
+        const temFormularioAtual = !!(sisdpuData && (sisdpuData.fase || sisdpuData.grupo || sisdpuData.concluirEfetivo()));
+        this.resumoSisdpu = sisdpuData ? {
+          fila: (sisdpuData.fila || []).map((item) => ({
+            fase: item.fase, grupo: item.grupo, anexos: item.anexos || [],
+          })),
+          formularioAtual: temFormularioAtual ? {
+            fase: sisdpuData.fase, grupo: sisdpuData.grupo,
+            anexos: sisdpuData.anexosStagedParaEnviar(), concluir: sisdpuData.concluirEfetivo(),
+          } : null,
+        } : null;
+        this.resultadoEproc = null; this.resultadoGerenciamento = null; this.erroExecucao = '';
+        this.etapaConjunta = 'resumo';
+        this.modalResumoAberto = true;
+      } catch (e) {
+        this.resumoErro = 'Erro de rede: ' + e;
+      } finally {
+        this.montandoResumo = false;
+      }
+    },
+
+    async confirmarExecucaoConjunta() {
+      this.etapaConjunta = 'executando';
+      this.erroExecucao = '';
+      const eprocData = this.eprocDados();
+      const sisdpuData = this.sisdpuDados();
+      if (!eprocData) { this.erroExecucao = 'Card "Ações no Eproc" ainda não está pronto.'; this.etapaConjunta = 'resumo'; return; }
+      try {
+        const chave = eprocData.chaveRascunho();
+        const respPrep = await fetch('/api/acoes-eproc/executar/' + encodeURIComponent(chave), { method: 'POST' });
+        const jPrep = await respPrep.json();
+        if (!jPrep.ok) { this.erroExecucao = jPrep.erro || 'Falha ao preparar no e-proc.'; this.etapaConjunta = 'resumo'; return; }
+        // Espelha o que prepararNoEproc()/confirmarPeticionamentoReal() do
+        // PRÓPRIO card fazem com `execResultado` — como aqui chamamos as rotas
+        // direto (pra não reabrir o modal do card dentro desta página),
+        // `eprocData.execResultado` nunca era populado, e `_executarGerenciamento()`
+        // (chamado abaixo) lê `this.execResultado.processo` internamente — sem
+        // isso, quebrava com "Cannot read properties of null" (bug real
+        // 2026-09-11, gerenciamento configurado numa movimentação conjunta).
+        eprocData.execResultado = jPrep;
+
+        const respConf = await fetch('/api/acoes-eproc/executar/' + encodeURIComponent(chave) + '/confirmar', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ processo: jPrep.processo }),
+        });
+        const jConf = await respConf.json();
+        this.resultadoEproc = jConf;
+        eprocData.execResultado = { ...eprocData.execResultado, ...jConf };
+        if (!jConf.ok) { this.erroExecucao = jConf.erro || 'Falha ao peticionar.'; this.etapaConjunta = 'resumo'; return; }
+
+        if (jConf.provavel_sucesso) {
+          const ger = (this.resumoEproc && this.resumoEproc.gerenciamento) || {};
+          if (ger.ativo) {
+            const tipoLabel = (eprocData.tiposGerenciamento.find((t) => t.valor === ger.tipo) || {}).rotulo || ger.tipo;
+            this.resultadoGerenciamento = { ...(await eprocData._executarGerenciamento(ger)), tipoLabel };
+          }
+          let sisdpuIniciou = false;
+          if (sisdpuData) {
+            // Fecha o resumo ENQUANTO o SISDPU executa — o progresso usa o
+            // modal/SSE PRÓPRIO do card à direita (mesma UI de sempre, sem
+            // duplicar); `true` pula o confirm() dele, já revisamos tudo
+            // junto acima. `executar()` é fire-and-forget (abre o EventSource
+            // e retorna — não espera o SSE terminar), então `sisdpuData.exec`
+            // logo depois já reflete se algo de fato foi disparado (havia
+            // fase/tramitação/conclusão/fila configurado) ou se não havia nada
+            // a fazer (guarda interna do próprio executar(), sem erro). Só no
+            // primeiro caso a navegação pra página do PAJ (aposExecutarIrPara,
+            // configurado no cfg do card) vai acontecer sozinha ao terminar —
+            // por isso o resumo desta página NÃO reabre nesse caso (evita
+            // "flashar" e some quando a navegação ocorrer).
+            this.modalResumoAberto = false;
+            await sisdpuData.executar(true);
+            sisdpuIniciou = sisdpuData.exec;
+          }
+          if (sisdpuIniciou) return;
+        }
+        this.etapaConjunta = 'concluido';
+        this.modalResumoAberto = true;
+      } catch (e) {
+        this.erroExecucao = 'Erro de rede: ' + e;
+        this.etapaConjunta = 'resumo';
+      }
+    },
+  };
+}
+</script>
+{% endblock %}

@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% from "partials/_macro_minimenu_paj.html" import itens_minimenu_paj %}
+{% from "partials/_macro_minimenu_processo.html" import itens_minimenu_processo %}
 
 {% block title %}Retornos{% endblock %}
 
@@ -83,9 +85,8 @@
                                         <div class="dropdown" @click.stop>
                                             <div tabindex="0" role="button" class="link" style="color:var(--accent)"
                                                  title="Escolher onde abrir o PAJ" x-text="r.paj"></div>
-                                            <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-44 p-1 shadow border border-base-300">
-                                                <li><a @click.stop="abrirPajPainel(r.paj_norm)">Abrir no Painel</a></li>
-                                                <li><a @click.stop="abrirPajNavegador(r.paj)">Abrir no navegador</a></li>
+                                            <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-48 p-1 shadow border border-base-300">
+                                                {{ itens_minimenu_paj('r.paj_norm', 'r.paj') }}
                                             </ul>
                                         </div>
                                         <button type="button" class="btn btn-ghost btn-xs p-1 h-auto min-h-0"
@@ -117,8 +118,11 @@
                                                          :title="'Escolher onde consultar o processo' + (p.juizo ? (' · Juízo: ' + p.juizo) : '') + (p.data_inclusao ? (' · Incluído em ' + p.data_inclusao) : '')"
                                                          x-text="p.numero"></div>
                                                     <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-52 p-1 shadow border border-base-300">
-                                                        <li><a @click.stop="consultarProcessoMcp(p.numero)">Consultar processo (MCP)</a></li>
-                                                        <li><a @click.stop="abrirProcessoNavegador(p.numero, $event.target)">Abrir no navegador</a></li>
+                                                        {{ itens_minimenu_processo("consultarProcessoMcp(p.numero)",
+                                                                                    "abrirProcessoNavegador(p.numero, $event.target)",
+                                                                                    "movimentarNoEproc(p.numero, r.paj_norm, r.paj)",
+                                                                                    "movimentarConjunto(p.numero, r.paj_norm)",
+                                                                                    "abrirGerenciarProcesso(p.numero)") }}
                                                     </ul>
                                                 </div>
                                                 <button type="button" class="btn btn-ghost btn-xs p-1 h-auto min-h-0"
@@ -352,8 +356,6 @@
     </div>
 
 </div>
-
-{% include "partials/sync_modal.html" %}
 
 <style>
 .ret-table td, .ret-table th { vertical-align: top; }

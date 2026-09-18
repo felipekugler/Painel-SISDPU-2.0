@@ -1,0 +1,55 @@
+<!-- Widget FLUTUANTE de sincronizacao SISDPU (substitui o antigo <dialog>
+     modal — 2026-08-28). Incluido UMA VEZ em base.html (nao mais por pagina)
+     pra que sobreviva a navegacao entre paginas: a sincronizacao em si roda
+     desacoplada no servidor (ver services/sync_service.py), e este widget so'
+     observa — pode ser minimizado, e a pagina de baixo continua clicavel.
+
+     Estados (controlados por static/js/sync_widget.js):
+       - oculto (nenhuma sync rodando/recem-concluida e ainda nao vista)
+       - minimizado (pílula no canto — spinner/status + titulo curto)
+       - expandido (card com o log completo, cancelar, minimizar) -->
+<div id="sync-widget" class="sync-widget-oculto" style="position:fixed; right:1.25rem; bottom:1.25rem; z-index:1000;">
+
+    <!-- Pílula minimizada -->
+    <button type="button" id="sync-widget-pill"
+            class="btn btn-sm shadow-lg gap-2 rounded-full pr-4"
+            onclick="SyncWidget.expandir()"
+            style="display:none;">
+        <span id="sync-widget-pill-spinner" class="loading loading-spinner loading-xs"></span>
+        <span id="sync-widget-pill-icone" style="display:none;"></span>
+        <span id="sync-widget-pill-titulo" class="text-xs font-medium max-w-[220px] truncate"></span>
+    </button>
+
+    <!-- Card expandido -->
+    <div id="sync-widget-card"
+         class="card bg-base-100 border border-base-300 shadow-xl"
+         style="display:none; width:min(480px, calc(100vw - 2.5rem));">
+        <div class="card-body p-4">
+            <div class="flex items-center justify-between gap-2 mb-2">
+                <h3 class="font-bold text-sm truncate" id="sync-widget-titulo">Sincronização</h3>
+                <div class="flex items-center gap-1.5 shrink-0">
+                    <span id="sync-widget-status" class="badge badge-sm badge-ghost">aguardando</span>
+                    <button type="button" class="btn btn-xs btn-error" id="sync-widget-cancel-btn"
+                            onclick="SyncWidget.cancelar()" style="display:none;" title="Cancelar sincronização">
+                        Cancelar
+                    </button>
+                    <button type="button" class="btn btn-xs btn-ghost btn-square" onclick="SyncWidget.minimizar()"
+                            title="Minimizar (continua rodando em segundo plano)">
+                        &#8211;
+                    </button>
+                    <button type="button" class="btn btn-xs btn-ghost btn-square" id="sync-widget-close-btn"
+                            onclick="SyncWidget.dispensar()" title="Fechar">
+                        X
+                    </button>
+                </div>
+            </div>
+            <div id="sync-widget-log"
+                 class="bg-base-300 rounded p-3 font-mono text-[11px] leading-[1.65] h-[260px] overflow-y-auto whitespace-pre-wrap">
+            </div>
+            <p class="text-xs text-base-content/60 mt-2">
+                Você pode navegar para outras páginas do painel — a sincronização continua
+                em segundo plano e este widget reconecta automaticamente.
+            </p>
+        </div>
+    </div>
+</div>

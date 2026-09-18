@@ -3,7 +3,7 @@
 {% block title %}Configurações{% endblock %}
 
 {% block content %}
-<div class="max-w-2xl mx-auto">
+<div class="w-full">
 
     <h2 class="text-2xl font-bold mb-6">Configurações do Painel</h2>
 
@@ -19,8 +19,11 @@
     <!-- ===================== Aba: Geral ===================== -->
     <div class="cfg-panel" data-panel="geral">
 
-    <!-- Aparência -->
-    <div class="card bg-base-200 shadow mb-6">
+    <!-- Aparência + Exibição de documentos lado a lado em telas largas — são
+         cartões curtos e ficariam com muito espaço vazio esticados sozinhos
+         na largura toda da página. -->
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start mb-6">
+    <div class="card bg-base-200 shadow">
         <div class="card-body gap-4">
             <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
                 Aparência
@@ -47,7 +50,7 @@
     </div>
 
     <!-- Exibição de documentos (coluna "Documentos" da tabela de movimentações) -->
-    <div class="card bg-base-200 shadow mb-6">
+    <div class="card bg-base-200 shadow">
         <div class="card-body gap-4">
             <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
                 Exibição de documentos
@@ -68,11 +71,69 @@
             </div>
         </div>
     </div>
+    </div><!-- /grid Aparência + Exibição de documentos -->
+
+    <!-- Identificação do Ofício/Defensor — usada no texto abaixo de "Painel
+         SISDPU" no menu e nos placeholders [OFICIO]/[UNIDADE]/[DEFENSOR]/
+         [CARGO] dos "Modelos de petição" (Ações no Eproc) e "Despachos
+         padrão" (Ações no SISDPU). Persistida no painel_config.json — vale
+         pra TODOS os usuários deste painel (diferente das prefs acima, que
+         são por navegador). Substitui o antigo OFICIO_DESCRICAO fixo do
+         .env (pedido do usuário 2026-09-18). -->
+    <div class="card bg-base-200 shadow mb-6" x-data="identificacaoOrgaoPrefs()" x-init="init()">
+        <div class="card-body gap-4">
+            <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
+                Identificação do Ofício/Defensor
+            </h3>
+            <p class="text-sm text-base-content/60">
+                Usada no texto abaixo de "Painel SISDPU" no menu, e nos placeholders
+                <code class="text-xs">[OFICIO]</code>, <code class="text-xs">[UNIDADE]</code>,
+                <code class="text-xs">[DEFENSOR]</code> e <code class="text-xs">[CARGO]</code> dos
+                "Modelos de petição" e "Despachos padrão". Vale pra todos os usuários deste painel.
+            </p>
+            <div x-show="carregando" class="text-sm text-base-content/50">
+                <span class="loading loading-spinner loading-xs"></span> Carregando…
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-4 gap-3" x-show="!carregando">
+                <label class="form-control">
+                    <span class="label-text text-xs mb-1">Ofício</span>
+                    <input type="text" class="input input-bordered input-sm"
+                           placeholder="Ex.: 4º Ofício Previdenciário" x-model="dados.oficio">
+                </label>
+                <label class="form-control">
+                    <span class="label-text text-xs mb-1">Unidade da DPU</span>
+                    <input type="text" class="input input-bordered input-sm"
+                           placeholder="Ex.: DPU Curitiba" x-model="dados.unidade">
+                </label>
+                <label class="form-control">
+                    <span class="label-text text-xs mb-1">Nome do defensor</span>
+                    <input type="text" class="input input-bordered input-sm"
+                           placeholder="Ex.: Felipe Belache Kugler" x-model="dados.defensor_nome">
+                </label>
+                <label class="form-control">
+                    <span class="label-text text-xs mb-1">Cargo do defensor</span>
+                    <input type="text" class="input input-bordered input-sm"
+                           placeholder="Ex.: Defensor Público Federal" x-model="dados.defensor_cargo">
+                </label>
+            </div>
+            <div class="flex items-center gap-2">
+                <button type="button" class="btn btn-sm btn-primary" :disabled="salvando" @click="salvar()">
+                    <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
+                    Salvar
+                </button>
+                <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
+            </div>
+        </div>
+    </div>
 
     </div><!-- /cfg-panel geral -->
 
     <!-- ===================== Aba: Acesso ===================== -->
     <div class="cfg-panel" data-panel="acesso">
+
+    <!-- Cofre de credenciais + Conexão com o Claude lado a lado em telas
+         largas (mesmo raciocínio da aba Geral, acima). -->
+    <div class="grid grid-cols-1 xl:grid-cols-2 gap-6 items-start">
 
     <!-- Cofre de credenciais (acesso aos sistemas externos) -->
     <div class="card bg-base-200 shadow" x-data="cofreAcesso()" x-init="init()">
@@ -261,7 +322,7 @@
     </div>
 
     <!-- Conexão com o Claude CLI (motor do "Elaborar"/"Analisar"/peticionamento por IA) -->
-    <div class="card bg-base-200 shadow mt-6"
+    <div class="card bg-base-200 shadow"
          x-data="{
              estado: null, testando: false,
              async testar() {
@@ -315,6 +376,7 @@
             </template>
         </div>
     </div>
+    </div><!-- /grid Cofre + Conexão com o Claude -->
 
     </div><!-- /cfg-panel acesso -->
 
@@ -440,6 +502,7 @@
         <button type="button" :class="subaba==='fases' && 'ativa'" @click="subaba='fases'">Fases do SISDPU</button>
         <button type="button" :class="subaba==='caixas' && 'ativa'" @click="subaba='caixas'">Caixas do SISDPU</button>
         <button type="button" :class="subaba==='oficios' && 'ativa'" @click="subaba='oficios'">Tabela de Ofícios</button>
+        <button type="button" :class="subaba==='despachos' && 'ativa'" @click="subaba='despachos'">Despachos padrão</button>
     </div>
 
     <div class="card bg-base-200 shadow" x-data="sisdpuPrefs()" x-init="init()" x-show="subaba==='fases' || subaba==='caixas'">
@@ -558,11 +621,124 @@
             </div>
         </div>
     </div>
+
+    <!-- Despachos padrão — textos padrão reutilizáveis pra despachos de
+         movimentação reiterados, com placeholders de dados do PAJ resolvidos
+         automaticamente. Usados no módulo "Ações no SISDPU" (botão "Usar
+         modelo" na caixa de Movimentação) — ver static/js/acoes_sisdpu.js.
+         Mesma fábrica JS de "Modelos de petição" (Ações no Eproc) — ver a
+         função modelosTextoPrefs() mais abaixo, no bloco de script. -->
+    <div class="card bg-base-200 shadow" x-data="sisdpuDespachosPadraoPrefs()" x-init="init()" x-show="subaba==='despachos'">
+        <div class="card-body gap-5">
+            <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
+                <h3 class="text-lg font-semibold text-base-content/80">Despachos padrão</h3>
+                <button class="btn btn-sm btn-primary gap-1" @click="abrirNovo()">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                    Novo despacho
+                </button>
+            </div>
+            <p class="text-sm text-base-content/60">
+                Textos padrão pra despachos de movimentação reiterados — disponíveis no módulo
+                <strong>"Ações no SISDPU"</strong> pra inserir na caixa de Movimentação com um clique, com a MESMA
+                formatação rica (negrito, itálico, listas etc.) daquela caixa. Use os placeholders
+                <code class="text-xs">[NOME]</code>, <code class="text-xs">[CPF]</code>,
+                <code class="text-xs">[PROCESSO]</code>, <code class="text-xs">[PAJ]</code>, <code class="text-xs">[DATA]</code>,
+                <code class="text-xs">[OFICIO]</code>, <code class="text-xs">[UNIDADE]</code>,
+                <code class="text-xs">[DEFENSOR]</code> e <code class="text-xs">[CARGO]</code> no texto — são
+                substituídos pelos dados do PAJ em uso na hora de inserir (nome e CPF são do assistido
+                <strong>principal</strong>; <strong>[PROCESSO]</strong> só resolve quando há exatamente 1 processo
+                judicial vinculado ao PAJ — com 0 ou 2+, fica em branco, sem escolher um arbitrariamente; data é
+                sempre a data de hoje; ofício/unidade/defensor/cargo vêm da aba <strong>Geral</strong> destas
+                Configurações; sem PAJ vinculado, só PAJ/data/ofício/unidade/defensor/cargo resolvem).
+            </p>
+            <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
+
+            <div x-show="carregando" class="text-sm text-base-content/50">
+                <span class="loading loading-spinner loading-xs"></span> Carregando…
+            </div>
+            <div x-show="!carregando && !modelos.length" class="text-sm text-base-content/40">
+                Nenhum despacho padrão cadastrado ainda.
+            </div>
+            <div class="overflow-x-auto" x-show="!carregando && modelos.length">
+                <table class="table table-sm">
+                    <thead>
+                        <tr class="text-xs font-bold">
+                            <th>Nome</th>
+                            <th>Texto</th>
+                            <th class="w-32 text-right"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="(m, i) in modelos" :key="m.id">
+                            <tr class="hover:bg-base-300/30">
+                                <td class="font-medium whitespace-nowrap" x-text="m.nome"></td>
+                                <td class="text-xs text-base-content/60" x-text="previewTexto(m.texto)"></td>
+                                <td class="text-right whitespace-nowrap">
+                                    <button type="button" class="btn btn-ghost btn-xs" @click="abrirEditar(i)">Editar</button>
+                                    <button type="button" class="btn btn-ghost btn-xs text-error" @click="excluir(i)">Excluir</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Modal: novo/editar despacho — SEM x-if (ver comentário no modal de
+             "Modelos de petição" acima: x-if destruiria o <div :id="uidModelo">
+             onde o Quill é montado a cada abertura/fechamento). -->
+        <div class="modal" :class="{'modal-open': modalAberto}" @click.self="fecharModal()">
+            <div class="modal-box max-w-2xl">
+                <h3 class="font-bold text-lg mb-3" x-text="editandoIndex >= 0 ? 'Editar despacho' : 'Novo despacho'"></h3>
+                <div class="flex flex-col gap-3">
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">Nome do despacho</span></label>
+                        <input type="text" class="input input-bordered input-sm" placeholder="Ex.: Encaminhamento para análise"
+                               x-model="modeloEmEdicao.nome">
+                    </div>
+                    <div class="form-control">
+                        <div class="flex items-center justify-between mb-1 flex-wrap gap-1">
+                            <label class="label-text text-xs">Texto do despacho</label>
+                            <div class="flex gap-1 flex-wrap">
+                                <template x-for="p in placeholders" :key="p.token">
+                                    <button type="button" class="btn btn-xs btn-outline" :title="p.legenda"
+                                            @click="inserirPlaceholder(p.token)" x-text="p.token"></button>
+                                </template>
+                            </div>
+                        </div>
+                        <div :id="uidModelo" x-show="quillModeloOk"></div>
+                        <textarea x-show="!quillModeloOk" class="textarea textarea-bordered w-full text-sm" rows="10" x-ref="textareaModelo"
+                                  x-model="modeloEmEdicao.texto"
+                                  placeholder="Texto padrão do despacho — clique nos botões acima pra inserir um placeholder na posição do cursor."></textarea>
+                    </div>
+                    <span class="text-error text-xs" x-show="msgErro" x-text="msgErro"></span>
+                </div>
+                <div class="modal-action">
+                    <button type="button" class="btn btn-sm" @click="fecharModal()">Cancelar</button>
+                    <button type="button" class="btn btn-sm btn-primary" :disabled="salvando" @click="salvarModelo()">
+                        <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
+                        Salvar despacho
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
     </div><!-- /cfg-panel sisdpu -->
 
     <!-- ===================== Aba: e-proc ===================== -->
-    <div class="cfg-panel" data-panel="eproc">
-    <div class="card bg-base-200 shadow" x-data="eprocEventosPrefs()" x-init="init()">
+    <div class="cfg-panel" data-panel="eproc" x-data="{ subaba: 'peticionamento' }">
+
+    <!-- Subabas do e-proc -->
+    <div class="cfg-subtabs">
+        <button type="button" :class="subaba==='peticionamento' && 'ativa'" @click="subaba='peticionamento'">Peticionamento</button>
+        <button type="button" :class="subaba==='modelos' && 'ativa'" @click="subaba='modelos'">Modelos de petição</button>
+        <button type="button" :class="subaba==='gerenciamento' && 'ativa'" @click="subaba='gerenciamento'">Gerenciamento de Processo</button>
+        <button type="button" :class="subaba==='documentos' && 'ativa'" @click="subaba='documentos'">Documentos</button>
+    </div>
+
+    <div class="card bg-base-200 shadow" x-data="eprocEventosPrefs()" x-init="init()" x-show="subaba==='peticionamento'">
         <div class="card-body gap-5">
             <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
                 <h3 class="text-lg font-semibold text-base-content/80">Eventos de peticionamento (e-proc)</h3>
@@ -623,7 +799,7 @@
     </div>
 
     <!-- Tipos de Documento (classificação de anexos ao peticionar) -->
-    <div class="card bg-base-200 shadow mt-4" x-data="eprocTiposDocPrefs()" x-init="init()">
+    <div class="card bg-base-200 shadow mt-4" x-data="eprocTiposDocPrefs()" x-init="init()" x-show="subaba==='peticionamento'">
         <div class="card-body gap-5">
             <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
                 <h3 class="text-lg font-semibold text-base-content/80">Tipos de Documento (anexos)</h3>
@@ -683,7 +859,7 @@
     </div>
 
     <!-- Níveis de Sigilo (por documento anexado) -->
-    <div class="card bg-base-200 shadow mt-4" x-data="eprocSigiloPrefs()" x-init="init()">
+    <div class="card bg-base-200 shadow mt-4" x-data="eprocSigiloPrefs()" x-init="init()" x-show="subaba==='peticionamento'">
         <div class="card-body gap-5">
             <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
                 <h3 class="text-lg font-semibold text-base-content/80">Níveis de Sigilo (por anexo)</h3>
@@ -733,7 +909,7 @@
     </div>
 
     <!-- Procuradores destino do Gerenciamento de Processo (substabelecimento) -->
-    <div class="card bg-base-200 shadow mt-4" x-data="eprocProcuradoresPrefs()" x-init="init()">
+    <div class="card bg-base-200 shadow" x-data="eprocProcuradoresPrefs()" x-init="init()" x-show="subaba==='gerenciamento'">
         <div class="card-body gap-5">
             <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
                 <h3 class="text-lg font-semibold text-base-content/80">Gerenciamento de Processo (substabelecimento)</h3>
@@ -794,8 +970,121 @@
         </div>
     </div>
 
+    <!-- Modelos de petição — textos padrão reutilizáveis (acordo, juntada de
+         documento, ciência de RPV/precatório etc.), com placeholders de dados
+         do PAJ resolvidos automaticamente. Usados no módulo "Ações no Eproc"
+         (botão "Usar modelo" na caixa de Petição) — ver static/js/acoes_eproc.js. -->
+    <div class="card bg-base-200 shadow" x-data="eprocModelosPeticaoPrefs()" x-init="init()" x-show="subaba==='modelos'">
+        <div class="card-body gap-5">
+            <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
+                <h3 class="text-lg font-semibold text-base-content/80">Modelos de petição</h3>
+                <button class="btn btn-sm btn-primary gap-1" @click="abrirNovo()">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                    Novo modelo
+                </button>
+            </div>
+            <p class="text-sm text-base-content/60">
+                Textos padrão pra petições reiteradas (aceitação de acordo, juntada de documento, ciência de
+                RPV/precatório etc.) — disponíveis no módulo <strong>"Ações no Eproc"</strong> pra inserir na caixa
+                de Petição com um clique, com a MESMA formatação rica (negrito, itálico, listas etc.) daquela caixa.
+                Use os placeholders <code class="text-xs">[NOME]</code>, <code class="text-xs">[CPF]</code>,
+                <code class="text-xs">[PROCESSO]</code>, <code class="text-xs">[PAJ]</code>,
+                <code class="text-xs">[DATA]</code>, <code class="text-xs">[OFICIO]</code>,
+                <code class="text-xs">[UNIDADE]</code>, <code class="text-xs">[DEFENSOR]</code> e
+                <code class="text-xs">[CARGO]</code> no texto — são substituídos pelos dados do PAJ/processo em uso
+                na hora de inserir (nome e CPF são do assistido <strong>principal</strong>; data é sempre a data de
+                hoje; ofício/unidade/defensor/cargo vêm da aba <strong>Geral</strong> destas Configurações; sem PAJ
+                vinculado — petição avulsa — processo/PAJ/data/ofício/unidade/defensor/cargo resolvem do mesmo jeito).
+            </p>
+            <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
+
+            <div x-show="carregando" class="text-sm text-base-content/50">
+                <span class="loading loading-spinner loading-xs"></span> Carregando…
+            </div>
+            <div x-show="!carregando && !modelos.length" class="text-sm text-base-content/40">
+                Nenhum modelo cadastrado ainda.
+            </div>
+            <div class="overflow-x-auto" x-show="!carregando && modelos.length">
+                <table class="table table-sm">
+                    <thead>
+                        <tr class="text-xs font-bold">
+                            <th>Nome</th>
+                            <th>Texto</th>
+                            <th class="w-32 text-right"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="(m, i) in modelos" :key="m.id">
+                            <tr class="hover:bg-base-300/30">
+                                <td class="font-medium whitespace-nowrap" x-text="m.nome"></td>
+                                <td class="text-xs text-base-content/60" x-text="previewTexto(m.texto)"></td>
+                                <td class="text-right whitespace-nowrap">
+                                    <button type="button" class="btn btn-ghost btn-xs" @click="abrirEditar(i)">Editar</button>
+                                    <button type="button" class="btn btn-ghost btn-xs text-error" @click="excluir(i)">Excluir</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Modal: novo/editar modelo -->
+        <div class="modal" :class="{'modal-open': modalAberto}" @click.self="fecharModal()">
+            <div class="modal-box max-w-2xl">
+                <h3 class="font-bold text-lg mb-3" x-text="editandoIndex >= 0 ? 'Editar modelo' : 'Novo modelo'"></h3>
+                <!-- SEM x-if aqui (era o bug): x-if destrói e recria este bloco a cada
+                     abertura/fechamento do modal — inclusive o <div :id="uidModelo">
+                     onde o Quill foi montado. O objeto `_editorModelo` (JS) sobrevive
+                     normalmente, mas o elemento DOM real ao qual ele está vinculado
+                     não — ele fica "órfão", apontando pra um nó já removido, e o novo
+                     <div id="qmodelo-..."> que aparece no lugar nunca recebe o
+                     conteúdo do Quill (a guarda em _garantirEditorModelo() pula o
+                     remonte porque `_editorModelo` já existe). Resultado: caixa de
+                     texto em branco a partir da 2ª abertura do modal (a 1ª "funciona"
+                     por coincidência, é quando o Quill é montado de verdade). Fix:
+                     manter este bloco sempre no DOM (visibilidade já é controlada
+                     pela classe modal-open do container acima) e nunca deixar
+                     `modeloEmEdicao` ficar null (ver estado inicial + fecharModal()),
+                     já que os bindings abaixo o referenciam sem guarda. -->
+                <div class="flex flex-col gap-3">
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">Nome do modelo</span></label>
+                        <input type="text" class="input input-bordered input-sm" placeholder="Ex.: Aceitação de acordo"
+                               x-model="modeloEmEdicao.nome">
+                    </div>
+                    <div class="form-control">
+                        <div class="flex items-center justify-between mb-1 flex-wrap gap-1">
+                            <label class="label-text text-xs">Texto da petição</label>
+                            <div class="flex gap-1 flex-wrap">
+                                <template x-for="p in placeholders" :key="p.token">
+                                    <button type="button" class="btn btn-xs btn-outline" :title="p.legenda"
+                                            @click="inserirPlaceholder(p.token)" x-text="p.token"></button>
+                                </template>
+                            </div>
+                        </div>
+                        <div :id="uidModelo" x-show="quillModeloOk"></div>
+                        <textarea x-show="!quillModeloOk" class="textarea textarea-bordered w-full text-sm" rows="10" x-ref="textareaModelo"
+                                  x-model="modeloEmEdicao.texto"
+                                  placeholder="Texto padrão da petição — clique nos botões acima pra inserir um placeholder na posição do cursor."></textarea>
+                    </div>
+                    <span class="text-error text-xs" x-show="msgErro" x-text="msgErro"></span>
+                </div>
+                <div class="modal-action">
+                    <button type="button" class="btn btn-sm" @click="fecharModal()">Cancelar</button>
+                    <button type="button" class="btn btn-sm btn-primary" :disabled="salvando" @click="salvarModelo()">
+                        <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
+                        Salvar modelo
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
     <!-- Documentos baixados (cache da página "Consultar processo") -->
-    <div class="card bg-base-200 shadow mt-4" x-data="eprocDocsCache()" x-init="init()">
+    <div class="card bg-base-200 shadow" x-data="eprocDocsCache()" x-init="init()" x-show="subaba==='documentos'">
         <div class="card-body gap-5">
             <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
                 <h3 class="text-lg font-semibold text-base-content/80">Documentos baixados (e-proc)</h3>
@@ -1005,6 +1294,61 @@ function docsExibicaoMarcarAtivo(v) {
     try { v = localStorage.getItem('docsExibicao') || 'tipo'; } catch(e){}
     docsExibicaoMarcarAtivo(v);
 })();
+
+// Identificação do Ofício/Defensor (aba Geral) — persistida no
+// painel_config.json (services/config_painel_service.py), diferente das
+// prefs acima (Aparência/Exibição de documentos), que são por navegador
+// (localStorage). Usada no texto da sidebar + placeholders [OFICIO]/
+// [UNIDADE]/[DEFENSOR]/[CARGO] dos "Modelos de petição"/"Despachos padrão"
+// (ver static/js/acoes_eproc.js/acoes_sisdpu.js).
+function identificacaoOrgaoPrefs() {
+    return {
+        dados: { oficio: '', unidade: '', defensor_nome: '', defensor_cargo: '' },
+        carregando: false, salvando: false, msg: '', msgErro: false,
+        async init() {
+            this.carregando = true;
+            try {
+                const j = await (await fetch('/api/config/identificacao-orgao')).json();
+                this.dados = {
+                    oficio: j.oficio || '', unidade: j.unidade || '',
+                    defensor_nome: j.defensor_nome || '', defensor_cargo: j.defensor_cargo || '',
+                };
+            } catch (e) {}
+            finally { this.carregando = false; }
+        },
+        async salvar() {
+            this.salvando = true; this.msg = ''; this.msgErro = false;
+            try {
+                const r = await fetch('/api/config/identificacao-orgao', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this.dados),
+                });
+                const j = await r.json();
+                if (!j.ok) { this.msgErro = true; this.msg = 'Falha ao salvar.'; return; }
+                this.dados = {
+                    oficio: j.oficio || '', unidade: j.unidade || '',
+                    defensor_nome: j.defensor_nome || '', defensor_cargo: j.defensor_cargo || '',
+                };
+                // Atualiza a sidebar + os placeholders globais AGORA MESMO, sem
+                // reload — window._identificacaoOrgao só é preenchido no load do
+                // base.html (ver template), e o texto da sidebar é HTML estático.
+                window._identificacaoOrgao = { ...this.dados };
+                const sub = document.getElementById('sidebar-oficio-descricao');
+                if (sub) {
+                    // \n vira quebra de linha visual — o <p> tem white-space:
+                    // pre-line (ver base.html/app.py:_oficio_descricao_atual).
+                    sub.textContent = [this.dados.oficio, this.dados.unidade].filter(Boolean).join('\n')
+                        || 'Defensoria Pública da União';
+                }
+                this.msg = 'Salvo ✓'; setTimeout(() => this.msg = '', 2500);
+            } catch (e) {
+                this.msgErro = true; this.msg = 'Erro ao salvar: ' + e;
+            } finally {
+                this.salvando = false;
+            }
+        },
+    };
+}
 
 // Aba SISDPU — fases/caixas: importar do SISDPU + curadoria de favoritas/frequentes.
 function sisdpuPrefs() {
@@ -1283,6 +1627,198 @@ function eprocSigiloPrefs() {
             finally { this.salvando = false; }
         },
     };
+}
+
+// Fábrica GENÉRICA de CRUD "modelos de texto padrão" com editor rico —
+// compartilhada por "Modelos de petição" (Ações no Eproc) e "Despachos
+// padrão" (Ações no SISDPU): mesmo formato de item {id, nome, texto — HTML do
+// Quill}, mesmo fluxo de modal, só muda o endpoint REST, a lista de
+// placeholders válidos naquele contexto e os textos das mensagens.
+// `cfg`: {endpoint, rotuloItem ('modelo'|'despacho' — pras mensagens),
+// placeholderEditor (texto de placeholder do Quill), placeholders (lista
+// {token, legenda})}.
+function modelosTextoPrefs(cfg) {
+    return {
+        modelos: [], carregando: false, salvando: false, msg: '', msgErro: false,
+        modalAberto: false,
+        // NUNCA null (mesmo fechado/antes da 1ª abertura) — o bloco do modal
+        // não usa x-if (ver comentário no template — x-if destruiria o
+        // <div :id="uidModelo"> onde o Quill é montado a cada abertura/
+        // fechamento, deixando a caixa em branco a partir da 2ª vez), então
+        // os bindings x-model="modeloEmEdicao.nome/.texto" ficam sempre
+        // ativos e quebrariam com objeto nulo.
+        modeloEmEdicao: { id: '', nome: '', texto: '' },
+        editandoIndex: -1,
+        placeholders: cfg.placeholders,
+        // Editor rico (Quill) do texto do modelo — mesma fábrica compartilhada
+        // usada pela caixa de destino (static/js/rich_editor.js). Montado uma
+        // vez só (o modal é reaproveitado pra novo/editar); cada abertura só
+        // troca o CONTEÚDO via setHTML() — nunca remonta.
+        uidModelo: 'qmodelo-' + Math.random().toString(36).slice(2, 9),
+        _editorModelo: null, quillModeloOk: true, _montandoEditorModelo: false,
+        async init() {
+            await this.carregar();
+        },
+        async carregar() {
+            this.carregando = true;
+            try {
+                const j = await (await fetch(cfg.endpoint)).json();
+                this.modelos = j.modelos || [];
+            } catch (e) { this.modelos = []; }
+            finally { this.carregando = false; }
+        },
+        // Monta o Quill na 1ª vez que o modal abre (precisa estar VISÍVEL —
+        // ver cabeçalho de rich_editor.js) — trava síncrona antes do 1º
+        // `await` evita duplicar a toolbar se x-init rodar 2x (mesmo padrão
+        // usado em acoes_eproc.js/acoes_sisdpu.js).
+        async _garantirEditorModelo() {
+            if (this._editorModelo || this._montandoEditorModelo) return;
+            this._montandoEditorModelo = true;
+            await this.$nextTick();
+            this._editorModelo = criarEditorRico(this.uidModelo, { placeholder: cfg.placeholderEditor });
+            this.quillModeloOk = !!this._editorModelo;
+        },
+        // Texto ATUAL do modal (HTML do Quill, ou a textarea de fallback se o
+        // Quill não carregou) — usado tanto por inserirPlaceholder() quanto
+        // por salvarModelo().
+        textoModeloEfetivo() {
+            return this._editorModelo ? this._editorModelo.getHTML() : (this.modeloEmEdicao ? this.modeloEmEdicao.texto : '');
+        },
+        async abrirNovo() {
+            this.modeloEmEdicao = { id: '', nome: '', texto: '' };
+            this.editandoIndex = -1;
+            this.msgErro = false; this.msg = '';
+            this.modalAberto = true;
+            await this._garantirEditorModelo();
+            if (this._editorModelo) this._editorModelo.setHTML('');
+        },
+        async abrirEditar(i) {
+            this.modeloEmEdicao = { ...this.modelos[i] };
+            this.editandoIndex = i;
+            this.msgErro = false; this.msg = '';
+            this.modalAberto = true;
+            await this._garantirEditorModelo();
+            if (this._editorModelo) this._editorModelo.setHTML(this.modeloEmEdicao.texto || '');
+        },
+        fecharModal() {
+            this.modalAberto = false;
+            // Reseta pro objeto "vazio" (nunca null — ver comentário no
+            // estado inicial acima; o bloco do modal continua no DOM mesmo
+            // fechado, então x-model precisa sempre de um objeto válido).
+            this.modeloEmEdicao = { id: '', nome: '', texto: '' };
+        },
+        // Insere o token na posição do CURSOR (Quill, ou a textarea de
+        // fallback) — não no fim — pra compor o texto do modelo com os
+        // placeholders exatamente onde o usuário está digitando.
+        inserirPlaceholder(token) {
+            if (this._editorModelo) { this._editorModelo.insertHTML(token); return; }
+            const el = this.$refs.textareaModelo;
+            const texto = this.modeloEmEdicao.texto || '';
+            if (!el) { this.modeloEmEdicao.texto = texto + token; return; }
+            const start = el.selectionStart ?? texto.length;
+            const end = el.selectionEnd ?? texto.length;
+            this.modeloEmEdicao.texto = texto.slice(0, start) + token + texto.slice(end);
+            this.$nextTick(() => {
+                el.focus();
+                el.selectionStart = el.selectionEnd = start + token.length;
+            });
+        },
+        async salvarModelo() {
+            const nome = (this.modeloEmEdicao.nome || '').trim();
+            if (!nome) { this.msgErro = true; this.msg = 'Informe um nome para o ' + cfg.rotuloItem + '.'; return; }
+            const item = { id: this.modeloEmEdicao.id || '', nome, texto: this.textoModeloEfetivo() || '' };
+            const novaLista = [...this.modelos];
+            if (this.editandoIndex >= 0) novaLista[this.editandoIndex] = item;
+            else novaLista.push(item);
+            const ok = await this._persistir(novaLista);
+            if (ok) this.fecharModal();
+        },
+        async excluir(i) {
+            if (!confirm('Excluir o ' + cfg.rotuloItem + ' "' + this.modelos[i].nome + '"? Não pode ser desfeito.')) return;
+            await this._persistir(this.modelos.filter((_, idx) => idx !== i));
+        },
+        async _persistir(lista) {
+            this.salvando = true; this.msg = ''; this.msgErro = false;
+            try {
+                const resp = await fetch(cfg.endpoint, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ modelos: lista }),
+                });
+                const j = await resp.json();
+                if (!j.ok) { this.msgErro = true; this.msg = 'Falha ao salvar.'; return false; }
+                this.modelos = j.modelos || lista;
+                this.msg = 'Salvo ✓'; setTimeout(() => this.msg = '', 2500);
+                return true;
+            } catch (e) {
+                this.msgErro = true; this.msg = 'Erro ao salvar: ' + e;
+                return false;
+            } finally {
+                this.salvando = false;
+            }
+        },
+        // `texto` pode ser HTML (Quill) ou, num modelo antigo, texto puro —
+        // htmlParaTextoSimples() (rich_editor.js) trata os dois igual.
+        previewTexto(texto) {
+            const t = htmlParaTextoSimples(texto || '').replace(/\s+/g, ' ').trim();
+            return t.length > 90 ? t.slice(0, 90) + '…' : (t || '(vazio)');
+        },
+    };
+}
+
+// Modelos de petição — CRUD simples (não vem do e-proc, é digitado pelo
+// usuário), consumido pelo módulo "Ações no Eproc" via /api/acoes-eproc/preferencias
+// (modelos_peticao) — ver static/js/acoes_eproc.js:usarModeloPeticao().
+// [LOCAL] removido 2026-09-16: vinha de metadata.foro_detectado, que NUNCA
+// foi um local geográfico — é a área temática da pretensão (derivar_foro()
+// em ingestao/parser.py, ex.: "Previdenciário"). Bug real relatado pelo
+// usuário (queria "Curitiba", veio "Previdenciário"). Não há hoje campo de
+// cidade/comarca confiável no painel — decisão do usuário foi remover em vez
+// de expor um dado errado.
+function eprocModelosPeticaoPrefs() {
+    return modelosTextoPrefs({
+        endpoint: '/api/config/eproc-modelos-peticao',
+        rotuloItem: 'modelo',
+        placeholderEditor: 'Texto padrão da petição — clique nos botões acima pra inserir um placeholder na posição do cursor.',
+        placeholders: [
+            { token: '[NOME]', legenda: 'Nome do assistido principal do PAJ' },
+            { token: '[CPF]', legenda: 'CPF do assistido principal do PAJ' },
+            { token: '[PROCESSO]', legenda: 'Número do processo judicial' },
+            { token: '[PAJ]', legenda: 'Número do PAJ' },
+            { token: '[DATA]', legenda: 'Data de hoje, por extenso' },
+            { token: '[OFICIO]', legenda: 'Ofício (Configurações › Geral)' },
+            { token: '[UNIDADE]', legenda: 'Unidade da DPU (Configurações › Geral)' },
+            { token: '[DEFENSOR]', legenda: 'Nome do defensor (Configurações › Geral)' },
+            { token: '[CARGO]', legenda: 'Cargo do defensor (Configurações › Geral)' },
+        ],
+    });
+}
+
+// Despachos padrão — CRUD simples, consumido pelo módulo "Ações no SISDPU"
+// via /api/acoes-sisdpu/preferencias (modelos_despacho) — ver
+// static/js/acoes_sisdpu.js:usarModeloDespacho(). [PROCESSO]: este módulo
+// não tem um "processo judicial ativo" selecionado como o
+// `processoSelecionado` de Ações no Eproc — o backend resolve pelo PAJ, só
+// quando há EXATAMENTE 1 processo judicial vinculado (0 ou 2+ = vazio de
+// propósito, nunca escolhe um arbitrariamente) — pedido do usuário
+// 2026-09-16: mantê-lo mesmo sem esse seletor, "no dia a dia raramente há
+// mais de um processo por PAJ".
+function sisdpuDespachosPadraoPrefs() {
+    return modelosTextoPrefs({
+        endpoint: '/api/config/sisdpu-modelos-despacho',
+        rotuloItem: 'despacho',
+        placeholderEditor: 'Texto padrão do despacho — clique nos botões acima pra inserir um placeholder na posição do cursor.',
+        placeholders: [
+            { token: '[NOME]', legenda: 'Nome do assistido principal do PAJ' },
+            { token: '[CPF]', legenda: 'CPF do assistido principal do PAJ' },
+            { token: '[PROCESSO]', legenda: 'Número do processo judicial (só quando há exatamente 1 vinculado ao PAJ)' },
+            { token: '[PAJ]', legenda: 'Número do PAJ' },
+            { token: '[DATA]', legenda: 'Data de hoje, por extenso' },
+            { token: '[OFICIO]', legenda: 'Ofício (Configurações › Geral)' },
+            { token: '[UNIDADE]', legenda: 'Unidade da DPU (Configurações › Geral)' },
+            { token: '[DEFENSOR]', legenda: 'Nome do defensor (Configurações › Geral)' },
+            { token: '[CARGO]', legenda: 'Cargo do defensor (Configurações › Geral)' },
+        ],
+    });
 }
 
 // Cache de documentos baixados na página "Consultar processo" (dados/eproc_docs/) —

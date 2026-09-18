@@ -1,7 +1,17 @@
 """Servico de sincronizacao da caixa SISDPU.
 
-Expoe `rodar_sync()` como async generator de linhas de log (para SSE).
-Usa asyncio.Lock global para garantir que uma unica sincronizacao roda por vez.
+MODELO (desde 2026-08-28): sincronizacoes de longa duracao (SSE) rodam como
+`asyncio.Task` DESACOPLADA de qualquer conexao HTTP — `iniciar_em_segundo_
+plano()` so' dispara o trabalho e retorna na hora; quem quiser acompanhar o
+log chama `acompanhar()` (gera as linhas ja acumuladas + as que ainda vao
+chegar). Isso permite ao usuario navegar pra outra pagina do painel enquanto
+uma sincronizacao roda — antes, o processo vivia DENTRO do generator
+consumido pela conexao SSE, entao fechar a aba/trocar de pagina cancelava a
+sincronizacao no meio (o EventSource fechado derrubava a conexao, Starlette
+cancelava o generator, e o `finally` cancelava a task). Ver `_SyncSession`.
+
+Usa asyncio.Lock global para garantir que uma unica sincronizacao roda por vez
+(todas compartilham a mesma sessao Playwright — ver ingestao/sisdpu_client.py).
 
 Cancelamento: `solicitar_cancelamento()` sinaliza o worker corrente via um
 asyncio.Event. O sincronizador consulta `deve_cancelar()` entre PAJs e aborta
@@ -12,7 +22,8 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Callable, Coroutine
+from typing import Any
 
 from config import SISDPU_PASSWORD, SISDPU_USERNAME, TIMEOUT_TOTAL
 from ingestao import sincronizador
@@ -35,6 +46,49 @@ def _paj_identificador_para_norm(paj_identificador: str) -> str:
     return ""
 
 
+class _SyncSession:
+    """Estado de UMA sincronizacao — vive independente de qualquer conexao
+    HTTP aberta. `log` acumula TODAS as linhas desde o inicio (pra quem
+    conectar atrasado, de outra pagina, ver o historico completo); cada
+    observador ativo recebe as linhas novas por uma `asyncio.Queue` propria.
+    """
+
+    _proximo_id = 0
+
+    def __init__(self, titulo: str, meta: dict | None = None) -> None:
+        _SyncSession._proximo_id += 1
+        self.id = _SyncSession._proximo_id
+        self.titulo = titulo
+        self.meta: dict = meta or {}
+        self.log: list[str] = []
+        self.done = False
+        self.ok: bool | None = None
+        self._subscribers: list[asyncio.Queue] = []
+
+    def emitir(self, linha: str) -> None:
+        self.log.append(linha)
+        for q in list(self._subscribers):
+            with contextlib.suppress(Exception):
+                q.put_nowait(linha)
+
+    def finalizar(self, ok: bool) -> None:
+        self.done = True
+        self.ok = ok
+        for q in list(self._subscribers):
+            with contextlib.suppress(Exception):
+                q.put_nowait(None)  # sentinela de fim
+
+    def inscrever(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue()
+        self._subscribers.append(q)
+        return q
+
+    def cancelar_inscricao(self, q: asyncio.Queue) -> None:
+        with contextlib.suppress(ValueError):
+            self._subscribers.remove(q)
+
+
+_sessao: _SyncSession | None = None
 _sync_lock = asyncio.Lock()
 _cancel_event: asyncio.Event | None = None
 
@@ -60,99 +114,148 @@ def esta_rodando() -> bool:
     return _sync_lock.locked()
 
 
-async def _rodar_com_cancel(
-    coro_factory,
-    emit,
-) -> AsyncGenerator[str, None]:
-    """Helper comum pro rodar_sync e rodar_sync_paj.
+def status_atual() -> dict:
+    """Snapshot do estado da sincronizacao atual (ou mais recente, se ja
+    terminou) — chamado por QUALQUER pagina ao carregar pra decidir se deve
+    mostrar o widget flutuante ja aberto e reconectar ao log via
+    `acompanhar()`. Nao depende de ter sido esta pagina/aba quem iniciou.
 
-    `coro_factory` e' uma closure que retorna a coroutine a executar (recebe
-    `emit` ja configurado). Isolamos aqui a logica de lock, cancel_event,
-    queue SSE e cleanup.
-    """
-    global _cancel_event
-    if _sync_lock.locked():
-        yield "[ERRO] ja existe uma sincronizacao em andamento — aguarde terminar"
+    Retorna {rodando, titulo, meta, log, done, ok}. `rodando=False` e
+    `titulo=None` quando nunca houve nenhuma sincronizacao nesta execucao do
+    painel."""
+    if _sessao is None:
+        return {"id": 0, "rodando": False, "titulo": None, "meta": {}, "log": [], "done": True, "ok": None}
+    return {
+        "id": _sessao.id,
+        "rodando": not _sessao.done,
+        "titulo": _sessao.titulo,
+        "meta": _sessao.meta,
+        "log": list(_sessao.log),
+        "done": _sessao.done,
+        "ok": _sessao.ok,
+    }
+
+
+async def acompanhar() -> AsyncGenerator[str, None]:
+    """Observa o log da sincronizacao ATUAL — NAO inicia nada, so' assiste.
+    Repete o log ja acumulado primeiro (quem conecta atrasado ve o historico
+    inteiro) e depois segue em tempo real ate o fim. Desconectar daqui
+    (fechar a aba, navegar pra outra pagina) NAO cancela a sincronizacao —
+    e' exatamente essa a diferenca em relacao ao modelo antigo."""
+    sessao = _sessao
+    if sessao is None:
         return
+    for linha in list(sessao.log):
+        yield linha
+    if sessao.done:
+        return
+    q = sessao.inscrever()
+    try:
+        while True:
+            item = await q.get()
+            if item is None:
+                break
+            yield item
+    finally:
+        sessao.cancelar_inscricao(q)
 
+
+async def iniciar_em_segundo_plano(
+    titulo: str,
+    coro_factory: Callable[[Callable[[str], None]], Coroutine[Any, Any, Any]],
+    meta: dict | None = None,
+) -> None:
+    """Dispara uma sincronizacao como task independente e retorna na hora
+    (nao espera terminar). `coro_factory` e' chamada com a funcao `emit` de
+    log e deve devolver a coroutine a executar.
+
+    Levanta RuntimeError se ja houver uma sincronizacao em andamento, ou se
+    faltar credenciais SISDPU — o chamador (rota) deve capturar e devolver
+    isso como erro HTTP imediato (nada foi iniciado)."""
+    global _sessao, _cancel_event
+
+    if _sync_lock.locked():
+        raise RuntimeError("já existe uma sincronização em andamento — aguarde terminar")
     if not SISDPU_USERNAME or not SISDPU_PASSWORD:
-        yield (
-            "[ERRO] credenciais SISDPU ausentes — preencha SISDPU_USERNAME e "
+        raise RuntimeError(
+            "credenciais SISDPU ausentes — preencha SISDPU_USERNAME e "
             "SISDPU_PASSWORD no arquivo .env e reinicie o painel"
         )
-        return
 
-    async with _sync_lock:
-        _cancel_event = asyncio.Event()
-        queue: asyncio.Queue = asyncio.Queue()
+    await _sync_lock.acquire()
+    sessao = _SyncSession(titulo, meta)
+    _sessao = sessao
+    _cancel_event = asyncio.Event()
 
-        def _emit(linha: str) -> None:
-            with contextlib.suppress(Exception):
-                queue.put_nowait(linha)
+    def _emit(linha: str) -> None:
+        with contextlib.suppress(Exception):
+            sessao.emitir(linha)
 
-        async def _worker() -> None:
-            try:
-                await asyncio.wait_for(coro_factory(_emit), timeout=TIMEOUT_TOTAL)
-            except TimeoutError:
-                _emit(f"[ERRO] timeout de {TIMEOUT_TOTAL}s atingido")
-            except asyncio.CancelledError:
-                _emit("[CANCELADO] sincronizacao interrompida pelo usuario")
-                raise
-            except CredenciaisInvalidas as e:
-                _emit(f"[ERRO] credenciais SISDPU rejeitadas: {e}")
-                _emit("[DICA] ajuste SISDPU_USERNAME/SISDPU_PASSWORD no .env e reinicie o painel")
-            except Exception as e:
-                _emit(f"[ERRO FATAL] {type(e).__name__}: {e}")
-            finally:
-                queue.put_nowait(None)
-
-        task = asyncio.create_task(_worker())
-
+    async def _worker() -> None:
+        global _cancel_event
+        ok = False
         try:
-            while True:
-                linha = await queue.get()
-                if linha is None:
-                    break
-                yield linha
+            await asyncio.wait_for(coro_factory(_emit), timeout=TIMEOUT_TOTAL)
+            ok = True
+        except TimeoutError:
+            _emit(f"[ERRO] timeout de {TIMEOUT_TOTAL}s atingido")
+        except asyncio.CancelledError:
+            _emit("[CANCELADO] sincronização interrompida pelo usuário")
+        except CredenciaisInvalidas as e:
+            _emit(f"[ERRO] credenciais SISDPU rejeitadas: {e}")
+            _emit("[DICA] ajuste SISDPU_USERNAME/SISDPU_PASSWORD no .env e reinicie o painel")
+        except Exception as e:
+            _emit(f"[ERRO FATAL] {type(e).__name__}: {e}")
         finally:
-            if not task.done():
-                task.cancel()
-                with contextlib.suppress(Exception):
-                    await task
+            sessao.finalizar(ok)
             _cancel_event = None
+            _sync_lock.release()
             # Sync mexeu nos metadata.json — invalida o cache de listagem
             # pra que a proxima chamada do dashboard veja o estado atual.
             invalidar_cache_listagem()
+
+    asyncio.create_task(_worker())
 
 
 async def rodar_sync(
     baixar_anexos: bool = True,
     rodar_ocr: bool = False,
-) -> AsyncGenerator[str, None]:
-    """Gera linhas de log da sincronizacao em tempo real.
+    extrair_documentos: bool | None = None,
+) -> None:
+    """Inicia a sincronização da caixa inteira em segundo plano.
 
     `baixar_anexos=False` pula o download/OCR dos anexos (sync rapido).
+    `extrair_documentos`: None (padrao) segue `baixar_anexos`; passar True
+    com `baixar_anexos=False` da o nivel LEVE (investiga a relacao de
+    documentos por seq sem baixar) — ver `sincronizador.rodar()`.
     `rodar_ocr=False` (padrao) baixa os anexos mas pula o OCR simples —
     use "Melhorar OCR" na aba Anexos SISDPU pra texto de qualidade.
     """
-    async for linha in _rodar_com_cancel(
+    await iniciar_em_segundo_plano(
+        "Sincronizar caixa SISDPU",
         lambda emit: sincronizador.rodar(
             emit,
             deve_cancelar=deve_cancelar,
             baixar_anexos=baixar_anexos,
             rodar_ocr=rodar_ocr,
+            extrair_documentos=extrair_documentos,
         ),
-        None,
-    ):
-        yield linha
+        meta={"tipo": "caixa"},
+    )
 
 
 async def rodar_sync_paj(
     paj_identificador: str,
     baixar_anexos: bool = True,
     rodar_ocr: bool = False,
-) -> AsyncGenerator[str, None]:
-    """Sincroniza um unico PAJ via SSE (teste/refresh pontual).
+    extrair_documentos: bool | None = None,
+) -> None:
+    """Inicia a sincronização de UM PAJ em segundo plano (teste/refresh pontual).
+
+    `extrair_documentos`: None (padrao) segue `baixar_anexos`; passar True com
+    `baixar_anexos=False` da o nivel LEVE (investiga a relacao de documentos
+    por seq sem baixar) — mesmas 3 hipoteses do botao "Sincronizar caixa" do
+    dashboard, ver `ingestao.sincronizador.rodar()`.
 
     Reutiliza o mesmo lock global — evita que uma sync da caixa inteira colida
     com uma sync pontual, e vice-versa.
@@ -171,120 +274,128 @@ async def rodar_sync_paj(
     """
     paj_norm = _paj_identificador_para_norm(paj_identificador)
     na_watchlist = bool(paj_norm) and watchlist_service.is_watched(paj_norm)
+    titulo = f"Sincronizar {paj_norm or paj_identificador}"
+    meta = {"tipo": "paj", "paj_norm": paj_norm}
 
     if na_watchlist:
-        async for linha in _rodar_com_cancel(
+        await iniciar_em_segundo_plano(
+            titulo,
             lambda emit: sincronizador.rodar_paj_via_busca_global(
                 paj_identificador,
                 emit,
                 deve_cancelar=deve_cancelar,
                 baixar_anexos=baixar_anexos,
                 rodar_ocr=rodar_ocr,
+                extrair_documentos=baixar_anexos if extrair_documentos is None else extrair_documentos,
             ),
-            None,
-        ):
-            yield linha
+            meta=meta,
+        )
         return
 
-    async for linha in _rodar_com_cancel(
+    await iniciar_em_segundo_plano(
+        titulo,
         lambda emit: sincronizador.rodar_paj_unico(
             paj_identificador,
             emit,
             deve_cancelar=deve_cancelar,
             baixar_anexos=baixar_anexos,
             rodar_ocr=rodar_ocr,
+            extrair_documentos=baixar_anexos if extrair_documentos is None else extrair_documentos,
         ),
-        None,
-    ):
-        yield linha
+        meta=meta,
+    )
 
 
-async def rodar_sync_movimentacoes(paj_identificador: str) -> AsyncGenerator[str, None]:
-    """Sincroniza SÓ as movimentações de UM PAJ via SSE, de forma INCREMENTAL —
-    sem baixar anexos (PDFs) e sem metadata/narrativa alem do que ja vem junto
-    do detalhamento. Usado pelo ícone de atualizar da tabela de movimentações
-    (one-click, disponível em qualquer lugar do painel onde a tabela aparece).
-
-    "Incremental" aqui significa: a tabela de movimentações em si e' sempre
-    relida por inteiro (o SISDPU nao expoe uma consulta de delta), mas o
-    trabalho caro — abrir o popup de anexo de cada movimentação para listar
-    seus documentos — só roda para as seqs que AINDA NÃO tinham `documentos`
-    no metadata anterior (`extrair_documentos=True` + `sisdpu_client.
-    extrair_documentos_por_seq` já filtra as seqs conhecidas). Ou seja, o
-    custo do clique fica proporcional só ao que mudou desde a última
-    sincronização, não ao tamanho total da tabela.
+async def rodar_sync_movimentacoes(paj_identificador: str) -> None:
+    """Inicia, em segundo plano, a sincronização SÓ das movimentações de UM
+    PAJ — sincronização LEVÍSSIMA (ver services/sync_service.py, glossário no
+    topo do módulo, se/quando adicionado): extrai todos os dados do PAJ
+    (tabela de movimentações por inteiro — o SISDPU nao expoe consulta de
+    delta), mas NÃO abre o popup de anexo de cada movimentação
+    (`extrair_documentos=False`) e não baixa nada (`baixar_anexos=False`).
+    Usado pelo ícone de atualizar da tabela de movimentações (one-click,
+    disponível em qualquer lugar do painel onde a tabela aparece) — precisa
+    ser rápido, só pra conferir visualmente se houve alteração recente no
+    PAJ; não é o lugar pra investigar documentos por sequencial (isso é
+    "sincronização leve" — ex.: rodar_sync_prazos_abertos/rodar_paj_via_
+    busca_global chamados de outros fluxos — ou "completa", que também
+    baixa os arquivos).
 
     Reusa o mesmo despacho de `rodar_sync_paj` (caixa -> busca global via
     watchlist ou fallback automatico), so' fixando `baixar_anexos=False,
-    esperas_curtas=True`.
+    extrair_documentos=False, esperas_curtas=True`.
     """
     paj_norm = _paj_identificador_para_norm(paj_identificador)
     na_watchlist = bool(paj_norm) and watchlist_service.is_watched(paj_norm)
+    titulo = f"Atualizar movimentações — {paj_norm or paj_identificador}"
+    meta = {"tipo": "movimentacoes", "paj_norm": paj_norm}
 
     if na_watchlist:
-        async for linha in _rodar_com_cancel(
+        await iniciar_em_segundo_plano(
+            titulo,
             lambda emit: sincronizador.rodar_paj_via_busca_global(
                 paj_identificador,
                 emit,
                 deve_cancelar=deve_cancelar,
                 baixar_anexos=False,
-                extrair_documentos=True,
+                extrair_documentos=False,
                 esperas_curtas=True,
             ),
-            None,
-        ):
-            yield linha
+            meta=meta,
+        )
         return
 
-    async for linha in _rodar_com_cancel(
+    await iniciar_em_segundo_plano(
+        titulo,
         lambda emit: sincronizador.rodar_paj_unico(
             paj_identificador,
             emit,
             deve_cancelar=deve_cancelar,
             baixar_anexos=False,
-            extrair_documentos=True,
+            extrair_documentos=False,
             esperas_curtas=True,
         ),
-        None,
-    ):
-        yield linha
+        meta=meta,
+    )
 
 
 async def rodar_sync_watchlist(
     baixar_anexos: bool = True,
     rodar_ocr: bool = False,
-) -> AsyncGenerator[str, None]:
-    """Sincroniza TODOS os PAJs ativos da watchlist via SSE.
+) -> None:
+    """Inicia, em segundo plano, a sincronização de TODOS os PAJs ativos da
+    watchlist.
 
     Cada PAJ entra pela "Pesquisa Rapida" do SIS-DPU — funciona mesmo para
     os ja concluidos (fora da caixa). Reusa o mesmo lock global das demais
     syncs, entao nao colide com sync da caixa ou de PAJ unico.
     """
-    async for linha in _rodar_com_cancel(
+    await iniciar_em_segundo_plano(
+        "Sincronizar watchlist",
         lambda emit: sincronizador.rodar_watchlist(
             emit,
             deve_cancelar=deve_cancelar,
             baixar_anexos=baixar_anexos,
             rodar_ocr=rodar_ocr,
         ),
-        None,
-    ):
-        yield linha
+        meta={"tipo": "watchlist"},
+    )
 
 
-async def rodar_sync_prazos_abertos() -> AsyncGenerator[str, None]:
-    """Sincronização LEVE (sem anexos) de todos os PAJs com prazo em aberto
-    nas intimações do e-proc (aba Prazos) — postura proativa disparada em
-    sequência pelo front-end logo após "Sincronizar caixa" terminar.
+async def rodar_sync_prazos_abertos() -> None:
+    """Inicia, em segundo plano, a sincronização LEVE (sem anexos) de todos
+    os PAJs com prazo em aberto nas intimações do e-proc (aba Prazos) —
+    postura proativa disparada em sequência pelo front-end logo após
+    "Sincronizar caixa" terminar.
 
     Fonte: última sincronização de intimações já salva (não força releitura
     do e-proc). Reusa o mesmo lock global — não colide com outra sync.
     """
-    async for linha in _rodar_com_cancel(
+    await iniciar_em_segundo_plano(
+        "Sincronizar prazos em aberto",
         lambda emit: sincronizador.rodar_prazos_abertos(emit, deve_cancelar=deve_cancelar),
-        None,
-    ):
-        yield linha
+        meta={"tipo": "prazos_abertos"},
+    )
 
 
 async def atualizar_caixa() -> dict:
@@ -449,13 +560,15 @@ async def rodar_sync_anexos_desde_data(
     paj_identificador: str,
     data_inicio,
     rodar_ocr: bool = False,
-) -> AsyncGenerator[str, None]:
-    """Baixa anexos de um PAJ a partir de uma data — SSE.
+) -> None:
+    """Inicia, em segundo plano, o download de anexos de um PAJ a partir de
+    uma data. `data_inicio` deve ser `datetime.date`.
 
     Reusa o lock global pra nao colidir com outras sincronizacoes em curso.
-    `data_inicio` deve ser `datetime.date`.
     """
-    async for linha in _rodar_com_cancel(
+    paj_norm = _paj_identificador_para_norm(paj_identificador)
+    await iniciar_em_segundo_plano(
+        f"Completar anexos — {paj_norm or paj_identificador}",
         lambda emit: sincronizador.rodar_anexos_desde_data(
             paj_identificador,
             data_inicio,
@@ -463,28 +576,63 @@ async def rodar_sync_anexos_desde_data(
             deve_cancelar=deve_cancelar,
             rodar_ocr=rodar_ocr,
         ),
-        None,
-    ):
-        yield linha
+        meta={"tipo": "anexos_desde_data", "paj_norm": paj_norm},
+    )
 
 
 async def rodar_sync_baixar_documentos(
     paj_norm: str,
     ids: list[str],
-) -> AsyncGenerator[str, None]:
-    """Baixa documentos ESPECIFICOS (por ID) de um PAJ ja sincronizado — SSE.
+) -> None:
+    """Inicia, em segundo plano, o download de documentos ESPECIFICOS (por
+    ID) de um PAJ ja sincronizado.
 
     Bem mais leve que as demais syncs: le as URLs direto do metadata.json
     existente, sem reabrir a caixa nem reextrair movimentacoes/documentos.
     Reusa o lock global pra nao colidir com outras sincronizacoes em curso.
     """
-    async for linha in _rodar_com_cancel(
+    await iniciar_em_segundo_plano(
+        f"Baixar documento(s) — {paj_norm}",
         lambda emit: sincronizador.rodar_baixar_documentos(
             paj_norm,
             ids,
             emit,
             deve_cancelar=deve_cancelar,
         ),
-        None,
-    ):
-        yield linha
+        meta={"tipo": "baixar_documentos", "paj_norm": paj_norm},
+    )
+
+
+async def rodar_sync_documentos_seq(paj_identificador: str, seq: str) -> None:
+    """Inicia, em segundo plano, a extração da relação de documentos de UM
+    seq específico de um PAJ — sem baixar nada, sem tocar nas demais
+    movimentações. Ver `sincronizador.rodar_documentos_seq` (minimenu do
+    clipe de anexo na coluna Documentos)."""
+    paj_norm = _paj_identificador_para_norm(paj_identificador)
+    await iniciar_em_segundo_plano(
+        f"Obter documentos — {paj_norm or paj_identificador} (seq {seq})",
+        lambda emit: sincronizador.rodar_documentos_seq(
+            paj_identificador,
+            seq,
+            emit,
+            deve_cancelar=deve_cancelar,
+        ),
+        meta={"tipo": "documentos_seq", "paj_norm": paj_norm, "seq": seq},
+    )
+
+
+async def rodar_sync_baixar_documentos_seq(paj_norm: str, seq: str) -> None:
+    """Inicia, em segundo plano, o download dos documentos de UM seq
+    específico — obtém a relação primeiro se ainda não for conhecida, e já
+    encadeia para o download. Ver `sincronizador.rodar_baixar_documentos_seq`
+    (minimenu do clipe de anexo na coluna Documentos)."""
+    await iniciar_em_segundo_plano(
+        f"Baixar documentos — {paj_norm} (seq {seq})",
+        lambda emit: sincronizador.rodar_baixar_documentos_seq(
+            paj_norm,
+            seq,
+            emit,
+            deve_cancelar=deve_cancelar,
+        ),
+        meta={"tipo": "baixar_documentos_seq", "paj_norm": paj_norm, "seq": seq},
+    )

@@ -19,7 +19,11 @@
   #fc-agenda .fc-button-active, #fc-agenda .fc-button:disabled { background: var(--accent) !important; border-color: var(--accent) !important; color: var(--accent-fg) !important; opacity: 1; }
   #fc-agenda .fc-daygrid-day, #fc-agenda .fc-timegrid-slot { border-color: var(--stroke) !important; }
   #fc-agenda th, #fc-agenda .fc-col-header-cell { border-color: var(--stroke) !important; color: var(--text-secondary); }
-  #fc-agenda .fc-day-today { background: var(--bg-tint) !important; }
+  /* Dia de hoje em tom avermelhado — fácil de achar na grade mesmo entre os
+     eventos coloridos. Usa o mesmo vermelho claro de "aguardando abertura"
+     (base.html) por já existir em claro/escuro; o contorno reforça em vez de
+     alterar o tamanho da célula (box-shadow inset não move o grid). */
+  #fc-agenda .fc-day-today { background: var(--cor-intim-aguardando) !important; box-shadow: inset 0 0 0 1px var(--cor-intim-urgente); }
   #fc-agenda .fc-daygrid-day-number, #fc-agenda .fc-list-day-text, #fc-agenda .fc-list-day-side-text { color: var(--text); }
   #fc-agenda a { color: inherit; }
   #fc-agenda .fc-event { border: none; font-size: 11px; }
@@ -54,7 +58,7 @@
     </div>
     <div class="flex gap-2 flex-wrap justify-end">
       <button class="btn btn-sm btn-primary btn-outline" @click="abrirNovoCompromisso()">+ Compromisso</button>
-      <button class="btn btn-sm btn-primary btn-outline" @click="abrirNovoAfastamento()">+ Afastamento</button>
+      <button class="btn btn-sm btn-primary btn-outline" @click="abrirNovoAfastamento()">+ Cadastrar Evento</button>
       <button class="btn btn-sm btn-primary" @click="sincronizarPrazos()" :disabled="sincronizando">
         <span x-show="sincronizando" class="loading loading-spinner loading-xs"></span>
         Sincronizar prazos (e-proc)
@@ -86,9 +90,10 @@
       <span :class="filtroTipo === 'manual' ? 'font-semibold' : 'text-base-content/60'">Compromisso</span>
     </span>
     <span class="filtro-chip" @click="setFiltro('afastamento')">
-      <span class="legenda-dot" style="background:repeating-linear-gradient(45deg, var(--text-tertiary) 0 2px, transparent 2px 4px); border:1px solid var(--stroke-strong);"></span>
+      <span class="legenda-dot" style="background:var(--text-tertiary);"></span>
       <span :class="filtroTipo === 'afastamento' ? 'font-semibold' : 'text-base-content/60'">Afastamento</span>
     </span>
+    <span class="text-base-content/50">— prazos marcados com <span class="font-semibold">*</span> ainda não foram abertos oficialmente no e-proc (data estimada)</span>
   </div>
 
   <!-- Calendário -->
@@ -121,7 +126,7 @@
             <template x-for="e in eventosListaFiltrados()" :key="e.id">
               <tr>
                 <td class="text-xs tnum whitespace-nowrap" x-text="formatarData(e)"></td>
-                <td><span class="badge badge-sm" :class="badgeTipo(e.tipo)" x-text="rotuloTipo(e.tipo)"></span></td>
+                <td><span class="badge badge-sm" :class="badgeTipo(e.tipo)" :style="estiloBadgeTipo(e)" x-text="rotuloTipo(e)"></span></td>
                 <td class="text-sm max-w-md">
                   <div class="truncate" :title="e.descricao || e.titulo" x-text="e.titulo"></div>
                 </td>
@@ -208,6 +213,16 @@
           </select>
         </label>
         <label class="form-control">
+          <span class="label-text text-xs mb-1">Cor (opcional — usa a cor padrão do tipo se nenhuma for escolhida)</span>
+          <div class="grid gap-1.5" style="grid-template-columns:repeat(8,1fr);max-width:220px;">
+            <template x-for="c in paletaCores" :key="c">
+              <button type="button" class="rounded-full"
+                      :style="'width:22px;height:22px;border:2px solid ' + (formCompromisso.cor === c ? 'var(--accent)' : 'transparent') + ';background:' + c + ';'"
+                      :title="c" @click="formCompromisso.cor = (formCompromisso.cor === c ? '' : c)"></button>
+            </template>
+          </div>
+        </label>
+        <label class="form-control">
           <span class="label-text text-xs mb-1">Descrição (opcional)</span>
           <textarea class="textarea textarea-bordered text-sm" rows="3" x-model="formCompromisso.descricao"></textarea>
         </label>
@@ -230,18 +245,16 @@
   <dialog id="modal-afastamento" class="modal">
     <div class="modal-box max-w-lg">
       <div class="flex items-center justify-between mb-4">
-        <h3 class="font-bold text-lg" x-text="edicaoAfastamentoId ? 'Editar afastamento' : 'Novo afastamento'"></h3>
+        <h3 class="font-bold text-lg" x-text="edicaoAfastamentoId ? 'Editar evento' : 'Cadastrar evento'"></h3>
         <form method="dialog"><button class="btn btn-sm btn-ghost">X</button></form>
       </div>
       <form @submit.prevent="salvarAfastamento()" class="flex flex-col gap-3">
         <label class="form-control">
           <span class="label-text text-xs mb-1">Tipo <span class="text-error">*</span></span>
           <select class="select select-bordered select-sm" x-model="formAfastamento.tipo_afastamento" required>
-            <option value="ferias">Férias</option>
-            <option value="recesso">Recesso forense</option>
-            <option value="suspensao_distribuicao">Suspensão de distribuição</option>
-            <option value="licenca">Licença</option>
-            <option value="outro">Outro</option>
+            <template x-for="t in tiposAfastamento" :key="t.value">
+              <option :value="t.value" x-text="t.label"></option>
+            </template>
           </select>
         </label>
         <div class="flex gap-3">
@@ -257,6 +270,16 @@
         <label class="form-control">
           <span class="label-text text-xs mb-1">Título (opcional — usa o tipo se vazio)</span>
           <input type="text" class="input input-bordered input-sm" x-model="formAfastamento.titulo" maxlength="200">
+        </label>
+        <label class="form-control">
+          <span class="label-text text-xs mb-1">Cor (opcional — usa o padrão cinza raiado se nenhuma for escolhida)</span>
+          <div class="grid gap-1.5" style="grid-template-columns:repeat(8,1fr);max-width:220px;">
+            <template x-for="c in paletaCores" :key="c">
+              <button type="button" class="rounded-full"
+                      :style="'width:22px;height:22px;border:2px solid ' + (formAfastamento.cor === c ? 'var(--accent)' : 'transparent') + ';background:' + c + ';'"
+                      :title="c" @click="formAfastamento.cor = (formAfastamento.cor === c ? '' : c)"></button>
+            </template>
+          </div>
         </label>
         <label class="form-control">
           <span class="label-text text-xs mb-1">Descrição (opcional)</span>
@@ -288,20 +311,46 @@ function agendaApp() {
     sincronizando: false,
     syncErro: '',
     calendar: null,
+    paletaCores: [],
+    coresFortes: [],
+    tiposAfastamento: [],
 
-    formCompromisso: { titulo: '', data_inicio: '', hora_inicio: '', paj_display: '', processo: '', status: 'agendado', descricao: '' },
+    formCompromisso: { titulo: '', data_inicio: '', hora_inicio: '', paj_display: '', processo: '', status: 'agendado', descricao: '', cor: '' },
     edicaoCompromissoId: null,
     salvandoCompromisso: false,
     erroCompromisso: '',
 
-    formAfastamento: { tipo_afastamento: 'ferias', data_inicio: '', data_fim: '', titulo: '', descricao: '' },
+    formAfastamento: { tipo_afastamento: 'ferias', data_inicio: '', data_fim: '', titulo: '', descricao: '', cor: '' },
     edicaoAfastamentoId: null,
     salvandoAfastamento: false,
     erroAfastamento: '',
 
     async init() {
       this.initCalendar();
+      await this.carregarCores();
+      await this.carregarTiposAfastamento();
       await this.carregar();
+    },
+
+    async carregarTiposAfastamento() {
+      try {
+        const r = await fetch('/api/agenda/tipos-afastamento');
+        const data = await r.json();
+        this.tiposAfastamento = data.tipos || [];
+      } catch (e) {
+        this.tiposAfastamento = [];
+      }
+    },
+
+    async carregarCores() {
+      try {
+        const r = await fetch('/api/agenda/cores');
+        const data = await r.json();
+        this.paletaCores = data.cores || [];
+        this.coresFortes = this.paletaCores.slice(8).map(c => c.toUpperCase());
+      } catch (e) {
+        this.paletaCores = [];
+      }
     },
 
     async carregar() {
@@ -354,13 +403,14 @@ function agendaApp() {
           const raw = info.event.extendedProps.raw;
           if (!raw) return;
           if (raw.tipo === 'manual') { this.abrirEdicaoCompromisso(raw); return; }
+          if (raw.tipo === 'afastamento') { this.abrirEdicaoAfastamento(raw); return; }
           if ((raw.tipo === 'prazo' || raw.tipo === 'audiencia') && raw.paj_norm) {
             this.abrirPajPainel(raw.paj_norm);
           }
         },
         eventMouseEnter: (info) => {
           const raw = info.event.extendedProps.raw;
-          if (raw && (raw.tipo === 'manual' || ((raw.tipo === 'prazo' || raw.tipo === 'audiencia') && raw.paj_norm))) {
+          if (raw && (raw.tipo === 'manual' || raw.tipo === 'afastamento' || ((raw.tipo === 'prazo' || raw.tipo === 'audiencia') && raw.paj_norm))) {
             info.el.style.cursor = 'pointer';
           }
         },
@@ -387,7 +437,6 @@ function agendaApp() {
         const cores = this.corEvento(e);
         return {
           id: e.id, title: e.titulo, start, end, allDay,
-          display: e.tipo === 'afastamento' ? 'background' : 'auto',
           backgroundColor: cores.bg, borderColor: cores.bg, textColor: cores.texto,
           extendedProps: { raw: e },
         };
@@ -399,6 +448,10 @@ function agendaApp() {
       if (e.tipo === 'prazo') return e.urgente
         ? { bg: 'var(--cor-intim-urgente)', texto: 'var(--cor-intim-urgente-texto)' }
         : { bg: 'var(--cor-intim-aberta)', texto: 'var(--cor-intim-texto)' };
+      // Compromisso/afastamento manuais: cor escolhida pelo defensor (ver
+      // paletaCores/seletor nos modais) prevalece; sem escolha, cai no padrão
+      // de antes (verde pra compromisso, cinza pra afastamento).
+      if (e.cor) return { bg: e.cor, texto: this.corTexto(e.cor) };
       if (e.tipo === 'manual') return { bg: '#1f9d55', texto: '#ffffff' };
       return { bg: 'var(--text-tertiary)', texto: 'var(--text)' };
     },
@@ -406,8 +459,23 @@ function agendaApp() {
     badgeTipo(tipo) {
       return { audiencia: 'badge-info', prazo: 'badge-error', manual: 'badge-success', afastamento: 'badge-ghost' }[tipo] || 'badge-ghost';
     },
-    rotuloTipo(tipo) {
-      return { audiencia: 'Audiência', prazo: 'Prazo judicial', manual: 'Compromisso', afastamento: 'Afastamento' }[tipo] || tipo;
+    corTexto(hex) {
+      return this.coresFortes.includes((hex || '').toUpperCase()) ? '#ffffff' : '#1f2937';
+    },
+    estiloBadgeTipo(e) {
+      if (!e.cor) return '';
+      return 'background:' + e.cor + ';color:' + this.corTexto(e.cor) + ';border-color:transparent;';
+    },
+    // Afastamento mostra o tipo ESPECÍFICO escolhido no cadastro (Férias,
+    // Feriado, Substituição...), não o rótulo genérico da categoria — é o que
+    // aparece na coluna "Tipo" da tabela (o filtro/legenda em cima do
+    // calendário continua agrupando por categoria, isso não muda).
+    rotuloTipo(e) {
+      if (e.tipo === 'afastamento') {
+        const t = this.tiposAfastamento.find(t => t.value === e.tipo_afastamento);
+        return t ? t.label : 'Afastamento';
+      }
+      return { audiencia: 'Audiência', prazo: 'Prazo judicial', manual: 'Compromisso' }[e.tipo] || e.tipo;
     },
     formatarData(e) {
       const d = (e.data_inicio || '').split('-');
@@ -469,7 +537,7 @@ function agendaApp() {
     abrirNovoCompromisso() {
       this.edicaoCompromissoId = null;
       this.erroCompromisso = '';
-      this.formCompromisso = { titulo: '', data_inicio: '', hora_inicio: '', paj_display: '', processo: '', status: 'agendado', descricao: '' };
+      this.formCompromisso = { titulo: '', data_inicio: '', hora_inicio: '', paj_display: '', processo: '', status: 'agendado', descricao: '', cor: '' };
       document.getElementById('modal-compromisso').showModal();
     },
     abrirEdicaoCompromisso(e) {
@@ -478,7 +546,7 @@ function agendaApp() {
       this.formCompromisso = {
         titulo: e.titulo || '', data_inicio: e.data_inicio || '', hora_inicio: e.hora_inicio || '',
         paj_display: e.paj_norm ? formatarPajNorm(e.paj_norm) : '', processo: e.processo || '',
-        status: e.status || 'agendado', descricao: e.descricao || '',
+        status: e.status || 'agendado', descricao: e.descricao || '', cor: e.cor || '',
       };
       document.getElementById('modal-compromisso').showModal();
     },
@@ -501,6 +569,7 @@ function agendaApp() {
         paj_norm: pajNorm,
         processo: (this.formCompromisso.processo || '').trim(),
         status: this.formCompromisso.status,
+        cor: this.formCompromisso.cor || '',
       };
       try {
         const url = this.edicaoCompromissoId ? '/api/agenda/compromissos/' + this.edicaoCompromissoId : '/api/agenda/compromissos';
@@ -526,7 +595,7 @@ function agendaApp() {
     abrirNovoAfastamento() {
       this.edicaoAfastamentoId = null;
       this.erroAfastamento = '';
-      this.formAfastamento = { tipo_afastamento: 'ferias', data_inicio: '', data_fim: '', titulo: '', descricao: '' };
+      this.formAfastamento = { tipo_afastamento: 'ferias', data_inicio: '', data_fim: '', titulo: '', descricao: '', cor: '' };
       document.getElementById('modal-afastamento').showModal();
     },
     abrirEdicaoAfastamento(e) {
@@ -534,7 +603,7 @@ function agendaApp() {
       this.erroAfastamento = '';
       this.formAfastamento = {
         tipo_afastamento: e.tipo_afastamento || 'ferias', data_inicio: e.data_inicio || '', data_fim: e.data_fim || '',
-        titulo: e.titulo || '', descricao: e.descricao || '',
+        titulo: e.titulo || '', descricao: e.descricao || '', cor: e.cor || '',
       };
       document.getElementById('modal-afastamento').showModal();
     },
@@ -551,6 +620,7 @@ function agendaApp() {
         data_fim: this.formAfastamento.data_fim,
         titulo: (this.formAfastamento.titulo || '').trim(),
         descricao: (this.formAfastamento.descricao || '').trim(),
+        cor: this.formAfastamento.cor || '',
       };
       try {
         const url = this.edicaoAfastamentoId ? '/api/agenda/afastamentos/' + this.edicaoAfastamentoId : '/api/agenda/afastamentos';

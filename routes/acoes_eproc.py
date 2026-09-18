@@ -32,7 +32,27 @@ async def api_preferencias():
         **config_painel_service.get_eproc_tipos_doc_prefs(),
         **config_painel_service.get_eproc_sigilo_prefs(),
         **config_painel_service.get_eproc_procuradores_prefs(),
+        "modelos_peticao": config_painel_service.get_eproc_modelos_peticao(),
     })
+
+
+@router.get("/api/acoes-eproc/qualificacao/{paj_norm}", response_class=JSONResponse)
+async def api_qualificacao_principal(paj_norm: str):
+    """Nome + CPF do assistido PRINCIPAL do PAJ + o número do processo
+    judicial (SE houver exatamente um vinculado) — resolve os placeholders
+    [NOME]/[CPF]/[PROCESSO] de um "Modelo de petição" (Configurações ›
+    e-proc) ou "Despacho padrão" (Configurações › SISDPU) na hora de usá-lo
+    ([DATA] resolve no próprio front, não depende do PAJ). paj_norm vazio
+    (avulso, sem PAJ) devolve tudo vazio — o front mantém o placeholder
+    literal nesse caso, sem quebrar. [PROCESSO] também some vazio (de
+    propósito) quando o PAJ tem 0 ou 2+ processos vinculados — nunca escolhe
+    um arbitrariamente entre vários.
+
+    NÃO tem mais [LOCAL] (removido 2026-09-16) — ver docstring de
+    peticao_ia_service.obter_qualificacao_principal."""
+    if not paj_norm:
+        return JSONResponse({"nome": "", "cpf": "", "processo": ""})
+    return JSONResponse(peticao_ia_service.obter_qualificacao_principal(paj_norm))
 
 
 @router.post("/api/acoes-eproc/importar-procuradores", response_class=JSONResponse)
@@ -85,6 +105,13 @@ async def api_comprimir_anexo(request: Request):
 async def api_listar_rascunhos():
     """Todos os rascunhos salvos — alimenta a página "Petições pendentes"."""
     return JSONResponse({"ok": True, "itens": acoes_eproc_service.listar_rascunhos()})
+
+
+@router.get("/api/acoes-eproc/rascunhos/count", response_class=JSONResponse)
+async def api_rascunhos_count():
+    """Contagem pro badge do submenu "Petições pendentes" — mesmo total
+    exibido no cabeçalho da própria página, sem tocar em nada."""
+    return {"count": len(acoes_eproc_service.listar_rascunhos())}
 
 
 @router.get("/api/acoes-eproc/rascunho/{paj_norm}", response_class=JSONResponse)
@@ -215,8 +242,8 @@ async def api_preparar_anexos_sisdpu(paj_norm: str, request: Request):
     "Petições" (ver `acoes_eproc_service.preparar_documentos_para_movimentacao_sisdpu`)."""
     body = await request.json()
     documentos = body.get("documentos") or []
-    anexos = acoes_eproc_service.preparar_documentos_para_movimentacao_sisdpu(paj_norm, documentos)
-    return JSONResponse({"ok": True, "anexos": anexos})
+    res = acoes_eproc_service.preparar_documentos_para_movimentacao_sisdpu(paj_norm, documentos)
+    return JSONResponse({"ok": True, "anexos": res["anexos"], "falhas": res["falhas"]})
 
 
 @router.post("/api/acoes-eproc/gerenciar", response_class=JSONResponse)

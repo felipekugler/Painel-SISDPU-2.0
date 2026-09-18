@@ -1,0 +1,57 @@
+{#
+  Itens do minimenu "Consultar processo" (clique no número do processo judicial,
+  NÃO o número do PAJ — ver _macro_minimenu_paj.html pra esse) — usado em ~6
+  páginas (dashboard, intimações, retornos, prazos, processo_judicial,
+  eproc_consultar). Mesmo espírito da unificação do minimenu de PAJ
+  (2026-09-11): centraliza só os <li> (o <div class="dropdown">/<ul> em volta
+  continua em cada template, porque o trigger varia — a maioria usa um
+  dropdown POR LINHA dentro de um x-for, prazos.html e processo_judicial.html
+  usam um único menu teleportado compartilhado).
+
+  Diferente do macro de PAJ, aqui os nomes de FUNÇÃO já divergiam entre páginas
+  antes desta unificação (prazos.html tinha verNoPainel()/abrirProcesso()
+  locais, com comportamento levemente diferente das globais
+  consultarProcessoMcp()/abrirProcessoNavegador() usadas nas demais — mesma
+  aba vs. nova aba, por exemplo) — por isso o macro recebe a EXPRESSÃO DE
+  CLIQUE inteira, não só o argumento, pra não forçar mudança de comportamento
+  em nenhuma página ao unificar.
+
+  Uso: {% from "partials/_macro_minimenu_processo.html" import itens_minimenu_processo %}
+       depois, dentro do <ul class="dropdown-content menu ..."> de cada página:
+       {{ itens_minimenu_processo("consultarProcessoMcp(paj.processo_judicial)",
+                                   "abrirProcessoNavegador(paj.processo_judicial, $event.target)",
+                                   "movimentarNoEproc(paj.processo_judicial, paj.paj_norm, paj.paj)",
+                                   "movimentarConjunto(paj.processo_judicial, paj.paj_norm)",
+                                   "abrirGerenciarProcesso(paj.processo_judicial)") }}
+
+  expr_consultar  — expressão JS (Alpine) completa pro clique de "Consultar
+                    processo (MCP)".
+  expr_abrir      — expressão JS completa pro clique de "Abrir no navegador".
+  expr_movimentar — expressão JS completa pro clique de "Movimentar no eproc"
+                    (normalmente movimentarNoEproc(<número>[, pajNorm, pajLabel])
+                    — ver static/js/app.js).
+  expr_conjunto   — expressão JS completa pro clique de "Movimentar Eproc +
+                    Sisdpu" (normalmente movimentarConjunto(<número>[, paj]) —
+                    ver static/js/app.js; passa o PAJ só quando a linha de
+                    origem já o conhece, senão a própria página resolve).
+  expr_gerenciar  — expressão JS completa pro clique de "Gerenciar processo"
+                    (normalmente abrirGerenciarProcesso(<número>) — abre o modal
+                    GLOBAL de gerenciamento avulso, ver templates/base.html:
+                    gerenciarProcessoApp — ação isolada, sem petição nenhuma).
+  after           — (opcional) statement extra a rodar depois de CADA clique,
+                    ex.: 'menuAbertoProc = null' (páginas com menu único
+                    compartilhado, que precisa ser fechado manualmente —
+                    prazos.html, processo_judicial.html).
+  stop            — (opcional, default true) usa "@click.stop" em vez de
+                    "@click" — false onde o clique não precisa impedir a
+                    propagação.
+#}
+{% macro itens_minimenu_processo(expr_consultar, expr_abrir, expr_movimentar, expr_conjunto, expr_gerenciar, after='', stop=true) %}
+{%- set mod = '.stop' if stop else '' -%}
+{%- set suf = ('; ' + after) if after else '' -%}
+<li><a @click{{ mod }}="{{ expr_consultar }}{{ suf }}">Consultar processo (MCP)</a></li>
+<li><a @click{{ mod }}="{{ expr_abrir }}{{ suf }}">Abrir no navegador</a></li>
+<li><a @click{{ mod }}="{{ expr_movimentar }}{{ suf }}">Movimentar no eproc</a></li>
+<li><a @click{{ mod }}="{{ expr_conjunto }}{{ suf }}">Movimentar Eproc + Sisdpu</a></li>
+<li><a @click{{ mod }}="{{ expr_gerenciar }}{{ suf }}">Gerenciar processo</a></li>
+{%- endmacro %}

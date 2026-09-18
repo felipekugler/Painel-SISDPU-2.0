@@ -15,6 +15,7 @@ duas janelas coexistirem sem conflito.
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import logging
 import re
@@ -216,6 +217,28 @@ def _garantir_hook_dialogo(ctx) -> None:
         with contextlib.suppress(Exception):
             p.on("dialog", _dispensar_dialogo)
     ctx.on("page", lambda p: p.on("dialog", _dispensar_dialogo))
+
+
+async def _fechar_abas_extras(ctx, manter) -> None:
+    """Fecha toda aba de `ctx` EXCETO `manter` — chamado ao final do login
+    (`abrir`) e de sincronizações (ex.: `eproc_intimacoes.ler_todos`) pra não
+    deixar abas de trabalho (listagem de categoria, telas de peticionamento
+    que escaparam do `finally` de origem etc.) acumulando na janela visível
+    do usuário.
+
+    NUNCA fecha a última aba: se `manter` já não estiver mais em `ctx.pages`
+    (por exemplo, foi fechada por outro motivo nesse meio-tempo), preserva a
+    primeira aba que sobrar em vez de zerar a janela — fechar TODAS as abas
+    encerraria o processo do Chromium inteiro (é uma janela normal, não modo
+    app), perdendo a sessão persistida no profile (ver docstring do módulo)."""
+    paginas = list(ctx.pages)
+    if manter not in paginas and paginas:
+        manter = paginas[0]
+    for p in paginas:
+        if p is manter:
+            continue
+        with contextlib.suppress(Exception):
+            await p.close()
 
 
 async def _dispensar_dialogo(dialog) -> None:
@@ -505,6 +528,21 @@ async def _selecionar_perfil(page, perfil: str = PERFIL_PADRAO) -> bool:
     return _status_dict(page.url)["logado"]
 
 
+# Trava única para QUALQUER operação que manipule a aba principal da janela
+# persistente do e-proc (login automático e sincronização de intimações, por
+# ora — ver `eproc_intimacoes.sincronizar`, que reusa esta MESMA trava em vez
+# de ter a sua própria). Sem isso, `abrir()` e uma sincronização concorrente
+# disputavam a mesma aba: `abrir()` fecha "abas extras" ao terminar o login
+# (`_fechar_abas_extras`) bem na hora em que a sincronização tinha uma aba de
+# listagem de categoria aberta e em espera — a aba sumia debaixo dela
+# (`TargetClosedError: Target page, context or browser has been closed`),
+# sem tratamento em lugar nenhum, virando um 500 sem corpo de erro pro
+# front-end ("erro desconhecido"). Bug real relatado 2026-09-18 (acontecia na
+# sequência automática de inicialização do painel: reconectar e-proc →
+# sincronizar intimações, uma logo depois da outra).
+_browser_lock = asyncio.Lock()
+
+
 async def abrir(url: str = EPROC_HOME, usuario: str = "", senha: str = "") -> dict:
     """Abre/traz à frente a janela do e-proc e tenta ENTRAR sozinho, em cadeia:
 
@@ -515,7 +553,18 @@ async def abrir(url: str = EPROC_HOME, usuario: str = "", senha: str = "") -> di
          memorizado no perfil — o usuário resolve na janela.
       3) seleção de perfil → escolhe PROCURADOR automaticamente.
 
+    Serializado por `_browser_lock` (ver comentário acima) — seguro chamar
+    mesmo com uma sincronização em andamento; espera a vez.
+
     Retorna o status final (logado?/url/msg)."""
+    async with _browser_lock:
+        return await _abrir_impl(url, usuario, senha)
+
+
+async def _abrir_impl(url: str, usuario: str, senha: str) -> dict:
+    """Corpo real de `abrir()` — chamado também por `eproc_intimacoes.
+    sincronizar()`, que já segura `_browser_lock` (evita deadlock de tentar
+    adquirir a mesma trava não-reentrante duas vezes)."""
     browser, page = await _connect(url)
     try:
         with contextlib.suppress(Exception):
@@ -548,7 +597,12 @@ async def abrir(url: str = EPROC_HOME, usuario: str = "", senha: str = "") -> di
         # 3) seleção de perfil → PROCURADOR (no-op se já dentro ou na tela de senha)
         with contextlib.suppress(Exception):
             await _selecionar_perfil(page)
-        return _status_dict(page.url)
+        status_final = _status_dict(page.url)
+        # Fecha qualquer aba extra (ex.: popup de SSO/2FA que ficou aberto) —
+        # o usuário só quer ver a aba principal, já autenticada, na janela.
+        with contextlib.suppress(Exception):
+            await _fechar_abas_extras(page.context, page)
+        return status_final
     finally:
         with contextlib.suppress(Exception):
             await browser.close()
@@ -764,25 +818,55 @@ async def listar_tipos_documento(numero_processo: str) -> dict:
 # JS do navegador não é o bastante (o widget deve escutar mousedown/mouseup, não
 # só o evento `click`).
 
+def _normalizar_texto_autocompletar(s: str) -> str:
+    import unicodedata
+    s = unicodedata.normalize("NFD", s or "").encode("ascii", "ignore").decode("ascii")
+    return re.sub(r"\s+", " ", s).strip().lower()
+
+
 async def _selecionar_autocomplete(page, campo_id: str, box_id: str, texto: str) -> bool:
     """Seleciona `texto` (rótulo idêntico ao do catálogo do e-proc) num campo de
     autocomplete "infraAutoCompletar" (`campo_id`) — digita o próprio `texto`
     completo (garante que o item exato esteja entre os resultados filtrados,
     já que ele é substring de si mesmo) e clica, com um clique de mouse real,
-    no `<li>` do popup (`box_id`) cujo texto normalizado bate EXATO. Falso se
-    `texto` não aparecer entre as opções (catálogo desatualizado/rótulo
-    incorreto) — a chamada NÃO falha sozinha, quem chamou decide o que fazer."""
+    no `<li>` do popup (`box_id`) cujo texto bate depois de NORMALIZADO (mesma
+    normalização — remove acento, minúsculas, colapsa espaço — já usada em
+    `acoes_eproc_service._normalizar_texto`/`acoes_eproc.js._normalizarTexto`
+    pra este mesmo rótulo). Falso se `texto` não aparecer entre as opções
+    (catálogo desatualizado/rótulo incorreto) — a chamada NÃO falha sozinha,
+    quem chamou decide o que fazer.
+
+    Bug real corrigido (2026-08-29, "Dar mera ciência"): a comparação exigia
+    bater CARACTERE A CARACTERE (`^texto$`) contra o `innerText` do `<li>`,
+    sensível a acento/caixa/espaço. Isso nunca dava problema nos fluxos
+    existentes porque o `texto` chegava sempre COPIADO ao vivo do próprio DOM
+    do e-proc (o Defensor escolhia o evento numa tela real antes de gravar o
+    rascunho). "Dar mera ciência" é o primeiro chamador a passar um rótulo
+    FIXO, digitado à mão no código
+    (`mera_ciencia_service.EVENTO_EPROC = "Ciência, com renúncia ao prazo"`)
+    — bastou uma diferença mínima de acentuação/espaço no catálogo real do
+    processo pra dar sempre "Evento não encontrado no catálogo" mesmo com a
+    opção visivelmente aparecendo pro usuário na tela."""
     campo = page.locator(f"#{campo_id}")
     await campo.click()
     await campo.fill("")
     await campo.type(texto, delay=15)
     await page.wait_for_timeout(900)
-    item = page.locator(f"#{box_id} li").filter(has_text=re.compile(f"^{re.escape(texto)}$")).first
-    if await item.count() == 0:
+    itens = page.locator(f"#{box_id} li")
+    n = await itens.count()
+    if n == 0:
         return False
-    await item.click()
-    await page.wait_for_timeout(400)
-    return True
+    alvo = _normalizar_texto_autocompletar(texto)
+    textos = await page.evaluate(
+        "(boxId) => [...document.querySelectorAll(`#${boxId} li`)].map(li => li.innerText)",
+        box_id,
+    )
+    for i, t in enumerate(textos):
+        if _normalizar_texto_autocompletar(t) == alvo:
+            await itens.nth(i).click()
+            await page.wait_for_timeout(400)
+            return True
+    return False
 
 
 async def _upload_documento(page, numero_processo: str, indice: int, caminho: Path,
@@ -904,14 +988,25 @@ async def _marcar_prazos_fechar(page, labels: list[str]) -> dict:
             nao_encontrados.append(label)
             continue
         usados.add(achou)
-        try:
+        with contextlib.suppress(Exception):
             await checkboxes.nth(achou).check()
-            marcados.append(label)
+        # Confere o estado REAL do checkbox depois do clique, em vez de confiar
+        # em `.check()` não ter lançado exceção. Bug real corrigido
+        # (2026-08-29): o clique marca o checkbox de verdade, mas o e-proc
+        # dispara um re-render (AJAX) da própria seção de prazos ao mudar a
+        # seleção — a verificação interna do Playwright pós-clique pode cair
+        # num elemento já destacado do DOM nesse meio-tempo e lançar exceção
+        # MESMO com o clique já tendo surtido efeito, fazendo o resumo dizer
+        # "prazo NÃO marcado" apesar de a caixa aparecer marcada na tela.
+        # `checkboxes.nth(achou)` é um locator "vivo" — reconsultar o DOM atual
+        # pega o checkbox correto mesmo que o nó original tenha sido
+        # substituído, contanto que a ORDEM das opções não mude (não muda:
+        # é a mesma lista de prazos pendentes do processo).
+        try:
+            marcado = await checkboxes.nth(achou).is_checked()
         except Exception:  # noqa: BLE001
-            # achou o checkbox mas o `.check()` falhou (elemento coberto/
-            # desabilitado) — NÃO finge que marcou; conta como não-encontrado
-            # pra aparecer no aviso do front, em vez de sumir silenciosamente.
-            nao_encontrados.append(label)
+            marcado = False
+        (marcados if marcado else nao_encontrados).append(label)
 
     return {"disponivel": True, "marcados": marcados, "nao_encontrados": nao_encontrados}
 

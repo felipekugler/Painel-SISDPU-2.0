@@ -4,7 +4,7 @@
 // base.html; este arquivo não depende de mais nada, só encapsula a fábrica +
 // leitura/escrita de conteúdo pra não duplicar essa lógica nos dois módulos.
 //
-// criarEditorRico(elId, opts?) -> {quill, getHTML, setHTML, setText, isEmpty, focus} | null
+// criarEditorRico(elId, opts?) -> {quill, getHTML, setHTML, insertHTML, setText, isEmpty, focus} | null
 //   elId               — id de um elemento já existente no DOM e VISÍVEL (não
 //                         display:none — Quill mede o container ao montar).
 //   opts.toolbar        — array de grupos de botões (default: RICH_EDITOR_TOOLBAR_PADRAO).
@@ -55,6 +55,28 @@ function criarEditorRico(elId, opts) {
             quill.setContents([]);
             if (html) quill.clipboard.dangerouslyPasteHTML(html);
         },
+        // Insere HTML na posição do CURSOR (ou no fim, se o editor não estiver
+        // focado/sem seleção) — diferente de setHTML(), NÃO apaga o que já
+        // estava lá. Usado por "Usar modelo" (Ações no Eproc): o usuário pode
+        // compor mais de um modelo, ou complementar com texto próprio antes.
+        //
+        // O `insertText('\n')` no final é NECESSÁRIO, não cosmético: o Quill
+        // funde a ÚLTIMA linha do HTML colado com o que já vinha DEPOIS do
+        // cursor, mesmo quando o HTML colado termina num bloco `<p>` fechado
+        // (bug real 2026-09-16, confirmado isolado: colar "...</p>" bem antes
+        // de um texto pré-existente vira "...texto pré-existente" na MESMA
+        // linha, sem quebra — só o meio do HTML colado preserva parágrafos
+        // em branco corretamente). Mede quanto foi inserido (comprimento do
+        // documento antes/depois do paste) pra saber onde inserir a quebra.
+        insertHTML(html) {
+            if (!html) return;
+            const sel = quill.getSelection(true); // true = foca o editor antes de ler a seleção
+            const index = sel ? sel.index : quill.getLength();
+            const lenAntes = quill.getLength();
+            quill.clipboard.dangerouslyPasteHTML(index, html);
+            const inserido = quill.getLength() - lenAntes;
+            quill.insertText(index + inserido, '\n', 'user');
+        },
         // Substitui TUDO por texto puro (sem HTML) — usado pra "puxar" uma fonte
         // externa (ex.: botão "Atualizar da Sugestão IA") de forma explícita, a
         // pedido do usuário — nunca automático depois da primeira carga.
@@ -75,4 +97,38 @@ function htmlParaTextoSimples(html) {
         elx.insertAdjacentText('afterend', '\n');
     });
     return (div.textContent || '').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+// --- "Usar modelo" — compartilhado por "Modelos de petição" (Ações no Eproc)
+// e "Despachos padrão" (Ações no SISDPU): 3 helpers puros (sem estado, sem
+// `this`) usados na hora de inserir um modelo cadastrado na caixa de texto
+// certa, com os placeholders resolvidos. ----------------------------------
+
+// "18 de agosto de 2026" — mesmo formato usado no fecho das petições geradas
+// por IA (ver services/minuta_ia_service._data_por_extenso).
+function dataPorExtenso() {
+    const meses = ['janeiro', 'fevereiro', 'março', 'abril', 'maio', 'junho',
+                   'julho', 'agosto', 'setembro', 'outubro', 'novembro', 'dezembro'];
+    const agora = new Date();
+    return agora.getDate() + ' de ' + meses[agora.getMonth()] + ' de ' + agora.getFullYear();
+}
+
+// Modelo cadastrado ANTES da caixa de cadastro virar editor rico (texto puro,
+// sem tags) — embrulha em <p> pra preservar quebra de linha ao inserir no
+// Quill; um modelo já em HTML (tem alguma tag) passa direto.
+function paraHtmlSeTextoPuro(texto) {
+    const t = texto || '';
+    return /<[a-z][\s\S]*>/i.test(t) ? t : ('<p>' + t.replace(/\n+/g, '</p><p>') + '</p>');
+}
+
+// Substitui cada chave literal (ex.: "[NOME]") pelo valor correspondente em
+// `subs` — chave sem valor resolvido (ex.: sem PAJ vinculado) fica como está
+// no texto, visível, pro usuário completar.
+function resolverPlaceholders(texto, subs) {
+    let out = texto || '';
+    for (const [chave, valor] of Object.entries(subs)) {
+        if (!valor) continue;
+        out = out.split(chave).join(valor);
+    }
+    return out;
 }

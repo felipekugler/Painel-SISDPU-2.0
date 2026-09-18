@@ -65,27 +65,35 @@ async def api_prazos_sessao_leve():
 @router.get("/api/prazos/sincronizar", response_class=JSONResponse)
 async def api_prazos_sincronizar():
     """Lê TODAS as categorias de Citações/Intimações do e-proc (clica → lê →
-    agrupa por processo) e persiste. Se a sessão não estiver ativa, tenta logar
-    sozinho com as credenciais do cofre (mesmo fluxo do botão 'Abrir e-proc /
-    Login') antes de desistir. Se o cofre estiver TRANCADO, devolve
-    `cofre_trancado: true` — o front-end pede a senha-mestra, destranca e chama
-    esta rota de novo, em vez de mandar o usuário logar manualmente na janela
-    quando as credenciais já estão salvas (só faltou destrancar)."""
-    from ingestao import eproc_client, eproc_intimacoes
-    res = await eproc_intimacoes.ler_todos()
-    if not res.get("ok"):
-        if not cofre_service.destrancado():
-            res["cofre_trancado"] = True
-            return JSONResponse(res, status_code=400)
-        creds = cofre_service.get_credenciais("eproc")
-        if creds:
-            usuario, senha = creds
-            await eproc_client.abrir(usuario=usuario, senha=senha)
-            res = await eproc_intimacoes.ler_todos()
-    if res.get("ok"):
-        eproc_intimacoes.salvar(res)
-        return JSONResponse(eproc_intimacoes.carregar())
-    return JSONResponse(res, status_code=400)
+    agrupa por processo) e persiste — login automático sozinho com as
+    credenciais do cofre se a sessão não estiver ativa (mesmo fluxo do botão
+    'Abrir e-proc / Login'); `cofre_trancado: true` se não tiver como (o
+    front-end pede a senha-mestra e chama esta rota de novo).
+
+    Serializada internamente (`eproc_intimacoes.sincronizar`, single-flight):
+    um clique duplicado ou qualquer chamada concorrente NUNCA dispara uma 2ª
+    tentativa disputando a mesma aba do e-proc com a que já está rodando — só
+    espera essa terminar e reaproveita o mesmo resultado. Sem isso, duas
+    tentativas simultâneas de login/leitura na MESMA aba controlada por CDP
+    deixavam a janela presa tentando logar indefinidamente (bug real relatado
+    2026-09-16).
+
+    A purga de casos já revisados (`intimacao_service.purgar_casos_
+    resolvidos`) NÃO roda mais aqui: DESATIVADA como automação em 2026-08-28
+    (poucos minutos após ligar) — ela apaga em lote, via `shutil.rmtree`, as
+    pastas de documentos de casos que saíram da caixa, e essa exclusão
+    RECURSIVA EM LOTE por um processo de rede (python.exe na porta 8001) bateu
+    na proteção antirransomware do antivírus corporativo (FortiClient: "File
+    Delete blocked for python.exe") — confirmado ao vivo: a 1ª sincronização
+    após ligar a purga já travou TODO salvamento posterior de análise de
+    intimação (mesmo sem nenhuma minuta envolvida), e voltou a travar a cada
+    sincronização seguinte, em instâncias novas do painel. Movida para disparo
+    MANUAL no botão "Atualizar lista" da página Intimações
+    (`routes.intimacoes.api_listar_casos`) — clique explícito do Defensor, bem
+    mais espaçado que uma sincronização automática."""
+    from ingestao import eproc_intimacoes
+    res = await eproc_intimacoes.sincronizar()
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
 
 
 @router.get("/api/prazos/intimacoes", response_class=JSONResponse)
@@ -93,6 +101,30 @@ async def api_prazos_intimacoes():
     """Retorna o último resultado sincronizado (sem re-consultar o e-proc)."""
     from ingestao import eproc_intimacoes
     return JSONResponse(eproc_intimacoes.carregar())
+
+
+@router.get("/api/prazos/count", response_class=JSONResponse)
+async def api_prazos_count():
+    """Contagem pro badge do submenu "Prazos" — sem re-consultar o e-proc.
+
+    A própria página NÃO mostra um total único (mostra 7 badges, um por
+    categoria — prazo_aberto/urgente/pendente/etc., ver CATEGORIAS em
+    ingestao/eproc_intimacoes.py) — então não há um "N" pra simplesmente
+    copiar. Conta PROCESSOS DISTINTOS entre todas as categorias (um mesmo
+    processo pode aparecer em mais de uma categoria; contar bruto inflaria o
+    número) — mesmo espírito da deduplicação já feita por
+    `services.intimacao_service.listar_casos()` sobre este mesmo cache,
+    só que sem o cruzamento com o índice de análise (não é o que a página
+    Prazos usa)."""
+    from ingestao import eproc_intimacoes
+    dados = eproc_intimacoes.carregar()
+    processos = {
+        caso.get("processo")
+        for secao in (dados.get("secoes") or {}).values()
+        for caso in secao
+        if caso.get("processo")
+    }
+    return {"count": len(processos)}
 
 
 @router.get("/api/prazos/abrir-processo", response_class=JSONResponse)

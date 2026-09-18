@@ -207,6 +207,55 @@ async def importar_config_eproc_procuradores(request: Request):
     return JSONResponse(res, status_code=status_code)
 
 
+# --- Preferências e-proc: modelos de petição (textos padrão reutilizáveis) ---
+@router.get("/api/config/eproc-modelos-peticao", response_class=JSONResponse)
+async def get_config_eproc_modelos_peticao():
+    """Lista completa de modelos cadastrados — sem "importar", é conteúdo
+    digitado pelo usuário."""
+    return JSONResponse({"modelos": config_painel_service.get_eproc_modelos_peticao()})
+
+
+@router.post("/api/config/eproc-modelos-peticao", response_class=JSONResponse)
+async def set_config_eproc_modelos_peticao(request: Request):
+    """Substitui a lista COMPLETA de modelos (curadoria feita inteira no front —
+    Configurações › e-proc)."""
+    body = await request.json()
+    modelos = config_painel_service.set_eproc_modelos_peticao(body.get("modelos") or [])
+    return JSONResponse({"ok": True, "modelos": modelos})
+
+
+# --- Preferências SISDPU: despachos padrão (textos padrão reutilizáveis) ---
+@router.get("/api/config/sisdpu-modelos-despacho", response_class=JSONResponse)
+async def get_config_sisdpu_modelos_despacho():
+    """Lista completa de despachos padrão cadastrados — sem "importar", é
+    conteúdo digitado pelo usuário. Mesmo formato de eproc-modelos-peticao."""
+    return JSONResponse({"modelos": config_painel_service.get_sisdpu_modelos_despacho()})
+
+
+@router.post("/api/config/sisdpu-modelos-despacho", response_class=JSONResponse)
+async def set_config_sisdpu_modelos_despacho(request: Request):
+    """Substitui a lista COMPLETA de despachos padrão (curadoria feita inteira
+    no front — Configurações › SISDPU)."""
+    body = await request.json()
+    modelos = config_painel_service.set_sisdpu_modelos_despacho(body.get("modelos") or [])
+    return JSONResponse({"ok": True, "modelos": modelos})
+
+
+# --- Identificação do Ofício/Defensor (aba Geral) ---
+@router.get("/api/config/identificacao-orgao", response_class=JSONResponse)
+async def get_config_identificacao_orgao():
+    """Ofício/Unidade/Defensor/Cargo — texto da sidebar + placeholders
+    [OFICIO]/[UNIDADE]/[DEFENSOR]/[CARGO] dos modelos de petição/despacho."""
+    return JSONResponse(config_painel_service.get_identificacao_orgao())
+
+
+@router.post("/api/config/identificacao-orgao", response_class=JSONResponse)
+async def set_config_identificacao_orgao(request: Request):
+    body = await request.json()
+    dados = config_painel_service.set_identificacao_orgao(body)
+    return JSONResponse({"ok": True, **dados})
+
+
 # --- Tabela de Ofícios: nome completo -> sigla (padronização de exibição) ---
 @router.get("/api/config/oficios", response_class=JSONResponse)
 async def get_config_oficios():

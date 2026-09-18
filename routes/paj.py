@@ -27,7 +27,16 @@ router = APIRouter()
 async def paj_detail(request: Request, paj_norm: PajNorm):
     dados = ler_paj(paj_norm)
     if not dados:
-        return HTMLResponse("<h1>PAJ não encontrado</h1>", status_code=404)
+        # PAJ pedido (caixa de pesquisa do menu, minimenu "Abrir PAJ" antigo,
+        # link/favorito) mas ainda sem pasta local — em vez do "PAJ não
+        # encontrado" morto de antes, mostra uma tela de carregamento que
+        # dispara sozinha a sincronização avulsa e recarrega quando terminar
+        # (ver templates/paj_carregando.html + pajCarregandoApp() em app.js).
+        # 200, não 404: é uma resposta válida (a tela em si carregou certo),
+        # só ainda não tem os dados do PAJ.
+        template = request.app.state.jinja.get_template("paj_carregando.html")
+        html = template.render(request=request, paj_norm=paj_norm)
+        return HTMLResponse(html)
     template = request.app.state.jinja.get_template("paj_detail.html")
     html = template.render(request=request, dados=dados, paj_norm=paj_norm)
     return HTMLResponse(html)

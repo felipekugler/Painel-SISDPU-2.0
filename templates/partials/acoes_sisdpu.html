@@ -33,6 +33,26 @@
                  se o Quill não montar (ex.: CDN fora do ar — ver quillMovOk no JS). -->
             <template x-if="!getDescricaoMov">
                 <div class="mt-2">
+                    <!-- "Usar modelo" — despachos padrão cadastrados em Configurações ›
+                         SISDPU (texto padrão + placeholders [NOME]/[CPF]/[PAJ]/[DATA]).
+                         INSERE no cursor — não substitui o que já estiver escrito (mesmo
+                         comportamento de "Usar modelo" em Ações no Eproc). -->
+                    <div class="flex items-center justify-end gap-2 mb-1" x-show="modelosDespacho.length">
+                        <div class="dropdown dropdown-end">
+                            <button type="button" tabindex="0" class="btn btn-xs btn-outline gap-1" :disabled="usandoModeloDespacho"
+                                    title="Insere o texto de um despacho padrão no cursor, com NOME/CPF/PAJ/DATA já preenchidos (quando houver PAJ vinculado).">
+                                <span x-show="usandoModeloDespacho" class="loading loading-spinner loading-xs"></span>
+                                <span x-show="!usandoModeloDespacho">📋 Usar modelo</span>
+                                <span x-show="usandoModeloDespacho">Inserindo…</span>
+                            </button>
+                            <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-64 p-1 shadow border border-base-300">
+                                <template x-for="m in modelosDespacho" :key="m.id">
+                                    <li><a @click="usarModeloDespacho(m.id)" x-text="m.nome"></a></li>
+                                </template>
+                            </ul>
+                        </div>
+                    </div>
+                    <div class="text-[11px] text-error mb-1" x-show="erroUsarModeloDespacho" x-text="erroUsarModeloDespacho"></div>
                     <div :id="uidMov" x-show="quillMovOk"></div>
                     <textarea x-show="!quillMovOk" class="textarea textarea-bordered textarea-sm w-full text-[12.5px]"
                               rows="2" x-model="descMov"
@@ -62,6 +82,12 @@
                             <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
                         </svg>
                         Adicionar do SISDPU
+                    </button>
+                    <button type="button" class="btn btn-xs btn-outline gap-1" @click="abrirModalPecasIa()">
+                        <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                        </svg>
+                        Adicionar Petições IA
                     </button>
                     <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="enviandoAnexo" @click="adicionarAnexoExterno()">
                         <span x-show="enviandoAnexo" class="loading loading-spinner loading-xs"></span>
@@ -191,6 +217,58 @@
                 </div>
             </div>
         </div>
+
+        <!-- Modal: "Adicionar Petições IA" (subpasta "Peças IA" do PAJ) — mesma
+             tabela/estilo do modal "Adicionar do SISDPU" acima, mesmo padrão do
+             módulo Ações no Eproc. -->
+        <div class="modal" :class="{'modal-open': modalPecasIaAberto}" @click.self="fecharModalPecasIa()">
+            <div class="modal-box max-w-3xl">
+                <h3 class="font-bold text-lg mb-1">Adicionar Petições IA</h3>
+                <p class="text-xs text-base-content/50 mb-3">
+                    Marque os arquivos da pasta "Peças IA" deste PAJ a anexar à movimentação. Clique no selo do tipo para abrir/visualizar o arquivo.
+                </p>
+                <div x-show="!pecasIa.length" class="text-sm text-base-content/40 py-4 text-center">
+                    Nenhum arquivo encontrado na pasta "Peças IA" deste PAJ.
+                </div>
+                <div class="overflow-x-auto max-h-[55vh] overflow-y-auto" x-show="pecasIa.length">
+                    <table class="table table-sm">
+                        <thead>
+                            <tr class="bg-base-300/50">
+                                <th class="w-8"></th>
+                                <th>Arquivo</th>
+                                <th>Tamanho</th>
+                                <th class="w-20">Visualizar</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="d in pecasIa" :key="docKey(d)">
+                                <tr class="hover:bg-base-300/30">
+                                    <td>
+                                        <input type="checkbox" class="checkbox checkbox-sm" x-model="modalPecasIaSelecionados[docKey(d)]">
+                                    </td>
+                                    <td class="font-mono text-xs break-all max-w-md" x-text="docLabel(d)"></td>
+                                    <td class="text-xs whitespace-nowrap" x-text="formatarTamanho(d.tamanho)"></td>
+                                    <td>
+                                        <a :href="linkArquivoPaj(d)" target="_blank" @click.stop
+                                           class="badge badge-sm gap-1 border border-black/15 cursor-pointer"
+                                           :class="corBadgeTipo(d.tipo)" :title="'Abrir ' + docLabel(d)">
+                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path>
+                                            </svg>
+                                            <span x-text="(d.tipo || 'file').toUpperCase()"></span>
+                                        </a>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="modal-action">
+                    <button type="button" class="btn btn-sm" @click="fecharModalPecasIa()">Cancelar</button>
+                    <button type="button" class="btn btn-sm btn-primary" @click="confirmarPecasIa()">Adicionar anexos</button>
+                </div>
+            </div>
+        </div>
         <!-- Tramitar -->
         <div class="ret-acao-bloco">
             <div class="ret-acao-titulo">Tramitar</div>
@@ -266,20 +344,90 @@
                     <span class="text-[11px] text-base-content/50">(retira o PAJ da caixa)</span>
                 </div>
             </template>
+
+            <!-- Fila de movimentações sequenciais (2026-09-11) — 0, 1 ou N
+                 movimentações guardadas via "Adicionar à fila" (abaixo), pra rodar
+                 em sequência (mov→tram→conclui de cada uma, na mesma sessão do
+                 SISDPU) quando "Executar" for clicado. Só aparece quando há algo
+                 na fila — sem isso, nada muda no console de sempre. -->
+            <div class="ret-acao-bloco mt-2" x-show="fila.length">
+                <div class="ret-acao-titulo">Fila de movimentações (executadas em sequência)</div>
+                <div class="overflow-x-auto max-h-48 overflow-y-auto rounded border border-base-300 mt-1">
+                    <table class="table table-xs">
+                        <thead>
+                            <tr class="bg-base-300/50">
+                                <th class="w-8">#</th>
+                                <th>Fase</th>
+                                <th class="w-14 text-center">Anexos</th>
+                                <th>Tramitar para</th>
+                                <th class="w-24">Conclusão</th>
+                                <th class="w-16"></th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="(item, i) in fila" :key="i">
+                                <tr class="hover:bg-base-300/30" :class="editandoFilaIndice === i ? 'bg-primary/5' : ''">
+                                    <td x-text="i + 1"></td>
+                                    <td x-text="item.fase || '—'"></td>
+                                    <td class="text-center">
+                                        <svg x-show="(item.anexos || []).length" class="w-3.5 h-3.5 inline text-error" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"
+                                             :title="(item.anexos || []).length + ' anexo(s)'">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="m18.375 12.739-7.693 7.693a4.5 4.5 0 0 1-6.364-6.364l10.94-10.94A3 3 0 1 1 19.5 7.372L8.552 18.32m.009-.01-.01.01m5.699-9.941-7.81 7.81a1.5 1.5 0 0 0 2.112 2.13" />
+                                        </svg>
+                                        <span x-show="!(item.anexos || []).length" class="text-base-content/40">—</span>
+                                    </td>
+                                    <td x-text="item.grupo || '—'"></td>
+                                    <td>
+                                        <span x-show="item.id_tramites.length" class="badge badge-xs badge-success"
+                                              x-text="item.id_tramites.length + ' trâmite(s)'"></span>
+                                        <span x-show="!item.id_tramites.length" class="text-base-content/40">—</span>
+                                    </td>
+                                    <td class="whitespace-nowrap">
+                                        <button type="button" class="btn btn-ghost btn-xs px-1" :disabled="exec"
+                                                @click="editarItemFila(i)" title="Editar esta movimentação">
+                                            <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:12px;height:12px">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L10.582 16.07a4.5 4.5 0 0 1-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 0 1 1.13-1.897l8.932-8.931Zm0 0L19.5 7.125" />
+                                            </svg>
+                                        </button>
+                                        <button type="button" class="btn btn-ghost btn-xs px-1 text-error" :disabled="exec"
+                                                @click="removerItemFila(i)" title="Remover esta movimentação da fila">✕</button>
+                                    </td>
+                                </tr>
+                            </template>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="text-[11px] text-base-content/50 mt-1">
+                    "Executar" roda estas movimentações em sequência, na mesma sessão do SISDPU.
+                    <template x-if="editandoFilaIndice === null && (fase || grupo || concluirEfetivo())">
+                        <span class="text-warning">O formulário acima ainda não foi adicionado à fila — clique em "Adicionar à fila", ou ele será ignorado ao Executar.</span>
+                    </template>
+                </div>
+            </div>
+
             <div class="flex items-center gap-2 flex-wrap mt-2">
-                <span class="text-[11px] text-base-content/40 ml-auto" x-show="rascunhoSalvoEm">
+                <span class="text-[11px] text-base-content/40" x-show="editandoFilaIndice !== null">
+                    Editando movimentação <span x-text="editandoFilaIndice + 1"></span> da fila —
+                    <button type="button" class="btn btn-ghost btn-xs" @click="cancelarEdicaoFila()">cancelar</button>
+                </span>
+                <span class="text-[11px] text-base-content/40" x-show="rascunhoSalvoEm">
                     Rascunho gravado
                 </span>
-                <button type="button" class="btn btn-sm btn-outline" :class="!rascunhoSalvoEm ? 'ml-auto' : ''"
+                <span class="flex-1"></span>
+                <button type="button" class="btn btn-sm btn-outline" @click="adicionarItemFila()"
+                        title="Guarda esta movimentação numa fila pra rodar em sequência com outras, sem executar agora.">
+                    <span x-text="editandoFilaIndice !== null ? 'Salvar alteração' : 'Adicionar à fila'"></span>
+                </button>
+                <button type="button" class="btn btn-sm btn-outline"
                         @click="gravarRascunho()" :disabled="gravando"
-                        title="Grava fase, despachos e anexos pra executar depois, sem perder o que já foi preenchido.">
+                        title="Grava fase, despachos, anexos e a fila pra continuar depois, sem perder o que já foi preenchido.">
                     <span x-show="gravando" class="loading loading-spinner loading-xs"></span>
                     Gravar
                 </button>
                 <button type="button" class="btn btn-sm btn-success ret-btn-exec" @click="executar()"
-                        :disabled="(!fase && !grupo && !concluirEfetivo()) || exec">
+                        :disabled="(fila.length === 0 && !fase && !grupo && !concluirEfetivo()) || exec">
                     <span x-show="exec" class="loading loading-spinner loading-xs"></span>
-                    Executar no SISDPU
+                    <span x-text="fila.length ? 'Executar fila (' + fila.length + ')' : 'Executar no SISDPU'"></span>
                 </button>
             </div>
         </div>

@@ -65,16 +65,35 @@ def obter_rascunho(paj_norm: str) -> dict | None:
 def listar_rascunhos() -> list[dict]:
     """Todos os rascunhos salvos — alimenta a página "Petições pendentes".
     Enriquece com o nome do assistido lido do metadata.json do PAJ (não fica
-    salvo no rascunho em si, pra não ficar desatualizado se o PAJ mudar)."""
+    salvo no rascunho em si, pra não ficar desatualizado se o PAJ mudar).
+
+    `par_sisdpu_paj_norm`: PAJ real (se houver) com um rascunho PENDENTE
+    também em "Ações no SISDPU" — normalmente as duas nasceram juntas em
+    "Movimentar Eproc + SISDPU" (movimentar_conjunto.html), mas a checagem
+    vale pra qualquer par pendente do mesmo PAJ. Alimenta o badge "Eproc +
+    SISDPU" da tabela de pendentes (pedido do usuário 2026-09-11 — sem ele,
+    sair da página conjunta sem executar "perdia" o caminho de volta pra
+    revisar os dois juntos). `paj_norm_vinculado` só existe em rascunhos
+    gravados a partir de hoje — rascunhos MAIS ANTIGOS não têm esse campo,
+    mas sempre usaram um PAJ de verdade como CHAVE quando havia um; cai pro
+    formato dela (mesmo fallback do front, ver
+    peticoes_pendentes.html:pajRealDe)."""
     if not RASCUNHOS_DIR.exists():
         return []
+    from services import acoes_sisdpu_service
+
     itens = []
     for f in RASCUNHOS_DIR.glob("*.json"):
         try:
             doc = json.loads(f.read_text(encoding="utf-8"))
         except Exception:
             continue
-        doc["assistido"] = _assistido_do_paj(doc.get("paj_norm", ""))
+        chave = doc.get("paj_norm", "") or ""
+        doc["assistido"] = _assistido_do_paj(chave)
+        paj_real = doc.get("paj_norm_vinculado") or (chave if chave.startswith("PAJ-") else "")
+        doc["par_sisdpu_paj_norm"] = (
+            paj_real if paj_real and acoes_sisdpu_service.obter_rascunho(paj_real) else ""
+        )
         itens.append(doc)
     itens.sort(key=lambda d: d.get("salvo_em", ""), reverse=True)
     return itens
@@ -483,7 +502,7 @@ def _anexo_relativo_ao_paj(paj_norm: str, caminho_absoluto: str) -> str | None:
 _PASTA_ANEXOS_EPROC_NO_PAJ = "Anexos e-proc"
 
 
-def preparar_documentos_para_movimentacao_sisdpu(paj_norm: str, documentos: list[dict]) -> list[dict]:
+def preparar_documentos_para_movimentacao_sisdpu(paj_norm: str, documentos: list[dict]) -> dict:
     """Monta a lista de anexos pronta pra "Anexos da movimentação" de Ações no
     SISDPU a partir dos documentos JÁ PROTOCOLADOS numa petição do e-proc (ver
     `montar_resumo_execucao` -> `documentos`, cada um com `caminho` ABSOLUTO já
@@ -503,32 +522,51 @@ def preparar_documentos_para_movimentacao_sisdpu(paj_norm: str, documentos: list
     de rascunhos de Ações no Eproc (fora de `PAJS_DIR`) é COPIADO pra dentro da
     pasta do PAJ (subpasta "Anexos e-proc") antes — sem isso, o `ref` não
     resolveria e `acoes_sisdpu_service.executar_stream` descartaria o anexo
-    EM SILÊNCIO na hora de executar."""
+    EM SILÊNCIO na hora de executar.
+
+    Cada documento é processado em bloco try/except PRÓPRIO — uma falha ao
+    copiar UM arquivo (permissão, antivírus/firewall bloqueando escrita — ver
+    [[painel-sisdpu-fortinet-subprocess-workaround]]) não pode derrubar a
+    rota inteira com um 500 puro: o chamador (`api_preparar_anexos_sisdpu`)
+    receberia "Internal Server Error" (texto, não JSON), e o front, que só
+    tentava fazer `.json()` daquilo, falhava dentro de um `catch` silencioso —
+    o sintoma real relatado pelo usuário (2026-09-16): a petição em texto
+    chegava na movimentação, o PDF protocolado não, sem erro nenhum visível.
+    Retorna também `falhas` (nome + motivo) pro chamador avisar o usuário em
+    vez de só ficar quieto com uma lista de anexos incompleta."""
     resultado: list[dict] = []
+    falhas: list[dict] = []
     for doc in documentos or []:
         caminho_abs = doc.get("caminho") or ""
+        nome = doc.get("nome") or (Path(caminho_abs).name if caminho_abs else "documento")
         if not caminho_abs:
+            falhas.append({"nome": nome, "motivo": "sem caminho de origem informado"})
             continue
-        nome = doc.get("nome") or Path(caminho_abs).name
-        rel = _anexo_relativo_ao_paj(paj_norm, caminho_abs)
-        if rel is None:
-            origem_arquivo = Path(caminho_abs)
-            if not origem_arquivo.exists():
-                continue
-            pasta_destino = Path(config.PAJS_DIR) / paj_norm / _PASTA_ANEXOS_EPROC_NO_PAJ
-            pasta_destino.mkdir(parents=True, exist_ok=True)
-            destino = pasta_destino / origem_arquivo.name
-            # Sempre sobrescreve (nunca reaproveita um destino já existente) — o
-            # nome sozinho não garante mesmo conteúdo entre petições diferentes
-            # (ex.: duas provas homônimas "documento.pdf" em datas distintas);
-            # a fonte aqui É o documento recém-protocolado, sempre a verdade.
-            shutil.copyfile(origem_arquivo, destino)
-            rel = f"{_PASTA_ANEXOS_EPROC_NO_PAJ}/{destino.name}"
+        try:
+            rel = _anexo_relativo_ao_paj(paj_norm, caminho_abs)
+            if rel is None:
+                origem_arquivo = Path(caminho_abs)
+                if not origem_arquivo.exists():
+                    falhas.append({"nome": nome, "motivo": "arquivo não encontrado em disco"})
+                    continue
+                pasta_destino = Path(config.PAJS_DIR) / paj_norm / _PASTA_ANEXOS_EPROC_NO_PAJ
+                pasta_destino.mkdir(parents=True, exist_ok=True)
+                destino = pasta_destino / origem_arquivo.name
+                # Sempre sobrescreve (nunca reaproveita um destino já existente) —
+                # o nome sozinho não garante mesmo conteúdo entre petições
+                # diferentes (ex.: duas provas homônimas "documento.pdf" em datas
+                # distintas); a fonte aqui É o documento recém-protocolado, sempre
+                # a verdade.
+                shutil.copyfile(origem_arquivo, destino)
+                rel = f"{_PASTA_ANEXOS_EPROC_NO_PAJ}/{destino.name}"
+        except Exception as e:  # noqa: BLE001 — 1 doc não pode derrubar o lote inteiro
+            falhas.append({"nome": nome, "motivo": f"{type(e).__name__}: {e}"[:200]})
+            continue
         resultado.append({
             "origem": "paj", "ref": rel, "nome": nome, "tamanho": doc.get("tamanho") or 0,
             "descricao": nome, "tipoArquivo": "Petições",
         })
-    return resultado
+    return {"anexos": resultado, "falhas": falhas}
 
 
 async def montar_resumo_execucao(paj_norm: str) -> dict:
@@ -647,11 +685,96 @@ async def importar_procuradores_gerenciamento(numero_processo: str) -> dict:
 # esta altura (sucesso do peticionamento) — o front captura esses parâmetros em
 # `execResumo.gerenciamento` (ver `montar_resumo_execucao`, chamado ANTES do
 # peticionamento) e os guarda em memória até a hora de perguntar Sim/Não.
+async def _prazo_residual_no_meu_painel(processo: str) -> dict:
+    """Confere se sobra alguma intimação ainda ATIVA (agora, ao vivo) entre os
+    prazos que o cache do Painel do Procurador reconhece como MEUS pra este
+    processo — nunca "qualquer coisa da DPU": o processo pode ter outro
+    procurador da DPU cadastrado, inclusive em polo adverso, com prazo próprio
+    que não me diz respeito. Restringir ao Painel do Procurador (em vez de
+    adivinhar por texto de parte/polo) já resolve isso sem heurística — é o
+    e-proc quem escopa por procurador registrado, não eu.
+
+    Existe porque Gerenciamento de Processo (substabelecimento) transfere o
+    processo INTEIRO pro novo procurador, inclusive qualquer prazo ainda
+    aberto nele — seja um coautor esquecido no MESMO ato simultâneo (falha
+    parcial ao fechar), seja um ato AUTÔNOMO diferente ainda pendente. Pedido
+    explícito do usuário (2026-09-XX): isso nunca pode acontecer por acidente,
+    então o gerenciamento fica bloqueado enquanto sobrar qualquer prazo meu
+    ativo neste processo — não interessa de qual ato ele veio.
+
+    Cruza o CACHE do Painel (só confirma QUAIS prazos são meus) com a
+    TRIAGEM AO VIVO (confirma se aquele prazo específico ainda está aberto
+    agora — o cache só atualiza por sincronização manual, pode estar
+    desatualizado por minutos/horas). Decisão explícita do usuário
+    (2026-09-XX): aceitar esse gap de frescor em vez de forçar uma
+    sincronização completa antes de cada gerenciamento — mais rápido, ao
+    custo de um prazo novíssimo (chegado depois da última sincronização)
+    poder escapar até a próxima. Se a triagem ao vivo falhar (MCP
+    indisponível), assume o pior e bloqueia — nunca libera às cegas.
+
+    Retorna {"tem_residual": bool, "quantidade": int}."""
+    from ingestao import eproc_intimacoes, eproc_mcp_client
+
+    meus = eproc_intimacoes.prazos_processo(processo).get("prazos") or []
+    if not meus:
+        return {"tem_residual": False, "quantidade": 0}
+
+    intimacoes: list[dict] = []
+    for instancia in (1, 2):
+        try:
+            res = await eproc_mcp_client.triagem_processo(processo, instancia=instancia)
+        except Exception:
+            res = None
+        if res and not res.get("erro"):
+            intimacoes = res.get("intimacoes") or []
+            break
+    else:
+        return {"tem_residual": True, "quantidade": len(meus)}
+
+    residuais = 0
+    for p in meus:
+        dia_p = _so_data(p.get("data_envio", ""))
+        dias_p = str(p.get("prazo_dias") or "")
+        for it in intimacoes:
+            if not it.get("ativa"):
+                continue
+            if _so_data(it.get("data_hora", "")) != dia_p:
+                continue
+            if dias_p and str(it.get("prazo_dias") or "") != dias_p:
+                continue
+            residuais += 1
+            break
+    return {"tem_residual": residuais > 0, "quantidade": residuais}
+
+
 async def executar_gerenciamento_real(processo: str, tipo: str, procurador_valor: str = "") -> dict:
     """Executa de fato o Gerenciamento de Processo (substituir/associar/
     desassociar procurador) — IRREVERSÍVEL, mesmo efeito de um substabelecimento
     real no e-proc. Só chamar depois que o usuário confirmar explicitamente
-    tipo + procurador destino."""
+    tipo + procurador destino.
+
+    Registra no Histórico do painel (pedido do usuário 2026-09-14 — gerenciamento
+    nunca deixava rastro nenhum ali, nem disparado automaticamente após
+    peticionar nem "puro", pelo modal avulso do minimenu — ver
+    `static/js/app.js:gerenciarProcessoApp`; os DOIS casos passam por esta MESMA
+    função, então um só ponto de registro cobre os dois). Registra sempre que o
+    automação de fato rodou no e-proc (`res["ok"]`), mesmo quando o resultado
+    não é um sucesso claro (`provavel_sucesso=False`/partes com erro) — o
+    `detalhe` reflete o que de fato aconteceu; um gerenciamento que falhou
+    parcialmente é MAIS importante de aparecer no Histórico, não menos. Tenta
+    achar o PAJ deste processo (`paj_processo_link_service`) só pra enriquecer
+    o registro — nunca exige um (o modal avulso não pede PAJ nenhum); com 0 ou
+    mais de 1 candidato, registra sem PAJ (ambíguo não é resolvido às cegas).
+
+    BLOQUEIA se sobrar prazo residual no MEU Painel do Procurador pra este
+    processo (`_prazo_residual_no_meu_painel`) — gerenciar transfere o
+    processo INTEIRO pro novo procurador, inclusive qualquer prazo ainda
+    aberto (coautor esquecido no mesmo ato simultâneo, ou ato autônomo
+    diferente ainda pendente); pedido explícito do usuário (2026-09-XX), isso
+    nunca pode acontecer por acidente. `dar_mera_ciencia` (mera_ciencia_service)
+    já trata esse bloqueio como um passo PULADO, não um erro fatal — fecha o
+    prazo do ato atual e a movimentação do SISDPU normalmente, só não
+    gerencia ainda."""
     from ingestao import eproc_client
     from ingestao.eproc_client import TIPOS_GERENCIAMENTO
 
@@ -661,7 +784,49 @@ async def executar_gerenciamento_real(processo: str, tipo: str, procurador_valor
         return {"ok": False, "erro": "processo é obrigatório."}
     if tipo not in TIPOS_GERENCIAMENTO:
         return {"ok": False, "erro": f"Tipo de gerenciamento inválido: {tipo!r}."}
-    return await eproc_client.gerenciar_processo(processo, tipo, procurador_valor or "")
+
+    residual = await _prazo_residual_no_meu_painel(processo)
+    if residual["tem_residual"]:
+        return {
+            "ok": False, "bloqueado_por_residual": True,
+            "quantidade_residual": residual["quantidade"],
+            "erro": (f"Gerenciamento bloqueado: ainda há {residual['quantidade']} prazo(s) em aberto no seu "
+                     f"Painel do Procurador para este processo. Gerenciar agora transferiria esse(s) "
+                     f"prazo(s) para o novo procurador — feche todos antes de gerenciar."),
+        }
+
+    res = await eproc_client.gerenciar_processo(processo, tipo, procurador_valor or "")
+
+    if res.get("ok"):
+        from services import historico_painel, paj_processo_link_service
+
+        tipo_label = TIPOS_GERENCIAMENTO.get(tipo, tipo)
+        partes_marcadas = res.get("partes_marcadas") or []
+        partes_com_erro = res.get("partes_com_erro") or []
+        if res.get("provavel_sucesso"):
+            detalhe = f"Processo {processo} — {len(partes_marcadas)} parte(s) gerenciada(s) com sucesso"
+        elif partes_com_erro:
+            detalhe = f"Processo {processo} — ATENÇÃO: {len(partes_com_erro)} parte(s) com erro, confira"
+        else:
+            detalhe = f"Processo {processo} — resultado não confirmado automaticamente, confira a aba do e-proc"
+
+        paj_norm, paj_label = "", ""
+        try:
+            candidatos = paj_processo_link_service.resolver_pajs_de_processo(processo)
+            if len(candidatos) == 1:
+                paj_norm = candidatos[0].get("paj_norm") or ""
+                paj_label = candidatos[0].get("paj_label") or ""
+        except Exception:  # noqa: BLE001
+            pass
+
+        historico_painel.registrar({
+            "paj": paj_label, "paj_norm": paj_norm,
+            "origem": "eproc", "atividade": "Gerenciamento de processo (substabelecimento)",
+            "movimentacao": tipo_label, "tramitado_para": procurador_valor or "",
+            "concluido": False, "detalhe": detalhe[:300],
+        })
+
+    return res
 
 
 async def confirmar_peticionamento_real(paj_norm: str, processo: str) -> dict:
@@ -682,5 +847,22 @@ async def confirmar_peticionamento_real(paj_norm: str, processo: str) -> dict:
     evento = (rascunho.get("evento") or "").strip()
     res = await eproc_client.confirmar_peticionamento(processo, evento=evento)
     if res.get("ok") and res.get("provavel_sucesso"):
+        # Registro no Histórico do painel — próprio pra este ato (nunca existia
+        # antes: peticionar no e-proc não deixava rastro nenhum ali, só a
+        # movimentação SISDPU consequente, quando executada em algum console
+        # que já registrasse — pedido do usuário 2026-09-14). Só quando há um
+        # PAJ REAL por trás ("PAJ-..." — petição avulsa, "PROC-...", não tem
+        # PAJ pra registrar contra nessa tela, que é organizada por PAJ).
+        if paj_norm.startswith("PAJ-"):
+            from services import historico_painel
+
+            numero_evento = res.get("numero_evento") or ""
+            detalhe = f"Processo {processo}" + (f" — Evento {numero_evento}" if numero_evento else "")
+            historico_painel.registrar({
+                "paj": rascunho.get("paj_label", ""), "paj_norm": paj_norm,
+                "origem": "eproc", "atividade": "Peticionamento no e-proc",
+                "movimentacao": evento or "—", "tramitado_para": "",
+                "concluido": False, "detalhe": detalhe[:300],
+            })
         excluir_rascunho(paj_norm)
     return res

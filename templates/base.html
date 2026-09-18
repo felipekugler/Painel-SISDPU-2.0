@@ -306,6 +306,11 @@
             .main-content.expanded { margin-left: 0; }
         }
 
+        /* Widget flutuante de sincronizacao (partials/sync_widget.html) —
+           oculto por padrao; JS (sync_widget.js) mostra a pilula minimizada
+           ou o card expandido conforme o estado. */
+        .sync-widget-oculto { display: none !important; }
+
         /* Badge de classificacao */
         .badge-classif { font-size: 0.7rem; letter-spacing: 0.03em; }
 
@@ -859,7 +864,8 @@
                 </span>
                 <h1 class="text-lg font-bold leading-tight" style="color: var(--text);">Painel SISDPU</h1>
             </div>
-            <p class="text-xs mt-2" style="color: var(--text-secondary);">{{ oficio_descricao }}</p>
+            <p id="sidebar-oficio-descricao" class="text-xs mt-2 text-left"
+               style="color: var(--text-secondary); white-space: pre-line;">{{ oficio_descricao() }}</p>
         </div>
 
         <!-- Nav -->
@@ -879,7 +885,7 @@
                 </svg>
                 <span>PAJs</span>
                 <span class="text-xs" style="color: var(--text-tertiary); margin-left: auto;">
-                    <span x-text="count > 0 ? `(${count})` : ''"></span>
+                    <span x-text="carregado ? `(${count})` : ''"></span>
                 </span>
             </a>
 
@@ -890,7 +896,7 @@
                 </svg>
                 <span>Watchlist</span>
                 <span class="text-xs" style="color: var(--text-tertiary); margin-left: auto;">
-                    <span x-text="count > 0 ? `(${count})` : ''"></span>
+                    <span x-text="carregado ? `(${count})` : ''"></span>
                 </span>
             </a>
 
@@ -901,16 +907,19 @@
                 </svg>
                 <span>Retornos</span>
                 <span class="text-xs" style="color: var(--text-tertiary); margin-left: auto;">
-                    <span x-text="count > 0 ? `(${count})` : ''"></span>
+                    <span x-text="carregado ? `(${count})` : ''"></span>
                 </span>
             </a>
 
-            <!-- Movimentações pendentes (submenu) -->
-            <a href="/movimentacoes-pendentes" class="nav-item nav-sub {% if request.url.path == '/movimentacoes-pendentes' %}active{% endif %}">
+            <!-- Movimentações pendentes (submenu) com contador -->
+            <a href="/movimentacoes-pendentes" class="nav-item nav-sub {% if request.url.path == '/movimentacoes-pendentes' %}active{% endif %}" x-data="movimentacoesPendentesCounter()" x-init="loadCount()">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5" />
                 </svg>
                 <span>Movimentações pendentes</span>
+                <span class="text-xs" style="color: var(--text-tertiary); margin-left: auto;">
+                    <span x-text="carregado ? `(${count})` : ''"></span>
+                </span>
             </a>
 
             <!-- Arquivos SAT (submenu) -->
@@ -922,7 +931,7 @@
             </a>
 
             <!-- E-proc (grupo) -->
-            <a href="/eproc/consultar" class="nav-item {% if request.url.path in ['/eproc/consultar', '/prazos', '/peticoes-pendentes'] %}active{% endif %}">
+            <a href="/eproc/consultar" class="nav-item {% if request.url.path in ['/eproc/consultar', '/prazos', '/peticoes-pendentes', '/intimacoes'] %}active{% endif %}">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25m-18 0A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75m-18 0v-7.5A2.25 2.25 0 0 1 5.25 9h13.5A2.25 2.25 0 0 1 21 11.25v7.5" />
                 </svg>
@@ -937,20 +946,44 @@
                 <span>Consultar processo</span>
             </a>
 
-            <!-- Prazos (submenu) -->
-            <a href="/prazos" class="nav-item nav-sub {% if request.url.path == '/prazos' %}active{% endif %}">
+            <!-- Prazos (submenu) com contador. Contagem = processos DISTINTOS
+                 entre as 7 categorias da página (que não tem um total único
+                 próprio) — ver docstring de /api/prazos/count. -->
+            <a href="/prazos" class="nav-item nav-sub {% if request.url.path == '/prazos' %}active{% endif %}" x-data="prazosCounter()" x-init="loadCount()">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M12 6v6h4.5m4.5 0a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z" />
                 </svg>
                 <span>Prazos</span>
+                <span class="text-xs" style="color: var(--text-tertiary); margin-left: auto;">
+                    <span x-text="carregado ? `(${count})` : ''"></span>
+                </span>
             </a>
 
-            <!-- Petições pendentes (submenu) -->
-            <a href="/peticoes-pendentes" class="nav-item nav-sub {% if request.url.path == '/peticoes-pendentes' %}active{% endif %}">
+            <!-- Petições pendentes (submenu) com contador -->
+            <a href="/peticoes-pendentes" class="nav-item nav-sub {% if request.url.path == '/peticoes-pendentes' %}active{% endif %}" x-data="peticoesPendentesCounter()" x-init="loadCount()">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
                 </svg>
                 <span>Petições pendentes</span>
+                <span class="text-xs" style="color: var(--text-tertiary); margin-left: auto;">
+                    <span x-text="carregado ? `(${count})` : ''"></span>
+                </span>
+            </a>
+
+            <!-- Intimações (submenu) com contador: Triagem Inteligente de
+                 Intimações — cruza intimações do Painel do Procurador com o
+                 PAJ vinculado, resume, confronta com o estágio do PAJ e
+                 classifica, sugerindo minuta (petição ou despacho) para
+                 revisão do Defensor. Só diagnóstico/preparo — nunca
+                 protocola/movimenta nada sozinha. -->
+            <a href="/intimacoes" class="nav-item nav-sub {% if request.url.path == '/intimacoes' %}active{% endif %}" x-data="intimacoesCounter()" x-init="loadCount()">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M8.25 3v1.5M15.75 3v1.5M3 18.75V7.5a2.25 2.25 0 0 1 2.25-2.25h13.5A2.25 2.25 0 0 1 21 7.5v11.25a2.25 2.25 0 0 1-2.25 2.25H5.25A2.25 2.25 0 0 1 3 18.75Zm3-8.25h10.5m-10.5 3.75h6" />
+                </svg>
+                <span>Intimações</span>
+                <span class="text-xs" style="color: var(--text-tertiary); margin-left: auto;">
+                    <span x-text="carregado ? `(${count})` : ''"></span>
+                </span>
             </a>
 
             <!-- Agenda: calendário + tabela unificando audiências (SISDPU),
@@ -962,6 +995,30 @@
                 <span>Agenda</span>
             </a>
         </nav>
+
+        <!-- Pesquisa rápida de PAJ — mesmo espírito da busca do próprio
+             SISDPU (número + botão de lupa). Enter ou clique abre o
+             detalhe numa aba NOVA imediatamente (window.open colado no
+             gesto do usuário, sem nenhum await antes — evita bloqueio de
+             pop-up); se o PAJ ainda não estiver sincronizado localmente, a
+             própria aba nova mostra uma tela de carregamento que dispara
+             uma sincronização levíssima (sem documentos/anexos) e recarrega
+             sozinha quando terminar — ver pesquisarPajMenu() em app.js,
+             templates/paj_carregando.html e routes/paj.py. -->
+        <div class="px-3 pt-3" x-data="{ pajBusca: '' }">
+            <div class="flex gap-1.5">
+                <input type="text" class="input input-bordered input-sm flex-1 font-mono text-xs"
+                       placeholder="Pesquisar PAJ — 2026/029-00136" maxlength="14"
+                       :value="pajBusca" @input="pajBusca = formatarInputPaj($event.target.value)"
+                       @keydown.enter="pesquisarPajMenu(pajBusca)">
+                <button type="button" class="btn btn-sm btn-primary btn-square" title="Pesquisar PAJ"
+                        @click="pesquisarPajMenu(pajBusca)">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+                    </svg>
+                </button>
+            </div>
+        </div>
 
         <!-- Footer com Pipeline e Configurações -->
         <div class="border-t border-base-300">
@@ -1112,6 +1169,91 @@
         <form method="dialog" class="modal-backdrop"><button onclick="cofreModalCancelar()">fechar</button></form>
     </dialog>
 
+    <!-- Modal "Gerenciar processo" (substabelecimento avulso, sem petição
+         nenhuma) — global, disponível em qualquer página (mesmo espírito do
+         modal do cofre acima), acionado pelo minimenu do número do processo
+         via abrirGerenciarProcesso() (static/js/app.js). Ação isolada e
+         rápida de propósito: gerenciamento no e-proc é um único POST (tipo +
+         procurador), sem rascunho/"preparar depois confirmar" como peticionar
+         — não precisa da tela cheia de "Ações no Eproc" pra isso (pedido do
+         usuário 2026-09-11, depois de um gerenciamento configurado numa
+         movimentação conjunta ter falhado por um bug e ficado sem forma de
+         reexecutar isolado). -->
+    <div x-data="gerenciarProcessoApp()" x-init="init()"
+         @abrir-gerenciar-processo.window="abrir($event.detail.processo)">
+        <div class="modal" :class="{'modal-open': aberto}">
+            <div class="modal-box max-w-md">
+                <h3 class="font-bold text-lg mb-1">Gerenciar processo</h3>
+                <p class="text-xs text-base-content/60 mb-3">
+                    Processo: <span class="font-mono font-semibold" x-text="processo"></span>
+                </p>
+                <!-- Formulário — some de vista assim que há um resultado (sucesso/erro/
+                     indefinido), dando lugar ao banner abaixo + botão único "Fechar". -->
+                <template x-if="!resultado">
+                    <div>
+                        <div class="flex flex-col gap-3">
+                            <div class="flex flex-col gap-1">
+                                <label class="text-xs font-semibold text-base-content/60">Tipo de gerenciamento</label>
+                                <select class="select select-bordered select-sm" x-model="tipo">
+                                    <template x-for="t in tiposGerenciamento" :key="t.valor">
+                                        <option :value="t.valor" x-text="t.rotulo"></option>
+                                    </template>
+                                </select>
+                            </div>
+                            <div class="flex flex-col gap-1" x-show="tipo !== 'D'">
+                                <label class="text-xs font-semibold text-base-content/60">Procurador destino</label>
+                                <select class="select select-bordered select-sm" x-model="procuradorValor" @change="onTrocarProcurador()">
+                                    <option value="">Escolha um Procurador</option>
+                                    <template x-for="p in procuradoresDropdown()" :key="p.valor">
+                                        <option :value="p.valor" x-text="p.rotulo"></option>
+                                    </template>
+                                </select>
+                                <span x-show="!procuradoresDropdown().length" class="text-[11px] text-base-content/50">
+                                    configure em Configurações › e-proc
+                                </span>
+                            </div>
+                        </div>
+                        <div class="text-[11px] text-error mt-2" x-show="erro" x-text="erro"></div>
+                        <div class="text-[11px] text-warning font-medium border border-warning/40 rounded p-2 mt-2">
+                            Ação IRREVERSÍVEL no e-proc — confira o procurador antes de executar.
+                        </div>
+                        <div class="modal-action">
+                            <button type="button" class="btn btn-sm" @click="aberto = false" :disabled="executando">Cancelar</button>
+                            <button type="button" class="btn btn-sm btn-error gap-1" @click="executar()"
+                                    :disabled="executando || (tipo !== 'D' && !procuradorValor)">
+                                <span x-show="executando" class="loading loading-spinner loading-xs"></span>
+                                Executar gerenciamento
+                            </button>
+                        </div>
+                    </div>
+                </template>
+
+                <!-- Resultado — mostrado dentro do próprio modal (sem alert()), com Fechar. -->
+                <template x-if="resultado">
+                    <div>
+                        <div class="text-sm font-medium rounded p-3 mt-1"
+                             :class="{
+                                'bg-success/10 text-success border border-success/40': resultado.tipo === 'sucesso',
+                                'bg-error/10 text-error border border-error/40': resultado.tipo === 'erro',
+                                'bg-warning/10 text-warning border border-warning/40': resultado.tipo === 'indefinido',
+                             }">
+                            <span x-text="resultado.mensagem"></span>
+                            <ul class="list-disc ml-5 mt-1" x-show="(resultado.detalhes || []).length">
+                                <template x-for="d in (resultado.detalhes || [])" :key="d">
+                                    <li x-text="d"></li>
+                                </template>
+                            </ul>
+                        </div>
+                        <div class="modal-action">
+                            <button type="button" class="btn btn-sm btn-primary" @click="fechar()">Fechar</button>
+                        </div>
+                    </div>
+                </template>
+            </div>
+            <form method="dialog" class="modal-backdrop"><button type="button" @click="aberto = false">fechar</button></form>
+        </div>
+    </div>
+
     <!-- Pipeline modal (compartilhado) -->
     {% include "partials/pipeline_modal.html" %}
 
@@ -1198,6 +1340,9 @@
         <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
     </dialog>
 
+    {% include "partials/sync_widget.html" %}
+
+    <script src="/static/js/sync_widget.js?v={{ app_version }}"></script>
     <script src="/static/js/app.js?v={{ app_version }}"></script>
     <script src="/static/js/movimentacoes.js?v={{ app_version }}"></script>
     <script src="/static/js/rich_editor.js?v={{ app_version }}"></script>
@@ -1207,53 +1352,74 @@
     <script src="/static/js/eventos_processo.js?v={{ app_version }}"></script>
     <script src="/static/js/minuta_ia.js?v={{ app_version }}"></script>
     <script src="/static/js/analise_pretensao.js?v={{ app_version }}"></script>
+    <script src="/static/js/calcular_cnis.js?v={{ app_version }}"></script>
     <script src="/static/js/lembretes.js?v={{ app_version }}"></script>
     {% block scripts %}{% endblock %}
 
     <script>
-        function watchlistCounter() {
+        // Identificação do Ofício/Defensor (aba Geral das Configurações) —
+        // disponível em TODA página (não só as que tem PAJ), pros
+        // placeholders [OFICIO]/[UNIDADE]/[DEFENSOR]/[CARGO] dos "Modelos de
+        // petição"/"despachos padrão" (ver static/js/acoes_eproc.js/
+        // acoes_sisdpu.js) — resolvem mesmo em petição avulsa, sem PAJ
+        // vinculado, já que não dependem de nenhum PAJ especifico.
+        window._identificacaoOrgao = {{ identificacao_orgao() | tojson }};
+
+        // Contador genérico do submenu — usado por todos os itens com badge
+        // de contagem (PAJs/Watchlist/Retornos/Movimentações pendentes/
+        // Prazos/Petições pendentes/Intimações). `url` é o endpoint que
+        // devolve a contagem; `extrair(data)` pega o número certo da
+        // resposta (o formato varia: {count}, {stats:{total}}, etc., cada
+        // endpoint já existia com seu próprio formato antes desta função
+        // genérica existir). `carregado` só vira true depois do 1º fetch
+        // (sucesso ou falha) — mostra "(N)" SEMPRE, inclusive "(0)" (pedido
+        // do usuário 2026-09-18), mas só depois de carregar de verdade —
+        // sem isso, "(0)" apareceria por um instante antes do número real
+        // chegar, toda vez que a página carrega.
+        function sidebarCounter(url, extrair) {
             return {
                 count: 0,
+                carregado: false,
                 async loadCount() {
                     try {
-                        const r = await fetch('/api/watchlist');
+                        const r = await fetch(url);
                         const data = await r.json();
-                        this.count = data.stats?.total || 0;
+                        this.count = extrair(data) || 0;
                     } catch (e) {
                         this.count = 0;
+                    } finally {
+                        this.carregado = true;
                     }
-                }
+                },
             };
+        }
+
+        function watchlistCounter() {
+            return sidebarCounter('/api/watchlist', (d) => d.stats?.total);
         }
 
         function pajsCounter() {
-            return {
-                count: 0,
-                async loadCount() {
-                    try {
-                        const r = await fetch('/api/pajs/count');
-                        const data = await r.json();
-                        this.count = data.count || 0;
-                    } catch (e) {
-                        this.count = 0;
-                    }
-                }
-            };
+            return sidebarCounter('/api/pajs/count', (d) => d.count);
         }
 
         function retornosCounter() {
-            return {
-                count: 0,
-                async loadCount() {
-                    try {
-                        const r = await fetch('/api/retornos/count');
-                        const data = await r.json();
-                        this.count = data.count || 0;
-                    } catch (e) {
-                        this.count = 0;
-                    }
-                }
-            };
+            return sidebarCounter('/api/retornos/count', (d) => d.count);
+        }
+
+        function movimentacoesPendentesCounter() {
+            return sidebarCounter('/api/acoes-sisdpu/rascunhos/count', (d) => d.count);
+        }
+
+        function prazosCounter() {
+            return sidebarCounter('/api/prazos/count', (d) => d.count);
+        }
+
+        function peticoesPendentesCounter() {
+            return sidebarCounter('/api/acoes-eproc/rascunhos/count', (d) => d.count);
+        }
+
+        function intimacoesCounter() {
+            return sidebarCounter('/api/intimacoes/casos/count', (d) => d.count);
         }
 
         window.encerrarPainel = async function() {
@@ -1491,14 +1657,13 @@
         // configurado e ainda trancado — o que é o normal após reiniciar,
         // já que o cofre é só em memória): a senha-mestra. Assim que
         // desbloqueado, reconecta SISDPU e e-proc sozinho (mesma chamada do
-        // selo "reconectar") e, com o e-proc já logado, sincroniza as
-        // intimações (mesma rota do botão "Sincronizar intimações" da
-        // página Prazos) — tudo sem esperar o usuário clicar em nada. Roda
+        // selo "reconectar") — tudo sem esperar o usuário clicar em nada. Roda
         // uma vez por processo do servidor — nas páginas seguintes o cofre
         // já está destrancado e este bloco não faz nada além do polling
         // normal. O SAT fica de fora de propósito: não usa credencial do
         // cofre, o login sempre exige 2FA/CAPTCHA manual, então abrir a
-        // janela dele sozinho não adiantaria nada.
+        // janela dele sozinho não adiantaria nada. NÃO sincroniza intimações/
+        // prazos automaticamente aqui (removido 2026-09-18) — só manual.
         async function _inicializarPainel() {
             var st = await _lerCofre();
             if (st.configurado && !st.destrancado) {
@@ -1512,34 +1677,15 @@
                     // conecta no reconectar manual seguinte, com a máquina livre).
                     await window.reconectarSistema('sisdpu');
                     await window.reconectarSistema('eproc');
-                    // Só dispara a sincronização de intimações DEPOIS do e-proc
-                    // ter terminado de logar — mesma lógica de não competir por
-                    // CPU/IO, e a rota abaixo precisa da sessão já ativa.
-                    _sincronizarIntimacoesInicial();
                 }
             }
             window.atualizarSelos();
         }
 
-        // Sincroniza as intimações do e-proc (mesma rota do botão "Sincronizar
-        // intimações" da página Prazos) logo após o login automático do início
-        // do painel. O resultado fica persistido no servidor
-        // (eproc_intimacoes.salvar) — quando o usuário abrir a página Prazos,
-        // ela já carrega sincronizada (carregarIntimacoes() só lê o que já foi
-        // salvo), sem precisar clicar em nada.
-        function _sincronizarIntimacoesInicial() {
-            showToast('Sincronizando intimações do e-proc...', 'info');
-            fetch('/api/prazos/sincronizar')
-                .then(function(r) { return r.json().then(function(d) { return { httpOk: r.ok, d: d }; }); })
-                .then(function(res) {
-                    if (res.httpOk) {
-                        showToast('Intimações do e-proc sincronizadas.', 'success');
-                    } else {
-                        showToast('Falha ao sincronizar intimações: ' + ((res.d && res.d.erro) || 'erro desconhecido'), 'error');
-                    }
-                })
-                .catch(function() { showToast('Falha de rede ao sincronizar intimações.', 'error'); });
-        }
+        // A sincronização de intimações/prazos judiciais do e-proc no início do
+        // painel foi REMOVIDA (pedido do usuário 2026-09-18 — mensagens de erro
+        // frequentes nela). Agora só dispara manualmente, pelo botão
+        // "Sincronizar intimações" da página Prazos (POST /api/prazos/sincronizar).
 
         _inicializarPainel();
         setInterval(window.atualizarSelos, 15000);

@@ -25,27 +25,34 @@ async def dashboard(request: Request):
 
 @router.get("/api/pajs/count", response_class=JSONResponse)
 async def api_pajs_count():
-    """Retorna a contagem de PAJs na caixa atual."""
-    pajs = listar_pajs(incluir_concluidos=False)
+    """Retorna a contagem de PAJs na caixa atual.
+
+    `excluir_submenu=False`: PAJs de Retornos/SAT contam aqui também (pedido
+    do usuário 2026-09-18 — ver `api_pajs` abaixo para o motivo completo);
+    sem isso, o badge do submenu "PAJs" (sidebar) contaria menos PAJs do que
+    a própria listagem que ele representa."""
+    pajs = listar_pajs(incluir_concluidos=False, excluir_submenu=False)
     return {"count": len(pajs)}
 
 
 @router.get("/api/pajs", response_class=JSONResponse)
-async def api_pajs(concluidos: int = 0, arquivados: int = 0):
-    """Lista PAJs pro dashboard.
+async def api_pajs():
+    """Lista PAJs pro dashboard — sempre apenas os em_caixa_atual.
 
-    ?concluidos=1 -> inclui tambem PAJs que sairam da caixa em sync anterior.
-    Por padrao so retorna em_caixa_atual.
+    O toggle "Mostrar concluídos" (e os parametros `concluidos`/`arquivados`
+    que ele usava) foi removido em 2026-09-18 (pedido do usuario — nunca
+    usado, e forcava uma 2a varredura completa de PAJS_DIR a cada load do
+    dashboard so' para calcular o badge "(+N)", sem se beneficiar do cache
+    de `listar_pajs` por este ser um unico slot por chave).
 
-    O parametro legado `arquivados` continua sendo aceito (alias do
-    `concluidos`) para nao quebrar bookmarks/scripts antigos.
+    `excluir_submenu=False` (pedido do usuario 2026-09-18): PAJs
+    classificados como Retornos/SAT (`metadata.categoria_caixa`) TAMBEM
+    aparecem aqui, alem de continuarem aparecendo nos submenus proprios —
+    antes ficavam OMITIDOS da lista geral (decisao antiga documentada em
+    `paj_service.listar_pajs`), o que dava a impressao de que menos PAJs
+    tinham sido sincronizados do que realmente foram.
     """
-    incluir = bool(concluidos or arquivados)
-    pajs = listar_pajs(incluir_concluidos=incluir)
-    # Conta total de concluidos no workspace (pra mostrar no toggle)
-    total_concluidos = 0
-    if not incluir:
-        total_concluidos = len(listar_pajs(incluir_concluidos=True)) - len(pajs)
+    pajs = listar_pajs(incluir_concluidos=False, excluir_submenu=False)
 
     # "ultima_execucao" reflete a ultima vez que a CAIXA INTEIRA foi
     # sincronizada (rapida ou completa). Le do marcador gravado pelo
@@ -76,5 +83,4 @@ async def api_pajs(concluidos: int = 0, arquivados: int = 0):
     return {
         "pajs": pajs,
         "ultima_execucao": ultima_execucao,
-        "total_concluidos": total_concluidos,
     }

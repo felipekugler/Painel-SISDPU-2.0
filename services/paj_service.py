@@ -268,9 +268,18 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
             if esta_concluido and not incluir_concluidos:
                 continue
 
-            # PAJs que pertencem a um submenu especializado (Retornos/SAT) NÃO
-            # aparecem no dashboard — só no submenu próprio (decisão do usuário).
-            # Fail-safe: categoria ausente/"" → PAJ geral, aparece normalmente.
+            # Decisão REVERTIDA 2026-09-18 (pedido do usuário): PAJs de
+            # Retornos/SAT ficavam OMITIDOS da lista geral do dashboard, só
+            # apareciam no submenu próprio — dava a impressão de que menos
+            # PAJs tinham sido sincronizados do que de fato foram. Agora o
+            # dashboard chama com `excluir_submenu=False` (ver routes/
+            # dashboard.py) e esses PAJs aparecem nos dois lugares. O
+            # parâmetro continua existindo (default `True`) pros OUTROS
+            # chamadores desta função que não foram revisados nesse pedido
+            # (ex.: services/chat_service.py, services/cota_service.py) —
+            # não alterar o default aqui sem confirmar se eles precisam
+            # continuar excluindo. Fail-safe: categoria ausente/"" → PAJ
+            # geral, aparece normalmente independente do parâmetro.
             if excluir_submenu and metadata.get("categoria_caixa"):
                 continue
 
@@ -729,8 +738,15 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
     """
     pasta = PAJS_DIR / paj_norm
     meta_path = pasta / "metadata.json"
-    if not meta_path.exists():
-        return {"ok": False, "detalhe": "PAJ não encontrado."}
+    # PAJ ainda não sincronizado localmente (fluxo de "Movimentações pendentes"
+    # — ver services.acoes_sisdpu_service/paj_link_service): registra no
+    # Histórico do painel MESMO ASSIM logo abaixo (não depende de metadata.json,
+    # só de campos que já vêm no próprio `resultado`) — só o que depende de
+    # fato da pasta em disco (marcar "fora da caixa", atualizar
+    # tramitacoes_caixa) fica pulado, sem erro, até uma sincronização real
+    # trazer o PAJ pra cá. Bug real 2026-09-14: nada era registrado nesse caso,
+    # nem o que já dava pra registrar sem PAJ local nenhum.
+    paj_sincronizado = meta_path.exists()
 
     status = (resultado or {}).get("status")
     ok = bool((resultado or {}).get("ok"))
@@ -768,7 +784,11 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
 
     saiu_da_caixa = False
     outros_tramites_abertos = 0
-    if concluido or ja_ausente:
+    # Sem metadata.json local não há tramitacoes_caixa nem "fora da caixa" pra
+    # marcar de verdade — pula direto (o registro no Histórico acima já
+    # aconteceu, independente disso). Uma sincronização real, mais tarde,
+    # traz o estado correto da caixa pra este PAJ.
+    if paj_sincronizado and (concluido or ja_ausente):
         # "concluidos" (NOVO — lista): ids concluídos agora OU já ausentes nesta
         # execução, devolvidos por acoes_sisdpu_service.executar_stream — cobre
         # tanto 1 quanto N trâmites selecionados de uma vez na página do PAJ.

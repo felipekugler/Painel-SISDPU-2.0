@@ -1,4 +1,5 @@
 {% extends "base.html" %}
+{% from "partials/_macro_minimenu_paj.html" import itens_minimenu_paj %}
 
 {% block title %}Histórico{% endblock %}
 
@@ -83,9 +84,8 @@
         <ul x-show="menuAbertoPaj !== null" x-cloak
             @click.outside="menuAbertoPaj = null"
             :style="'position:fixed; top:' + posMenu.top + 'px; left:' + posMenu.left + 'px;'"
-            class="menu menu-xs bg-base-100 rounded-box z-[1000] w-44 p-1 shadow border border-base-300">
-            <li><a @click.stop="abrirPajPainel(menuAbertoPaj); menuAbertoPaj = null">Abrir no Painel</a></li>
-            <li><a @click.stop="abrirPajNavegador(menuAbertoPajLabel); menuAbertoPaj = null">Abrir no navegador</a></li>
+            class="menu menu-xs bg-base-100 rounded-box z-[1000] w-48 p-1 shadow border border-base-300">
+            {{ itens_minimenu_paj('menuAbertoPaj', 'menuAbertoPajLabel', after='menuAbertoPaj = null') }}
         </ul>
     </template>
 </div>

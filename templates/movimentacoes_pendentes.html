@@ -6,13 +6,19 @@
 {% block content %}
 <div x-data="movimentacoesPendentesApp()" x-init="init()" x-cloak class="flex flex-col flex-1">
 
-  <div class="px-8 pt-6 pb-2">
-    <h1 class="text-3xl font-semibold tracking-tight">Movimentações pendentes</h1>
-    <div class="text-xs text-base-content/50 mt-1">
-      Rascunhos gravados no módulo "Ações no SISDPU" de cada PAJ — fase, despacho e anexos ficam
-      guardados aqui até você voltar pra concluir e executar. Inclui os gravados automaticamente
-      depois de um peticionamento real no e-proc.
+  <div class="px-8 pt-6 pb-2 flex items-start justify-between gap-4">
+    <div>
+      <h1 class="text-3xl font-semibold tracking-tight">Movimentações pendentes</h1>
+      <div class="text-xs text-base-content/50 mt-1">
+        Rascunhos gravados para movimentação no SISDPU.
+      </div>
     </div>
+    <button type="button" class="btn btn-sm btn-primary gap-1.5 whitespace-nowrap" @click="abrirModalNovo()">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px">
+        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+      </svg>
+      Adicionar movimentação
+    </button>
   </div>
 
   <div class="px-8 py-4">
@@ -41,12 +47,22 @@
               <td x-text="it.assistido || '—'"></td>
               <td>
                 <a :href="'/paj/' + it.paj_norm" target="_blank" class="link font-mono text-xs" x-text="it.paj_label || it.paj_norm"></a>
+                <span x-show="it.sincronizado === false" class="badge badge-xs badge-warning ml-1"
+                      title="Este PAJ ainda não foi sincronizado localmente — o id do SISDPU será resolvido automaticamente ao executar.">
+                  não sincronizado
+                </span>
+                <span x-show="it.par_eproc_processo" class="badge badge-xs badge-info gap-1 cursor-pointer ml-1 normal-case"
+                      title="Há uma petição pendente correlacionada no e-proc — clique pra abrir as duas juntas em 'Movimentar Eproc + SISDPU'."
+                      @click="movimentarConjunto(it.par_eproc_processo, it.paj_norm)">
+                  SISDPU+Eproc
+                </span>
               </td>
               <td x-text="it.fase || '—'"></td>
               <td x-text="it.grupo || '—'"></td>
               <td x-text="(it.anexos || []).length || '—'"></td>
               <td class="text-xs whitespace-nowrap" x-text="formatarDataHora(it.salvo_em)"></td>
-              <td class="text-right">
+              <td class="text-right whitespace-nowrap">
+                <button type="button" class="btn btn-ghost btn-xs" @click="abrirModalNovo(it.paj_label || it.paj_norm)">Abrir</button>
                 <button type="button" class="btn btn-ghost btn-xs text-error" @click="descartar(it.paj_norm)">Descartar</button>
               </td>
             </tr>
@@ -56,13 +72,75 @@
     </div>
   </div>
 
+  <!-- Modal "Adicionar movimentação" — pede o número do PAJ (não precisa estar
+       sincronizado no painel) e, uma vez confirmado, reabre o MESMO console
+       "Ações no SISDPU" usado na página do PAJ (Gravar/Executar). Reabrir aqui
+       pra um PAJ que já tem rascunho salvo carrega o rascunho automaticamente
+       (carregarRascunho() do próprio console, sem nada novo) — por isso o botão
+       "Abrir" de cada linha da tabela usa exatamente este mesmo modal. -->
+  <div class="modal overflow-y-auto" :class="{'modal-open': modalNovoAberto}">
+    <div class="modal-box max-w-[75vw] max-h-none overflow-visible my-8">
+      <h3 class="font-bold text-lg mb-1">Adicionar movimentação</h3>
+      <template x-if="!numeroPajConfirmado">
+        <div class="flex flex-col gap-2">
+          <p class="text-xs text-base-content/60">
+            Informe o número do PAJ (formato AAAA/UUU-NNNNN). Não precisa estar sincronizado
+            neste painel — útil quando o SISDPU está fora do ar: a movimentação fica guardada
+            aqui, e o id do processo é resolvido automaticamente na hora de executar.
+          </p>
+          <input type="text" class="input input-bordered input-sm font-mono w-64" placeholder="2026/029-01593"
+                 x-model="numeroPajDigitado" @keydown.enter="confirmarNumeroPaj()" x-ref="inputNumeroPaj">
+          <span class="text-error text-xs" x-show="erroNumeroPaj" x-text="erroNumeroPaj"></span>
+          <div class="modal-action">
+            <button type="button" class="btn btn-sm" @click="fecharModalNovo()">Cancelar</button>
+            <button type="button" class="btn btn-sm btn-primary" @click="confirmarNumeroPaj()">Continuar</button>
+          </div>
+        </div>
+      </template>
+      <template x-if="numeroPajConfirmado">
+        <div>
+          <div class="text-xs text-base-content/60 mb-2 flex items-center gap-2">
+            <span>PAJ: <span class="font-mono font-semibold" x-text="numeroPajConfirmado"></span></span>
+            <button type="button" class="btn btn-ghost btn-xs" @click="numeroPajConfirmado = ''">trocar número</button>
+          </div>
+          <template x-if="numeroPajConfirmado">
+            <div x-data="acoesSisdpuBlock({
+                     idProcesso: '', paj: numeroPajConfirmado, pajNorm: pajNormNovo,
+                     aberto: true,
+                     onExecutado: async (res) => { await posExecucaoPaj(pajNormNovo, res); fecharModalNovo(); },
+                 })" x-init="init()">
+              {% include "partials/acoes_sisdpu.html" %}
+            </div>
+          </template>
+          <div class="modal-action">
+            <button type="button" class="btn btn-sm" @click="fecharModalNovo()">Fechar</button>
+          </div>
+        </div>
+      </template>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button type="button" @click="fecharModalNovo()">fechar</button></form>
+  </div>
+
 </div>
 
 <script>
 function movimentacoesPendentesApp() {
   return {
     itens: [], carregando: false,
-    async init() { await this.carregar(); },
+    modalNovoAberto: false,
+    numeroPajDigitado: '', numeroPajConfirmado: '', pajNormNovo: '', erroNumeroPaj: '',
+    async init() {
+      await this.carregar();
+      // "Adicionar movimentação" no minimenu do número do PAJ (dashboard, intimações,
+      // prazos etc. — ver adicionarMovimentacaoPendente() em app.js) chega aqui via
+      // ?novo_paj=AAAA/UUU-NNNNN — abre o modal já confirmado, sem exigir redigitação.
+      const params = new URLSearchParams(window.location.search);
+      const novoPaj = params.get('novo_paj');
+      if (novoPaj) {
+        this.abrirModalNovo(novoPaj);
+        history.replaceState(null, '', window.location.pathname);
+      }
+    },
     async carregar() {
       this.carregando = true;
       try {
@@ -77,6 +155,38 @@ function movimentacoesPendentesApp() {
         await fetch('/api/acoes-sisdpu/rascunho/' + encodeURIComponent(pajNorm), { method: 'DELETE' });
         this.itens = this.itens.filter((it) => it.paj_norm !== pajNorm);
       } catch (e) { alert('Falha ao descartar: ' + e); }
+    },
+    // `numeroPreenchido` (opcional): já vem no formato AAAA/UUU-NNNNN — confirma
+    // direto, sem exigir mais um clique (usado por "Abrir" de uma linha existente
+    // e por ?novo_paj=). Sem argumento: abre limpo, pro botão "+ Adicionar".
+    abrirModalNovo(numeroPreenchido) {
+      this.numeroPajDigitado = numeroPreenchido || '';
+      this.numeroPajConfirmado = '';
+      this.erroNumeroPaj = '';
+      this.modalNovoAberto = true;
+      if (numeroPreenchido) {
+        this.confirmarNumeroPaj();
+      } else {
+        this.$nextTick(() => this.$refs.inputNumeroPaj && this.$refs.inputNumeroPaj.focus());
+      }
+    },
+    // Fecha e SEMPRE recarrega a lista — cobre tanto quem gravou algo (o rascunho
+    // novo/atualizado precisa aparecer/mudar na tabela) quanto quem só abriu pra
+    // conferir e fechou sem mexer (recarregar de novo é barato e inofensivo).
+    async fecharModalNovo() {
+      this.modalNovoAberto = false;
+      this.numeroPajConfirmado = '';
+      await this.carregar();
+    },
+    confirmarNumeroPaj() {
+      const numero = (this.numeroPajDigitado || '').trim();
+      if (!/^\d{4}\/\d{3}-\d{5}$/.test(numero)) {
+        this.erroNumeroPaj = 'Formato inválido — use AAAA/UUU-NNNNN (ex.: 2026/029-01593).';
+        return;
+      }
+      this.erroNumeroPaj = '';
+      this.pajNormNovo = 'PAJ-' + numero.replace(/\//g, '-');
+      this.numeroPajConfirmado = numero;
     },
     formatarDataHora(iso) {
       if (!iso) return '—';

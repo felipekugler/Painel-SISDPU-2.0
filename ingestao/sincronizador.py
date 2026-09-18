@@ -137,6 +137,34 @@ def _montar_contatos(det: dict, meta_antiga: dict) -> dict:
     }
 
 
+async def _escrever_texto_com_retry(
+    caminho: Path, texto: str, tentativas: int = 4, espera_inicial: float = 0.3
+) -> None:
+    """Grava texto num arquivo com retry/backoff — protege contra bloqueio
+    TRANSITORIO do arquivo no Windows (antivirus escaneando um arquivo/pasta
+    recem-criado, indexador, cliente de backup/nuvem), que pode disparar
+    `PermissionError: [Errno 13]` mesmo sem NENHUMA outra execucao do painel
+    disputando o arquivo — confirmado em producao: sync de um PAJ novo (pasta
+    recem-criada por `pasta.mkdir()` linhas antes) falhou gravando sisdpu.txt
+    com o lock global (`_sync_lock`) livre, ou seja, sem concorrencia real
+    entre sincronizacoes — sinal de bloqueio externo passageiro, nao de uma
+    segunda escrita simultanea.
+
+    `await asyncio.sleep` (nao `time.sleep`) entre tentativas — isso roda
+    dentro do event loop do FastAPI/uvicorn, um sleep sincrono travaria TODAS
+    as requisicoes do painel durante a espera."""
+    espera = espera_inicial
+    for tentativa in range(1, tentativas + 1):
+        try:
+            caminho.write_text(texto, encoding="utf-8")
+            return
+        except PermissionError:
+            if tentativa == tentativas:
+                raise
+            await asyncio.sleep(espera)
+            espera *= 2
+
+
 def _montar_sisdpu_txt(item_caixa: dict, det: dict) -> str:
     """Monta sisdpu.txt no mesmo formato dos arquivos existentes.
 
@@ -866,7 +894,7 @@ async def _processar_paj_pos_detalhamento(
         meta_antiga = {}
 
     texto_sisdpu = _montar_sisdpu_txt(item, det)
-    (pasta / "sisdpu.txt").write_text(texto_sisdpu, encoding="utf-8")
+    await _escrever_texto_com_retry(pasta / "sisdpu.txt", texto_sisdpu)
 
     try:
         metadata = parser.montar_metadata(paj_norm, texto_sisdpu)
@@ -1495,17 +1523,33 @@ async def rodar(
     deve_cancelar: Callable[[], bool] | None = None,
     baixar_anexos: bool = True,
     rodar_ocr: bool = False,
+    extrair_documentos: bool | None = None,
 ) -> dict:
     """Sincroniza caixa SISDPU com PAJs/<PAJ>/.
 
     log_callback: funcao que recebe uma linha de log por chamada.
     deve_cancelar: callback opcional consultado entre PAJs; se True,
         o laco abort e a funcao retorna o resumo parcial.
-    baixar_anexos: se False, pula download/OCR dos anexos (sync rapido).
+    baixar_anexos: se False, pula download/OCR dos anexos (so' baixa quando
+        True).
+    extrair_documentos: se True, abre o popup de anexo de cada movimentacao
+        pra investigar a relacao de documentos por seq, mesmo sem baixar.
+        Se None (padrao), segue `baixar_anexos` (compat com chamadores que
+        nao escolhem os dois separadamente). As 3 combinacoes usadas pelo
+        botao "Sincronizar caixa" do dashboard (terminologia do projeto,
+        pedido do usuario 2026-09-18):
+          - LEVISSIMA: baixar_anexos=False, extrair_documentos=False — so'
+            movs/metadata.
+          - LEVE:      baixar_anexos=False, extrair_documentos=True — movs +
+            relacao de documentos, sem baixar.
+          - COMPLETA:  baixar_anexos=True,  extrair_documentos=True — movs +
+            relacao de documentos + download.
     rodar_ocr: se True, roda o OCR simples nos PDFs baixados (padrao False —
         so baixa; use "Melhorar OCR" na aba Anexos SISDPU pra texto de qualidade).
     Retorna dict com resumo: {"total_caixa": N, "processados": M, "erros": [...]}.
     """
+    if extrair_documentos is None:
+        extrair_documentos = baixar_anexos
 
     def log(msg: str) -> None:
         with contextlib.suppress(Exception):
@@ -1528,8 +1572,10 @@ async def rodar(
 
     log("[sync] iniciando sincronização SISDPU")
     log(f"[sync] timeout global: {TIMEOUT_TOTAL}s, rate-limit: {RATE_LIMIT_SISDPU}s/PAJ")
-    if not baixar_anexos:
-        log("[sync] modo RÁPIDO — anexos NÃO serão baixados (só movs/metadata)")
+    if not baixar_anexos and not extrair_documentos:
+        log("[sync] modo LEVÍSSIMO — sem baixar anexos e sem investigar documentos por seq (só movs/metadata)")
+    elif not baixar_anexos and extrair_documentos:
+        log("[sync] modo LEVE — investiga a relação de documentos por seq mas não baixa anexos")
 
     try:
         log("[sync] abrindo caixa de entrada...")
@@ -1577,6 +1623,7 @@ async def rodar(
                 deve_cancelar=_cancelado,
                 baixar_anexos=baixar_anexos,
                 rodar_ocr=rodar_ocr,
+                extrair_documentos=extrair_documentos,
             )
             if paj_norm:
                 pajs_na_caixa.add(paj_norm)
@@ -1961,6 +2008,224 @@ async def rodar_baixar_documentos(
     log("=" * 60)
     log(f"[baixar-docs] FIM: {resultado['baixados']}/{resultado['total']} documento(s) baixado(s)")
     return resultado
+
+
+async def rodar_documentos_seq(
+    paj_identificador: str,
+    seq: str,
+    log_callback: Callable[[str], None],
+    deve_cancelar: Callable[[], bool] | None = None,
+) -> dict:
+    """Extrai a relacao de documentos de UM seq especifico de um PAJ — sem
+    tocar nas demais movimentacoes, sem baixar nada. Usado pelo minimenu do
+    clipe de anexo na coluna "Documentos" (ver movimentacoes_tabela.html):
+    quando o icone (`tem_anexo_icone`, ver sisdpu_client.py — extraido JA na
+    sincronizacao levissima, sem custo) sinaliza que aquele seq PODE ter
+    documento mas a relacao em si ainda nao foi obtida, chamar isso e' bem
+    mais barato que uma sincronizacao leve/completa (que reprocessaria TODA
+    seq nova, nao so' a pedida).
+
+    Entra pela caixa de entrada (se o PAJ estiver la') ou pela busca global
+    (mesmo fallback de `rodar_paj_unico`), so' pra reabrir o detalhamento do
+    PAJ — e' pre-condicao de `extrair_documentos_por_seq`. Nao existe hoje um
+    parametro de "so' este seq" nessa funcao (so' `seqs_conhecidos`, uma
+    lista de EXCLUSAO) — o efeito de "so' processar 1 seq" e' obtido passando
+    TODOS os seqs MENOS o pedido como "conhecidos", reaproveitando 100% do
+    mecanismo ja testado (inclusive a protecao contra ler o popup do seq
+    errado, ja corrigida ali antes).
+
+    Persiste o resultado direto no metadata.json existente, tocando so' a
+    movimentacao daquele seq (`documentos`, `tem_anexo_icone`) mais os
+    contadores agregados (`n_documentos_indexados`, `seqs_sem_documento_
+    confirmado`) — NAO reescreve o resto do PAJ (narrativa, contatos, outras
+    movimentacoes ficam exatamente como estavam).
+
+    Retorna {"ok": True, "seq": ..., "documentos": [...]} ou {"erro": "..."}.
+    """
+
+    def log(msg: str) -> None:
+        with contextlib.suppress(Exception):
+            log_callback(msg)
+
+    alvo = paj_identificador.strip()
+    if alvo.startswith("PAJ-"):
+        resto = alvo[4:]
+        partes = resto.split("-", 1)
+        if len(partes) == 2:
+            alvo = f"{partes[0]}/{partes[1]}"
+    dec = _decompor_paj(alvo)
+    if not dec:
+        return {"erro": f"identificador inválido: {paj_identificador}"}
+    ano, unidade, numero = dec
+    paj_norm = _normalizar_paj(alvo)
+    seq_str = str(seq).strip()
+
+    log(f"[doc-seq] alvo: {alvo} seq={seq_str}")
+
+    try:
+        data = await sisdpu_client.caixa_de_entrada()
+        item_alvo = None
+        for raw in data.get("itens_tabela", []) or []:
+            it = sisdpu_client.parse_item_caixa(raw)
+            if it and it.get("paj") == alvo:
+                item_alvo = it
+                break
+        if item_alvo:
+            det = await sisdpu_client.movimentacoes_paj(numero, ano, unidade, esperas_curtas=True)
+        else:
+            log(f"[doc-seq] PAJ {alvo} não está na caixa atual — seguindo pela busca global do SIS-DPU")
+            det = await sisdpu_client.buscar_paj_global(
+                numero, ano, unidade, forcar_sessao=False, esperas_curtas=True
+            )
+    except Exception as e:  # noqa: BLE001
+        log(f"[FATAL] {type(e).__name__}: {e}")
+        return {"erro": str(e)}
+
+    if det.get("erro"):
+        log(f"[doc-seq] {det['erro']}")
+        return {"erro": det["erro"]}
+
+    movs = det.get("movimentacoes") or []
+    mov_alvo = next((m for m in movs if str(m.get("seq")) == seq_str), None)
+    if mov_alvo is None:
+        msg = f"seq {seq_str} não encontrado na tabela de movimentações"
+        log(f"[doc-seq] {msg}")
+        return {"erro": msg}
+    if not mov_alvo.get("tem_anexo_icone"):
+        log(f"[doc-seq] seq {seq_str} não tem ícone de anexo — nada a obter")
+        return {"ok": True, "seq": seq_str, "documentos": []}
+
+    if deve_cancelar is not None and deve_cancelar():
+        log("[doc-seq] cancelado antes da extração")
+        return {"erro": "cancelado"}
+
+    todos_seqs = {str(m.get("seq")) for m in movs if m.get("seq") is not None}
+    seqs_conhecidos = sorted(todos_seqs - {seq_str})
+    resultado_docs = await sisdpu_client.extrair_documentos_por_seq(
+        seqs_conhecidos=seqs_conhecidos,
+        deve_cancelar=deve_cancelar,
+        log=log,
+    )
+    if resultado_docs.get("erro"):
+        log(f"[doc-seq] {resultado_docs['erro']}")
+        return {"erro": resultado_docs["erro"]}
+
+    documentos: list[dict] = []
+    for mov_doc in resultado_docs.get("movimentacoes_com_documentos", []):
+        if str(mov_doc.get("seq")) == seq_str:
+            documentos = mov_doc.get("documentos", []) or []
+            break
+    sem_documento_confirmado = seq_str in {
+        str(s) for s in (resultado_docs.get("seqsVerificadosSemDocumento") or [])
+    }
+
+    # Persiste so' este seq no metadata.json existente — nao toca no resto.
+    pasta = PAJS_DIR / paj_norm
+    meta_path = pasta / "metadata.json"
+    if not meta_path.exists():
+        log(f"[doc-seq] aviso: PAJ {paj_norm} sem metadata.json local — resultado não persistido")
+        return {"ok": True, "seq": seq_str, "documentos": documentos}
+    try:
+        metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        log(f"[doc-seq] erro ao ler metadata: {type(e).__name__}: {e}")
+        return {"ok": True, "seq": seq_str, "documentos": documentos}
+
+    movs_meta = metadata.get("detalhes_sisdpu", {}).get("movimentacoes", []) or []
+    mov_meta_alvo = next((m for m in movs_meta if str(m.get("seq")) == seq_str), None)
+    if mov_meta_alvo is not None:
+        n_delta = len(documentos) - len(mov_meta_alvo.get("documentos") or [])
+        mov_meta_alvo["documentos"] = documentos
+        mov_meta_alvo["tem_anexo_icone"] = True
+        metadata["n_documentos_indexados"] = max(
+            0, (metadata.get("n_documentos_indexados") or 0) + n_delta
+        )
+        if sem_documento_confirmado and not documentos:
+            confirmados = {str(s) for s in (metadata.get("seqs_sem_documento_confirmado") or [])}
+            confirmados.add(seq_str)
+            metadata["seqs_sem_documento_confirmado"] = sorted(confirmados, key=lambda s: (len(s), s))
+        try:
+            meta_path.write_text(
+                json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
+                encoding="utf-8",
+            )
+        except Exception as e:  # noqa: BLE001
+            log(f"[doc-seq] erro ao salvar metadata: {type(e).__name__}: {e}")
+    else:
+        log(f"[doc-seq] aviso: seq {seq_str} não encontrado no metadata local (tabela pode ter mudado) — resultado não persistido")
+
+    log(f"[doc-seq] FIM: seq {seq_str} — {len(documentos)} documento(s)")
+    return {"ok": True, "seq": seq_str, "documentos": documentos}
+
+
+async def rodar_baixar_documentos_seq(
+    paj_norm: str,
+    seq: str,
+    log_callback: Callable[[str], None],
+    deve_cancelar: Callable[[], bool] | None = None,
+) -> dict:
+    """Baixa os documentos de UM seq especifico — um clique so' pra "PAJ com
+    fase de encerramento, so' preciso do que anexaram AGORA" (caso de uso
+    real do usuario, ver PAJ 2026/029-02241 seq 22). Se a relacao de
+    documentos daquele seq ainda nao for conhecida no metadata local, obtem
+    primeiro (chamando `rodar_documentos_seq` acima) e ja encadeia pro
+    download; se ja for conhecida (ex.: usuario ja clicou em "Obter relação
+    de documentos" antes, ou uma sincronizacao leve anterior ja pegou esse
+    seq), pula direto pro download.
+
+    Reusa `rodar_baixar_documentos` (por ID de arquivo) pra a parte de
+    download em si — mesmo mecanismo dos botoes "Baixar todos"/"Baixar
+    selecionados" da coluna Documentos, so' que os IDs aqui vem do seq
+    pedido em vez de uma selecao manual do usuario."""
+
+    def log(msg: str) -> None:
+        with contextlib.suppress(Exception):
+            log_callback(msg)
+
+    seq_str = str(seq).strip()
+    pasta = PAJS_DIR / paj_norm
+    meta_path = pasta / "metadata.json"
+    if not meta_path.exists():
+        return {"erro": f"PAJ {paj_norm} não encontrado (sem metadata.json)"}
+
+    try:
+        metadata = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception as e:  # noqa: BLE001
+        return {"erro": f"erro ao ler metadata: {e}"}
+
+    movs_meta = metadata.get("detalhes_sisdpu", {}).get("movimentacoes", []) or []
+    mov_meta_alvo = next((m for m in movs_meta if str(m.get("seq")) == seq_str), None)
+    documentos = (mov_meta_alvo or {}).get("documentos") or []
+
+    if not documentos:
+        log(f"[baixar-doc-seq] relação de documentos da seq {seq_str} ainda não conhecida — obtendo...")
+        # `metadata["paj"]` guarda o formato "AAAA/UUU-NNNNN" (aceito por
+        # rodar_documentos_seq); paj_norm ("PAJ-AAAA-UUU-NNNNN") tambem e'
+        # aceito, entao serve de fallback se o campo faltar por algum motivo.
+        resultado_extracao = await rodar_documentos_seq(
+            metadata.get("paj") or paj_norm,
+            seq_str,
+            log_callback,
+            deve_cancelar=deve_cancelar,
+        )
+        if resultado_extracao.get("erro"):
+            return resultado_extracao
+        documentos = resultado_extracao.get("documentos") or []
+
+    if not documentos:
+        log(f"[baixar-doc-seq] seq {seq_str} não tem documento nenhum — nada a baixar")
+        return {"baixados": 0, "erros": [], "total": 0, "nao_encontrados": []}
+
+    ids = [
+        sisdpu_client.extrair_id_arquivo(doc.get("urlDownload", ""))
+        for doc in documentos
+    ]
+    ids = [i for i in ids if i]
+    if not ids:
+        log(f"[baixar-doc-seq] seq {seq_str} tem documento(s) sem ID de download reconhecível")
+        return {"baixados": 0, "erros": [], "total": 0, "nao_encontrados": []}
+
+    return await rodar_baixar_documentos(paj_norm, ids, log_callback, deve_cancelar=deve_cancelar)
 
 
 async def rodar_paj_unico(
@@ -2459,7 +2724,7 @@ async def buscar_resumo_via_busca(
 
     pasta = PAJS_DIR / paj_norm
     pasta.mkdir(parents=True, exist_ok=True)
-    (pasta / "sisdpu.txt").write_text(texto_sisdpu, encoding="utf-8")
+    await _escrever_texto_com_retry(pasta / "sisdpu.txt", texto_sisdpu)
 
     # Metadata anterior (se este PAJ ja tinha sido sincronizado antes por outro
     # caminho) — usado so' pra preservar a escolha manual de WhatsApp, que nao

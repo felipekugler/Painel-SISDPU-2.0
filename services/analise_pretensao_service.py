@@ -323,7 +323,9 @@ _INSTRUCAO_IDIOMA = (
 )
 
 
-def _montar_instrucao_diagnostico(paj_norm: str, skill_slug: str, prompt_max: str) -> str:
+def _montar_instrucao_diagnostico(
+    paj_norm: str, skill_slug: str, prompt_max: str, orientacao: str = ""
+) -> str:
     pasta = PAJS_DIR / paj_norm
     prompt_max_limpo = prompt_max.replace(_TRAILER_GENERICO_PROMPT_MAX, "").rstrip()
     if skill_slug:
@@ -337,8 +339,28 @@ def _montar_instrucao_diagnostico(paj_norm: str, skill_slug: str, prompt_max: st
         )
     else:
         abertura = _INSTRUCAO_DIAGNOSTICO_GENERICO
+
+    # Orientação diretiva do Defensor (campo opcional ao lado do botão
+    # "Analisar", ver paj_detail.html) — quando já há uma linha definida pro
+    # caso, evita a IA desenvolver/sugerir abordagens já descartadas. Vem
+    # LOGO após a abertura (antes até do contexto do PAJ), pra pesar desde o
+    # início do raciocínio, não como uma nota de rodapé.
+    bloco_orientacao = ""
+    if orientacao:
+        bloco_orientacao = (
+            "ORIENTAÇÃO DIRETIVA DO DEFENSOR (leia com atenção — é uma decisão "
+            "já tomada pelo Defensor sobre o caso, não uma sugestão a ser "
+            "questionada):\n"
+            f'"{orientacao}"\n\n'
+            "Direcione a análise conforme essa orientação, evitando desenvolver "
+            "ou sugerir abordagens que o Defensor já descartou. Se algo nos "
+            "autos contradizer claramente a orientação, sinalize isso no "
+            "relatório em vez de simplesmente ignorar ou seguir cegamente.\n\n"
+        )
+
     return (
         abertura
+        + bloco_orientacao
         + _INSTRUCAO_IDIOMA
         + "IMPORTANTE sobre a fonte dos dados: use o CONTEXTO DO PAJ anexado abaixo "
         "(dados colados diretamente) — NÃO abra o SISDPU no navegador nem procure "
@@ -367,7 +389,11 @@ def _aguardar_conclusao(session: ChatSession, timeout: int = 1800) -> None:
         time.sleep(0.5)
 
 
-def iniciar(paj_norm: str, tipo: str) -> dict:
+def iniciar(paj_norm: str, tipo: str, orientacao: str = "") -> dict:
+    """`orientacao` (opcional): orientação diretiva do Defensor pra balizar a
+    análise (campo "Orientação diretiva para análise da IA" ao lado do
+    botão "Analisar", ver paj_detail.html) — injetada na instrução real
+    mandada pra IA, ver `_montar_instrucao_diagnostico`."""
     cfg = CONFIG_TIPOS.get(tipo)
     if not cfg:
         return {"ok": False, "erro": f"Tipo de análise desconhecido: {tipo}"}
@@ -425,7 +451,7 @@ def iniciar(paj_norm: str, tipo: str) -> dict:
             if prompt_path.exists()
             else ""
         )
-        instrucao = _montar_instrucao_diagnostico(paj_norm, skill_slug, prompt_content)
+        instrucao = _montar_instrucao_diagnostico(paj_norm, skill_slug, prompt_content, orientacao)
         if not session.start_elaboracao(instrucao):
             _persistir(paj_norm, session, tipo)
             return

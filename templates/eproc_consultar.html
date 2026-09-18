@@ -1,4 +1,6 @@
 {% extends "base.html" %}
+{% from "partials/_macro_minimenu_paj.html" import itens_minimenu_paj %}
+{% from "partials/_macro_minimenu_processo.html" import itens_minimenu_processo %}
 {% block title %}Consultar processo{% endblock %}
 
 {% block content_class %}flex flex-col flex-1 p-0{% endblock %}
@@ -53,8 +55,6 @@
 
 {% block content %}
 <div x-data="eprocConsultarApp()" x-init="init()" x-cloak class="flex flex-col flex-1">
-
-  {% include "partials/sync_modal.html" %}
 
   <!-- Top bar -->
   <div class="px-8 pt-6 pb-2">
@@ -122,9 +122,11 @@
             <div class="dropdown doc-dropdown">
               <div tabindex="0" role="button" class="text-sm font-semibold font-mono link"
                    title="Escolher onde ver o processo" x-text="resultado.numero"></div>
-              <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-44 p-1 shadow border border-base-300">
-                <li><a @click="buscar()">Ver no Painel</a></li>
-                <li><a @click="abrirNoNavegador()">Ver no navegador</a></li>
+              <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-52 p-1 shadow border border-base-300">
+                {{ itens_minimenu_processo("buscar()", "abrirNoNavegador()",
+                                            "movimentarNoEproc(resultado.numero, pajExibicaoParaNorm(pajAssociado), pajAssociado)",
+                                            "movimentarConjunto(resultado.numero, pajExibicaoParaNorm(pajAssociado))",
+                                            "abrirGerenciarProcesso(resultado.numero)", stop=false) }}
               </ul>
             </div>
             <span class="badge badge-ghost badge-sm" x-text="'instância ' + resultado.instancia"></span>
@@ -180,9 +182,8 @@
           <template x-if="!carregandoPaj && pajAssociado">
             <div class="dropdown doc-dropdown">
               <div tabindex="0" role="button" class="link link-primary font-mono" title="Escolher onde abrir o PAJ" x-text="pajAssociado"></div>
-              <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-44 p-1 shadow border border-base-300">
-                <li><a @click="abrirPajPainel(pajExibicaoParaNorm(pajAssociado))">Abrir no Painel</a></li>
-                <li><a @click="abrirPajNavegador(pajAssociado)">Abrir no navegador</a></li>
+              <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-48 p-1 shadow border border-base-300">
+                {{ itens_minimenu_paj('pajExibicaoParaNorm(pajAssociado)', 'pajAssociado', stop=false) }}
               </ul>
             </div>
           </template>
