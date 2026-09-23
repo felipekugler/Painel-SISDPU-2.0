@@ -1062,14 +1062,18 @@
                 </svg>
             </button>
 
-            <!-- Pesquisa rápida de PAJ — movida do menu lateral pro topo da
-                 página (pedido do usuário), centralizada no espaço entre o
-                 ícone de Menu e a barra de selos dos sistemas (que tem
-                 margin-left:auto, empurrando-se pra direita — este
-                 flex-1 + justify-center ocupa e centraliza o espaço restante
-                 entre os dois). Mesmo comportamento/funções de antes
-                 (pesquisarPajMenu()/formatarInputPaj() em app.js). -->
-            <div class="flex-1 flex justify-center" x-data="{ pajBusca: '' }">
+            <!-- Pesquisa rápida de PAJ e de processo judicial — movidas do
+                 menu lateral pro topo da página (pedido do usuário),
+                 centralizadas no espaço entre o ícone de Menu e a barra de
+                 selos dos sistemas (que tem margin-left:auto, empurrando-se
+                 pra direita — este flex-1 + justify-center ocupa e
+                 centraliza o espaço restante entre os dois). Mesmo
+                 comportamento/funções de antes (pesquisarPajMenu()/
+                 formatarInputPaj() em app.js); "Consultar processo" reusa
+                 consultarProcessoMcp() (mesma função do minimenu de processo
+                 — abre /eproc/consultar numa aba nova, já com o número
+                 preenchido, ver static/js/app.js). -->
+            <div class="flex-1 flex justify-center gap-3" x-data="{ pajBusca: '', processoBusca: '' }">
                 <div class="flex gap-1.5 w-full max-w-xs">
                     <input type="text" class="input input-bordered input-sm flex-1 font-mono text-xs"
                            placeholder="Pesquisar PAJ — 2026/029-00136" maxlength="14"
@@ -1077,6 +1081,19 @@
                            @keydown.enter="pesquisarPajMenu(pajBusca)">
                     <button type="button" class="btn btn-sm btn-primary btn-square" title="Pesquisar PAJ"
                             @click="pesquisarPajMenu(pajBusca)">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+                        </svg>
+                    </button>
+                </div>
+                <span class="text-base-content/20 select-none" aria-hidden="true">|</span>
+                <div class="flex gap-1.5 w-full max-w-xs">
+                    <input type="text" class="input input-bordered input-sm flex-1 font-mono text-xs"
+                           placeholder="Consultar processo — 5000000-00.2026.4.04.7000" maxlength="26"
+                           :value="processoBusca" @input="processoBusca = formatarInputProcesso($event.target.value)"
+                           @keydown.enter="consultarProcessoMcp(processoBusca)">
+                    <button type="button" class="btn btn-sm btn-primary btn-square" title="Consultar processo (abre em nova aba)"
+                            @click="consultarProcessoMcp(processoBusca)">
                         <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
                             <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
                         </svg>

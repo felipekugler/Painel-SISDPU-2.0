@@ -23,6 +23,21 @@ function formatarInputPaj(raw) {
     return `${digits.slice(0, 4)}/${digits.slice(4, 7)}-${digits.slice(7)}`;
 }
 
+/* Mascara de numero de processo judicial (NPU/CNJ) pro campo "Consultar
+   processo" do topo da pagina (base.html) — mesmo espirito de
+   formatarInputPaj acima: extrai so os 20 digitos e remonta no padrao
+   NNNNNNN-DD.AAAA.J.TR.OOOO conforme o usuario digita. */
+function formatarInputProcesso(raw) {
+    const d = String(raw || '').replace(/\D/g, '').slice(0, 20);
+    let out = d.slice(0, 7);
+    if (d.length > 7) out += '-' + d.slice(7, 9);
+    if (d.length > 9) out += '.' + d.slice(9, 13);
+    if (d.length > 13) out += '.' + d.slice(13, 14);
+    if (d.length > 14) out += '.' + d.slice(14, 16);
+    if (d.length > 16) out += '.' + d.slice(16, 20);
+    return out;
+}
+
 /* "2026/044-00187" -> "PAJ-2026-044-00187". Retorna null se a string nao bater
    o formato oficial (use para validar input antes de enviar para a API). */
 function pajExibicaoParaNorm(exibicao) {
