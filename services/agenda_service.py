@@ -164,11 +164,16 @@ def _listar_prazos() -> list[dict]:
     Agrupa por (PAJ, dia) antes de devolver: a tabela de "/prazos" trata cada
     intimação separadamente (é o correto lá — cada uma pode ter origem/prazo
     diferente), mas na Agenda várias intimações do MESMO PAJ vencendo no MESMO
-    dia devem aparecer como um único compromisso — ver `_agrupar_prazos_por_dia`."""
+    dia devem aparecer como um único compromisso — ver `_agrupar_prazos_por_dia`.
+
+    Usa a leitura VISÍVEL (`carregar_visivel`) — um prazo já baixado
+    localmente dentro do painel (peticionado, mera ciência — ver
+    `services.prazo_baixa_service`) some da Agenda na hora, sem esperar
+    nova sincronização."""
     from ingestao import eproc_intimacoes
 
     brutos: list[dict] = []
-    dados = eproc_intimacoes.carregar()
+    dados = eproc_intimacoes.carregar_visivel()
     contador = 0  # desempate de chave — um mesmo processo pode aparecer em
     # mais de uma categoria do e-proc ao mesmo tempo (ex.: "prazo em aberto" e
     # "decurso de prazo"); sem isso, prazos sem PAJ/processo resolvido

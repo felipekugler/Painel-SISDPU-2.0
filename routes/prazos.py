@@ -98,9 +98,13 @@ async def api_prazos_sincronizar():
 
 @router.get("/api/prazos/intimacoes", response_class=JSONResponse)
 async def api_prazos_intimacoes():
-    """Retorna o último resultado sincronizado (sem re-consultar o e-proc)."""
+    """Retorna o último resultado sincronizado (sem re-consultar o e-proc) —
+    já com a baixa LOCAL de prazos cumpridos dentro do painel aplicada (ver
+    `services.prazo_baixa_service`), pra a tabela não continuar mostrando um
+    prazo que o Defensor já resolveu por dentro do painel (peticionou, deu
+    mera ciência) até a próxima "Sincronizar intimações"."""
     from ingestao import eproc_intimacoes
-    return JSONResponse(eproc_intimacoes.carregar())
+    return JSONResponse(eproc_intimacoes.carregar_visivel())
 
 
 @router.get("/api/prazos/count", response_class=JSONResponse)
@@ -115,9 +119,10 @@ async def api_prazos_count():
     número) — mesmo espírito da deduplicação já feita por
     `services.intimacao_service.listar_casos()` sobre este mesmo cache,
     só que sem o cruzamento com o índice de análise (não é o que a página
-    Prazos usa)."""
+    Prazos usa). Usa a leitura visível (baixa local aplicada) — mesmo
+    espírito de `api_prazos_intimacoes`."""
     from ingestao import eproc_intimacoes
-    dados = eproc_intimacoes.carregar()
+    dados = eproc_intimacoes.carregar_visivel()
     processos = {
         caso.get("processo")
         for secao in (dados.get("secoes") or {}).values()

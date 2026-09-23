@@ -1314,32 +1314,6 @@
         <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
     </dialog>
 
-    <!-- Modal de Correção direta (sem passar pelo resumo) -->
-    <dialog id="correcao-direta-modal" class="modal">
-        <div class="modal-box w-11/12 max-w-3xl">
-            <div class="flex items-center justify-between mb-3">
-                <h3 class="font-bold text-lg">
-                    Pedir correção / nova explicação — PAJ
-                    <span id="correcao-direta-paj-label" class="font-mono"></span>
-                </h3>
-                <form method="dialog"><button class="btn btn-sm btn-ghost">X</button></form>
-            </div>
-            <p class="text-xs text-base-content/60 mb-2" id="correcao-direta-contexto"></p>
-            <textarea id="correcao-direta-text"
-                      class="textarea textarea-bordered w-full text-sm"
-                      rows="6"
-                      placeholder="Ex: Refaça o despacho sem citar o art. X. / Acrescente fundamento sobre Y. / Ajuste o tom e seja mais objetivo."></textarea>
-            <div class="flex justify-end gap-2 mt-3">
-                <form method="dialog"><button class="btn btn-sm btn-ghost">Cancelar</button></form>
-                <button class="btn btn-sm btn-primary"
-                        onclick="enviarCorrecaoDireta()">
-                    Enviar correção e refazer
-                </button>
-            </div>
-        </div>
-        <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
-    </dialog>
-
     {% include "partials/sync_widget.html" %}
 
     <script src="/static/js/sync_widget.js?v={{ app_version }}"></script>
@@ -1353,6 +1327,8 @@
     <script src="/static/js/minuta_ia.js?v={{ app_version }}"></script>
     <script src="/static/js/analise_pretensao.js?v={{ app_version }}"></script>
     <script src="/static/js/calcular_cnis.js?v={{ app_version }}"></script>
+    <script src="/static/js/calcular_qs.js?v={{ app_version }}"></script>
+    <script src="/static/js/consulta_rpv.js?v={{ app_version }}"></script>
     <script src="/static/js/lembretes.js?v={{ app_version }}"></script>
     {% block scripts %}{% endblock %}
 

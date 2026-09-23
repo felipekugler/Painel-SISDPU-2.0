@@ -46,9 +46,18 @@ IGNORAR = {
     "NOTAS.md",
     "analise_pretensao.json",
     "organizar_ajuizamento.json",
+    "calcular_cnis.json",
+    "calcular_qs.json",
+    "valor_causa.json",
 }
 
-PREFIXOS_DESPACHO = ("despacho",)
+# Extensoes que contam como "peça" de verdade na aba Peças da pagina do PAJ.
+# Sem essa allowlist, QUALQUER arquivo solto na raiz da pasta do PAJ que nao
+# estivesse em IGNORAR aparecia ali — inclusive arquivos internos de
+# funcionamento (foto_assistido.jpg, LEMBRETES.json, .json intermediarios de
+# skills como valor_causa/calculo_cnis, etc.), sem nenhuma relacao com peca
+# judicial (pedido do usuario 2026-09-18).
+EXTENSOES_PECA = {"pdf", "docx", "doc", "odt", "rtf", "txt"}
 
 PREFIXOS_PECA_JUDICIAL = (
     "peticao",
@@ -249,17 +258,22 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
 
         em_caixa = metadata.get("em_caixa_atual")
 
-        # `tramitacoes_caixa` (lista, uma entrada por tramitação GERAL pendente
-        # na caixa — Retornos/SAT já ficam de fora dela na origem, ver
+        # `tramitacoes_caixa` (lista, uma entrada por tramitação pendente na
+        # caixa — geral, retorno OU sat, cada uma com `subtipo`, ver
         # ingestao.sincronizador._atualizar_tramitacoes_caixa) é AUTORITATIVA
         # quando presente: um PAJ pode ter 2+ tramitações simultâneas, e só sai
-        # do dashboard quando NENHUMA restar. Supera em_caixa_atual/
-        # categoria_caixa (campos únicos, sobrescritos a cada sync) pra PAJs
-        # já sincronizados com essa lógica. PAJs ainda não resincronizados
-        # (campo ausente) caem no comportamento antigo, abaixo.
+        # do dashboard quando NENHUMA restar (de qualquer subtipo — desde
+        # 2026-09-19, quando a lista passou a incluir retorno/sat também, não
+        # só geral). Supera em_caixa_atual/categoria_caixa (campos únicos,
+        # sobrescritos a cada sync) pra PAJs já sincronizados com essa lógica.
+        # PAJs ainda não resincronizados (campo ausente) caem no comportamento
+        # antigo, abaixo. `em_caixa_atual` entra como segunda camada de
+        # segurança (independente, setado a cada sync) contra qualquer
+        # inconsistência entre as duas leituras de caixa usadas pelo
+        # sincronizador.
         tramitacoes_caixa = metadata.get("tramitacoes_caixa")
         if tramitacoes_caixa is not None:
-            esta_concluido = len(tramitacoes_caixa) == 0
+            esta_concluido = len(tramitacoes_caixa) == 0 and em_caixa is not True
             if esta_concluido and not incluir_concluidos:
                 continue
         else:
@@ -315,10 +329,15 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
             else (ultima_mov.get("data") or _dmc)
         )
 
-        # Contagem de pecas GERADAS pelo defensor/Claude (na raiz do PAJ)
+        # Contagem de pecas GERADAS pelo defensor/Claude (na raiz do PAJ) —
+        # mesmo filtro por extensao da aba Peças (EXTENSOES_PECA), senão
+        # arquivos internos (foto, LEMBRETES.json, calcular_cnis.json etc.)
+        # inflavam essa contagem tambem (pedido do usuario 2026-09-18).
         n_pecas_geradas = 0
         for f in pasta.iterdir():
             if not f.is_file() or f.name in IGNORAR:
+                continue
+            if f.suffix.lstrip(".").lower() not in EXTENSOES_PECA:
                 continue
             n_pecas_geradas += 1
 
@@ -505,34 +524,27 @@ def ler_paj(paj_norm: str) -> dict | None:
     prompt_max_path = pasta / "PROMPT_MAX.md"
     prompt_max = prompt_max_path.read_text(encoding="utf-8") if prompt_max_path.exists() else ""
 
-    # Categorizar arquivos na pasta do PAJ:
-    #   despachos       — nomes comecando com "despacho"
-    #   pecas_judiciais — demais arquivos gerados (peticao*, recurso*, .docx, .pdf, etc.)
-    despachos: list[dict] = []
+    # Arquivos gerados na raiz do PAJ (peticao*, recurso*, despacho*, .docx,
+    # .pdf, etc.) — a aba "Despachos" foi removida (pedido do usuário
+    # 2026-09-18, junto com o resto da seção "Outros"); os antigos arquivos
+    # "despacho*" agora entram na mesma lista de peças, sem distinção.
     pecas_judiciais: list[dict] = []
 
     for f in sorted(pasta.iterdir()):
         if not f.is_file() or f.name in IGNORAR:
             continue
+        tipo = f.suffix.lstrip(".").lower()
+        if tipo not in EXTENSOES_PECA:
+            continue
 
         _stat = f.stat()
-        item = {
+        pecas_judiciais.append({
             "nome": f.name,
             "caminho": f.name,
-            "tipo": f.suffix.lstrip(".").lower(),
+            "tipo": tipo,
             "tamanho": _stat.st_size,
             "modificado": _stat.st_mtime,
-            # st_ctime no Windows e' a data de CRIACAO do arquivo (diferente de
-            # Unix, onde e' so' a ultima mudanca de metadado) — coluna "Criado
-            # em" das abas Peças/Despachos.
-            "criado": _stat.st_ctime,
-        }
-
-        nome_norm = _normalizar(f.name)
-        if nome_norm.startswith(PREFIXOS_DESPACHO):
-            despachos.append(item)
-        else:
-            pecas_judiciais.append(item)
+        })
 
     # Subpasta "Peças IA": petições/peças geradas pela análise de pretensão
     # (services/analise_pretensao_service.py — skills de diagnóstico BPC/BI) são
@@ -544,20 +556,17 @@ def ler_paj(paj_norm: str) -> dict | None:
         for f in sorted(pasta_pecas_ia.iterdir()):
             if not f.is_file() or f.name in IGNORAR:
                 continue
+            tipo = f.suffix.lstrip(".").lower()
+            if tipo not in EXTENSOES_PECA:
+                continue
             _stat = f.stat()
-            item = {
+            pecas_judiciais.append({
                 "nome": f.name,
                 "caminho": f"Peças IA/{f.name}",
-                "tipo": f.suffix.lstrip(".").lower(),
+                "tipo": tipo,
                 "tamanho": _stat.st_size,
                 "modificado": _stat.st_mtime,
-                "criado": _stat.st_ctime,
-            }
-            nome_norm = _normalizar(f.name)
-            if nome_norm.startswith(PREFIXOS_DESPACHO):
-                despachos.append(item)
-            else:
-                pecas_judiciais.append(item)
+            })
 
     det = metadata.get("detalhes_sisdpu", {}) or {}
     movs = det.get("movimentacoes", []) or []
@@ -656,9 +665,8 @@ def ler_paj(paj_norm: str) -> dict | None:
         "pecas": [],
         "pecas_por_categoria": [],
         "decisoes": [],
-        "despachos": despachos,
         "pecas_judiciais": pecas_judiciais,
-        "pecas_geradas": despachos + pecas_judiciais,
+        "pecas_geradas": pecas_judiciais,
         "anexos_sisdpu": anexos_sisdpu,
         "assistidos_pf": assistidos_pf,
         "movimentacoes": movs_sorted,
@@ -809,6 +817,7 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
             # vivo. Sem nenhum id informado (ex.: chamada antiga), não arrisca
             # remover o item errado — não decide.
             if ids_concluidos:
+                await _dar_baixa_retorno_se_aplicavel(tramitacoes_caixa, ids_concluidos)
                 ids_set = set(ids_concluidos)
                 restantes = [
                     t for t in tramitacoes_caixa
@@ -816,6 +825,9 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
                 ]
                 outros_tramites_abertos = len(restantes)
                 metadata["tramitacoes_caixa"] = restantes
+                # `tramitacoes_caixa` agora inclui geral+retorno+sat
+                # (2026-09-19), então "nada restante" já significa mesmo fora
+                # da caixa, de qualquer subtipo.
                 if not restantes:
                     from datetime import datetime
 
@@ -865,6 +877,39 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
     }
 
 
+async def _dar_baixa_retorno_se_aplicavel(
+    tramitacoes_caixa: list[dict] | None, ids_concluidos: list[str]
+) -> None:
+    """Reconciliação pedida pelo usuário 2026-09-19: desde que trâmites de
+    Retorno/SAT passaram a aparecer em `tramitacoes_caixa` (junto com os
+    gerais — ver `ingestao.sincronizador._atualizar_tramitacoes_caixa`) e
+    podem ser concluídos por QUALQUER caminho genérico (pill do dashboard,
+    "Concluir PAJ da Caixa de Entrada", módulo "Ações no SISDPU"), um
+    trâmite de Retorno concluído por um desses caminhos — em vez do botão
+    próprio da página Retornos — precisa "dar baixa" no store dela também,
+    senão ela continua mostrando como pendente até a próxima sincronização
+    manual da Retornos. `retornos_service.registrar_pos_execucao` já existe
+    e já faz exatamente isso (é o mesmo hook que a própria página Retornos
+    usa) — só precisamos chamá-lo aqui pra cada id concluído que for
+    subtipo "retorno". Arquivos SAT não precisa de nada: sua lista é sempre
+    lida ao vivo da caixa, sem store próprio — um trâmite concluído
+    simplesmente não aparece mais lá na próxima vez que a página carregar."""
+    if not tramitacoes_caixa or not ids_concluidos:
+        return
+    ids_set = set(ids_concluidos)
+    retorno_ids = [
+        t.get("id_tramite") for t in tramitacoes_caixa
+        if t.get("subtipo") == "retorno" and t.get("id_tramite") in ids_set
+    ]
+    if not retorno_ids:
+        return
+    from services import retornos_service
+
+    for rid in retorno_ids:
+        with contextlib.suppress(Exception):
+            await retornos_service.registrar_pos_execucao(rid, {"ok": True, "concluido": True})
+
+
 async def concluir_tramites_caixa(paj_norm: str, id_tramites: list[str]) -> dict:
     """Conclui uma ou mais tramitações ESPECÍFICAS da caixa de entrada deste
     PAJ, cada uma pelo seu próprio `id_tramite` — chamado tanto pelo pill "N
@@ -873,8 +918,12 @@ async def concluir_tramites_caixa(paj_norm: str, id_tramites: list[str]) -> dict
     pendente (o usuário marca quais quer concluir de uma vez).
 
     `movtram.concluir_paj()` já aceita uma lista de ids — aqui só orquestramos
-    o registro no Histórico (uma entrada por trâmite efetivamente concluído) e
-    a atualização de `tramitacoes_caixa`/`em_caixa_atual`."""
+    o registro no Histórico (uma entrada por trâmite efetivamente concluído),
+    a atualização de `tramitacoes_caixa`/`em_caixa_atual`, e — desde
+    2026-09-19, quando trâmites de Retorno/SAT passaram a poder ser
+    concluídos por aqui também (não só pela página Retornos) — a
+    reconciliação do store da Retornos pra ela "dar baixa" no que foi
+    concluído externamente (ver `_dar_baixa_retorno_se_aplicavel` abaixo)."""
     pasta = PAJS_DIR / paj_norm
     meta_path = pasta / "metadata.json"
     if not meta_path.exists():
@@ -916,12 +965,16 @@ async def concluir_tramites_caixa(paj_norm: str, id_tramites: list[str]) -> dict
                 "concluido": True, "detalhe": (tramite_info.get("descricao") or "")[:300],
             })
 
+    await _dar_baixa_retorno_se_aplicavel(tramitacoes_caixa, concluidos_ok)
+
     saiu_da_caixa = False
     outros_tramites_abertos = 0
     if tramitacoes_caixa is not None:
         restantes = [t for t in tramitacoes_caixa if t.get("id_tramite") not in concluidos_ok]
         outros_tramites_abertos = len(restantes)
         metadata["tramitacoes_caixa"] = restantes
+        # `tramitacoes_caixa` agora inclui geral+retorno+sat (2026-09-19), então
+        # "nada restante" já significa mesmo fora da caixa, de qualquer subtipo.
         if not restantes:
             from datetime import datetime
 
@@ -987,9 +1040,9 @@ def abrir_pasta_paj(paj_norm: str) -> dict:
 
 
 def excluir_arquivo_paj(paj_norm: str, caminho: str) -> dict:
-    """Exclui UM arquivo de peça/despacho da pasta do PAJ (aba Outros > Peças/
-    Despachos — ícone de lixeira). `caminho` é relativo à pasta do PAJ, igual
-    ao campo `item["caminho"]` que `ler_paj` devolve (arquivo na raiz ou em
+    """Exclui UM arquivo de peça da pasta do PAJ (aba Peças — ícone de
+    lixeira). `caminho` é relativo à pasta do PAJ, igual ao campo
+    `item["caminho"]` que `ler_paj` devolve (arquivo na raiz ou em
     "Peças IA/...").
 
     Bloqueia: caminho fora da pasta do PAJ (path traversal), arquivos de
@@ -1200,46 +1253,3 @@ def listar_pecas_assistido(assistido: str) -> list[dict]:
             )
     resultado.sort(key=lambda x: x["modificado"], reverse=True)
     return resultado
-
-
-# ---------------------------------------------------------------------------
-# Notas pessoais por PAJ — NOTAS.md na pasta do PAJ
-# ---------------------------------------------------------------------------
-
-
-def _validar_paj_norm(paj_norm: str) -> Path | None:
-    """Valida paj_norm e retorna a pasta (ou None se invalido)."""
-    if not paj_norm or "/" in paj_norm or "\\" in paj_norm or ".." in paj_norm:
-        return None
-    if not paj_norm.startswith("PAJ-"):
-        return None
-    pasta = PAJS_DIR / paj_norm
-    if not pasta.exists() or not pasta.is_dir():
-        return None
-    return pasta
-
-
-def ler_notas(paj_norm: str) -> str:
-    """Retorna conteudo de NOTAS.md (string vazia se nao existe)."""
-    pasta = _validar_paj_norm(paj_norm)
-    if pasta is None:
-        return ""
-    f = pasta / "NOTAS.md"
-    if not f.exists():
-        return ""
-    try:
-        return f.read_text(encoding="utf-8")
-    except Exception:
-        return ""
-
-
-def salvar_notas(paj_norm: str, texto: str) -> bool:
-    """Salva NOTAS.md. Retorna False se PAJ invalido."""
-    pasta = _validar_paj_norm(paj_norm)
-    if pasta is None:
-        return False
-    try:
-        (pasta / "NOTAS.md").write_text(texto or "", encoding="utf-8")
-        return True
-    except Exception:
-        return False

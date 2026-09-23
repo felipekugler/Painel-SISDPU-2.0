@@ -653,10 +653,14 @@ async def _baixar_anexos_sisdpu(
 
     if resultado_fetch.get("total", 0) > 0:
         baixados = resultado_fetch.get("baixados", 0)
+        pulados_fetch = resultado_fetch.get("pulados", 0)
         total = resultado_fetch['total']
         erros_count = len(resultado_fetch.get("erros", []))
         log("")
-        log(f"✓ {baixados}/{total} arquivo(s) baixado(s) com sucesso   /   {erros_count} erros")
+        log(
+            f"✓ {baixados}/{total} arquivo(s) baixado(s), {pulados_fetch} já existente(s) "
+            f"pulado(s)   /   {erros_count} erros"
+        )
 
     # OCR simples (rapido, qualidade baixa) — desabilitado por padrao. Para
     # texto de qualidade, use o botao "Melhorar OCR" (OCR local + Sonnet
@@ -1265,16 +1269,85 @@ def _apagar_anexos_pasta(pasta: Path, log: Callable[[str], None]) -> tuple[int, 
     return (removidos, bytes_lib)
 
 
+async def _ler_tramitacoes_estruturadas_por_paj(
+    log: Callable[[str], None],
+) -> dict[str, list[dict]] | None:
+    """Lê a caixa via `sisdpu_movtram.listar_caixa_estruturada()` (por linha,
+    data-rk — tem `id_tramite` individualizado, diferente do scrape de texto
+    solto usado por `sisdpu_client.caixa_de_entrada()`) e agrupa por PAJ.
+
+    Retorna `None` em falha de leitura (nunca `{}` pra "falhou" — `{}` real
+    só ocorre se a caixa estiver genuinamente vazia). Chamadores devem tratar
+    `None` como "não sei o que está na caixa agora" e cair no caminho mais
+    caro/seguro (processar normalmente), nunca assumir "sem mudança" sobre um
+    `None` — mesmo espírito do guard em `sisdpu_client.caixa_de_entrada()`
+    (ver docstring lá: um erro de leitura nunca pode parecer "vazio").
+
+    Extraída de `_atualizar_tramitacoes_caixa` pra ser chamada 1x no início
+    de `rodar()` e reaproveitada tanto pela decisão de pular PAJs sem
+    tramitação nova (`id_tramite` inalterado) quanto pela gravação final —
+    antes disso, `rodar()` fazia SUA PRÓPRIA leitura de texto solto da caixa
+    E esta função fazia uma SEGUNDA leitura estruturada, no fim: duas idas à
+    mesma página por sync completa.
+    """
+    from services import categorias_caixa
+
+    try:
+        res = await sisdpu_movtram.listar_caixa_estruturada()
+    except Exception as e:  # noqa: BLE001
+        log(f"  [tramitacoes] falha ao ler caixa estruturada: {type(e).__name__}: {e}")
+        return None
+    if not res.get("ok"):
+        log(f"  [tramitacoes] {res.get('detalhe', 'não foi possível ler a caixa estruturada')}")
+        return None
+
+    por_paj: dict[str, list[dict]] = {}
+    for it in res.get("itens", []) or []:
+        paj_txt = (it.get("paj") or "").strip()
+        if not paj_txt:
+            continue
+        paj_norm = _normalizar_paj(paj_txt)
+        categoria = categorias_caixa.classificar(it.get("descricao", ""), it.get("linha_texto", ""))
+        por_paj.setdefault(paj_norm, []).append({
+            "id_tramite": it.get("id_tramite", ""),
+            "id_processo": it.get("id", ""),
+            "descricao": it.get("descricao", ""),
+            "data_envio": it.get("data_envio", ""),
+            "remetente": it.get("remetente", ""),
+            "prazo": it.get("prazo", ""),
+            "subtipo": categoria or "geral",
+        })
+    return por_paj
+
+
 async def _atualizar_tramitacoes_caixa(
     pajs_na_caixa: set[str],
     log: Callable[[str], None],
+    por_paj_pronto: dict[str, list[dict]] | None = None,
 ) -> int:
     """Grava `tramitacoes_caixa` (lista) no metadata de cada PAJ ainda na caixa:
-    TODAS as tramitações GERAIS (exclui Retornos/SAT, que têm fluxo próprio e
-    ficam de fora daqui) pendentes na caixa de entrada do usuário, com
-    `id_tramite` individualizado — permite ao dashboard mostrar quantas
-    existem e concluir cada uma isoladamente (ver `services/paj_service` e
-    `templates/dashboard.html`).
+    TODAS as tramitações pendentes na caixa de entrada do usuário — geral,
+    retorno OU sat, cada uma com `subtipo` ("geral"/"retorno"/"sat") e
+    `id_tramite` individualizado — permite ao dashboard e ao módulo "Ações no
+    SISDPU" mostrar/concluir qualquer uma (ver `services/paj_service`,
+    `templates/dashboard.html`, `static/js/acoes_sisdpu.js`).
+
+    Redesenhado 2026-09-19 (pedido do usuário): até então, trâmites de
+    Retorno/SAT eram excluídos desta lista (tinham "fluxo próprio" nas
+    páginas Retornos/Arquivos SAT) — isso causava dois problemas: (1) um PAJ
+    só-retorno/só-sat "sumia" do dashboard geral quando a lista ficava vazia
+    (corrigido antes com um campo `tem_pendencia_submenu`, agora superado por
+    esta mudança), e (2) o módulo "Ações no SISDPU" não oferecia ESSES
+    trâmites pra conclusão, obrigando o usuário a ir na página específica só
+    pra isso. Agora TODOS aparecem em qualquer lugar que leia
+    `tramitacoes_caixa`. A reconciliação com Retornos (dar baixa no store
+    dela quando um trâmite de retorno é concluído por aqui, fora da própria
+    página) fica a cargo de quem CONCLUI — ver
+    `paj_service.concluir_tramites_caixa`/`registrar_pos_execucao_sisdpu`,
+    que chamam `retornos_service.registrar_pos_execucao` pra isso. Arquivos
+    SAT não precisa de nada — sua lista é sempre lida ao vivo da caixa, sem
+    store próprio, então um trâmite concluído por aqui simplesmente não
+    aparece mais lá na próxima vez que a página carregar.
 
     Comum o mesmo PAJ ter mais de uma tramitação pendente simultânea — antes,
     cada uma sobrescrevia a anterior no metadata (etiqueta/descrição/data);
@@ -1287,39 +1360,20 @@ async def _atualizar_tramitacoes_caixa(
 
     Só toca PAJs que JÁ TÊM metadata.json (PAJ nunca sincronizado localmente
     não entra aqui — o laço principal cuida disso na primeira sincronização).
+
+    `por_paj_pronto`: quando informado (ver `rodar()`), reaproveita uma
+    leitura já feita no início da sync em vez de reler a caixa de novo —
+    evita a dupla leitura que existia antes desta função ser dividida em
+    `_ler_tramitacoes_estruturadas_por_paj` + esta.
     """
-    from services import categorias_caixa
+    if por_paj_pronto is not None:
+        por_paj = por_paj_pronto
+    else:
+        por_paj = await _ler_tramitacoes_estruturadas_por_paj(log)
+        if por_paj is None:
+            return 0
 
-    try:
-        res = await sisdpu_movtram.listar_caixa_estruturada()
-    except Exception as e:  # noqa: BLE001
-        log(f"  [tramitacoes] falha ao ler caixa estruturada: {type(e).__name__}: {e}")
-        return 0
-    if not res.get("ok"):
-        log(f"  [tramitacoes] {res.get('detalhe', 'não foi possível ler a caixa estruturada')}")
-        return 0
-
-    por_paj: dict[str, list[dict]] = {}
-    for it in res.get("itens", []) or []:
-        paj_txt = (it.get("paj") or "").strip()
-        if not paj_txt:
-            continue
-        paj_norm = _normalizar_paj(paj_txt)
-        categoria = categorias_caixa.classificar(it.get("descricao", ""), it.get("linha_texto", ""))
-        if categoria:  # retorno/sat -> fluxo próprio, não entra na lista geral
-            continue
-        por_paj.setdefault(paj_norm, []).append({
-            "id_tramite": it.get("id_tramite", ""),
-            "id_processo": it.get("id", ""),
-            "descricao": it.get("descricao", ""),
-            "data_envio": it.get("data_envio", ""),
-            "remetente": it.get("remetente", ""),
-            "prazo": it.get("prazo", ""),
-        })
-
-    # PAJs a atualizar: todo PAJ ainda na caixa (geral ou não) — os só-retorno/
-    # só-sat também ficam com tramitacoes_caixa=[] explícito (nunca aparecem
-    # no dashboard geral de qualquer forma, mas o campo fica consistente).
+    # PAJs a atualizar: todo PAJ ainda na caixa.
     atualizados = 0
     for paj_norm in pajs_na_caixa:
         meta_path = PAJS_DIR / paj_norm / "metadata.json"
@@ -1333,6 +1387,7 @@ async def _atualizar_tramitacoes_caixa(
         if meta.get("tramitacoes_caixa") == novas:
             continue  # sem mudança
         meta["tramitacoes_caixa"] = novas
+        meta.pop("tem_pendencia_submenu", None)  # campo antigo, superado por subtipo
         try:
             meta_path.write_text(
                 json.dumps(meta, ensure_ascii=False, indent=2, default=str),
@@ -1475,7 +1530,9 @@ async def atualizar_caixa(log_callback: Callable[[str], None]) -> dict:
     limpeza automatica de anexos binarios que ja acontece em qualquer
     transicao ativo->concluido, igual ao sync completo).
 
-    Retorna {"ok": bool, "total_caixa": int, "removidos": int, "mensagem": str}.
+    Retorna {"ok": bool, "total_caixa": int, "removidos": int, "novos_pendentes": int,
+    "mensagem": str}. `novos_pendentes` conta PAJs na caixa sem pasta local ainda
+    (aviso apenas — ver bloco abaixo).
     """
 
     def log(msg: str) -> None:
@@ -1510,10 +1567,38 @@ async def atualizar_caixa(log_callback: Callable[[str], None]) -> dict:
     else:
         log("[atualizar] nenhum PAJ saiu da caixa — tudo em dia")
 
+    # PAJs que estao na caixa mas nunca tiveram pasta local criada — ainda nao
+    # passaram por nenhuma sincronizacao (avulsa ou completa). So' um AVISO:
+    # este endpoint (usado pelo botao "Atualizar", rapido) nao baixa PAJ
+    # nenhum — isso continua sendo papel do "Sincronizar caixa" completo.
+    # Persistido em marcador proprio pra sobreviver ao reload do dashboard
+    # (mesmo padrao de `.ultima_sync_caixa.json`, gravado por `rodar()` acima);
+    # o badge que le esse marcador (routes/dashboard.py) reconfere ao vivo se
+    # cada PAJ listado aqui ainda esta sem pasta, e se auto-corrige quando uma
+    # sincronizacao completa (ou avulsa) resolver algum deles nesse meio tempo.
+    novos_pendentes = sorted(p for p in pajs_na_caixa if not (PAJS_DIR / p).exists())
+    if novos_pendentes:
+        log(f"[atualizar] {len(novos_pendentes)} PAJ(s) na caixa ainda não sincronizados")
+    else:
+        log("[atualizar] nenhum PAJ novo pendente de sincronização")
+
+    with contextlib.suppress(Exception):
+        from datetime import datetime as _dt_pend
+
+        PAJS_DIR.mkdir(parents=True, exist_ok=True)
+        (PAJS_DIR / ".pendentes_sync.json").write_text(
+            json.dumps(
+                {"em": _dt_pend.now().isoformat(timespec="seconds"), "pajs": novos_pendentes},
+                ensure_ascii=False, indent=2,
+            ),
+            encoding="utf-8",
+        )
+
     return {
         "ok": True,
         "total_caixa": len(pajs_na_caixa),
         "removidos": removidos,
+        "novos_pendentes": len(novos_pendentes),
         "mensagem": "",
     }
 
@@ -1564,6 +1649,7 @@ async def rodar(
     resumo: dict = {
         "total_caixa": 0,
         "processados": 0,
+        "pulados": 0,
         "concluidos": 0,
         "erros": [],
         "cancelado": False,
@@ -1598,6 +1684,17 @@ async def rodar(
         log("[sync] nada a sincronizar — encerrando")
         return resumo
 
+    # Leitura estruturada da caixa (id_tramite por linha) feita UMA VEZ aqui,
+    # no início — reaproveitada tanto pra decidir quais PAJs pular abaixo
+    # quanto pra gravar `tramitacoes_caixa` no final (ver a chamada de
+    # `_atualizar_tramitacoes_caixa` mais abaixo). `None` = falha na leitura;
+    # nesse caso NENHUM PAJ é pulado
+    # nesta rodada (fail-safe — sem saber o que está na caixa agora, não há
+    # base pra dizer "sem mudança").
+    tramitacoes_estruturadas_por_paj = await _ler_tramitacoes_estruturadas_por_paj(log)
+    if tramitacoes_estruturadas_por_paj is None:
+        log("[sync] leitura estruturada da caixa falhou — nenhum PAJ será pulado por 'sem tramitação nova' nesta rodada")
+
     # Comum o mesmo PAJ ter mais de uma tramitação pendente na caixa (aparece
     # mais de uma vez em `itens`) — o detalhamento/anexos/movs são os MESMOS
     # PARA O PROCESSO independente de qual tramitação disparou, então
@@ -1615,6 +1712,58 @@ async def rodar(
             log(f"[{i}/{len(itens)}] {item.get('paj', '?')} — outra tramitação do mesmo PAJ, já sincronizado nesta rodada")
             pajs_na_caixa.add(paj_norm_item)
             continue
+
+        # Pula a reabertura cara do detalhamento quando o CONJUNTO de
+        # id_tramite deste PAJ na caixa agora é EXATAMENTE o mesmo já
+        # conhecido da última sync — ou seja, nenhuma tramitação nova
+        # chegou pra ele desde então (nem sobrou uma antiga que já não
+        # esteja mais lá). Comparação por ID (não por texto/data) porque
+        # `id_tramite` só muda quando o SISDPU cria uma tramitação de fato
+        # nova; é a mesma chave usada por `concluir_tramites_caixa`.
+        #
+        # Só pula quando TODAS as condições valem — cada uma existe pra
+        # nunca pular por incerteza (fail-safe, mesmo raciocínio do guard em
+        # sisdpu_client.caixa_de_entrada):
+        #   1) a leitura estruturada desta rodada funcionou;
+        #   2) e achou ESTE PAJ (se não achou, é uma divergência entre as
+        #      duas leituras da caixa — processa por segurança);
+        #   3) o PAJ já tinha sido sincronizado com o modelo de
+        #      `tramitacoes_caixa` (PAJ legado nesse campo ainda em `None`
+        #      nunca tem uma base confiável de comparação);
+        #   4) o PAJ já estava marcado ativo (nunca pula um que "voltou" de
+        #      concluído — precisa reabrir pra recalcular tudo);
+        #   5) o conjunto de id_tramite bate INTEIRO, e não é vazio.
+        pulou = False
+        if paj_norm_item and tramitacoes_estruturadas_por_paj is not None:
+            tram_atuais = tramitacoes_estruturadas_por_paj.get(paj_norm_item)
+            if tram_atuais:
+                ids_atuais = {t.get("id_tramite") for t in tram_atuais if t.get("id_tramite")}
+                meta_path_item = PAJS_DIR / paj_norm_item / "metadata.json"
+                if ids_atuais and meta_path_item.exists():
+                    try:
+                        meta_item = json.loads(meta_path_item.read_text(encoding="utf-8"))
+                    except Exception:
+                        meta_item = None
+                    if (
+                        meta_item is not None
+                        and meta_item.get("em_caixa_atual") is True
+                        and meta_item.get("tramitacoes_caixa") is not None
+                    ):
+                        ids_conhecidos = {
+                            t.get("id_tramite")
+                            for t in (meta_item.get("tramitacoes_caixa") or [])
+                            if t.get("id_tramite")
+                        }
+                        if ids_conhecidos == ids_atuais:
+                            pulou = True
+
+        if pulou:
+            log(f"[{i}/{len(itens)}] {item.get('paj', '?')} — sem tramitação nova desde a última sync, pulado")
+            pajs_na_caixa.add(paj_norm_item)
+            vistos.add(paj_norm_item)
+            resumo["pulados"] += 1
+            continue
+
         log(f"[{i}/{len(itens)}] {item.get('paj', '?')}")
         try:
             paj_norm, ok = await _processar_paj(
@@ -1653,7 +1802,9 @@ async def rodar(
     # quando há mais de uma pro mesmo PAJ (comum no SISDPU).
     log("[sync] atualizando tramitações individualizadas da caixa...")
     with contextlib.suppress(Exception):
-        await _atualizar_tramitacoes_caixa(pajs_na_caixa, log)
+        await _atualizar_tramitacoes_caixa(
+            pajs_na_caixa, log, por_paj_pronto=tramitacoes_estruturadas_por_paj
+        )
 
     # Resumo de PAJs com anexos pendentes (overflow do limite de 30) e
     # PAJs com sincronizacao incompleta (cancelados mid-PAJ).
@@ -1723,6 +1874,7 @@ async def rodar(
     log("=" * 60)
     log(
         f"[sync] FIM: {resumo['processados']}/{resumo['total_caixa']} processados, "
+        f"{resumo['pulados']} pulado(s) (sem tramitação nova), "
         f"{len(resumo['erros'])} erros"
     )
 
@@ -2592,7 +2744,10 @@ async def rodar_prazos_abertos(
 
     resumo: dict = {"total": 0, "processados": 0, "erros": [], "cancelado": False}
 
-    dados_intimacoes = eproc_intimacoes.carregar()
+    # Leitura VISÍVEL (baixa local aplicada, ver `services.prazo_baixa_
+    # service`) — um PAJ cujo único prazo já foi fechado dentro do painel
+    # não entra mais nesta lista sem precisar de nova sincronização.
+    dados_intimacoes = eproc_intimacoes.carregar_visivel()
     casos = (dados_intimacoes.get("secoes") or {}).get("prazo_aberto") or []
 
     # Dedupe por paj_norm preservando ordem — o mesmo PAJ pode ter varios

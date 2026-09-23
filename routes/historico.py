@@ -1,12 +1,12 @@
-"""Rotas do "Histórico de PAJs Concluídos" (visão panorâmica das conclusões de
-caixa de entrada efetivadas dentro do painel — retornos, SAT, etc.)."""
+"""Rotas do "Histórico" — conclusões de caixa de entrada efetivadas dentro do
+painel (retornos, SAT, etc.) e análises/petições disparadas por IA."""
 
 from __future__ import annotations
 
 from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 
-from services import historico_painel
+from services import historico, historico_painel
 
 router = APIRouter()
 
@@ -21,3 +21,9 @@ async def pagina_historico(request: Request):
 @router.get("/api/historico/lista", response_class=JSONResponse)
 async def api_lista():
     return JSONResponse({"registros": historico_painel.listar()})
+
+
+@router.get("/api/historico/analises", response_class=JSONResponse)
+async def api_analises():
+    """Aba "Análises (IA)" — ver `services.historico.listar_analises`."""
+    return JSONResponse({"registros": historico.listar_analises()})

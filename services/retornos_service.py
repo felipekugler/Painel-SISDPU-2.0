@@ -128,9 +128,12 @@ def _mapa_intimacoes_eproc() -> dict[str, dict]:
     """Índice {processo (só dígitos) -> caso} de TODAS as intimações/prazos JÁ
     sincronizados na aba "Prazos e-proc" — leitura LOCAL do JSON persistido por
     `eproc_intimacoes.salvar()` (não navega no e-proc; instantâneo). Vazio se essa
-    sincronização nunca rodou — nesse caso nenhum processo mostra o badge."""
+    sincronização nunca rodou — nesse caso nenhum processo mostra o badge.
+    Usa a leitura VISÍVEL (`carregar_visivel`) — um prazo já baixado
+    localmente dentro do painel (ver `services.prazo_baixa_service`) some
+    do badge na hora, sem esperar nova sincronização."""
     from ingestao import eproc_intimacoes
-    dados = eproc_intimacoes.carregar()
+    dados = eproc_intimacoes.carregar_visivel()
     idx: dict[str, dict] = {}
     for categoria, casos in (dados.get("secoes") or {}).items():
         for caso in casos:

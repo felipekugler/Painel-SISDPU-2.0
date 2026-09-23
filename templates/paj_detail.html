@@ -76,10 +76,13 @@
       enderecosFmt: {{ ((meta.enderecos or []) | map('formatar_endereco_contato') | list) | tojson }},
       whatsappNumeros: {{ (meta.whatsapp_numeros or []) | tojson }},
     };
-    // Tramitações GERAIS pendentes na caixa de entrada deste PAJ (pode ser
-    // mais de uma — ver ingestao/sincronizador._atualizar_tramitacoes_caixa).
-    // Usado pelo botão "Concluir PAJ da Caixa de Entrada" pra saber se precisa
-    // abrir o modal de escolha (N>1) ou seguir direto (N<=1).
+    // Tramitações pendentes na caixa de entrada deste PAJ — geral, retorno OU
+    // sat, cada uma com `subtipo` (pode ser mais de uma — ver
+    // ingestao/sincronizador._atualizar_tramitacoes_caixa; desde 2026-09-19
+    // inclui retorno/sat também, não só geral). Usado pelo botão "Concluir
+    // PAJ da Caixa de Entrada" pra saber se precisa abrir o modal de escolha
+    // (N>1) ou seguir direto (N<=1), e por "Ações no SISDPU" (ver
+    // acoesSisdpuBlock abaixo) pra oferecer TODAS pra conclusão.
     window._paj_tramitacoes_caixa = {{ (meta.tramitacoes_caixa or []) | tojson }};
     // Config inicial da tabela COMPARTILHADA de movimentações (partials/movimentacoes_tabela.html).
     window.__movInicial = {
@@ -498,10 +501,13 @@
             </button>
             {% endif %}
 
-            <!-- Modal de escolha — só quando há mais de uma tramitação geral
-                 pendente (ver abrir()). Mostra o "trâmite de trabalho" (o
-                 usado por Ações no SISDPU/e-proc) destacado e pré-marcado,
-                 mais os demais disponíveis pra concluir de uma vez. -->
+            <!-- Modal de escolha — só quando há mais de uma tramitação
+                 pendente (geral, retorno OU sat desde 2026-09-19 — ver
+                 abrir()). Mostra o "trâmite de trabalho" (o usado por Ações
+                 no SISDPU/e-proc) destacado e pré-marcado, mais os demais
+                 disponíveis pra concluir de uma vez. Concluir um trâmite de
+                 retorno/sat por aqui já dá baixa na página própria também
+                 (ver paj_service._dar_baixa_retorno_se_aplicavel). -->
             <div class="modal" :class="{'modal-open': modalAberto}">
                 <div class="modal-box max-w-md text-left">
                     <h3 class="font-bold text-base mb-1">Concluir PAJ da Caixa de Entrada</h3>
@@ -518,6 +524,8 @@
                                     <span class="block text-[11px] text-base-content/50"
                                           x-text="(t.remetente || '') + (t.remetente && t.data_envio ? ' · ' : '') + (t.data_envio || '')"></span>
                                     <span x-show="t.id_tramite === idTramite" class="badge badge-primary badge-xs mt-1">trâmite de trabalho</span>
+                                    <span x-show="t.subtipo === 'retorno'" class="badge badge-accent badge-xs mt-1">retorno</span>
+                                    <span x-show="t.subtipo === 'sat'" class="badge badge-accent badge-xs mt-1">SAT</span>
                                 </span>
                             </label>
                         </template>
@@ -748,6 +756,30 @@
     </dialog>
 </div>
 
+<!-- Narrativa (seção própria, retrátil, aberta por padrão) — destacada de
+     dentro da seção com abas em 2026-09-21 (pedido do usuário), posicionada
+     logo após Lembretes e antes de "Ações com IA". Puro Jinja, sem nenhuma
+     dependência do x-data da antiga seção com abas — só um toggle
+     abrir/fechar local, mesmo padrão do cabeçalho de Lembretes acima. -->
+<div class="bg-base-200 border border-base-300 rounded-lg mb-4" x-data="{ aberto: true }">
+    <div class="flex items-center gap-2 px-4 py-3">
+        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
+            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
+                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+            </svg>
+            <span class="text-lg font-semibold">Narrativa</span>
+        </button>
+    </div>
+    <div x-show="aberto" x-cloak class="px-4 pb-4">
+        {% if dados.narrativa %}
+        <div class="text-sm text-base-content/80 leading-relaxed break-words bg-base-100 p-4 rounded border border-base-300/50 prose prose-sm max-w-none">{{ dados.narrativa|safe }}</div>
+        {% else %}
+        <p class="text-sm text-base-content/50 italic">Narrativa não disponível para este PAJ</p>
+        {% endif %}
+    </div>
+</div>
+
 <!-- Processo Judicial (se houver) — seção retrátil, sempre aberta quando existe
      processo cadastrado; some por completo quando não há nenhum. `processos_raw`
      já foi calculado no topo do arquivo (com fallback pra PAJs antigos) e passado
@@ -809,11 +841,12 @@
              diretiva + botão único. Dispara o diagnóstico na seção "Análise
              feita pela IA" abaixo, no tipo escolhido no dropdown — SEMPRE
              visível (não depende mais da pretensão cadastrada no SISDPU
-             bater com alguma skill): "BPC/LOAS" e "Benefício por
-             Incapacidade" rodam o playbook de teses dedicado (skills
-             /SISDPU-AnalisarPAJ-BPC e /SISDPU-AnalisarPAJ-BI,
-             respectivamente); "Análise ampla" é diagnóstico direto via
-             PROMPT_MAX, sem playbook de área. Isso permite escolher a rota
+             bater com alguma skill): "BPC/LOAS", "Benefício por
+             Incapacidade" e "Pensão por Morte" rodam o playbook de teses
+             dedicado (skills /SISDPU-AnalisarPAJ-BPC, /SISDPU-AnalisarPAJ-BI
+             e /SISDPU-AnalisarPAJ-Pensao, respectivamente); "Análise ampla"
+             é diagnóstico direto via PROMPT_MAX, sem playbook de área. Isso
+             permite escolher a rota
              certa mesmo quando o PAJ está cadastrado no SISDPU com a
              pretensão errada. Pré-seleciona `tipo_ia_padrao` (calculado no
              topo do arquivo).
@@ -837,6 +870,7 @@
                     title="Escolha a pretensão/rota do diagnóstico por IA">
                 <option value="bpc">BPC/LOAS</option>
                 <option value="bi">Benefício por Incapacidade</option>
+                <option value="pensao_morte">Pensão por Morte</option>
                 <option value="generica">Análise ampla</option>
             </select>
             <button type="button"
@@ -845,7 +879,7 @@
                         document.getElementById('secao-abas-paj').scrollIntoView({behavior:'smooth'});
                         window.dispatchEvent(new CustomEvent('iniciar-analise-ia', {detail:{tipo: tipoAnalise, orientacao: orientacaoDiretiva}}));
                     "
-                    title="Diagnostica este PAJ por IA — BPC/LOAS aplica o playbook de teses (skill /SISDPU-AnalisarPAJ-BPC); Benefício por Incapacidade aplica o parecer de viabilidade dedicado (skill /SISDPU-AnalisarPAJ-BI); Análise ampla é um diagnóstico jurídico geral via PROMPT_MAX, sem playbook de área específica">
+                    title="Diagnostica este PAJ por IA — BPC/LOAS aplica o playbook de teses (skill /SISDPU-AnalisarPAJ-BPC); Benefício por Incapacidade aplica o parecer de viabilidade dedicado (skill /SISDPU-AnalisarPAJ-BI); Pensão por Morte aplica o playbook de teses dedicado (skill /SISDPU-AnalisarPAJ-Pensao); Análise ampla é um diagnóstico jurídico geral via PROMPT_MAX, sem playbook de área específica">
                 <svg class="w-3.5 h-3.5" fill="currentColor" viewBox="0 0 24 24"><path d="M9.813 15.904L9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715L18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456ZM16.894 20.567L16.5 21.75l-.394-1.183a2.25 2.25 0 0 0-1.423-1.423L13.5 18.75l1.183-.394a2.25 2.25 0 0 0 1.423-1.423l.394-1.183.394 1.183a2.25 2.25 0 0 0 1.423 1.423l1.183.394-1.183.394a2.25 2.25 0 0 0-1.423 1.423Z"></path></svg>
                 Analisar
             </button>
@@ -869,39 +903,113 @@
                 <span x-show="status === 'running'" class="loading loading-spinner loading-xs"></span>
                 <span x-show="status === 'running'">Calculando…</span>
             </button>
-            <span class="text-[11px] text-base-content/50" x-show="status === 'done' && arquivoEmUso" x-text="'Último cálculo: ' + arquivoEmUso.replace('Arquivos/', '')"></span>
-
             <dialog class="modal" :open="modalAberto" @close="fecharModal()">
-                <div class="modal-box max-w-lg">
+                <div class="modal-box w-full max-w-[50vw]">
                     <!-- Passo 1: escolher o arquivo -->
                     <template x-if="!arquivoPendente">
                         <div>
-                            <h3 class="font-bold text-lg mb-1">Selecionar o extrato CNIS</h3>
-                            <p class="text-xs text-base-content/50 mb-3">
-                                Escolha qual arquivo de CNIS usar no cálculo — pode haver mais de um,
-                                extraído em datas diferentes.
-                            </p>
+                            <h3 class="font-bold text-lg mb-3">Dados para realizar o cálculo</h3>
 
-                            <div class="flex justify-center py-6" x-show="carregandoArquivos">
-                                <span class="loading loading-spinner loading-md"></span>
+                            <!-- Seção 1: Sexo e DER — ÚNICA fonte aceita para esses dois dados
+                                 (nunca lidos/inferidos do CNIS ou de qualquer outra peça do PAJ
+                                 pela IA — pedido explícito do usuário, 2026-09-20). -->
+                            <div class="border border-base-300 rounded-lg p-3 mb-3">
+                                <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-2">Dados complementares</h4>
+                                <div class="grid grid-cols-[1fr_2fr] gap-2">
+                                    <label class="form-control">
+                                        <span class="label-text text-xs mb-1">Sexo</span>
+                                        <select class="select select-sm select-bordered" x-model="sexo">
+                                            <option value="">Não informado</option>
+                                            <option value="Masculino">Masculino</option>
+                                            <option value="Feminino">Feminino</option>
+                                        </select>
+                                    </label>
+                                    <label class="form-control">
+                                        <span class="label-text text-xs mb-1">DER (Data de Entrada do Requerimento)</span>
+                                        <div class="join">
+                                            <input type="text" placeholder="DD/MM/AAAA" maxlength="10"
+                                                   class="input input-sm input-bordered join-item flex-1"
+                                                   :class="!derValida() ? 'input-error' : ''"
+                                                   x-model="der">
+                                            <button type="button" class="btn btn-sm join-item normal-case font-normal"
+                                                    @click="preencherDerHoje()">Considerar data de hoje</button>
+                                        </div>
+                                    </label>
+                                </div>
+                                <!-- Cópia da caixa "Orientação diretiva" (x-model no MESMO
+                                     orientacaoDiretiva do container pai — 2 caixas, 1 variável).
+                                     Necessária aqui dentro: o backdrop do modal bloqueia clique
+                                     na caixa original da página enquanto o modal está aberto, então
+                                     quem digita a orientação DEPOIS de abrir o modal (o mais comum)
+                                     via a caixa de fora tinha o texto silenciosamente ignorado —
+                                     achado num caso real, PAJ 2026/029-00956, 2026-09-21. -->
+                                <label class="form-control mt-2">
+                                    <span class="label-text text-xs mb-1">Orientação diretiva para este cálculo (opcional)</span>
+                                    <textarea x-model="orientacaoDiretiva" rows="2"
+                                              class="textarea textarea-bordered textarea-sm text-xs"
+                                              placeholder="Ex.: considere o vínculo X encerrado em DD/MM/AAAA, antes do auxílio-doença"></textarea>
+                                </label>
                             </div>
-                            <div class="text-sm text-base-content/50 text-center py-4" x-show="!carregandoArquivos && erroArquivos" x-text="erroArquivos"></div>
 
-                            <div class="flex flex-col gap-1.5" x-show="!carregandoArquivos && arquivos.length">
-                                <template x-for="a in arquivos" :key="a.caminho">
-                                    <button type="button"
-                                            class="btn btn-outline btn-sm justify-between normal-case font-normal"
-                                            @click="escolherArquivo(a)">
-                                        <span class="flex items-center gap-1.5 truncate">
-                                            <span class="badge badge-xs" :class="a.tipo === 'completo' ? 'badge-info' : 'badge-ghost'"
-                                                  x-text="a.tipo === 'completo' ? 'completo' : 'simples'"
-                                                  :title="a.tipo === 'completo' ? 'CNIS com remunerações por competência' : 'CNIS só com vínculos'"></span>
-                                            <span class="truncate" x-text="a.nome"></span>
+                            <!-- Seção 2: arquivo do CNIS (baixar do SAT ou escolher um já salvo). -->
+                            <div class="border border-base-300 rounded-lg p-3">
+                                <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-2">Arquivo CNIS para o cálculo</h4>
+                                <p class="text-xs text-base-content/50 mb-3">
+                                    Escolha qual arquivo de CNIS usar no cálculo — pode haver mais de um,
+                                    extraído em datas diferentes.
+                                </p>
+
+                                <button type="button" class="btn btn-outline btn-info btn-sm w-full gap-1.5 mb-1"
+                                        :disabled="baixandoSat"
+                                        @click="baixarDoSat()"
+                                        title="Baixa do SAT (INSS/Dataprev) os documentos &quot;CNIS - Vínculos&quot; e &quot;CNIS - Remunerações&quot; mais atuais, direto para a pasta deste PAJ — fecha a sessão do SAT automaticamente ao terminar">
+                                    <span x-show="!baixandoSat">📥 Baixar CNIS Atualizado do SAT</span>
+                                    <template x-if="baixandoSat">
+                                        <span class="flex items-center gap-1.5 normal-case font-normal">
+                                            <span class="loading loading-spinner loading-xs"></span>
+                                            <span x-text="satStatus || 'Baixando…'"></span>
                                         </span>
-                                        <span class="text-[11px] text-base-content/50 whitespace-nowrap ml-2"
-                                              x-text="formatarData(a.modificado) + ' · ' + formatarTamanho(a.tamanho)"></span>
-                                    </button>
-                                </template>
+                                    </template>
+                                </button>
+                                <div class="divider my-1 text-[11px] text-base-content/40">ou escolha um já baixado</div>
+
+                                <div class="alert alert-warning text-xs py-2 mb-2" x-show="!carregandoArquivos && nenhumNativo()">
+                                    Todos os arquivos encontrados são escaneados (imagem, sem texto extraível) — nenhum
+                                    pode ser usado no cálculo. Use o botão "Baixar CNIS Atualizado do SAT" acima.
+                                </div>
+
+                                <div class="flex justify-center py-6" x-show="carregandoArquivos">
+                                    <span class="loading loading-spinner loading-md"></span>
+                                </div>
+                                <div class="text-sm text-base-content/50 text-center py-4" x-show="!carregandoArquivos && erroArquivos" x-text="erroArquivos"></div>
+
+                                <div class="flex flex-col gap-1.5" x-show="!carregandoArquivos && arquivos.length">
+                                    <template x-for="a in arquivos" :key="a.caminho">
+                                        <button type="button"
+                                                class="btn btn-sm justify-between normal-case font-normal"
+                                                :class="a.nativo ? 'btn-outline' : 'btn-outline btn-disabled opacity-60'"
+                                                :disabled="!a.nativo"
+                                                @click="escolherArquivo(a, orientacaoDiretiva)">
+                                            <span class="flex items-center gap-1.5 truncate">
+                                                <template x-if="a.nativo">
+                                                    <span class="badge badge-xs" :class="a.tipo === 'completo' ? 'badge-info' : 'badge-ghost'"
+                                                          x-text="a.tipo === 'completo' ? 'remunerações' : 'vínculos'"
+                                                          :title="a.tipo === 'completo' ? 'CNIS com remunerações por competência (permite cálculo completo)' : 'CNIS só com vínculos (permite cálculo simples)'"></span>
+                                                </template>
+                                                <span class="badge badge-xs badge-warning gap-1" x-show="!a.nativo"
+                                                      title="PDF escaneado (imagem, sem texto extraível) — pode ter página faltando ou legibilidade prejudicada, por isso não pode ser usado neste cálculo. Baixe um arquivo nativo do SAT Central.">
+                                                    📷 escaneado — não utilizável
+                                                </span>
+                                                <span class="badge badge-xs badge-success" x-show="a.mais_recente">mais recente</span>
+                                                <span class="truncate" x-text="a.nome"></span>
+                                            </span>
+                                            <span class="text-[11px] whitespace-nowrap ml-2"
+                                                  :class="a.data_emissao_fmt ? 'text-base-content/50' : 'text-warning'"
+                                                  :title="a.data_emissao_fmt ? '' : 'Não foi possível ler a data de emissão no cabeçalho deste CNIS'"
+                                                  x-text="rotuloData(a) + ' · ' + formatarTamanho(a.tamanho)"></span>
+                                        </button>
+                                    </template>
+                                </div>
                             </div>
 
                             <div class="modal-action">
@@ -941,6 +1049,155 @@
             </dialog>
         </div>
 
+        <!-- Calcular Qualidade de Segurado (skill /AnáliseQS, generalizada em
+             2026-09-21 para qualquer benefício): botão PRÓPRIO, ao lado de
+             "Calcular Tempo de Contribuição" — mais rápido que aquele (só
+             período de graça, art. 15 da LBPS, não o tempo de contribuição
+             competência a competência). Exige que o Defensor escolha o tipo
+             de benefício (define o rótulo da data-alvo: DII, óbito, parto/
+             adoção, prisão) e informe essa data manualmente — nunca inferida
+             pela IA. Reaproveita o mesmo detector/modal de arquivos CNIS do
+             botão acima (ver routes/calcular_qs.py, services/calcular_qs_service.py
+             e static/js/calcular_qs.js). -->
+        <div class="flex items-center gap-2 flex-wrap"
+             x-data="calcularQsApp('{{ paj_norm }}')" x-init="init()">
+            <button type="button" class="btn btn-sm btn-outline gap-1.5"
+                    :disabled="status === 'running'"
+                    @click="abrirModal()"
+                    title="Escolhe um extrato CNIS anexado ao PAJ e verifica a qualidade de segurado numa data-alvo (DII, óbito, parto/adoção, prisão etc. — skill /AnáliseQS) — gera um PDF em &quot;Peças IA&quot;. Se não houver qualidade de segurado, a própria análise indica se vale a pena checar direito adquirido a aposentadoria via &quot;Calcular Tempo de Contribuição&quot;.">
+                <span x-show="status !== 'running'">🛡️ Calcular Qualidade de Segurado</span>
+                <span x-show="status === 'running'" class="loading loading-spinner loading-xs"></span>
+                <span x-show="status === 'running'">Analisando…</span>
+            </button>
+            <dialog class="modal" :open="modalAberto" @close="fecharModal()">
+                <div class="modal-box w-full max-w-[50vw]">
+                    <h3 class="font-bold text-lg mb-3">Qualidade de segurado — dados da análise</h3>
+
+                    <!-- Seção 1: tipo de benefício e data-alvo — ÚNICA fonte
+                         aceita para esses dados (nunca inferidos pela IA). -->
+                    <div class="border border-base-300 rounded-lg p-3 mb-3">
+                        <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-2">Tipo de benefício e data-alvo (fato gerador)</h4>
+                        <div class="flex flex-col gap-2">
+                            <label class="form-control">
+                                <span class="label-text text-xs mb-1">Tipo de benefício</span>
+                                <select class="select select-sm select-bordered" x-model="tipoBeneficio">
+                                    <option value="" disabled>Selecione…</option>
+                                    <template x-for="t in tiposBeneficio" :key="t.valor">
+                                        <option :value="t.valor" x-text="t.rotulo"></option>
+                                    </template>
+                                </select>
+                            </label>
+                            <label class="form-control" x-show="tipoBeneficio === 'outro'">
+                                <span class="label-text text-xs mb-1">Como chamar a data-alvo no parecer</span>
+                                <input type="text" placeholder="Ex.: Data da separação de fato"
+                                       class="input input-sm input-bordered" x-model="dataAlvoRotulo">
+                            </label>
+                            <div class="grid grid-cols-[1fr_2fr] gap-2">
+                                <label class="form-control">
+                                    <span class="label-text text-xs mb-1" x-text="rotuloDataAlvo()"></span>
+                                    <input type="text" placeholder="DD/MM/AAAA" maxlength="10"
+                                           class="input input-sm input-bordered"
+                                           :class="dataAlvo && !dataAlvoValida() ? 'input-error' : ''"
+                                           x-model="dataAlvo">
+                                </label>
+                                <label class="form-control">
+                                    <span class="label-text text-xs mb-1">Fonte da data (opcional)</span>
+                                    <input type="text" placeholder="Ex.: Certidão de óbito, laudo pericial…"
+                                           class="input input-sm input-bordered" x-model="dataAlvoFonte">
+                                </label>
+                            </div>
+                            <label class="form-control">
+                                <span class="label-text text-xs mb-1">Idade do titular do vínculo na data-alvo (opcional)</span>
+                                <input type="text" placeholder="Ex.: 61 — só refina a sugestão de direito adquirido"
+                                       class="input input-sm input-bordered w-32" x-model="idadeInstituidor">
+                            </label>
+                            <!-- Cópia da caixa "Orientação diretiva" (mesmo motivo/mesma
+                                 variável de calcular_cnis, ver comentário lá): o backdrop do
+                                 modal bloqueia a caixa original da página enquanto o modal
+                                 está aberto. -->
+                            <label class="form-control">
+                                <span class="label-text text-xs mb-1">Orientação diretiva para esta análise (opcional)</span>
+                                <textarea x-model="orientacaoDiretiva" rows="2"
+                                          class="textarea textarea-bordered textarea-sm text-xs"
+                                          placeholder="Ex.: considere o vínculo X encerrado em DD/MM/AAAA"></textarea>
+                            </label>
+                        </div>
+                    </div>
+
+                    <!-- Seção 2: arquivo do CNIS. -->
+                    <div class="border border-base-300 rounded-lg p-3">
+                        <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-2">Arquivo CNIS para o cálculo</h4>
+                        <p class="text-xs text-base-content/50 mb-3">
+                            Escolha o extrato CNIS do titular do vínculo (segurado/instituidor) — pode
+                            haver mais de um, extraído em datas diferentes.
+                        </p>
+
+                        <div class="alert alert-warning text-xs py-2 mb-2" x-show="!carregandoArquivos && nenhumNativo()">
+                            Todos os arquivos encontrados são escaneados (imagem, sem texto extraível) — nenhum
+                            pode ser usado no cálculo. Baixe um extrato nativo (ex.: pelo botão do SAT no
+                            "Calcular Tempo de Contribuição") e tente de novo.
+                        </div>
+
+                        <div class="flex justify-center py-6" x-show="carregandoArquivos">
+                            <span class="loading loading-spinner loading-md"></span>
+                        </div>
+                        <div class="text-sm text-base-content/50 text-center py-4" x-show="!carregandoArquivos && erroArquivos" x-text="erroArquivos"></div>
+
+                        <div class="flex flex-col gap-1.5" x-show="!carregandoArquivos && arquivos.length">
+                            <template x-for="a in arquivos" :key="a.caminho">
+                                <button type="button"
+                                        class="btn btn-sm justify-between normal-case font-normal"
+                                        :class="(a.nativo && podeIniciar()) ? 'btn-outline' : 'btn-outline btn-disabled opacity-60'"
+                                        :disabled="!a.nativo || !podeIniciar()"
+                                        :title="!podeIniciar() ? 'Preencha o tipo de benefício e a data-alvo antes de escolher o arquivo' : ''"
+                                        @click="iniciarCalculo(a.caminho, orientacaoDiretiva)">
+                                    <span class="flex items-center gap-1.5 truncate">
+                                        <template x-if="a.nativo">
+                                            <span class="badge badge-xs" :class="a.tipo === 'completo' ? 'badge-info' : 'badge-ghost'"
+                                                  x-text="a.tipo === 'completo' ? 'remunerações' : 'vínculos'"></span>
+                                        </template>
+                                        <span class="badge badge-xs badge-warning gap-1" x-show="!a.nativo">📷 escaneado — não utilizável</span>
+                                        <span class="badge badge-xs badge-success" x-show="a.mais_recente">mais recente</span>
+                                        <span class="truncate" x-text="a.nome"></span>
+                                    </span>
+                                    <span class="text-[11px] whitespace-nowrap ml-2"
+                                          :class="a.data_emissao_fmt ? 'text-base-content/50' : 'text-warning'"
+                                          x-text="rotuloData(a) + ' · ' + formatarTamanho(a.tamanho)"></span>
+                                </button>
+                            </template>
+                        </div>
+                    </div>
+
+                    <div class="modal-action">
+                        <button type="button" class="btn btn-sm" @click="fecharModal()">Fechar</button>
+                    </div>
+                </div>
+                <form method="dialog" class="modal-backdrop"><button @click="fecharModal()">fechar</button></form>
+            </dialog>
+        </div>
+
+        <!-- Consulta RPV/Precatório: ONE-CLICK (pedido explícito do usuário,
+             2026-09-22 — nenhum dado digitado, tudo já está no processo/PAJ),
+             só aparece quando há processo judicial vinculado (sem processo não
+             há RPV/precatório a consultar). Verifica, no(s) processo(s)
+             vinculado(s), se cada RPV/Precatório paga (evento com documento
+             DEMTRANSF) já foi efetivamente depositada no banco (CEF hoje; BB
+             ainda sem suporte — sem caso real pra validar o formulário) e
+             registra automaticamente a movimentação correspondente no SISDPU
+             — ver services/consulta_rpv_service.py e static/js/consulta_rpv.js. -->
+        {% if dados.processos_judiciais %}
+        <div x-data="consultaRpvApp('{{ paj_norm }}')" x-init="init()">
+            <button type="button" class="btn btn-sm btn-outline gap-1.5"
+                    :disabled="status === 'running'"
+                    @click="iniciar()"
+                    title="Verifica no site do banco depositário (CEF) se cada RPV/Precatório paga deste processo já foi depositada, e já registra a movimentação correspondente no SISDPU — um clique, sem preencher nada.">
+                <span x-show="status !== 'running'">🏦 Consulta RPV/Precatório</span>
+                <span x-show="status === 'running'" class="loading loading-spinner loading-xs"></span>
+                <span x-show="status === 'running'">Consultando…</span>
+            </button>
+        </div>
+        {% endif %}
+
         <!-- Organizar Pasta para Ajuizamento (skill /SISDPU-OrganizarArquivos):
              habilitado só depois que uma petição inicial existir na pasta do PAJ.
              Fila da seção, agora centralizada com os demais botões (pedido
@@ -978,6 +1235,16 @@
                 <span x-text="error"></span>
             </div>
         </div>
+
+        <!-- Discutir / PROMPT_MAX: antes eram 2 abas dentro da seção "Outros"
+             (removida por completo — pedido do usuário 2026-09-18); mesma
+             estrutura e funcionalidades (discutirPaj(), PROMPT_MAX.md), só
+             mudou o local de disparo — agora um modal aberto por este botão. -->
+        <button type="button" class="btn btn-sm btn-outline gap-1.5"
+                @click="carregarConversasPaj('{{ paj_norm }}'); document.getElementById('discutir-modal').showModal()"
+                title="Discutir o caso com o Claude (explorar tese, brainstorm, dúvidas) ou consultar o PROMPT_MAX deste PAJ">
+            💬 Discutir / PROMPT_MAX
+        </button>
     </div>
 
     <!-- Orientação diretiva para análise da IA — linha própria abaixo dos
@@ -1137,28 +1404,53 @@
     </div>
 </div>
 
-<!-- Seção com abas: Movimentações, Análise IA, Narrativa, Anexos SISDPU e Peças
-     (aglutinadas aqui em 2026-08-19 — antes eram 5 seções retráteis
-     separadas; "Peças" foi destacada de dentro da seção "Outros", que
-     continua no final da página, sem alteração). Movimentações é a aba
-     default (primeira à esquerda, pré-selecionada na abertura da página).
-     x-data ÚNICO: mescla analiseIaApp() (status/summary/iniciar/etc., usados
-     tanto pela aba Análise IA quanto pelo badge de status no rótulo da aba)
-     com `tab` (aba ativa) — mesmo padrão de escopo compartilhado já usado em
-     "Outros" logo abaixo (x-data="{ tab: '...' }" envolvendo todas as abas).
-     O botão "Atualizar movimentações" mora DENTRO do partial (abaixo dos
-     filtros, ver mostrarBotaoAtualizar em movimentacoes_tabela.html) — usa o
-     `atualizando`/`atualizarMovimentacoes()` do próprio componente da tabela,
-     sem precisar do roundtrip de evento global que o botão externo usava. -->
+<!-- Movimentações (seção própria, retrátil, aberta por padrão) — destacada
+     de dentro da seção com abas em 2026-09-21 (pedido do usuário),
+     posicionada logo após "Ações no SISDPU"/"Ações no e-proc". Mesmo padrão
+     de toggle local das demais seções retráteis desta página (Lembretes,
+     Narrativa acima) — `mostrar_botao_atualizar_movs` (Jinja, escopado só a
+     este include via `with`) liga o botão "Atualizar movimentações" só
+     aqui — o mesmo partial é reaproveitado também dentro de "Gerar Minuta"
+     (seletor de documentos, ver partials/minuta_ia.html) e lá não faz
+     sentido nenhum esse botão. O partial tem seu PRÓPRIO x-data
+     (tabelaMovimentacoes(), self-contido) — sem dependência nenhuma do
+     x-data da seção com abas, então mover pra fora dela é seguro. -->
+<div class="bg-base-200 border border-base-300 rounded-lg mb-6" x-data="{ aberto: true }">
+    <div class="flex items-center gap-2 px-4 py-3">
+        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
+            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
+                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+            </svg>
+            <span class="text-lg font-semibold">Movimentações</span>
+            <span class="badge badge-ghost badge-sm">{{ dados.movimentacoes|length }}</span>
+        </button>
+    </div>
+    <div x-show="aberto" x-cloak class="px-4 pb-4">
+        {% with mostrar_botao_atualizar_movs = true %}
+        {% include "partials/movimentacoes_tabela.html" %}
+        {% endwith %}
+    </div>
+</div>
+
+<!-- Seção com abas: Análise IA, Anexos SISDPU e Peças (aglutinadas aqui em
+     2026-08-19 — antes eram 5 seções retráteis separadas; "Peças" foi
+     destacada de dentro da antiga seção "Outros" — removida por completo em
+     2026-09-18, junto com Despachos, Notas e Discutir/PROMPT_MAX, que
+     viraram um botão+modal em "Ações com IA"). Narrativa e Movimentações
+     também foram destacadas daqui em 2026-09-21 (pedido do usuário) — agora
+     são seções próprias, retráteis, abertas por padrão: Narrativa logo após
+     Lembretes, Movimentações logo após "Ações no SISDPU"/"Ações no e-proc".
+     Análise IA é a aba default agora (primeira à esquerda das que restaram
+     aqui). x-data ÚNICO: mescla analiseIaApp() (status/summary/iniciar/etc.,
+     usados tanto pela aba Análise IA quanto pelo badge de status no rótulo
+     da aba) com `tab` (aba ativa). -->
 <div id="secao-abas-paj" class="bg-base-200 border border-base-300 rounded-lg mb-6"
-     x-data="{...analiseIaApp('{{ paj_norm }}', '{{ tipo_ia_padrao }}'), tab: 'movimentacoes'}"
+     x-data="{...analiseIaApp('{{ paj_norm }}', '{{ tipo_ia_padrao }}'), tab: 'analise_ia'}"
      x-init="init()"
      @iniciar-analise-ia.window="tab = 'analise_ia'; iniciar($event.detail && $event.detail.tipo, $event.detail && $event.detail.orientacao)">
     <div class="px-4 pt-3">
         <div role="tablist" class="tabs tabs-bordered mb-4">
-            <a role="tab" class="tab" :class="tab === 'movimentacoes' && 'tab-active'" @click="tab = 'movimentacoes'">
-                Movimentações <span class="badge badge-ghost badge-sm ml-1">{{ dados.movimentacoes|length }}</span>
-            </a>
             <a role="tab" class="tab" :class="tab === 'analise_ia' && 'tab-active'" @click="tab = 'analise_ia'">
                 Análise IA
                 <span class="loading loading-spinner loading-xs text-warning ml-1" x-show="status === 'running'"></span>
@@ -1171,9 +1463,6 @@
                       }"
                       x-text="status === 'running' ? 'em andamento' : (status === 'done' ? 'concluída' : (status === 'error' ? 'erro' : 'não iniciada'))"></span>
             </a>
-            <a role="tab" class="tab" :class="tab === 'narrativa' && 'tab-active'" @click="tab = 'narrativa'">
-                Narrativa
-            </a>
             <a role="tab" class="tab" :class="tab === 'anexos_sisdpu' && 'tab-active'" @click="tab = 'anexos_sisdpu'">
                 Anexos SISDPU <span class="badge badge-primary badge-sm ml-1">{{ dados.anexos_sisdpu|length }}</span>
             </a>
@@ -1182,18 +1471,6 @@
                 Peças <span id="badge-pecas-count" class="badge badge-ghost badge-xs ml-1">{{ dados.pecas_judiciais|length }}</span>
             </a>
         </div>
-    </div>
-
-    <!-- Aba: Movimentações. `mostrar_botao_atualizar_movs` (Jinja, escopado só
-         a este include via `with`) liga o botão "Atualizar movimentações" só
-         aqui — o mesmo partial é reaproveitado também dentro de "Gerar
-         Minuta" (seletor de documentos, ver partials/minuta_ia.html) e lá
-         não faz sentido nenhum esse botão (recarregaria as movimentações e
-         atrapalharia a seleção em andamento). -->
-    <div x-show="tab === 'movimentacoes'" x-cloak class="px-4 pb-4">
-        {% with mostrar_botao_atualizar_movs = true %}
-        {% include "partials/movimentacoes_tabela.html" %}
-        {% endwith %}
     </div>
 
     <!-- Aba: Análise IA (diagnóstico por pretensão + reenvio p/ ajuste ou pedido
@@ -1246,15 +1523,6 @@
                 </div>
             </div>
         </template>
-    </div>
-
-    <!-- Aba: Narrativa -->
-    <div x-show="tab === 'narrativa'" x-cloak class="px-4 pb-4">
-        {% if dados.narrativa %}
-        <div class="text-sm text-base-content/80 leading-relaxed break-words bg-base-100 p-4 rounded border border-base-300/50 prose prose-sm max-w-none">{{ dados.narrativa|safe }}</div>
-        {% else %}
-        <p class="text-sm text-base-content/50 italic">Narrativa não disponível para este PAJ</p>
-        {% endif %}
     </div>
 
     <!-- Aba: Anexos SISDPU -->
@@ -1391,9 +1659,10 @@
         {% endif %}
     </div>
 
-    <!-- Aba: Peças judiciais geradas (destacada de dentro da seção "Outros",
-         que continua no final da página com as demais abas — Despachos,
-         Notas, Discutir, PROMPT_MAX). -->
+    <!-- Aba: Peças judiciais geradas (inclui os antigos "despachos" — a
+         classificação/aba separada foi removida em 2026-09-18, junto com o
+         resto da seção "Outros"; despacho*.txt/.docx/.pdf agora entram
+         nesta mesma lista, sem distinção). -->
     <div x-show="tab === 'pecas_jud'" x-cloak class="px-4 pb-4">
         <div class="flex items-start justify-between gap-3 mb-1 flex-wrap">
             <h3 class="text-lg font-semibold">Peças judiciais geradas</h3>
@@ -1417,7 +1686,7 @@
             <table class="table table-sm">
                 <thead>
                     <tr class="bg-base-300/50">
-                        <th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>Criado em</th><th>Ações</th>
+                        <th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>Atualizado em</th><th>Ações</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -1430,7 +1699,7 @@
                             </span>
                         </td>
                         <td class="text-sm">{{ (p.tamanho / 1024)|round(1) }} KB</td>
-                        <td class="text-xs text-base-content/60 whitespace-nowrap">{{ p.criado | data_hora_arquivo }}</td>
+                        <td class="text-xs text-base-content/60 whitespace-nowrap">{{ p.modificado | data_hora_arquivo }}</td>
                         <td>
                             <div class="flex flex-wrap gap-1">
                                 {% if p.tipo in ('pdf', 'docx', 'doc') %}
@@ -1474,223 +1743,113 @@
     </div>
 </div>
 
-<!-- Outros (seção retrátil): Peças, Despachos, Notas, Discutir, PROMPT_MAX — recolhida por padrão -->
-<div class="bg-base-200 border border-base-300 rounded-lg mb-6" x-data="{ aberto: false }">
-    <div class="flex items-center gap-2 px-4 py-3">
-        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
-            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
-                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-            </svg>
-            <span class="text-lg font-semibold">Outros</span>
-        </button>
-    </div>
-    <div x-show="aberto" x-cloak class="px-4 pb-4">
-<!-- Tabs (Peças foi destacada daqui em 2026-08-19 — agora mora na seção com
-     abas do topo da página, junto de Movimentações/Análise IA/Narrativa/
-     Anexos SISDPU. Outros continua com as demais abas, sem outra alteração). -->
-<div x-data="{ tab: 'despachos' }" class="mt-2">
-    <div role="tablist" class="tabs tabs-bordered mb-4">
-        <a role="tab" class="tab" :class="tab === 'despachos' && 'tab-active'" @click="tab = 'despachos'"
-           title="Despachos administrativos para lançamento no SISDPU">
-            Despachos <span id="badge-despachos-count" class="badge badge-ghost badge-xs ml-1">{{ dados.despachos|length }}</span>
-        </a>
-        <a role="tab" class="tab" :class="tab === 'notas' && 'tab-active'" @click="tab = 'notas'; carregarNotas('{{ paj_norm }}')"
-           title="Anotações pessoais do defensor (NOTAS.md)">
-            Notas
-        </a>
-        <a role="tab" class="tab" :class="tab === 'discutir' && 'tab-active'"
-           @click="tab = 'discutir'; carregarConversasPaj('{{ paj_norm }}')"
-           title="Modo conversa: explorar tese, brainstorm estratégico, dúvidas sobre o caso">
-            Discutir
-        </a>
-        <a role="tab" class="tab" :class="tab === 'prompt' && 'tab-active'" @click="tab = 'prompt'">PROMPT_MAX</a>
-    </div>
-
-    <!-- Tab: Notas (anotacoes pessoais — NOTAS.md no disco) -->
-    <div x-show="tab === 'notas'" class="bg-base-200 rounded-lg border border-base-300 p-6">
-        <div class="flex items-center justify-between mb-3">
-            <div>
-                <h3 class="text-lg font-semibold">Notas pessoais</h3>
-                <p class="text-xs text-base-content/40">
-                    Salvo em <code>NOTAS.md</code> na pasta do PAJ — sobrevive à sincronização e não vai pra lista de peças.
-                </p>
-            </div>
-            <span class="text-xs text-base-content/50" id="notas-status">—</span>
-        </div>
-        <textarea id="notas-textarea"
-                  class="textarea textarea-bordered w-full font-mono text-sm"
-                  rows="15"
-                  placeholder="Rascunhos, lembretes, estratégia do caso, contatos, etc. Markdown aceito. Salva automaticamente 2s após parar de digitar."
-                  oninput="agendarSalvarNotas('{{ paj_norm }}')"></textarea>
-    </div>
-
-    <!-- Tab: Discutir (chat livre vinculado ao PAJ — explorar tese, brainstorm) -->
-    <div x-show="tab === 'discutir'" class="bg-base-200 rounded-lg border border-base-300 p-6"
-         x-data="discutirPaj('{{ paj_norm }}')"
-         x-init="init()"
-         @recarregar-conversas-paj.window="recarregar()">
-        <div class="flex items-center justify-between mb-4">
-            <div>
-                <h3 class="text-lg font-semibold">Discutir o caso</h3>
-                <p class="text-xs text-base-content/50 mt-1">
-                    Modo conversa com Claude usando o PROMPT_MAX deste PAJ como contexto.
-                    Útil para explorar tese, testar hipótese, brainstorm estratégico,
-                    tirar dúvida — <strong>não produz peça</strong> (o Claude só elabora
-                    se você pedir explicitamente). Cada conversa fica salva em
-                    <code>PAJs/{{ paj_norm }}/conversas/</code>.
-                </p>
-            </div>
-            <button class="btn btn-primary btn-sm" @click="criarENovaAba()">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-                </svg>
-                Nova conversa
-            </button>
+<!-- Modal: Discutir + PROMPT_MAX (antes eram 2 das 4 abas da seção "Outros";
+     Despachos e Notas foram removidas por completo, sem substituto — pedido
+     do usuário 2026-09-18. Mesma estrutura/funcionalidades de antes
+     (discutirPaj(), PROMPT_MAX.md), só mudou o local de disparo: agora um
+     botão em "Ações com IA", em vez de abas dentro de uma seção retrátil. -->
+<dialog id="discutir-modal" class="modal">
+    <div class="modal-box w-11/12 max-w-4xl" x-data="{ subtab: 'discutir' }">
+        <form method="dialog"><button class="btn btn-sm btn-circle btn-ghost absolute right-2 top-2">✕</button></form>
+        <div role="tablist" class="tabs tabs-bordered mb-4">
+            <a role="tab" class="tab" :class="subtab === 'discutir' && 'tab-active'" @click="subtab = 'discutir'"
+               title="Modo conversa: explorar tese, brainstorm estratégico, dúvidas sobre o caso">
+                Discutir
+            </a>
+            <a role="tab" class="tab" :class="subtab === 'prompt' && 'tab-active'" @click="subtab = 'prompt'">PROMPT_MAX</a>
         </div>
 
-        <template x-if="carregando">
-            <p class="text-sm text-base-content/50">Carregando...</p>
-        </template>
-
-        <template x-if="!carregando && conversas.length === 0">
-            <div class="text-center py-8 text-base-content/50">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto mb-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                </svg>
-                <p class="text-sm">Nenhuma conversa ainda neste PAJ.</p>
-                <p class="text-xs mt-1">Clique em <strong>Nova conversa</strong> para começar.</p>
+        <!-- Discutir (chat livre vinculado ao PAJ — explorar tese, brainstorm) -->
+        <div x-show="subtab === 'discutir'"
+             x-data="discutirPaj('{{ paj_norm }}')"
+             x-init="init()"
+             @recarregar-conversas-paj.window="recarregar()">
+            <div class="flex items-center justify-between mb-4">
+                <div>
+                    <h3 class="text-lg font-semibold">Discutir o caso</h3>
+                    <p class="text-xs text-base-content/50 mt-1">
+                        Modo conversa com Claude usando o PROMPT_MAX deste PAJ como contexto.
+                        Útil para explorar tese, testar hipótese, brainstorm estratégico,
+                        tirar dúvida — <strong>não produz peça</strong> (o Claude só elabora
+                        se você pedir explicitamente). Cada conversa fica salva em
+                        <code>PAJs/{{ paj_norm }}/conversas/</code>.
+                    </p>
+                </div>
+                <button class="btn btn-primary btn-sm" @click="criarENovaAba()">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                    </svg>
+                    Nova conversa
+                </button>
             </div>
-        </template>
 
-        <template x-if="!carregando && conversas.length > 0">
-            <div class="space-y-2">
-                <template x-for="c in conversas" :key="c.id">
-                    <div class="flex items-center gap-3 p-3 rounded-lg border border-base-300 hover:border-primary/40 hover:bg-base-300/40 transition-colors">
-                        <div style="flex:1; min-width:0;">
+            <template x-if="carregando">
+                <p class="text-sm text-base-content/50">Carregando...</p>
+            </template>
+
+            <template x-if="!carregando && conversas.length === 0">
+                <div class="text-center py-8 text-base-content/50">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto mb-3 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                    </svg>
+                    <p class="text-sm">Nenhuma conversa ainda neste PAJ.</p>
+                    <p class="text-xs mt-1">Clique em <strong>Nova conversa</strong> para começar.</p>
+                </div>
+            </template>
+
+            <template x-if="!carregando && conversas.length > 0">
+                <div class="space-y-2">
+                    <template x-for="c in conversas" :key="c.id">
+                        <div class="flex items-center gap-3 p-3 rounded-lg border border-base-300 hover:border-primary/40 hover:bg-base-300/40 transition-colors">
+                            <div style="flex:1; min-width:0;">
+                                <a :href="'/chat-livre?conv=' + c.id"
+                                   class="font-semibold text-sm hover:text-primary block truncate"
+                                   x-text="c.titulo"></a>
+                                <div class="text-xs text-base-content/50 mt-0.5 flex items-center gap-2 flex-wrap">
+                                    <span x-text="formatarData(c.atualizado_em)"></span>
+                                    <span x-show="c.skill_slug"
+                                          class="badge badge-xs badge-ghost"
+                                          x-text="'/' + c.skill_slug"></span>
+                                    <span x-show="c.n_mensagens > 0"
+                                          class="text-base-content/40"
+                                          x-text="c.n_mensagens + ' mensagens'"></span>
+                                </div>
+                            </div>
                             <a :href="'/chat-livre?conv=' + c.id"
-                               class="font-semibold text-sm hover:text-primary block truncate"
-                               x-text="c.titulo"></a>
-                            <div class="text-xs text-base-content/50 mt-0.5 flex items-center gap-2 flex-wrap">
-                                <span x-text="formatarData(c.atualizado_em)"></span>
-                                <span x-show="c.skill_slug"
-                                      class="badge badge-xs badge-ghost"
-                                      x-text="'/' + c.skill_slug"></span>
-                                <span x-show="c.n_mensagens > 0"
-                                      class="text-base-content/40"
-                                      x-text="c.n_mensagens + ' mensagens'"></span>
-                            </div>
+                               class="btn btn-sm btn-ghost"
+                               title="Abrir conversa">
+                                Abrir
+                            </a>
+                            <button class="btn btn-sm btn-ghost text-error"
+                                    @click="apagar(c)"
+                                    title="Apagar conversa">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" />
+                                </svg>
+                            </button>
                         </div>
-                        <a :href="'/chat-livre?conv=' + c.id"
-                           class="btn btn-sm btn-ghost"
-                           title="Abrir conversa">
-                            Abrir
-                        </a>
-                        <button class="btn btn-sm btn-ghost text-error"
-                                @click="apagar(c)"
-                                title="Apagar conversa">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" />
-                            </svg>
-                        </button>
-                    </div>
-                </template>
+                    </template>
+                </div>
+            </template>
+        </div>
+
+        <!-- PROMPT_MAX -->
+        <div x-show="subtab === 'prompt'">
+            <div class="flex items-center justify-between mb-4">
+                <h3 class="text-lg font-semibold">PROMPT_MAX.md</h3>
+                <button class="btn btn-ghost btn-xs" onclick="copiarPrompt()">Copiar</button>
             </div>
-        </template>
-    </div>
-
-    <!-- Tab: Despachos SISDPU -->
-    <div x-show="tab === 'despachos'" class="bg-base-200 rounded-lg border border-base-300 p-6">
-        <h3 class="text-lg font-semibold mb-1">Despachos SISDPU</h3>
-        <p class="text-xs text-base-content/40 mb-4">
-            Despachos administrativos para lançamento na movimentação do SISDPU.
-            Para .txt, use os botões DOCX/PDF para converter.
-        </p>
-        {% if dados.despachos %}
-        <div class="overflow-x-auto rounded-lg border border-base-300">
-            <table class="table table-sm">
-                <thead>
-                    <tr class="bg-base-300/50">
-                        <th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>Criado em</th><th>Ações</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for p in dados.despachos %}
-                    <tr class="hover:bg-base-300/30">
-                        <td class="font-mono text-sm">{{ p.nome }}</td>
-                        <td>
-                            <span class="badge badge-sm {% if p.tipo == 'pdf' %}badge-error{% elif p.tipo == 'docx' %}badge-info{% elif p.tipo == 'txt' %}badge-ghost{% else %}badge-ghost{% endif %}">
-                                {{ p.tipo|upper or 'FILE' }}
-                            </span>
-                        </td>
-                        <td class="text-sm">{{ (p.tamanho / 1024)|round(1) }} KB</td>
-                        <td class="text-xs text-base-content/60 whitespace-nowrap">{{ p.criado | data_hora_arquivo }}</td>
-                        <td>
-                            <div class="flex flex-wrap gap-1">
-                                {% if p.tipo in ('pdf', 'docx', 'doc') %}
-                                <a href="/files/{{ paj_norm }}/{{ p.caminho }}" target="_blank"
-                                   class="btn btn-primary btn-xs">Abrir</a>
-                                <button class="btn btn-warning btn-xs"
-                                        onclick="abrirCorrecaoDireta('{{ paj_norm }}', '{{ p.nome|e }}')"
-                                        title="Pedir correção / nova explicação para o Claude refazer a peça">
-                                    Corrigir
-                                </button>
-                                {% elif p.tipo in ('txt', 'md') %}
-                                <button class="btn btn-ghost btn-xs"
-                                        @click="verTxt('{{ paj_norm }}', '{{ p.caminho }}', '{{ p.nome|e }}')">Ler</button>
-                                <button class="btn btn-info btn-xs btn-outline"
-                                        onclick="runDocgen('{{ paj_norm }}', '{{ p.caminho }}', 'docx', 'Gerar DOCX — {{ p.nome|e }}')">
-                                    DOCX
-                                </button>
-                                <button class="btn btn-error btn-xs btn-outline"
-                                        onclick="runDocgen('{{ paj_norm }}', '{{ p.caminho }}', 'pdf', 'Gerar PDF — {{ p.nome|e }}')">
-                                    PDF
-                                </button>
-                                <button class="btn btn-warning btn-xs"
-                                        onclick="abrirCorrecaoDireta('{{ paj_norm }}', '{{ p.nome|e }}')"
-                                        title="Pedir correção / nova explicação para o Claude refazer a peça">
-                                    Corrigir
-                                </button>
-                                {% else %}
-                                <a href="/files/{{ paj_norm }}/{{ p.caminho }}" target="_blank"
-                                   class="btn btn-ghost btn-xs">Baixar</a>
-                                {% endif %}
-                                <button type="button" class="btn btn-ghost btn-xs text-error"
-                                        onclick="excluirArquivoPaj('{{ paj_norm }}', '{{ p.caminho|e }}', '{{ p.nome|e }}', this, 'badge-despachos-count')"
-                                        title="Excluir arquivo">
-                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"></path></svg>
-                                </button>
-                            </div>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+            {% if dados.prompt_max %}
+            <div id="prompt-content" class="prose prose-sm prose-invert max-w-none">
+                <pre class="whitespace-pre-wrap text-sm text-base-content/80 bg-base-300 p-4 rounded-lg max-h-[70vh] overflow-y-auto">{{ dados.prompt_max }}</pre>
+            </div>
+            {% else %}
+            <p class="text-base-content/50">PROMPT_MAX.md não encontrado.</p>
+            {% endif %}
         </div>
-        {% else %}
-        <div class="alert">
-            <p class="text-sm">Nenhum despacho gerado ainda para este PAJ.</p>
-        </div>
-        {% endif %}
     </div>
-
-    <!-- Tab: PROMPT_MAX -->
-    <div x-show="tab === 'prompt'" class="bg-base-200 rounded-lg border border-base-300 p-6">
-        <div class="flex items-center justify-between mb-4">
-            <h3 class="text-lg font-semibold">PROMPT_MAX.md</h3>
-            <button class="btn btn-ghost btn-xs" onclick="copiarPrompt()">Copiar</button>
-        </div>
-        {% if dados.prompt_max %}
-        <div id="prompt-content" class="prose prose-sm prose-invert max-w-none">
-            <pre class="whitespace-pre-wrap text-sm text-base-content/80 bg-base-300 p-4 rounded-lg max-h-[70vh] overflow-y-auto">{{ dados.prompt_max }}</pre>
-        </div>
-        {% else %}
-        <p class="text-base-content/50">PROMPT_MAX.md não encontrado.</p>
-        {% endif %}
-    </div>
-</div>
-    </div>
-</div>
+    <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
+</dialog>
 
 <!-- Modal de leitura de TXT -->
 <dialog id="txt-modal" class="modal">

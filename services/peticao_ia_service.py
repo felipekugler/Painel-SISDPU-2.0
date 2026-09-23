@@ -16,9 +16,14 @@ Fluxo:
      instruindo-o a escrever/executar um script Python usando
      `peticao_base.py` (biblioteca de formatação DPU) e salvar o `.docx`.
   5) Converte o `.docx` gerado pra PDF (Word/COM — e-proc não aceita .docx
-     como anexo) e deixa o PDF na pasta do RASCUNHO do PAJ (mesma pasta usada
-     por "Adicionar Externo" — ver `acoes_eproc_service`), pra virar anexo
-     via a MESMA rota que já serve arquivos de rascunho.
+     como anexo). O docx+pdf ficam salvos na subpasta "Peças IA" do PAJ (não
+     na raiz — pedido do usuário 2026-09-22: essa é a mesma pasta que
+     "Adicionar Petições IA" já lê em Ações no Eproc E em Ações no SISDPU,
+     então a petição gerada aqui já sai disponível pra juntar/registrar
+     TAMBÉM no SISDPU). O PDF é ainda COPIADO pra pasta do RASCUNHO do PAJ
+     (mesma pasta usada por "Adicionar Externo" — ver `acoes_eproc_service`),
+     pra virar anexo da PETIÇÃO NO E-PROC via a MESMA rota que já serve
+     arquivos de rascunho — os dois usos (Peças IA e rascunho) coexistem.
 
 Estado em memória (`_status`), 1 geração por PAJ por vez — reinicia se chamado
 de novo enquanto uma está rodando não é permitido (ver `iniciar`).
@@ -126,11 +131,16 @@ def _gerar_worker(paj_norm: str, processo: str, prazo_ids: list[str]) -> None:
                                "(cache desatualizado?). Sincronize a aba Prazos e tente de novo.")
             return
 
-        # Gera direto na pasta do PAJ (pedido do usuário: docx E pdf ficam
-        # guardados ali, junto com as demais peças do caso) — o PDF depois é
+        # Gera na subpasta "Peças IA" do PAJ (docx E pdf ficam guardados ali —
+        # pedido do usuário 2026-09-22: essa é a MESMA pasta que "Adicionar
+        # Petições IA" já lê tanto em Ações no Eproc quanto em Ações no SISDPU
+        # — ver acoes_eproc_service.listar_pecas_ia/acoes_sisdpu_service.
+        # listar_pecas_ia —, então a petição gerada aqui passa a ficar
+        # disponível pra juntar/registrar TAMBÉM no SISDPU, sem precisar
+        # reanexar manualmente algo que já foi redigido aqui). O PDF depois é
         # COPIADO (não movido) pra pasta do rascunho, só pra poder ser servido
         # como anexo da petição (e-proc não aceita .docx).
-        pasta_paj = PAJS_DIR / paj_norm
+        pasta_paj = PAJS_DIR / paj_norm / "Peças IA"
         pasta_paj.mkdir(parents=True, exist_ok=True)
         nome = _nome_peticao_hoje()
         docx_path = pasta_paj / f"{nome}.docx"
@@ -507,14 +517,16 @@ def incluir_nos_anexos(paj_norm: str, peticao_html: str) -> dict:
     síncrona. Nome do arquivo: "Petição-DD-MM-AAAA" (ver `_nome_peticao_hoje`)
     — no MESMO dia, sobrescreve o gerado pela IA (mesmo arquivo lógico, só
     reexportado); útil quando o texto precisou de ajuste manual depois de
-    gerado."""
+    gerado. Salva na subpasta "Peças IA" do PAJ (mesmo motivo de
+    `_gerar_worker` acima — fica disponível pra "Adicionar Petições IA" tanto
+    em Ações no Eproc quanto em Ações no SISDPU)."""
     from config import PAJS_DIR
 
     texto_limpo = re.sub(r"<[^>]+>", "", peticao_html or "").strip()
     if not texto_limpo:
         return {"ok": False, "erro": "A caixa de Petição está vazia — escreva ou gere o texto antes de incluir nos anexos."}
 
-    pasta_paj = PAJS_DIR / paj_norm
+    pasta_paj = PAJS_DIR / paj_norm / "Peças IA"
     pasta_paj.mkdir(parents=True, exist_ok=True)
     nome = _nome_peticao_hoje()
     docx_path = pasta_paj / f"{nome}.docx"

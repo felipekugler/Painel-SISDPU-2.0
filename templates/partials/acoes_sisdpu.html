@@ -328,6 +328,13 @@
                                         <span class="block text-[10.5px] text-base-content/50"
                                               x-text="(t.remetente || '') + (t.remetente && t.data_envio ? ' · ' : '') + (t.data_envio || '')"></span>
                                         <span x-show="t.id_tramite === idTramite" class="badge badge-primary badge-xs mt-0.5">trâmite de trabalho</span>
+                                        <!-- Badge de subtipo (retorno/sat) — pedido do usuário 2026-09-19:
+                                             esses trâmites agora aparecem aqui também (antes só na página
+                                             própria), então avisa o que é pra não confundir. Concluir por
+                                             aqui já "dá baixa" automaticamente na Retornos/Arquivos SAT
+                                             (ver services.paj_service._dar_baixa_retorno_se_aplicavel). -->
+                                        <span x-show="t.subtipo === 'retorno'" class="badge badge-accent badge-xs mt-0.5">retorno</span>
+                                        <span x-show="t.subtipo === 'sat'" class="badge badge-accent badge-xs mt-0.5">SAT</span>
                                     </span>
                                 </label>
                             </template>

@@ -78,6 +78,14 @@ CONFIG_TIPOS: dict[str, dict] = {
             "AUXILIO ACIDENTE",
         ),
     },
+    "pensao_morte": {
+        "skill": "SISDPU-AnalisarPAJ-Pensao",
+        "label": "Pensão por Morte",
+        "palavras_pretensao": (
+            "PENSAO POR MORTE",
+            "PENSAO MORTE",
+        ),
+    },
     "generica": {
         "skill": "",
         "label": "Análise ampla",
@@ -122,7 +130,9 @@ def ler_disco(paj_norm: str) -> dict | None:
         return None
 
 
-def _persistir(paj_norm: str, session: ChatSession, tipo: str) -> None:
+def _persistir(
+    paj_norm: str, session: ChatSession, tipo: str, existia_peticao_antes: bool = False
+) -> None:
     pasta = PAJS_DIR / paj_norm
     if not pasta.exists():
         return
@@ -142,6 +152,24 @@ def _persistir(paj_norm: str, session: ChatSession, tipo: str) -> None:
         _arquivo_estado(paj_norm).write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+
+    # Atividade pro "Histórico de Análises" (templates/historico.html, aba
+    # "Análises (IA)"): esta MESMA sessão pode terminar em diagnóstico
+    # (Análise Prévia) ou avançar sozinha — ou via `reenviar()`, quando o
+    # Defensor pede "redigir a petição inicial" na mesma conversa — até
+    # produzir o rascunho da peça. Distinguimos comparando o ANTES/DEPOIS
+    # (não só "existe agora"): sem isso, toda análise rodada DEPOIS que a
+    # petição já existia (de uma rodada anterior) apareceria rotulada como
+    # "Gerada Petição Inicial" de novo, mesmo sem ter produzido nada novo.
+    # `tem_peticao_inicial()` é a MESMA checagem que já habilita o botão
+    # "Organizar Documentos para Ajuizamento" e o badge "PI" do dashboard.
+    gerou_peticao = False
+    with contextlib.suppress(Exception):
+        from services.organizar_ajuizamento_service import tem_peticao_inicial
+
+        gerou_peticao = (not existia_peticao_antes) and tem_peticao_inicial(paj_norm)
+    atividade = "Gerada Petição Inicial" if gerou_peticao else "Análise Prévia"
+
     with contextlib.suppress(Exception):
         historico.registrar(
             paj_norm,
@@ -149,6 +177,7 @@ def _persistir(paj_norm: str, session: ChatSession, tipo: str) -> None:
             skill=data["skill"],
             status=session.status,
             resumo=historico.primeira_linha_util(session.summary),
+            atividade=atividade,
         )
 
 
@@ -411,6 +440,15 @@ def iniciar(paj_norm: str, tipo: str, orientacao: str = "") -> dict:
     if existing:
         existing.stop()
 
+    # Checado ANTES de iniciar — usado por `_persistir` pra distinguir "esta
+    # rodada gerou a petição inicial" de "a petição já existia de antes" (ver
+    # comentário lá).
+    existia_peticao_antes = False
+    with contextlib.suppress(Exception):
+        from services.organizar_ajuizamento_service import tem_peticao_inicial
+
+        existia_peticao_antes = tem_peticao_inicial(paj_norm)
+
     # skill_slug=None no construtor: usamos instrução própria (start_elaboracao),
     # não o wrapper genérico de _montar_instrucao — ver docstring do módulo.
     session = ChatSession(paj_norm)
@@ -453,10 +491,10 @@ def iniciar(paj_norm: str, tipo: str, orientacao: str = "") -> dict:
         )
         instrucao = _montar_instrucao_diagnostico(paj_norm, skill_slug, prompt_content, orientacao)
         if not session.start_elaboracao(instrucao):
-            _persistir(paj_norm, session, tipo)
+            _persistir(paj_norm, session, tipo, existia_peticao_antes)
             return
         _aguardar_conclusao(session)
-        _persistir(paj_norm, session, tipo)
+        _persistir(paj_norm, session, tipo, existia_peticao_antes)
 
     threading.Thread(target=_run, daemon=True).start()
     return {"ok": True}
@@ -493,6 +531,14 @@ def reenviar(paj_norm: str, mensagem: str) -> dict:
         + _INSTRUCAO_PIPELINE_E_ESTILO_PECA
     )
 
+    # Ver comentário em `iniciar()` — mesma checagem ANTES/DEPOIS pra
+    # `_persistir` saber se foi ESTE reenvio que produziu a petição inicial.
+    existia_peticao_antes = False
+    with contextlib.suppress(Exception):
+        from services.organizar_ajuizamento_service import tem_peticao_inicial
+
+        existia_peticao_antes = tem_peticao_inicial(paj_norm)
+
     session = ChatSession(paj_norm)
     session.encerrar_ao_concluir = True
     session.resume_session_id = session_id
@@ -501,14 +547,14 @@ def reenviar(paj_norm: str, mensagem: str) -> dict:
 
     def _run() -> None:
         if not session._start_subprocess():
-            _persistir(paj_norm, session, tipo)
+            _persistir(paj_norm, session, tipo, existia_peticao_antes)
             return
         session.status = "running"
         session.last_action = "processando…"
         session.accumulated_text = ""
         session.send_message(mensagem_final)
         _aguardar_conclusao(session)
-        _persistir(paj_norm, session, tipo)
+        _persistir(paj_norm, session, tipo, existia_peticao_antes)
 
     threading.Thread(target=_run, daemon=True).start()
     return {"ok": True}

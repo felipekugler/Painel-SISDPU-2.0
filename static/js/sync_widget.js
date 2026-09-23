@@ -208,6 +208,59 @@ const SyncWidget = (function () {
             });
     }
 
+    /* Aplica um snapshot de /api/sync/status ao widget (log, título, status,
+     * reconexao ao stream se ainda estiver rodando) — compartilhado por
+     * `checarEmAndamento` (automático, respeita o "dispensado" e o
+     * minimizado/expandido salvo) e `verUltimoLog` (manual, sempre expande).
+     */
+    function _aplicarSnapshot(status, opts) {
+        opts = opts || {};
+        currentId = status.id;
+        logBuffer = (status.log || []).join('\n') + ((status.log && status.log.length) ? '\n' : '');
+        const logEl = el('sync-widget-log');
+        if (logEl) { logEl.textContent = logBuffer; logEl.scrollTop = logEl.scrollHeight; }
+        definirTitulo(status.titulo);
+        running = !!status.rodando;
+
+        const cancelBtn = el('sync-widget-cancel-btn');
+        if (cancelBtn) cancelBtn.style.display = status.rodando ? '' : 'none';
+
+        if (status.rodando) {
+            setStatus('sincronizando...', 'badge-warning');
+            definirSpinnerPill(true);
+        } else {
+            setStatus(status.ok === false ? 'erro' : 'concluído', status.ok === false ? 'badge-error' : 'badge-success');
+            definirSpinnerPill(false);
+        }
+
+        if (opts.forcarExpandir) {
+            expandir();
+        } else {
+            let expandidoAntes = '0';
+            try { expandidoAntes = localStorage.getItem('syncWidgetExpandido') || '0'; } catch (e) { /* ignora */ }
+            if (expandidoAntes === '1') expandir(); else minimizar();
+        }
+
+        if (status.rodando) {
+            if (es) { es.close(); }
+            es = new EventSource('/api/sync/stream');
+            es.addEventListener('log', function (e) { appendLog(e.data); });
+            es.addEventListener('done', function (e) {
+                appendLog(e.data);
+                if (es) { es.close(); es = null; }
+                fetch('/api/sync/status').then(function (r) { return r.json(); }).then(function (st) {
+                    _finalizarUI(st);
+                    if (window.showToast) showToast((st && st.titulo) + ' — concluída', st && st.ok === false ? 'error' : 'success');
+                }).catch(function () { _finalizarUI(null); });
+            });
+            es.onerror = function () {
+                if (es) { es.close(); es = null; }
+                running = false;
+                definirSpinnerPill(false);
+            };
+        }
+    }
+
     /* Roda em TODA pagina ao carregar — reconecta se algo estiver rodando,
      * ou mostra o resultado se terminou e ainda nao foi "visto" nesta aba
      * (rastreado por id incremental em localStorage, ja que a sessao de
@@ -216,52 +269,31 @@ const SyncWidget = (function () {
     function checarEmAndamento() {
         fetch('/api/sync/status').then(function (r) { return r.json(); }).then(function (status) {
             if (!status || !status.id) return;
-            currentId = status.id;
 
             let dismissedId = 0;
             try { dismissedId = parseInt(localStorage.getItem('syncWidgetDismissedId') || '0', 10); } catch (e) { /* ignora */ }
             if (status.done && status.id <= dismissedId) return; // ja visto/dispensado
 
-            logBuffer = (status.log || []).join('\n') + ((status.log && status.log.length) ? '\n' : '');
-            const logEl = el('sync-widget-log');
-            if (logEl) { logEl.textContent = logBuffer; logEl.scrollTop = logEl.scrollHeight; }
-            definirTitulo(status.titulo);
-            running = !!status.rodando;
-
-            const cancelBtn = el('sync-widget-cancel-btn');
-            if (cancelBtn) cancelBtn.style.display = status.rodando ? '' : 'none';
-
-            if (status.rodando) {
-                setStatus('sincronizando...', 'badge-warning');
-                definirSpinnerPill(true);
-            } else {
-                setStatus(status.ok === false ? 'erro' : 'concluído', status.ok === false ? 'badge-error' : 'badge-success');
-                definirSpinnerPill(false);
-            }
-
-            let expandidoAntes = '0';
-            try { expandidoAntes = localStorage.getItem('syncWidgetExpandido') || '0'; } catch (e) { /* ignora */ }
-            if (expandidoAntes === '1') expandir(); else minimizar();
-
-            if (status.rodando) {
-                if (es) { es.close(); }
-                es = new EventSource('/api/sync/stream');
-                es.addEventListener('log', function (e) { appendLog(e.data); });
-                es.addEventListener('done', function (e) {
-                    appendLog(e.data);
-                    if (es) { es.close(); es = null; }
-                    fetch('/api/sync/status').then(function (r) { return r.json(); }).then(function (st) {
-                        _finalizarUI(st);
-                        if (window.showToast) showToast((st && st.titulo) + ' — concluída', st && st.ok === false ? 'error' : 'success');
-                    }).catch(function () { _finalizarUI(null); });
-                });
-                es.onerror = function () {
-                    if (es) { es.close(); es = null; }
-                    running = false;
-                    definirSpinnerPill(false);
-                };
-            }
+            _aplicarSnapshot(status, { forcarExpandir: false });
         }).catch(function () { /* silencioso — sem widget pra mostrar mesmo */ });
+    }
+
+    /* Reabre o widget mostrando o log da ÚLTIMA sincronização registrada no
+     * servidor — inclusive uma já "dispensada" antes (diferente de
+     * `checarEmAndamento`, que respeita esse dispensado). Usado pelo ícone
+     * de "ver log" ao lado de "última atualização" no dashboard. Se por
+     * acaso ainda estiver rodando (sync disparada por outra aba/pessoa),
+     * reconecta ao stream ao vivo — mesmo caminho de `checarEmAndamento`. */
+    function verUltimoLog() {
+        fetch('/api/sync/status').then(function (r) { return r.json(); }).then(function (status) {
+            if (!status || !status.id) {
+                if (window.showToast) showToast('Nenhuma sincronização registrada ainda', 'info');
+                return;
+            }
+            _aplicarSnapshot(status, { forcarExpandir: true });
+        }).catch(function () {
+            if (window.showToast) showToast('Falha ao buscar o status da última sincronização', 'error');
+        });
     }
 
     document.addEventListener('DOMContentLoaded', checarEmAndamento);
@@ -273,6 +305,7 @@ const SyncWidget = (function () {
         minimizar: minimizar,
         dispensar: dispensar,
         cancelar: cancelar,
+        verUltimoLog: verUltimoLog,
         estaRodando: function () { return running; },
     };
 })();

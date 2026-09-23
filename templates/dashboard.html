@@ -69,7 +69,8 @@
 {% endblock %}
 
 {% block content %}
-<div x-data="dashboardApp()" x-init="init()" x-cloak class="flex flex-col flex-1">
+<div x-data="dashboardApp()" x-init="init()" x-cloak class="flex flex-col flex-1"
+     @pendentes-sync-atualizado.window="pendentesSync = $event.detail">
 
   <!-- Modal: Elaborar todos (lote) -->
   <dialog id="lote-modal" class="modal">
@@ -334,11 +335,16 @@
         <span class="text-base-content/50 tnum text-sm">
           <span x-text="pajsFiltrados.length"></span> de <span class="tnum" x-text="pajs.length"></span>
         </span>
+        <!-- PAJs vistos na caixa pelo botão "Atualizar" mas ainda sem pasta
+             local (nunca sincronizados) — ver rota /api/pajs e
+             ingestao.sincronizador.atualizar_caixa. So' um aviso: este badge
+             nao sincroniza nada por si, e' o "Sincronizar caixa" quem resolve. -->
+        <span class="badge badge-warning badge-sm gap-1" x-show="pendentesSync > 0"
+              title="Vistos na caixa de entrada do SISDPU pelo botão Atualizar, mas ainda sem sincronização local — use Sincronizar caixa para trazê-los">
+          <span x-text="pendentesSync"></span> PAJs a sincronizar
+        </span>
       </div>
       <div class="text-xs text-base-content/50 mt-1 flex items-center gap-3 flex-wrap">
-        <span x-show="ultimaExecucao">
-          última atualização <span class="font-mono text-warning/90" x-text="formatarDataHora(ultimaExecucao)"></span>
-        </span>
         <div class="flex gap-2" x-show="stats.running > 0 || stats.queued > 0">
           <span class="badge badge-warning badge-sm">
             <span class="loading loading-spinner loading-xs mr-1"></span>
@@ -351,9 +357,10 @@
       </div>
     </div>
 
-    <div class="flex items-center gap-3 pt-1">
+    <div class="flex flex-col items-end gap-1 pt-1">
+      <div class="flex items-center gap-3">
       <button id="atualizar-caixa-btn" class="btn btn-ghost btn-sm gap-2 normal-case" onclick="atualizarCaixa()"
-              title="Lê a caixa de entrada e remove do dashboard os PAJs que saíram dela (rápido — não baixa anexos novos)">
+              title="Lê a caixa de entrada e remove do dashboard os PAJs que saíram dela, e avisa se há PAJs novos ainda não sincronizados (rápido — não baixa anexos novos)">
         <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"></path></svg>
         Atualizar
       </button>
@@ -412,6 +419,21 @@
           </ul>
         </div>
       </div>
+      </div>
+      <span class="text-xs text-base-content/50 inline-flex items-center gap-1" x-show="ultimaExecucao">
+        última atualização <span class="font-mono text-warning/90" x-text="formatarDataHora(ultimaExecucao)"></span>
+        <!-- Reabre o SyncWidget com o log da última sincronização registrada
+             no servidor, mesmo que já tenha sido dispensado antes (ver
+             SyncWidget.verUltimoLog em static/js/sync_widget.js) — /api/sync/status
+             guarda o log da última rodada até a próxima sincronização começar. -->
+        <button type="button" class="btn btn-ghost btn-xs p-1 h-auto min-h-0"
+                @click="SyncWidget.verUltimoLog()"
+                title="Ver log da última sincronização">
+          <svg class="w-3.5 h-3.5 text-base-content/40 hover:text-base-content/70" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l5.414 5.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2Z"></path>
+          </svg>
+        </button>
+      </span>
     </div>
   </div>
 
@@ -612,12 +634,35 @@
                       <path stroke-linecap="round" stroke-linejoin="round" d="M11.48 3.499a.562.562 0 0 1 1.04 0l2.125 5.111a.563.563 0 0 0 .475.345l5.518.442c.499.04.701.663.321.988l-4.204 3.602a.563.563 0 0 0-.182.557l1.285 5.385a.562.562 0 0 1-.84.61l-4.725-2.885a.562.562 0 0 0-.586 0L6.982 20.54a.562.562 0 0 1-.84-.61l1.285-5.386a.562.562 0 0 0-.182-.557l-4.204-3.602a.562.562 0 0 1 .321-.988l5.518-.442a.563.563 0 0 0 .475-.345L11.48 3.5Z" />
                     </svg>
                   </button>
-                  <!-- Pill "N trâmites" — mais de uma tramitação GERAL pendente
-                       do mesmo PAJ na caixa (comum no SISDPU: tramitado pra
-                       grupos/pessoas diferentes em momentos diferentes). So'
-                       aparece quando N>1 (com 1 so', o botao "Concluir PAJ da
-                       Caixa de Entrada" do cabecalho ja resolve sem esse
-                       passo extra). Clique expande a linha com cada uma. -->
+                  <!-- Conclusão imediata (1 clique) do trâmite na caixa de entrada —
+                       só aparece quando há exatamente 1 tramitação pendente (com 2+,
+                       usa o pill "N trâmites" abaixo, que já expande com um botão
+                       Concluir por tramitação). Reusa concluirTramite(paj, t), mesma
+                       função do botão Concluir da linha expandida — inclusive o
+                       mesmo objeto reativo concluindoTramite (pré-semeado em
+                       recarregar() pra evitar o bug do ":disabled" travado, ver
+                       memória "alpine-disabled-binding-unset-key"). Ícone
+                       check-circle provisório — mesmo placeholder usado no botão
+                       "Concluir PAJ da Caixa de Entrada" da página do PAJ, aguardando
+                       o ícone real do SISDPU. -->
+                  <button type="button" x-show="(paj.tramitacoes_caixa || []).length === 1"
+                          class="btn btn-ghost btn-xs p-1 h-auto min-h-0 shrink-0"
+                          :disabled="concluindoTramite[(paj.tramitacoes_caixa[0] || {}).id_tramite]"
+                          @click.stop="concluirTramite(paj, paj.tramitacoes_caixa[0])"
+                          title="Concluir trâmite na caixa de entrada (retira este PAJ da caixa)">
+                    <span x-show="concluindoTramite[(paj.tramitacoes_caixa[0] || {}).id_tramite]" class="loading loading-spinner loading-xs"></span>
+                    <svg x-show="!concluindoTramite[(paj.tramitacoes_caixa[0] || {}).id_tramite]" class="w-3.5 h-3.5 text-base-content/40 hover:text-success" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                      <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"></path>
+                    </svg>
+                  </button>
+                  <!-- Pill "N trâmites" — mais de uma tramitação pendente do
+                       mesmo PAJ na caixa (geral, retorno ou sat — desde
+                       2026-09-19 todas contam aqui, não só geral; comum no
+                       SISDPU: tramitado pra grupos/pessoas diferentes em
+                       momentos diferentes). So' aparece quando N>1 (com 1 so',
+                       o botao "Concluir PAJ da Caixa de Entrada" do cabecalho
+                       ja resolve sem esse passo extra). Clique expande a
+                       linha com cada uma. -->
                   <button type="button" x-show="(paj.tramitacoes_caixa || []).length > 1"
                           class="badge badge-error text-white border-0 text-[10px] font-bold h-5 min-h-0 px-1.5 shrink-0"
                           style="border-radius: 999px;"
@@ -733,6 +778,11 @@
                       <span class="flex-1 min-w-0 truncate" :title="t.descricao">
                         <span x-text="t.descricao || '—'"></span>
                         <span class="text-base-content/40" x-show="t.remetente"> — de <span x-text="t.remetente"></span></span>
+                        <!-- Retorno/SAT passaram a aparecer aqui também (2026-09-19) —
+                             badge só pra deixar claro o subtipo; concluir aqui já dá
+                             baixa na página própria (Retornos/Arquivos SAT). -->
+                        <span x-show="t.subtipo === 'retorno'" class="badge badge-accent badge-xs ml-1">retorno</span>
+                        <span x-show="t.subtipo === 'sat'" class="badge badge-accent badge-xs ml-1">SAT</span>
                       </span>
                       <span class="text-base-content/40 whitespace-nowrap" x-text="t.data_envio || ''"></span>
                       <button type="button" class="btn btn-outline btn-error btn-xs"
@@ -796,14 +846,24 @@ function dashboardApp() {
         pajs: [],
         pajsFiltrados: [],
         ultimaExecucao: '',
+        // Badge "X PAJs a sincronizar" ao lado do contador — carregado junto
+        // com /api/pajs (self-corrige contra o marcador .pendentes_sync.json,
+        // ver routes/dashboard.py) e atualizado sem reload quando o botão
+        // "Atualizar" detecta PAJs novos na caixa (evento disparado por
+        // atualizarCaixa() em app.js, ouvido no elemento raiz acima).
+        pendentesSync: 0,
         filtroOficio: '',
         filtroPretensao: '',
         filtroDescricao: '',
         filtroData: '',
         filtroAnalise: '',
         busca: '',
-        ordemCampo: 'data_caixa',
-        ordemAsc: false,
+        // Padrão: Descrição crescente (pedido do usuário 2026-09-19) — como a
+        // página inteira recarrega tanto ao abrir o painel quanto ao final de
+        // qualquer sincronização (ver sincronizarCaixa() em app.js), este
+        // default cobre os dois casos sem precisar de nenhuma lógica extra.
+        ordemCampo: 'desc_caixa',
+        ordemAsc: true,
         statusMap: {},
         analiseStatusMap: {},
         stats: {running: 0, queued: 0, max_parallel: 5},
@@ -834,6 +894,26 @@ function dashboardApp() {
             const data = await resp.json();
             this.pajs = data.pajs || [];
             this.ultimaExecucao = data.ultima_execucao || '';
+            this.pendentesSync = data.pendentes_sync || 0;
+            // Pré-semeia concluindoTramite[id_tramite]=false pra CADA trâmite ANTES
+            // da 1ª renderização — bug conhecido do Alpine neste projeto (ver
+            // memória "alpine-disabled-binding-unset-key", já visto 2x antes em
+            // processo_judicial.js e intimacoes.js): ":disabled" ligado a uma
+            // chave de objeto reativo NUNCA lida antes pode renderizar como
+            // disabled=true de forma permanente, mesmo com o valor real sendo
+            // undefined/falsy — só ler a chave depois (dentro do @click) não
+            // resolve, porque a 1ª leitura já aconteceu (errada) na renderização
+            // inicial do botão "Concluir" da seção "Tramitações pendentes na
+            // caixa de entrada" (relatado pelo usuário 2026-09-19, PAJ
+            // 2026/029-03696 — todos os botões "Concluir" apareciam desabilitados
+            // mesmo em PAJs recém-carregados, sem nenhum clique prévio).
+            for (const paj of this.pajs) {
+                for (const t of (paj.tramitacoes_caixa || [])) {
+                    if (!(t.id_tramite in this.concluindoTramite)) {
+                        this.concluindoTramite[t.id_tramite] = false;
+                    }
+                }
+            }
             this.aplicarFiltros();
             await this.carregarWatchlist();
         },

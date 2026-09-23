@@ -785,8 +785,36 @@ async def executar_gerenciamento_real(processo: str, tipo: str, procurador_valor
     if tipo not in TIPOS_GERENCIAMENTO:
         return {"ok": False, "erro": f"Tipo de gerenciamento inválido: {tipo!r}."}
 
+    from services import historico_painel, paj_processo_link_service
+
+    tipo_label = TIPOS_GERENCIAMENTO.get(tipo, tipo)
+    paj_norm, paj_label = "", ""
+    try:
+        candidatos = paj_processo_link_service.resolver_pajs_de_processo(processo)
+        if len(candidatos) == 1:
+            paj_norm = candidatos[0].get("paj_norm") or ""
+            paj_label = candidatos[0].get("paj_label") or ""
+    except Exception:  # noqa: BLE001
+        pass
+
+    def _registrar(detalhe: str) -> None:
+        historico_painel.registrar({
+            "paj": paj_label, "paj_norm": paj_norm,
+            "origem": "eproc", "atividade": "Gerenciamento de processo (substabelecimento)",
+            "movimentacao": tipo_label, "tramitado_para": procurador_valor or "",
+            "concluido": False, "detalhe": detalhe[:300],
+        })
+
     residual = await _prazo_residual_no_meu_painel(processo)
     if residual["tem_residual"]:
+        # Bloqueio ANTES de tentar de verdade no e-proc (nem chega a abrir a
+        # tela) — mesmo assim precisa aparecer no Histórico: sem isso, um
+        # gerenciamento configurado numa movimentação conjunta simplesmente
+        # sumia sem deixar rastro nenhum (bug real 2026-09-22, PAJ
+        # 2026/029-01856 — o bloqueio em si estava correto, só o silêncio
+        # total ao redor dele não).
+        detalhe = f"Processo {processo} — NÃO executado: prazo residual em aberto ({residual['quantidade']}) no Painel do Procurador"
+        _registrar(detalhe)
         return {
             "ok": False, "bloqueado_por_residual": True,
             "quantidade_residual": residual["quantidade"],
@@ -798,9 +826,6 @@ async def executar_gerenciamento_real(processo: str, tipo: str, procurador_valor
     res = await eproc_client.gerenciar_processo(processo, tipo, procurador_valor or "")
 
     if res.get("ok"):
-        from services import historico_painel, paj_processo_link_service
-
-        tipo_label = TIPOS_GERENCIAMENTO.get(tipo, tipo)
         partes_marcadas = res.get("partes_marcadas") or []
         partes_com_erro = res.get("partes_com_erro") or []
         if res.get("provavel_sucesso"):
@@ -809,22 +834,11 @@ async def executar_gerenciamento_real(processo: str, tipo: str, procurador_valor
             detalhe = f"Processo {processo} — ATENÇÃO: {len(partes_com_erro)} parte(s) com erro, confira"
         else:
             detalhe = f"Processo {processo} — resultado não confirmado automaticamente, confira a aba do e-proc"
-
-        paj_norm, paj_label = "", ""
-        try:
-            candidatos = paj_processo_link_service.resolver_pajs_de_processo(processo)
-            if len(candidatos) == 1:
-                paj_norm = candidatos[0].get("paj_norm") or ""
-                paj_label = candidatos[0].get("paj_label") or ""
-        except Exception:  # noqa: BLE001
-            pass
-
-        historico_painel.registrar({
-            "paj": paj_label, "paj_norm": paj_norm,
-            "origem": "eproc", "atividade": "Gerenciamento de processo (substabelecimento)",
-            "movimentacao": tipo_label, "tramitado_para": procurador_valor or "",
-            "concluido": False, "detalhe": detalhe[:300],
-        })
+    else:
+        # Falha real na automação (não o bloqueio por residual, já tratado
+        # acima) — também precisa ficar visível no Histórico, não só a tela.
+        detalhe = f"Processo {processo} — NÃO executado: {res.get('erro') or 'erro desconhecido'}"
+    _registrar(detalhe)
 
     return res
 
@@ -847,6 +861,21 @@ async def confirmar_peticionamento_real(paj_norm: str, processo: str) -> dict:
     evento = (rascunho.get("evento") or "").strip()
     res = await eproc_client.confirmar_peticionamento(processo, evento=evento)
     if res.get("ok") and res.get("provavel_sucesso"):
+        # Baixa LOCAL dos prazos marcados pra fechar nesta petição — sem isso
+        # a tabela de Prazos e-proc (e tudo que dela deriva: Agenda, badge de
+        # intimação pendente, checkbox desta mesma tela, página Intimações)
+        # só refletiria o prazo fechado na PRÓXIMA "Sincronizar intimações"
+        # (pedido do usuário 2026-09-19). Ver `services.prazo_baixa_service`
+        # — é otimista/temporário, a próxima sincronização real sempre vence.
+        from services import prazo_baixa_service
+
+        ids_selecionados = [pid for pid, sel in (rascunho.get("prazos_selecionados") or {}).items() if sel]
+        for pid in ids_selecionados:
+            resolvido = resolver_prazo_por_id(pid)
+            if resolvido:
+                prazo_baixa_service.marcar_baixa(
+                    processo, resolvido["prazo"], origem="eproc-peticionamento",
+                    detalhe=f"{paj_norm} — {evento}" if evento else paj_norm)
         # Registro no Histórico do painel — próprio pra este ato (nunca existia
         # antes: peticionar no e-proc não deixava rastro nenhum ali, só a
         # movimentação SISDPU consequente, quando executada em algum console

@@ -314,7 +314,21 @@ async def _ensure_logged_in() -> None:
 
 
 async def caixa_de_entrada() -> dict:
-    """Navega para a caixa de entrada e extrai os itens listados."""
+    """Navega para a caixa de entrada e extrai os itens listados.
+
+    Levanta RuntimeError se a pagina nao parecer a caixa real (sessao morta
+    ou erro transitorio do SISDPU) — CRITICO: os chamadores desta funcao
+    (ver ingestao.sincronizador: atualizar_caixa/rodar/etc.) tratam uma lista
+    de itens vazia como "a caixa esta vazia" e usam isso pra marcar TODOS os
+    PAJs ativos locais como concluidos (+ apagar seus anexos baixados). Sem
+    esta checagem, uma pagina de erro do SISDPU ("recurso temporariamente
+    indisponivel") ou uma sessao morta pos-restart e' indistinguivel de uma
+    caixa genuinamente vazia, e o mesmo `table_data=[]` dispara essa
+    reconciliacao em massa por engano — foi exatamente o que aconteceu em
+    2026-09-22 logo apos um restart do painel: 37 PAJs ativos foram marcados
+    concluidos e tiveram anexos apagados porque o SISDPU respondeu com uma
+    pagina de erro transitoria e o codigo leu isso como "0 PAJs na caixa".
+    """
     await _ensure_logged_in()
     page = await _get_page()
     await page.goto(
@@ -325,6 +339,20 @@ async def caixa_de_entrada() -> dict:
     await _wait_pf_ajax(page, timeout=10000)
 
     body = await page.inner_text("body")
+    corpo_lower = body.lower()
+    if "recurso temporariamente indispon" in corpo_lower or "não foi possível completar a sua requisição" in corpo_lower:
+        raise RuntimeError(
+            "SISDPU retornou página de erro ('recurso temporariamente "
+            "indisponível') ao abrir a caixa de entrada — não é uma caixa "
+            "vazia, é uma falha transitória do SISDPU. Tente novamente em "
+            "alguns instantes."
+        )
+    if "unidade dpu" not in corpo_lower:
+        raise RuntimeError(
+            "sessão SIS-DPU não confirmada como ativa ao abrir a caixa de "
+            "entrada (página sem marca da área logada) — abortando sem "
+            "reconciliar, pra não marcar PAJs ativos como concluídos por engano."
+        )
 
     table_data = await page.evaluate(
         """
@@ -3150,6 +3178,7 @@ async def baixar_todos_arquivos(
     page = await _get_page()
     context = page.context
     baixados = 0
+    pulados = 0
     erros = []
 
     try:
@@ -3180,6 +3209,21 @@ async def baixar_todos_arquivos(
                 seq_fmt = str(seq_real)
 
             nome_para_post = f"seq{seq_fmt} - {file_id or '0'} - {nomeArq}"
+
+            # Já baixado numa sync anterior (mesmo nome — inclui o ID estável
+            # do arquivo, não só a seq) e com conteúdo: pula o fetch/POST.
+            # Sem isso, TODO anexo já em disco era rebaixado do SISDPU em
+            # toda sincronização Completa, mesmo sem nenhuma mudança —
+            # trabalho e tráfego proporcionais ao total acumulado do PAJ, não
+            # só ao que é novo. Comparação só por nome+tamanho>0 (não
+            # reabre/valida conteúdo) — um arquivo corrompido/truncado
+            # continuaria sendo pulado; recuperação manual (excluir o arquivo
+            # local e resincronizar) continua disponível como sempre foi.
+            destino_existente = pasta_destino / nome_para_post
+            if destino_existente.exists() and destino_existente.stat().st_size > 0:
+                _log(f"[{idx}/{len(docs)}]   {nomeArq} ... já existe, pulado")
+                pulados += 1
+                continue
 
             _log(f"[{idx}/{len(docs)}]   {nomeArq}")
 
@@ -3327,12 +3371,16 @@ async def baixar_todos_arquivos(
                 except Exception:
                     pass
 
-    if baixados == len(docs):
-        _log(f"[fetch] ✓ {baixados} arquivo(s) baixado(s) com sucesso")
+    if baixados + pulados == len(docs):
+        _log(f"[fetch] ✓ {baixados} arquivo(s) baixado(s), {pulados} já existente(s) pulado(s)")
     else:
-        _log(f"[fetch] ⚠ {baixados}/{len(docs)} arquivo(s) baixado(s) — {len(erros)} erro(s)")
+        _log(
+            f"[fetch] ⚠ {baixados}/{len(docs)} arquivo(s) baixado(s), "
+            f"{pulados} já existente(s) pulado(s) — {len(erros)} erro(s)"
+        )
     return {
         "baixados": baixados,
+        "pulados": pulados,
         "erros": erros,
         "total": len(docs),
     }

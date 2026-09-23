@@ -369,10 +369,13 @@ def listar_casos() -> list[dict]:
     entra na lista (é apagado do disco por `purgar_casos_resolvidos()`,
     chamada antes desta função em `GET /api/intimacoes/casos` — mas mesmo
     que a purga falhe/atrase, esta função já filtra por conta própria, nunca
-    sintetiza um item "fora da caixa")."""
+    sintetiza um item "fora da caixa"). Usa a leitura VISÍVEL (`carregar_
+    visivel`) — um ato já baixado localmente dentro do painel (peticionado,
+    mera ciência — ver `services.prazo_baixa_service`) desaparece daqui na
+    hora, sem esperar nova sincronização."""
     from ingestao import eproc_intimacoes
 
-    cache = eproc_intimacoes.carregar()
+    cache = eproc_intimacoes.carregar_visivel()
     raw = _ler_raw()
     vistos_processo: set[str] = set()
     itens: list[dict] = []

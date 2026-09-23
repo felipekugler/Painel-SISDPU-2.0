@@ -1,7 +1,8 @@
 // Componente Alpine "Análise feita pela IA" — diagnóstico de PAJ por rota de
 // pretensão escolhida no dropdown da barra de ações: "bpc" (skill dedicada
 // SISDPU-AnalisarPAJ-BPC, playbook teses-dpu), "bi" (skill dedicada
-// SISDPU-AnalisarPAJ-BI, parecer de viabilidade de benefício por incapacidade)
+// SISDPU-AnalisarPAJ-BI, parecer de viabilidade de benefício por incapacidade),
+// "pensao_morte" (skill dedicada SISDPU-AnalisarPAJ-Pensao, playbook teses-dpu)
 // ou "generica" (diagnóstico direto via PROMPT_MAX, sem playbook de área —
 // cobre pretensões sem skill dedicada, ou PAJs cadastrados no SISDPU com a
 // pretensão errada) + reenvio (ajustes na análise, ou pedido de redação da

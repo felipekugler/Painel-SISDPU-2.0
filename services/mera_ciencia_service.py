@@ -177,6 +177,16 @@ async def dar_mera_ciencia(processo: str, ato: str, descricao_mov: str, log_cb) 
     resultado["eproc_confirmado"] = True
     registrar("ok", f"{processo}: ciência protocolada no e-proc.")
 
+    # Baixa LOCAL dos prazos deste ato (inclusive coautores em litisconsórcio
+    # ativo) — sem isso a tabela de Prazos e-proc (e tudo que dela deriva)
+    # só refletiria o fechamento na PRÓXIMA "Sincronizar intimações". Também
+    # é o que permite o Gerenciamento de Processo logo abaixo liberar sozinho
+    # quando este era o último prazo residual, sem esperar sincronização.
+    from services import prazo_baixa_service
+
+    for p in caso.get("prazos") or []:
+        prazo_baixa_service.marcar_baixa(processo, p, origem="mera-ciencia", detalhe=paj_norm)
+
     # 2) e-proc — Gerenciamento de Processo (substabelecimento), padrão já
     # configurado em Configurações › e-proc.
     procurador_padrao = (config_painel_service.get_eproc_procuradores_prefs() or {}).get("procurador_padrao") or {}

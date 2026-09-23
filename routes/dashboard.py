@@ -80,7 +80,23 @@ async def api_pajs():
         except Exception:
             pass
 
+    # PAJs pendentes de sincronizacao — vistos na caixa pelo botao "Atualizar"
+    # (ver ingestao.sincronizador.atualizar_caixa) mas que ainda nao tem pasta
+    # local. Reconfere ao vivo se cada um listado no marcador ainda esta sem
+    # pasta — se uma sincronizacao completa/avulsa ja resolveu algum deles
+    # nesse meio tempo, ele sai da contagem sem precisar clicar "Atualizar"
+    # de novo.
+    pendentes_sync = 0
+    marcador_pendentes = PAJS_DIR / ".pendentes_sync.json"
+    if marcador_pendentes.exists():
+        with contextlib.suppress(Exception):
+            dados_pendentes = json.loads(marcador_pendentes.read_text(encoding="utf-8"))
+            pendentes_sync = sum(
+                1 for p in (dados_pendentes.get("pajs") or []) if not (PAJS_DIR / p).exists()
+            )
+
     return {
         "pajs": pajs,
         "ultima_execucao": ultima_execucao,
+        "pendentes_sync": pendentes_sync,
     }

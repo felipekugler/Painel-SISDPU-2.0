@@ -110,6 +110,86 @@ def ler(paj_norm: str, limit: int | None = None) -> list[dict]:
     return eventos
 
 
+def listar_analises(eventos: set[str] | None = None) -> list[dict]:
+    """Agrega, entre TODAS as pastas de PAJ, os eventos de análise/elaboração
+    por IA — alimenta a aba "Análises (IA)" do Histórico
+    (`templates/historico.html`, `routes/historico.py`).
+
+    Diferente de `ler()` (por PAJ), esta função varre `PAJS_DIR` inteiro —
+    mesmo padrão de `services/paj_service.listar_pajs()` (itera todas as
+    pastas) e de `services/historico_painel.listar()` (resolve o assistido
+    pelo metadata.json, cobrindo registros antigos que não guardaram o nome).
+
+    Sem armazenamento próprio: lê direto o `historico.jsonl` de cada PAJ (via
+    `ler()`) — nenhum dado é duplicado. `eventos` filtra por tipo (default:
+    só `analise_pretensao`, a origem de "Análise Prévia"/"Gerada Petição
+    Inicial" — ver `services/analise_pretensao_service._persistir`); passe um
+    conjunto maior pra incluir outros eventos (`elaborar`, `calcular_cnis`,
+    `calcular_qs`, `consulta_rpv`, `organizar_ajuizamento`, `peticao_ia`).
+
+    Compatibilidade com entradas ANTIGAS (gravadas antes do campo `atividade`
+    existir — painel rodando código anterior, sem restart ainda): quando um
+    evento `analise_pretensao` não tem `atividade` persistida, aplica um
+    FALLBACK só pro evento MAIS RECENTE de cada PAJ (`ler()` já devolve mais
+    recente primeiro): se a petição inicial existe agora nesse PAJ
+    (`organizar_ajuizamento_service.tem_peticao_inicial`), rotula como
+    "Gerada Petição Inicial (retroativo)" — sinalizando que é inferido pela
+    existência atual do arquivo, não capturado no momento exato. Eventos mais
+    antigos do mesmo PAJ sem `atividade` ficam "Análise Prévia" (não dá pra
+    saber com certeza qual rodada específica gerou o arquivo, então não
+    arriscamos marcar mais de uma)."""
+    eventos = eventos or {"analise_pretensao"}
+    if not PAJS_DIR.exists():
+        return []
+
+    from services.organizar_ajuizamento_service import tem_peticao_inicial
+
+    out: list[dict] = []
+    for pasta in PAJS_DIR.iterdir():
+        if not pasta.is_dir() or not pasta.name.startswith("PAJ-"):
+            continue
+        if not (pasta / _NOME_ARQUIVO).exists():
+            continue
+        paj_norm = pasta.name
+        meta: dict = {}
+        with contextlib.suppress(Exception):
+            meta = json.loads((pasta / "metadata.json").read_text(encoding="utf-8"))
+        paj_display = meta.get("paj") or paj_norm
+        assistido = str(meta.get("assistido_caixa") or meta.get("assistido") or "").strip()
+        ja_aplicou_fallback = False
+        for i, ev in enumerate(ler(paj_norm)):
+            if ev.get("evento") not in eventos:
+                continue
+            atividade = ev.get("atividade")
+            if not atividade and ev.get("evento") == "analise_pretensao":
+                if not ja_aplicou_fallback:
+                    ja_aplicou_fallback = True
+                    peticao_existe = False
+                    with contextlib.suppress(Exception):
+                        peticao_existe = tem_peticao_inicial(paj_norm)
+                    atividade = "Gerada Petição Inicial (retroativo)" if peticao_existe else "Análise Prévia"
+                else:
+                    atividade = "Análise Prévia"
+            out.append({
+                # Sintético (não persistido) — só pra `:key` único no x-for do
+                # frontend (ver memória "x-for duplicate key collapses items";
+                # `ts` sozinho colide se dois eventos do mesmo PAJ caírem no
+                # mesmo segundo).
+                "id": f"{paj_norm}:{i}",
+                "ts": ev.get("ts", ""),
+                "paj_norm": paj_norm,
+                "paj": paj_display,
+                "assistido": assistido,
+                "evento": ev.get("evento", ""),
+                "atividade": atividade or ev.get("evento", ""),
+                "skill": ev.get("skill", ""),
+                "status": ev.get("status", ""),
+                "resumo": ev.get("resumo", ""),
+            })
+    out.sort(key=lambda r: r.get("ts", ""), reverse=True)
+    return out
+
+
 def primeira_linha_util(texto: str) -> str:
     """Extrai a primeira linha nao-vazia de um texto. Util pra resumir
     `summary` de elaboracao em uma frase no historico."""

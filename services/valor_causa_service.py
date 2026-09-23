@@ -290,7 +290,7 @@ def _montar_dados_calc(paj_norm: str, params: dict) -> tuple[dict, dict]:
 
 # ── Execução do runner ───────────────────────────────────────────────────────
 
-def _rodar_runner(dados: dict, pasta_pi: Path, alvos: dict) -> dict:
+def _rodar_runner(dados: dict, pasta_saida: Path, alvos: dict) -> dict:
     interp = _interpretador()
     if not interp:
         return {
@@ -298,7 +298,7 @@ def _rodar_runner(dados: dict, pasta_pi: Path, alvos: dict) -> dict:
             "erro": "Nenhum Python com python-docx + pywin32 (Word) encontrado. "
                     "Instale-os no Python do sistema ou defina VALOR_CAUSA_PYTHON no .env.",
         }
-    pdf_path = pasta_pi / _nome_pdf(pasta_pi)
+    pdf_path = pasta_saida / _nome_pdf(pasta_saida)
     job = {
         "calc_dir": str(VALOR_CAUSA_DIR),
         "dados": dados,
@@ -370,8 +370,17 @@ def processar(paj_norm: str, params: dict | None = None) -> dict:
     except Exception as e:
         return {"ok": False, "erro": f"Parâmetros inválidos: {e}"}
 
+    # `pasta_pi` acima é só ONDE PROCURAR a petição inicial pra injetar o
+    # placeholder (pode legitimamente estar na raiz, se o usuário ainda não
+    # organizou pra "Peças IA"). O PDF gerado agora, porém, é sempre salvo em
+    # "Peças IA" — cria a subpasta se ainda não existir. Antes caía na raiz
+    # do PAJ quando "Peças IA" não existia ainda, misturando com arquivos
+    # internos do painel (pedido do usuário 2026-09-18).
+    pasta_saida = paj_dir / "Peças IA"
+    pasta_saida.mkdir(exist_ok=True)
+
     alvos = _localizar_peticao(pasta_pi)
-    saida = _rodar_runner(dados, pasta_pi, alvos)
+    saida = _rodar_runner(dados, pasta_saida, alvos)
     if not saida.get("ok"):
         return saida
 
@@ -385,7 +394,7 @@ def processar(paj_norm: str, params: dict | None = None) -> dict:
         "ok": True,
         "paj": paj_norm,
         "pdf": saida.get("pdf"),
-        "pasta": str(pasta_pi),
+        "pasta": str(pasta_saida),
         "total_nominal": saida.get("total_nominal"),
         "total_atualizado": saida.get("total_atualizado"),
         "valor_causa": saida.get("valor_causa"),

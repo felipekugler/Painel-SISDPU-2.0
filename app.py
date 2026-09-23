@@ -28,6 +28,8 @@ from routes.agenda import router as agenda_router
 from routes.analise_pretensao import router as analise_pretensao_router
 from routes.configuracoes import router as configuracoes_router
 from routes.calcular_cnis import router as calcular_cnis_router
+from routes.calcular_qs import router as calcular_qs_router
+from routes.consulta_rpv import router as consulta_rpv_router
 from routes.dashboard import router as dashboard_router
 from routes.docgen import router as docgen_router
 from routes.files import router as files_router
@@ -79,7 +81,7 @@ _configurar_logging()
 # Versao do painel — fonte unica. Usada pelo FastAPI (OpenAPI/docs) e tambem
 # exposta a todos os templates via Jinja globals (renderizada no rodape da
 # sidebar). Para incrementar: mude aqui e so aqui.
-APP_VERSION = "0.4.86"
+APP_VERSION = "0.4.97"
 
 app = FastAPI(title="oficio-geral-ui", version=APP_VERSION)
 app.state.jinja = jinja2.Environment(
@@ -266,6 +268,8 @@ app.include_router(acoes_sisdpu_router)
 app.include_router(agenda_router)
 app.include_router(analise_pretensao_router)
 app.include_router(calcular_cnis_router)
+app.include_router(calcular_qs_router)
+app.include_router(consulta_rpv_router)
 app.include_router(dashboard_router)
 app.include_router(paj_router)
 app.include_router(files_router)
@@ -339,6 +343,10 @@ async def _shutdown_fechar_sat() -> None:
         from ingestao import eproc_client
 
         eproc_client.fechar_navegador()
+    with contextlib.suppress(Exception):
+        from ingestao import rpv_precatorio_client
+
+        rpv_precatorio_client.fechar_navegador()
 
 
 def _cleanup_port(port: int) -> None:
@@ -404,3 +412,7 @@ if __name__ == "__main__":
             from ingestao import eproc_client
 
             eproc_client.fechar_navegador()
+        with contextlib.suppress(Exception):
+            from ingestao import rpv_precatorio_client
+
+            rpv_precatorio_client.fechar_navegador()

@@ -14,10 +14,8 @@ from services.paj_service import (
     excluir_arquivo_paj,
     invalidar_cache_listagem,
     ler_paj,
-    ler_notas,
     limpar_anexos_paj,
     registrar_pos_execucao_sisdpu,
-    salvar_notas,
 )
 
 router = APIRouter()
@@ -214,22 +212,6 @@ async def api_definir_whatsapp(paj_norm: PajNorm, payload: dict = Body(...)):
     if contatos is None:
         return JSONResponse({"ok": False, "erro": "PAJ não encontrado"}, status_code=404)
     return {"ok": True, "contatos": contatos}
-
-
-@router.get("/api/paj/{paj_norm}/notas", response_class=JSONResponse)
-async def api_notas_ler(paj_norm: PajNorm):
-    """Le NOTAS.md do PAJ (string vazia se nao existe)."""
-    return {"paj_norm": paj_norm, "texto": ler_notas(paj_norm)}
-
-
-@router.post("/api/paj/{paj_norm}/notas", response_class=JSONResponse)
-async def api_notas_salvar(paj_norm: PajNorm, payload: dict = Body(...)):
-    """Salva NOTAS.md do PAJ. Body: {"texto": "..."}."""
-    texto = payload.get("texto", "") if isinstance(payload, dict) else ""
-    ok = salvar_notas(paj_norm, texto)
-    if not ok:
-        return JSONResponse({"ok": False, "erro": "PAJ inválido"}, status_code=400)
-    return {"ok": True}
 
 
 # ---------------------------------------------------------------------------

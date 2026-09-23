@@ -249,8 +249,11 @@ function sincronizarCaixa(nivel) {
 
 /* Atualizar caixa — reconciliacao rapida (1 pagina, sem abrir cada PAJ):
  * remove do dashboard os PAJs ja sincronizados que saíram da caixa de
- * entrada. NAO adiciona PAJs novos — isso continua sendo papel do
- * "Sincronizar caixa" completo. Sem modal/SSE — endpoint responde direto. */
+ * entrada, e AVISA se ha PAJs na caixa que ainda nao tem pasta local (nunca
+ * sincronizados). NAO adiciona PAJs novos por si so' — isso continua sendo
+ * papel do "Sincronizar caixa" completo; aqui e' so' deteccao + aviso (badge
+ * "X PAJs a sincronizar" no cabecalho, ver dashboardApp() em dashboard.html).
+ * Sem modal/SSE — endpoint responde direto. */
 function atualizarCaixa() {
     const btn = document.getElementById('atualizar-caixa-btn');
     if (btn) { btn.disabled = true; }
@@ -263,11 +266,16 @@ function atualizarCaixa() {
                 showToast('Erro ao atualizar: ' + (d.mensagem || 'falha desconhecida'), 'error');
                 return;
             }
+            window.dispatchEvent(new CustomEvent('pendentes-sync-atualizado', { detail: d.novos_pendentes || 0 }));
             if (d.removidos > 0) {
                 showToast(d.removidos + ' PAJ(s) saíram da caixa e foram removidos do dashboard', 'success');
                 window.location.reload();
+                return;
+            }
+            if (d.novos_pendentes > 0) {
+                showToast(d.novos_pendentes + ' PAJ(s) na caixa de entrada ainda não sincronizados — use "Sincronizar caixa" para trazê-los', 'warning');
             } else {
-                showToast('Nenhum PAJ saiu da caixa — tudo em dia', 'info');
+                showToast('Nenhum PAJ saiu ou entrou na caixa — tudo em dia', 'info');
             }
         })
         .catch(function(e) { showToast('Falha de rede: ' + e.message, 'error'); })
@@ -1256,65 +1264,6 @@ function _triggerElaborarPolling() {
     }
 }
 
-let _correcaoDiretaPajAtual = null;
-
-function abrirCorrecaoDireta(pajNorm, nomeArquivo) {
-    _correcaoDiretaPajAtual = pajNorm;
-    const modal = document.getElementById('correcao-direta-modal');
-    if (!modal) {
-        showToast('Modal de correção não encontrado', 'error');
-        return;
-    }
-    const label = document.getElementById('correcao-direta-paj-label');
-    if (label) label.textContent = pajNorm;
-    const ctx = document.getElementById('correcao-direta-contexto');
-    if (ctx) {
-        ctx.textContent = nomeArquivo
-            ? ('Arquivo de referência: ' + nomeArquivo)
-            : '';
-    }
-    const ta = document.getElementById('correcao-direta-text');
-    if (ta) ta.value = '';
-    modal.showModal();
-    setTimeout(() => ta && ta.focus(), 50);
-}
-
-async function enviarCorrecaoDireta() {
-    const pajNorm = _correcaoDiretaPajAtual;
-    if (!pajNorm) {
-        showToast('PAJ não identificado', 'warning');
-        return;
-    }
-    const textarea = document.getElementById('correcao-direta-text');
-    const text = (textarea?.value || '').trim();
-    if (!text) {
-        showToast('Digite a correção primeiro', 'warning');
-        return;
-    }
-    try {
-        const resp = await fetch('/api/elaborar/correcao/' + pajNorm, {
-            method: 'POST',
-            headers: {'Content-Type': 'application/json'},
-            body: JSON.stringify({text: text}),
-        });
-        if (!resp.ok) {
-            const err = await resp.json();
-            showToast('Erro: ' + (err.erro || resp.status), 'error');
-            return;
-        }
-        const data = await resp.json();
-        const msg = data.last_action && data.last_action !== 'iniciando...'
-            ? 'Correção enviada — ' + data.last_action
-            : 'Correção enviada — Claude refazendo a peça';
-        showToast(msg, 'info');
-        textarea.value = '';
-        document.getElementById('correcao-direta-modal')?.close();
-        _triggerElaborarPolling();
-    } catch (e) {
-        showToast('Erro: ' + e.message, 'error');
-    }
-}
-
 async function enviarCorrecao(pajNorm) {
     const textarea = document.getElementById('correcao-text');
     const text = (textarea?.value || '').trim();
@@ -1546,59 +1495,6 @@ async function excluirArquivoPaj(pajNorm, caminho, nome, btnEl, badgeId) {
         showToast('Arquivo excluído', 'success');
     } catch (e) {
         showToast('Erro de rede ao excluir arquivo', 'error');
-    }
-}
-
-/* =========================================================
-   Notas pessoais por PAJ (NOTAS.md) — autosave 2s
-   ========================================================= */
-let _notasTimer = null;
-const _notasCarregado = {};  // evita recarregar ao re-entrar na aba
-
-async function carregarNotas(pajNorm) {
-    if (_notasCarregado[pajNorm]) return;
-    let ta = document.getElementById('notas-textarea');
-    let status = document.getElementById('notas-status');
-    if (!ta) return;
-    if (status) status.textContent = 'carregando...';
-    try {
-        let resp = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/notas');
-        let data = await resp.json();
-        ta.value = data.texto || '';
-        _notasCarregado[pajNorm] = true;
-        if (status) status.textContent = ta.value ? 'carregado' : 'em branco';
-    } catch (e) {
-        if (status) status.textContent = 'erro ao carregar: ' + e.message;
-    }
-}
-
-function agendarSalvarNotas(pajNorm) {
-    let status = document.getElementById('notas-status');
-    if (status) status.textContent = 'digitando...';
-    if (_notasTimer) clearTimeout(_notasTimer);
-    _notasTimer = setTimeout(function() { salvarNotas(pajNorm); }, 2000);
-}
-
-async function salvarNotas(pajNorm) {
-    let ta = document.getElementById('notas-textarea');
-    let status = document.getElementById('notas-status');
-    if (!ta) return;
-    if (status) status.textContent = 'salvando...';
-    try {
-        let resp = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/notas', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ texto: ta.value }),
-        });
-        let data = await resp.json();
-        if (!resp.ok || !data.ok) {
-            if (status) status.textContent = 'erro: ' + (data.erro || resp.status);
-            showToast('Erro ao salvar notas', 'error');
-            return;
-        }
-        if (status) status.textContent = 'salvo';
-    } catch (e) {
-        if (status) status.textContent = 'erro: ' + e.message;
     }
 }
 
@@ -2084,9 +1980,16 @@ function gerenciarProcessoApp() {
                 this.executando = false;
             }
         },
+        // Só recarrega a página quando o gerenciamento foi um SUCESSO (pedido do
+        // usuário 2026-09-22, testado via minimenu na página de Consultar Processo
+        // — sem isso, os dados na tela ficavam desatualizados até um F5 manual).
+        // Com erro/indefinido, NÃO recarrega — o usuário já viu a mensagem e pode
+        // querer copiar/analisar o texto do erro antes de perder o estado da tela.
         fechar() {
+            const foiSucesso = this.resultado && this.resultado.tipo === 'sucesso';
             this.aberto = false;
             this.resultado = null;
+            if (foiSucesso) window.location.reload();
         },
     };
 }

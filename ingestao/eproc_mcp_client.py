@@ -266,6 +266,28 @@ async def consultar_processo(
     return await _mcp_server().consultar_processo(numero, instancia=instancia, chave=chave)
 
 
+async def cabecalho_completo(
+    numero: str, instancia: int = 1, chave: Optional[str] = None
+) -> dict[str, Any]:
+    """Cabeçalho cadastral COMPLETO do processo — classe, competência, juiz(a)/
+    relator(a), `partes` com `representantes` (procurador/advogado de cada uma,
+    já com identificador/OAB/matrícula e órgão quando institucional) e
+    `processos_relacionados` (dependente/apensado/recurso, com o NPU e a
+    instância provável de cada um, prontos pra "entrar" no relacionado com
+    `consultar_processo`/`triagem_processo`).
+
+    Usa `forcar_scraper=True` na tool MCP `consultar_processo` — esses campos
+    só existem na página HTML do eproc, o MNI (webservice) não os expõe (e,
+    além disso, ainda não está configurado de fato para o TRF4, então hoje a
+    tool já cai no scraper espontaneamente; o flag é só a garantia pra quando
+    o MNI for ligado). Página "Consultar processo" do painel: chamada em
+    paralelo à `triagem_processo` (que continua MNI-first, sem mudança) só
+    pra enriquecer o cabeçalho — ver `templates/eproc_consultar.html`."""
+    return await _mcp_server().consultar_processo(
+        numero, instancia=instancia, chave=chave, forcar_scraper=True
+    )
+
+
 async def triagem_processo(
     numero: str,
     instancia: int = 1,

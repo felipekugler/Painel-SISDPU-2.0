@@ -439,6 +439,19 @@ function movimentarConjuntoApp() {
           if (ger.ativo) {
             const tipoLabel = (eprocData.tiposGerenciamento.find((t) => t.valor === ger.tipo) || {}).rotulo || ger.tipo;
             this.resultadoGerenciamento = { ...(await eprocData._executarGerenciamento(ger)), tipoLabel };
+            // O bloco 'concluido' abaixo SÓ aparece quando não há SISDPU pra
+            // executar (senão o resumo fecha e a página navega pra outra —
+            // ver comentário logo abaixo). Sem isso, um gerenciamento que
+            // falhou ou foi bloqueado (ex.: prazo residual no Painel do
+            // Procurador) simplesmente sumia sem nenhum aviso — bug real
+            // 2026-09-22, PAJ 2026/029-01856. alert() nativo garante que o
+            // usuário vê antes de qualquer navegação acontecer.
+            if (!this.resultadoGerenciamento.ok) {
+              alert('Gerenciamento de processo NÃO executado: ' + (this.resultadoGerenciamento.mensagem || 'erro desconhecido') +
+                    '\n\nO peticionamento e a movimentação no SISDPU seguem normalmente.');
+            } else if (!this.resultadoGerenciamento.provavel_sucesso) {
+              alert('Gerenciamento de processo executado, mas o resultado não pôde ser confirmado automaticamente — confira a aba do e-proc.');
+            }
           }
           let sisdpuIniciou = false;
           if (sisdpuData) {

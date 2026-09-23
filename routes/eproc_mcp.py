@@ -6,6 +6,9 @@ visível) — aqui é tudo sem janela, com login 100% automático via TOTP.
 
 - `/api/eproc-mcp/status`: verifica/renova a sessão HTTP em segundo plano.
 - `/api/eproc-mcp/consultar`: dados cadastrais do processo (JSON estruturado).
+- `/api/eproc-mcp/cabecalho-completo`: cabeçalho completo (classe/competência/
+  juiz/relator + partes com representantes + processos relacionados), sempre
+  via scraper — usado só para enriquecer o cabeçalho de "Consultar processo".
 - `/api/eproc-mcp/triagem`: cabeçalho + timeline + intimações (JSON estruturado).
 - `/api/eproc-mcp/acesso-integra`: resolve o gate de "Acesso à Íntegra" — no
   TRF4/JFPR é automático (código TOTP, sem imagem); no TRF6 pediria captcha
@@ -53,6 +56,19 @@ async def api_eproc_mcp_consultar(numero: str, instancia: int = 1, chave: str | 
     from ingestao import eproc_mcp_client as emc
 
     res = await emc.consultar_processo(numero, instancia=instancia, chave=chave or None)
+    return JSONResponse(res, status_code=200 if "erro" not in res else 400)
+
+
+@router.get("/api/eproc-mcp/cabecalho-completo", response_class=JSONResponse)
+async def api_eproc_mcp_cabecalho_completo(numero: str, instancia: int = 1, chave: str | None = None):
+    """Cabeçalho cadastral completo (classe, competência, juiz/relator, partes
+    COM representantes/procurador e processos_relacionados) — só a página
+    "Consultar processo" usa isso, em paralelo à `/triagem` (que continua
+    MNI-first para a timeline/intimações; sem mudança). Sempre via scraper
+    (`forcar_scraper=True`) — é o único caminho que traz esses dois campos."""
+    from ingestao import eproc_mcp_client as emc
+
+    res = await emc.cabecalho_completo(numero, instancia=instancia, chave=chave or None)
     return JSONResponse(res, status_code=200 if "erro" not in res else 400)
 
 

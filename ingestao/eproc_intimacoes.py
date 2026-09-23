@@ -417,6 +417,17 @@ def salvar(resultado: dict) -> dict:
     }
     _STORE.parent.mkdir(parents=True, exist_ok=True)
     _STORE.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+    # Uma sincronização REAL sempre vence sobre a baixa local otimista (ver
+    # `services.prazo_baixa_service`) — descarta a baixa de todo processo
+    # tocado por este sync (continuou na caixa ou saiu dela): se o prazo
+    # realmente fechou, nem aparece mais no scrape; se por engano ainda
+    # estiver aberto, volta a aparecer — nunca fica escondido pra sempre.
+    from services import prazo_baixa_service
+
+    for proc in set(idx_ant.keys()) | procs_atuais:
+        prazo_baixa_service.limpar_processo(proc)
+
     return payload
 
 
@@ -427,6 +438,25 @@ def carregar() -> dict:
         return json.loads(_STORE.read_text(encoding="utf-8"))
     except Exception:  # noqa: BLE001
         return {"sincronizado_em": "", "resumo": [], "secoes": {}, "diff": {}, "saidas": []}
+
+
+def carregar_visivel() -> dict:
+    """Como `carregar()`, mas com a baixa LOCAL de prazos já cumpridos dentro
+    do painel aplicada (ver `services.prazo_baixa_service`) — usar em toda
+    tela/cálculo que reflete "o que ainda está pendente" (tabela de Prazos,
+    Agenda, badge de intimação pendente, checkbox de "Ações no Eproc",
+    página Intimações, bloqueio de Gerenciamento de Processo por prazo
+    residual).
+
+    NUNCA usar dentro de `salvar()` (precisa do estado CRU pra decidir o que
+    preservar/o que saiu da caixa) nem em `purgar_casos_resolvidos()` (decide
+    o que apagar do disco — só uma sincronização REAL, nunca uma baixa
+    otimista local, pode confirmar que um ato saiu de vez da caixa)."""
+    from services import prazo_baixa_service
+
+    dados = carregar()
+    secoes = prazo_baixa_service.aplicar_filtro(dados.get("secoes") or {})
+    return {**dados, "secoes": secoes}
 
 
 def buscar_lembretes(numero: str) -> dict:
@@ -493,8 +523,15 @@ def caso_e_prazos_mesclados(numero: str) -> dict:
     data_envio,inicio_prazo,final_prazo,...}, ...]}. `caso` traz os campos de
     NÍVEL DE PROCESSO (mesmo valor em qualquer categoria em que apareça,
     exceto `urgente` — que vira True se QUALQUER categoria/caso encontrado
-    indicar urgência)."""
-    dados = carregar()
+    indicar urgência).
+
+    Usa a leitura VISÍVEL (`carregar_visivel`) — prazo já baixado localmente
+    (ver `services.prazo_baixa_service`) não entra aqui, o que também é o
+    que faz o bloqueio de Gerenciamento de Processo por prazo residual
+    (`acoes_eproc_service._prazo_residual_no_meu_painel`, que usa esta
+    função via `prazos_processo`) liberar sozinho assim que o(s) prazo(s)
+    forem fechados dentro do painel, sem esperar nova sincronização."""
+    dados = carregar_visivel()
     alvo = re.sub(r"\D", "", numero or "")
     if not alvo:
         return {"encontrado": False, "caso": None, "prazos": []}
@@ -801,7 +838,19 @@ async def _sincronizar_impl() -> dict:
                 res = await ler_todos()
     if res.get("ok"):
         salvar(res)
-        return carregar()
+        # `carregar()` devolve o payload persistido (sincronizado_em/resumo/
+        # secoes/diff/saidas) SEM a chave "ok" — sem repô-la aqui, o chamador
+        # (`routes.prazos.api_prazos_sincronizar`, que decide o status HTTP
+        # por `res.get("ok")`, e `prazos.html`, que trata `resp.ok === false`
+        # como falha) via um sucesso real como se fosse falha ("Falha ao
+        # sincronizar.", mesmo com o dado já salvo corretamente em disco —
+        # só sumia depois de um F5, que recarrega por `/api/prazos/
+        # intimacoes` em vez de reusar esta resposta). Bug real relatado
+        # 2026-09-22. Usa `carregar_visivel()` (não a crua) por consistência
+        # com o que `/api/prazos/intimacoes` devolveria logo em seguida (ex.:
+        # um F5) — ainda que, recém-sincronizado, não sobre baixa local pra
+        # nenhum processo tocado (ver `salvar()`, que já a limpa).
+        return {"ok": True, **carregar_visivel()}
     return res
 
 
