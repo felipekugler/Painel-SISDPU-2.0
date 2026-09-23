@@ -1,5 +1,15 @@
 <!DOCTYPE html>
-<html lang="pt-BR">
+<!-- bg-base-300 aqui também (não só no <body>): o <html> nunca tinha
+     cor nenhuma e ficava branco puro (padrão do navegador) — invisível na
+     maioria das páginas porque o <body> cobre tudo, mas em páginas com
+     pouco conteúdo o <body> não preenche a altura toda e esse branco
+     aparecia como uma faixa no final da página (relatado pelo usuário
+     2026-09-22, ex.: fim da página de PAJs, logo após o rodapé "N
+     exibidos"). Usa a MESMA classe Tailwind do <body> (em vez de tentar
+     recriar a cor via CSS var direto — o DaisyUI v4 usa oklch internamente,
+     não hsl: uma tentativa anterior com `background: hsl(var(--b3))`
+     resultou em cor invalida/transparente). -->
+<html lang="pt-BR" class="bg-base-300">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -31,6 +41,15 @@
     <script src="https://cdn.jsdelivr.net/npm/quill@1.3.7/dist/quill.min.js"></script>
 
     <style>
+        /* <html> nunca foi estilizado e fica branco puro por padrão do
+           navegador (oklch(1 0 0)) — invisível na maioria das páginas porque
+           o <body> cobre tudo, mas em páginas com pouco conteúdo (poucos
+           PAJs, por ex.) o <body> não preenche a altura toda e esse branco
+           aparece como uma faixa no final da página (relatado pelo usuário
+           2026-09-22, ex.: fim da página de PAJs, logo após o rodapé "N
+           exibidos"). Mesmo tom do <body> (hsl(var(--b3)), a classe
+           bg-base-300 dele) — nunca white puro, mesmo se algum dia o body
+           também usar outra cor. */
         /* Tema Fluent (Windows 11) — harmonizado com PAINEL COMUNICAÇÕES */
         :root {
             /* Acento Primário */
@@ -1069,6 +1088,19 @@
             <div class="sistemas-bar" id="sistemas-bar" style="margin-left:auto;">
                 {% set _recon_svg %}<svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.9"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" /></svg>{% endset %}
 
+                <!-- Claude CLI: motor de todo o "Elaborar"/"Analisar"/peticionamento por IA.
+                     Diferente dos demais (sessão de navegador), aqui não há janela pra abrir —
+                     reconectar dispara uma chamada mínima real ao Claude pra confirmar a sessão
+                     OAuth (ver services/claude_status_service.py). -->
+                <span class="sys-selo sys-off" id="selo-claude" data-sys="claude"
+                      title="Verificando conexão com o Claude…">
+                    <span class="dot"></span><span class="txt">Claude</span>
+                    <button type="button" class="sys-recon" onclick="reconectarSistema('claude', event)"
+                            title="Testar a conexão com o Claude CLI (chamada mínima real).">
+                        {{ _recon_svg }}
+                    </button>
+                </span>
+
                 <!-- SISDPU -->
                 <span class="sys-selo sys-off" id="selo-sisdpu" data-sys="sisdpu"
                       title="Verificando conexão com o SISDPU…">
@@ -1104,27 +1136,14 @@
                         {{ _recon_svg }}
                     </button>
                 </span>
-
-                <!-- Claude CLI: motor de todo o "Elaborar"/"Analisar"/peticionamento por IA.
-                     Diferente dos demais (sessão de navegador), aqui não há janela pra abrir —
-                     reconectar dispara uma chamada mínima real ao Claude pra confirmar a sessão
-                     OAuth (ver services/claude_status_service.py). -->
-                <span class="sys-selo sys-off" id="selo-claude" data-sys="claude"
-                      title="Verificando conexão com o Claude…">
-                    <span class="dot"></span><span class="txt">Claude</span>
-                    <button type="button" class="sys-recon" onclick="reconectarSistema('claude', event)"
-                            title="Testar a conexão com o Claude CLI (chamada mínima real).">
-                        {{ _recon_svg }}
-                    </button>
-                </span>
             </div>
 
             <button type="button" id="btn-encerrar-painel" onclick="encerrarPainel()"
-                    title="Encerrar o painel: desliga o servidor. Os dados já salvos permanecem em disco.">
+                    title="Fechar o painel: desliga o servidor. Os dados já salvos permanecem em disco.">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1.9" style="width:14px;height:14px;">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M5.636 5.636a9 9 0 1 0 12.728 0M12 3v9" />
                 </svg>
-                Encerrar painel
+                Fechar Painel
             </button>
         </div>
 
