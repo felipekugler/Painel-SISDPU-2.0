@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>{% block title %}Ofício Geral{% endblock %} — DPU</title>
+    <title>{% block title %}Ofício Geral{% endblock %}</title>
+    <link rel="icon" type="image/png" href="/static/images/dpu_favicon_128.png">
 
     <!-- Tailwind + DaisyUI via CDN. "?plugins=typography" ativa as classes
          `prose` (tabelas, listas, headings bem formatados) — já eram usadas
@@ -854,17 +855,14 @@
            :class="{ 'hidden': !sidebarOpen }"
            @sidebar-toggle.window="sidebarOpen = !sidebarOpen; localStorage.setItem('sidebarOpen', sidebarOpen)">
         <!-- Header -->
-        <div class="p-5 border-b border-base-300">
-            <div class="flex items-center gap-3">
-                <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0"
-                      style="background: var(--accent); color: var(--accent-fg);">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M9 12h3.75M9 15h3.75M9 18h3.75m3 .75H18a2.25 2.25 0 0 0 2.25-2.25V6.108c0-1.135-.845-2.098-1.976-2.192a48.424 48.424 0 0 0-1.123-.08m-5.801 0c-.065.21-.1.433-.1.66V18a2.25 2.25 0 0 0 2.25 2.25h3.75a2.25 2.25 0 0 0 2.25-2.25V2.716m-3.75 0V3c0 .414-.336.75-.75.75H6.75C6.336 3 6 3.336 6 3.75V18a2.25 2.25 0 0 0 2.25 2.25h3.75a2.25 2.25 0 0 0 2.25-2.25" />
-                    </svg>
+        <div class="p-5 border-b border-base-300 text-center">
+            <div class="flex items-center justify-center gap-3">
+                <span class="inline-flex items-center justify-center w-8 h-8 rounded-lg flex-shrink-0">
+                    <img src="/static/images/dpu_favicon_128.png" alt="DPU" class="w-full h-full object-contain">
                 </span>
                 <h1 class="text-lg font-bold leading-tight" style="color: var(--text);">Painel SISDPU</h1>
             </div>
-            <p id="sidebar-oficio-descricao" class="text-xs mt-2 text-left"
+            <p id="sidebar-oficio-descricao" class="text-xs mt-2 text-center"
                style="color: var(--text-secondary); white-space: pre-line;">{{ oficio_descricao() }}</p>
         </div>
 
@@ -911,6 +909,14 @@
                 </span>
             </a>
 
+            <!-- Arquivos SAT (submenu) -->
+            <a href="/sat" class="nav-item nav-sub {% if request.url.path == '/sat' %}active{% endif %}">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                </svg>
+                <span>Arquivos SAT</span>
+            </a>
+
             <!-- Movimentações pendentes (submenu) com contador -->
             <a href="/movimentacoes-pendentes" class="nav-item nav-sub {% if request.url.path == '/movimentacoes-pendentes' %}active{% endif %}" x-data="movimentacoesPendentesCounter()" x-init="loadCount()">
                 <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -920,14 +926,6 @@
                 <span class="text-xs" style="color: var(--text-tertiary); margin-left: auto;">
                     <span x-text="carregado ? `(${count})` : ''"></span>
                 </span>
-            </a>
-
-            <!-- Arquivos SAT (submenu) -->
-            <a href="/sat" class="nav-item nav-sub {% if request.url.path == '/sat' %}active{% endif %}">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-                </svg>
-                <span>Arquivos SAT</span>
             </a>
 
             <!-- E-proc (grupo) -->
@@ -959,17 +957,6 @@
                 </span>
             </a>
 
-            <!-- Petições pendentes (submenu) com contador -->
-            <a href="/peticoes-pendentes" class="nav-item nav-sub {% if request.url.path == '/peticoes-pendentes' %}active{% endif %}" x-data="peticoesPendentesCounter()" x-init="loadCount()">
-                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
-                </svg>
-                <span>Petições pendentes</span>
-                <span class="text-xs" style="color: var(--text-tertiary); margin-left: auto;">
-                    <span x-text="carregado ? `(${count})` : ''"></span>
-                </span>
-            </a>
-
             <!-- Intimações (submenu) com contador: Triagem Inteligente de
                  Intimações — cruza intimações do Painel do Procurador com o
                  PAJ vinculado, resume, confronta com o estágio do PAJ e
@@ -986,6 +973,17 @@
                 </span>
             </a>
 
+            <!-- Petições pendentes (submenu) com contador -->
+            <a href="/peticoes-pendentes" class="nav-item nav-sub {% if request.url.path == '/peticoes-pendentes' %}active{% endif %}" x-data="peticoesPendentesCounter()" x-init="loadCount()">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z" />
+                </svg>
+                <span>Petições pendentes</span>
+                <span class="text-xs" style="color: var(--text-tertiary); margin-left: auto;">
+                    <span x-text="carregado ? `(${count})` : ''"></span>
+                </span>
+            </a>
+
             <!-- Agenda: calendário + tabela unificando audiências (SISDPU),
                  prazos finais (e-proc) e compromissos/afastamentos manuais. -->
             <a href="/agenda" class="nav-item {% if request.url.path == '/agenda' %}active{% endif %}">
@@ -996,31 +994,10 @@
             </a>
         </nav>
 
-        <!-- Pesquisa rápida de PAJ — mesmo espírito da busca do próprio
-             SISDPU (número + botão de lupa). Enter ou clique abre o
-             detalhe numa aba NOVA imediatamente (window.open colado no
-             gesto do usuário, sem nenhum await antes — evita bloqueio de
-             pop-up); se o PAJ ainda não estiver sincronizado localmente, a
-             própria aba nova mostra uma tela de carregamento que dispara
-             uma sincronização levíssima (sem documentos/anexos) e recarrega
-             sozinha quando terminar — ver pesquisarPajMenu() em app.js,
-             templates/paj_carregando.html e routes/paj.py. -->
-        <div class="px-3 pt-3" x-data="{ pajBusca: '' }">
-            <div class="flex gap-1.5">
-                <input type="text" class="input input-bordered input-sm flex-1 font-mono text-xs"
-                       placeholder="Pesquisar PAJ — 2026/029-00136" maxlength="14"
-                       :value="pajBusca" @input="pajBusca = formatarInputPaj($event.target.value)"
-                       @keydown.enter="pesquisarPajMenu(pajBusca)">
-                <button type="button" class="btn btn-sm btn-primary btn-square" title="Pesquisar PAJ"
-                        @click="pesquisarPajMenu(pajBusca)">
-                    <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
-                    </svg>
-                </button>
-            </div>
-        </div>
-
-        <!-- Footer com Pipeline e Configurações -->
+        <!-- Footer com Histórico e Configurações — Pipeline removido do menu
+             (pedido do usuário 2026-09-22: redundante com o SyncWidget e o
+             ícone "ver log" do dashboard; a página /pipeline continua
+             existindo, só não fica mais visível na sidebar). -->
         <div class="border-t border-base-300">
             <nav class="p-3">
                 <ul class="menu menu-sm">
@@ -1031,15 +1008,6 @@
                                 <path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
                             </svg>
                             Histórico
-                        </a>
-                    </li>
-                    <li>
-                        <a href="/pipeline"
-                           class="{% if request.url.path == '/pipeline' %}active{% endif %}">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
-                                <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3v11.25A2.25 2.25 0 0 0 6 16.5h2.25M3.75 3h-1.5m1.5 0h16.5m0 0h1.5m-1.5 0v11.25A2.25 2.25 0 0 1 18 16.5h-2.25m-7.5 0h7.5m-7.5 0-1 3m8.5-3 1 3m0 0 .5 1.5m-.5-1.5h-9.5m0 0-.5 1.5m.75-9 3-3 2.148 2.148A12.061 12.061 0 0 1 16.5 7.605" />
-                            </svg>
-                            Pipeline
                         </a>
                     </li>
                     <li>
@@ -1054,9 +1022,8 @@
                     </li>
                 </ul>
             </nav>
-            <div class="p-4 text-xs text-base-content/40">
-                <p>Defensoria Pública da União</p>
-                <p class="mt-1">v{{ app_version }}</p>
+            <div class="p-4 text-xs text-base-content/40 text-center">
+                <p>v{{ app_version }}</p>
             </div>
         </div>
     </aside>
@@ -1074,8 +1041,29 @@
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 6h16M4 12h16M4 18h16" />
                 </svg>
-                <span class="ml-2 text-sm">Menu</span>
             </button>
+
+            <!-- Pesquisa rápida de PAJ — movida do menu lateral pro topo da
+                 página (pedido do usuário), centralizada no espaço entre o
+                 ícone de Menu e a barra de selos dos sistemas (que tem
+                 margin-left:auto, empurrando-se pra direita — este
+                 flex-1 + justify-center ocupa e centraliza o espaço restante
+                 entre os dois). Mesmo comportamento/funções de antes
+                 (pesquisarPajMenu()/formatarInputPaj() em app.js). -->
+            <div class="flex-1 flex justify-center" x-data="{ pajBusca: '' }">
+                <div class="flex gap-1.5 w-full max-w-xs">
+                    <input type="text" class="input input-bordered input-sm flex-1 font-mono text-xs"
+                           placeholder="Pesquisar PAJ — 2026/029-00136" maxlength="14"
+                           :value="pajBusca" @input="pajBusca = formatarInputPaj($event.target.value)"
+                           @keydown.enter="pesquisarPajMenu(pajBusca)">
+                    <button type="button" class="btn btn-sm btn-primary btn-square" title="Pesquisar PAJ"
+                            @click="pesquisarPajMenu(pajBusca)">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+                        </svg>
+                    </button>
+                </div>
+            </div>
 
             <!-- Barra de selos de status dos sistemas externos -->
             <div class="sistemas-bar" id="sistemas-bar" style="margin-left:auto;">

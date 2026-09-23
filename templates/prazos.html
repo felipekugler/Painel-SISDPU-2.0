@@ -129,7 +129,7 @@
 
     <!-- Tabela-resumo (Citações/Intimações) -->
     <template x-if="resumo.length">
-      <div class="bg-base-200 rounded-lg border border-base-300 overflow-hidden max-w-2xl">
+      <div class="bg-base-200 rounded-lg border border-base-300 overflow-hidden max-w-2xl mx-auto">
         <div class="px-4 py-2 border-b border-base-300 text-sm font-semibold">Citações / Intimações</div>
         <table class="table table-sm resumo-table">
           <thead>
@@ -322,7 +322,10 @@ function prazosEprocApp() {
     resumo: [], secoes: {}, sincronizadoEm: '',
     diff: {}, saidas: [],
     sincronizando: false, syncErro: '',
-    sortCampo: '', sortDir: 1,
+    // Padrão da tabela (pedido do usuário 2026-09-22): sempre por "Final" crescente
+    // (prazo que vence antes primeiro) — ver `aplicar()`, que reimpõe isto tanto no
+    // carregamento inicial da página quanto depois de cada sincronização.
+    sortCampo: 'final', sortDir: 1,
     lembreteTip: { show: false, x: 0, y: 0, itens: [] },
     menuAbertoProc: null,
     menuAbertoProcObj: null,
@@ -392,6 +395,12 @@ function prazosEprocApp() {
       this.sincronizadoEm = r.sincronizado_em || '';
       this.diff = r.diff || {};
       this.saidas = r.saidas || [];
+      // Padrão de ordenação (pedido do usuário 2026-09-22): sempre por "Final"
+      // crescente — `aplicar()` roda no carregamento inicial (`init` →
+      // `carregarIntimacoes`) e logo após cada sincronização, reimpondo o
+      // padrão mesmo que o Defensor tenha reordenado por outra coluna antes.
+      this.sortCampo = 'final';
+      this.sortDir = 1;
     },
 
     // Tooltip do lembrete (post-it) — posiciona ao lado do ícone

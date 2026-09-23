@@ -36,8 +36,16 @@
   .dot-pulse { animation: softpulse 2.2s ease-in-out infinite; }
 
   .chip-input {
-    background: hsl(var(--b3));
-    border: 1px solid hsl(var(--bc) / 0.08);
+    /* var(--card) — a variável PRÓPRIA do app pra superfície elevada (branco
+       puro no tema claro, #2b2b2b no escuro — ver :root/:root[data-theme=dark]
+       em base.html), não o token --b1 do DaisyUI: no tema claro real deste
+       painel --b1 e --b3 (fundo da página/barra de filtros) ficam parecidos
+       demais, então a troca anterior pra --b1 não resolveu (confirmado ao
+       vivo pelo usuário — screenshot mostrou tudo com a mesma cor). --card
+       garante contraste forte nos dois temas, igual usado em inputs análogos
+       (ex.: editor Quill, linha ~831). */
+    background: var(--card);
+    border: 1px solid var(--stroke-strong);
   }
   .chip-input:hover { border-color: hsl(var(--bc) / 0.18); }
   .chip-input:focus-within { border-color: hsl(var(--p) / 0.6); }
@@ -421,7 +429,7 @@
       </div>
       </div>
       <span class="text-xs text-base-content/50 inline-flex items-center gap-1" x-show="ultimaExecucao">
-        última atualização <span class="font-mono text-warning/90" x-text="formatarDataHora(ultimaExecucao)"></span>
+        última atualização <span class="font-mono text-base-content/60" x-text="formatarDataHora(ultimaExecucao)"></span>
         <!-- Reabre o SyncWidget com o log da última sincronização registrada
              no servidor, mesmo que já tenha sido dispensado antes (ver
              SyncWidget.verUltimoLog em static/js/sync_widget.js) — /api/sync/status
@@ -445,7 +453,7 @@
       <label class="w-[440px] shrink-0 flex items-center gap-2 px-3 h-10 chip-input rounded-lg">
         <svg class="w-4 h-4 text-base-content/50 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m21 21-4.3-4.3m1.8-5.7a7.5 7.5 0 1 1-15 0 7.5 7.5 0 0 1 15 0Z"></path></svg>
         <input type="text" x-model="busca" @input.debounce.300ms="aplicarFiltros()"
-               placeholder="Buscar assistido, PAJ, processo, ofício, pretensão, descrição, data ou análise…"
+               placeholder="Busca Livre"
                title="Busca em: PAJ, assistido, processo judicial, ofício, pretensão, descrição, data e análise IA (sim/não)"
                class="bg-transparent w-full text-sm placeholder:text-base-content/40 focus:outline-none">
       </label>
