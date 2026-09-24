@@ -325,6 +325,29 @@
     <div class="card bg-base-200 shadow"
          x-data="{
              estado: null, testando: false,
+             modelo: '', modeloSelecao: '', effort: '', salvandoPrefs: false,
+             // IDs de modelo conhecidos, TESTADOS ao vivo em 23/09/2026 (ver
+             // conversa) — NÃO usar os apelidos genéricos 'opus'/'fable' do Claude
+             // CLI: confirmado que 'opus' hoje resolve pro Opus 4.8 (antigo), não
+             // pro mais recente — o apelido NÃO garante 'sempre o mais novo' nesta
+             // conta/instalação. Por isso a lista usa o ID completo e versionado de
+             // cada modelo. 'claude-opus-5-5' e 'claude-fable-5-1' existem mas EXIGEM
+             // atualizar o Claude CLI desta máquina (< 2.1.280/2.1.251 hoje) — ainda
+             // assim ficam na lista (a tela só reflete a escolha; o teste de conexão
+             // avisa se a versão instalada não suportar).
+             _MODELOS_CONHECIDOS: ['claude-opus-5[1m]', 'opus[1m]', 'claude-opus-5',
+                                    'claude-sonnet-5', 'claude-haiku-4-5-20251001',
+                                    'claude-opus-5-5', 'claude-fable-5-1'],
+             _syncModeloSelecao() {
+                 this.modeloSelecao = this._MODELOS_CONHECIDOS.includes(this.modelo) ? this.modelo : '__outro__';
+             },
+             onModeloChange() {
+                 if (this.modeloSelecao !== '__outro__') {
+                     this.modelo = this.modeloSelecao;
+                     this.salvarPrefsElaboracao();
+                 }
+                 // '__outro__': aguarda o usuário digitar no campo de texto (salva no @change dele)
+             },
              async testar() {
                  this.testando = true; this.estado = null;
                  try {
@@ -337,7 +360,37 @@
                      if (typeof window.atualizarSelos === 'function') window.atualizarSelos();
                  }
              },
-         }">
+             async carregarPrefsElaboracao() {
+                 try {
+                     const r = await fetch('/api/config/elaboracao');
+                     const d = await r.json();
+                     if (d && d.ok) {
+                         this.modelo = d.modelo || '';
+                         this.effort = d.effort || '';
+                         this._syncModeloSelecao();
+                     }
+                 } catch (e) {}
+             },
+             async salvarPrefsElaboracao() {
+                 this.salvandoPrefs = true;
+                 try {
+                     const r = await fetch('/api/config/elaboracao', {
+                         method: 'POST',
+                         headers: { 'Content-Type': 'application/json' },
+                         body: JSON.stringify({ modelo: this.modelo, effort: this.effort }),
+                     });
+                     const d = await r.json().catch(() => ({}));
+                     if (typeof showToast === 'function')
+                         showToast(d && d.ok ? 'Preferência salva — vale na próxima elaboração/análise.' : 'Falha ao salvar.',
+                                   d && d.ok ? 'success' : 'error');
+                 } catch (e) {
+                     if (typeof showToast === 'function') showToast('Falha ao salvar: ' + e, 'error');
+                 } finally {
+                     this.salvandoPrefs = false;
+                 }
+             },
+         }"
+         x-init="carregarPrefsElaboracao()">
         <div class="card-body gap-4">
             <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
                 Conexão com o Claude
@@ -374,6 +427,72 @@
                 <p class="text-sm" :class="estado.ok ? 'text-success' : (estado.estado === 'cota' ? 'text-warning' : 'text-error')"
                    x-text="estado.detalhe"></p>
             </template>
+
+            <div class="divider my-1"></div>
+
+            <!-- Modelo -->
+            <div>
+                <p class="text-sm font-medium mb-1">Modelo</p>
+                <p class="text-sm text-base-content/60 mb-2">
+                    Qual "cérebro" da Anthropic processa a elaboração/análise (usado por "Elaborar"
+                    e "Analisar" — BI, BPC, Pensão etc.). Modelos mais potentes leem e cruzam mais
+                    informação com mais precisão, mas são mais lentos e caros por análise; os mais
+                    leves são rápidos e baratos, mas raciocinam de forma mais superficial.
+                </p>
+                <p class="text-sm text-base-content/60 mb-3">
+                    <strong>Para análise jurídica mais complexa, com vários documentos</strong>
+                    (PAJs longos, muitos anexos, teses que cruzam vários requisitos): use
+                    <strong>Opus 5 — janela de contexto 1M</strong>. É o único que garante ler
+                    <strong>todos</strong> os anexos de um PAJ extenso numa única análise, sem
+                    perder informação no meio do caminho por estourar o limite de contexto.
+                </p>
+                <select class="select select-bordered select-sm w-full sm:w-auto" x-model="modeloSelecao"
+                        @change="onModeloChange()" :disabled="salvandoPrefs">
+                    <option value="claude-opus-5[1m]">Opus 5 — janela de contexto 1M (recomendado p/ PAJs com muitos anexos)</option>
+                    <option value="opus[1m]">Opus 4.8 — janela de contexto 1M (padrão anterior do painel)</option>
+                    <option value="claude-opus-5">Opus 5 — contexto padrão</option>
+                    <option value="claude-sonnet-5">Sonnet 5 — mais rápido/barato</option>
+                    <option value="claude-haiku-4-5-20251001">Haiku 4.5 — custo mínimo (não recomendado p/ análise jurídica)</option>
+                    <option value="claude-opus-5-5">Opus 5.5 (requer atualizar o Claude CLI)</option>
+                    <option value="claude-fable-5-1">Fable 5.1 (requer atualizar o Claude CLI)</option>
+                    <option value="__outro__">Outro (digitar o ID do modelo)…</option>
+                </select>
+                <div x-show="modeloSelecao === '__outro__'" class="mt-2">
+                    <input x-model="modelo" @change="salvarPrefsElaboracao()" type="text"
+                           class="input input-bordered input-sm w-full sm:w-auto"
+                           placeholder="ex.: claude-opus-5-5[1m]">
+                    <p class="text-xs text-base-content/50 mt-1">
+                        Use o ID exato do modelo (não o nome de exibição) — confira no seletor de
+                        modelo do seu cliente Claude (app/site), não neste painel.
+                    </p>
+                </div>
+            </div>
+
+            <div class="divider my-1"></div>
+
+            <!-- Esforço de raciocínio -->
+            <div>
+                <p class="text-sm font-medium mb-1">Esforço de raciocínio</p>
+                <p class="text-sm text-base-content/60 mb-2">
+                    Controla <strong>quanto</strong> o modelo escolhido acima "pensa" antes de
+                    responder — mais esforço significa raciocínio mais profundo e cauteloso diante
+                    de nuances, ao custo de respostas mais lentas e mais caras.
+                </p>
+                <p class="text-sm text-base-content/60 mb-3">
+                    <strong>Para análise jurídica mais complexa, com vários documentos</strong>: use
+                    <strong>Xhigh</strong> — é o nível recomendado para tarefas analíticas densas.
+                    "Max" existe para casos extremos, mas na prática rende um ganho pequeno frente a
+                    um custo bem maior.
+                </p>
+                <select class="select select-bordered select-sm w-full sm:w-auto" x-model="effort"
+                        @change="salvarPrefsElaboracao()" :disabled="salvandoPrefs">
+                    <option value="low">Low — raciocínio mínimo, mais rápido</option>
+                    <option value="medium">Medium</option>
+                    <option value="high">High</option>
+                    <option value="xhigh">Xhigh (recomendado p/ análise jurídica)</option>
+                    <option value="max">Max — raciocínio máximo (mais caro, ganho pequeno)</option>
+                </select>
+            </div>
         </div>
     </div>
     </div><!-- /grid Cofre + Conexão com o Claude -->

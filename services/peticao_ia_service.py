@@ -6,9 +6,9 @@ Fluxo:
   1) Recebe o(s) `prazo_id` selecionado(s) na tela ("Selecione o(s) prazo(s)
      a ser(em) fechado(s)") — são o universo do que a petição deve responder.
   2) Resolve cada prazo pro registro cru (`acoes_eproc_service.
-     resolver_prazo_por_id`) e casa contra a triagem MCP do processo (mesmo
-     critério de "mesmo dia de envio + mesmo nº de dias" já usado em
-     `static/js/processo_judicial.js`) pra achar o `evento_referenciado` —
+     resolver_prazo_por_id`) e casa contra a triagem MCP do processo (dia de
+     envio + nº de dias + parte associada ao procurador logado, ver
+     `services.eproc_procurador_service`) pra achar o `evento_referenciado` —
      o ATO que gerou a intimação (o que a petição precisa responder).
   3) Baixa o texto integral desse(s) ato(s) referenciado(s) (MCP, mesma
      função que a página "Consultar processo" usa).
@@ -242,11 +242,17 @@ def _coletar_atos_referenciados(prazo_ids: list[str]) -> list[dict]:
 
 async def _coletar_async(prazo_ids: list[str]) -> list[dict]:
     """Pra cada prazo selecionado: resolve o registro cru, casa contra a
-    triagem MCP do processo (mesmo critério dia+dias de
-    `processo_judicial.js`) e baixa o texto do evento referenciado. Agrupa
-    por processo pra só consultar a triagem UMA VEZ por processo distinto
-    (normal ter só 1, mas o PAJ pode ter mais de um vinculado)."""
+    triagem MCP do processo (dia+dias + parte associada ao procurador
+    logado, ver `services.eproc_procurador_service` — substituiu 2026-09-23
+    o casamento antigo só por dia+dias, sem filtro nenhum de identidade nem
+    de intimação ainda ativa: podia casar com o ato de OUTRA parte, ex. o
+    INSS, ou com uma intimação já fechada, se coincidissem no dia+prazo —
+    a petição gerada pela IA responderia então ao ato errado) e baixa o
+    texto do evento referenciado. Agrupa por processo pra só consultar a
+    triagem UMA VEZ por processo distinto (normal ter só 1, mas o PAJ pode
+    ter mais de um vinculado)."""
     from ingestao import eproc_mcp_client as mcp
+    from services import eproc_procurador_service
 
     resolvidos = []
     for pid in prazo_ids:
@@ -261,11 +267,15 @@ async def _coletar_async(prazo_ids: list[str]) -> list[dict]:
         num = re.sub(r"\D", "", r["caso"].get("processo", ""))
         por_processo.setdefault(num, []).append(r)
 
+    meu_id = eproc_procurador_service.meu_identificador()
+
     atos: list[dict] = []
     vistos_evento: set[str] = set()
     for numero, itens in por_processo.items():
         triagem = await mcp.triagem_processo(numero, instancia=1)
         intimacoes = [it for it in (triagem.get("intimacoes") or [])]
+        minhas_partes = eproc_procurador_service.partes_do_procurador(
+            triagem.get("cabecalho") or {}, meu_id)
         usadas: set[int] = set()
 
         for item in itens:
@@ -277,7 +287,10 @@ async def _coletar_async(prazo_ids: list[str]) -> list[dict]:
                 dias_p = -1
             match_idx = -1
             for i, it in enumerate(intimacoes):
-                if i in usadas:
+                if i in usadas or not it.get("ativa"):
+                    continue
+                if not eproc_procurador_service.parte_intimada_e_minha(
+                        it.get("parte_intimada", ""), minhas_partes):
                     continue
                 # data_hora = expedição da PRÓPRIA intimação (casa com o "data_envio" do
                 # Painel do Procurador) — NÃO enviado_em (sub-dado "Domicílio Judicial

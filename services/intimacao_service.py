@@ -83,6 +83,22 @@ CLASSIFICACOES = (
     "CIENCIA_SENTENCA_HOMOLOGATORIA",
     "SENTENCA_HOMOLOGATORIA_ANALISAR",
     "SENTENCA_HOMOLOGATORIA_PETICIONAR",
+    # 11º-14º rótulos, também fora do confronto genérico — fluxo dedicado de
+    # sentença de MÉRITO (`gerar_conferencia_sentenca_merito`, 2026-09-24):
+    # cadeia de 5 julgamentos (quem a DPU representa, natureza da atuação —
+    # ordinária ou curadoria especial, com/sem conflito de interesses —,
+    # tese sustentada, resultado, orientação) bem mais complexa que o
+    # batimento da sentença homologatória. CIENCIA (sem interesse recursal),
+    # EMBARGOS (vício sanável, pontos omissos indicados) ou RECURSO
+    # (interesse recursal de mérito, pontos de sucumbência + teses
+    # indicados objetivamente) — nunca gera a peça, só orienta. ANALISAR
+    # (fallback quando não dá pra concluir com segurança algum passo da
+    # cadeia — nunca arrisca CIENCIA silenciosa, o risco de perder prazo
+    # recursal é grave demais).
+    "SENTENCA_MERITO_CIENCIA",
+    "SENTENCA_MERITO_EMBARGOS",
+    "SENTENCA_MERITO_RECURSO",
+    "SENTENCA_MERITO_ANALISAR",
 )
 
 STATUS_GERAL = ("novo", "analisando", "aguardando_revisao", "concluido", "descartado", "erro", "gravado_lote")
@@ -408,8 +424,21 @@ def listar_casos() -> list[dict]:
                     # a análise antiga, de qualquer forma, só cobria o ato
                     # mais próximo (o bug que motivou esta mudança), então
                     # não há dado bom pra preservar pro outro ato.
+                    #
+                    # EXCETO "gravado_lote" (valor do extinto "Lote de Mera
+                    # Ciência", removido 2026-08-29): nunca migra esse status —
+                    # ele descreve um ato ANTIGO já concluído em lote, não o
+                    # ato ATUAL (que pode ser uma intimação nova e totalmente
+                    # diferente chegada meses depois, mas que agora "herdava"
+                    # o mesmo status_geral só por ser a única deste processo).
+                    # A checagem de "gravado_lote" logo abaixo então escondia a
+                    # intimação atual da lista inteira — bug real confirmado
+                    # 2026-09-24 (PAJ 2021/029-02882, processo 5011174-83.2021.
+                    # 4.04.7000: registro legado do evento 189/agosto, já
+                    # concluído, escondia o evento 197/setembro, ativo e sem
+                    # nenhuma relação com o primeiro).
                     candidato = raw.get(chave_proc)
-                    if candidato is not None:
+                    if candidato is not None and candidato.get("status_geral") != "gravado_lote":
                         local = candidato
                 # "gravado_lote": valor LEGADO do extinto "Lote de Mera
                 # Ciência" (removido em 2026-08-29) — continua somindo da
@@ -440,6 +469,19 @@ def listar_casos() -> list[dict]:
 
     itens.sort(key=lambda it: it.get("prazo_final_ordenacao") or "9999-99-99")
     return itens
+
+
+def casos_do_processo(processo: str) -> list[dict]:
+    """Todos os itens (1 por ATO, ver `listar_casos`) de UM processo — usado
+    pra resolver, a partir de dados JÁ conhecidos de um prazo cru (evento +
+    data_envio + prazo_dias, ex. vindos da página do PAJ em "Intimações
+    pendentes"), qual `chave_caso` ele corresponde: o chamador casa
+    localmente cada `prazos[*]` (mesmos 3 campos) contra o seu próprio dado,
+    sem precisar reimplementar `_agrupar_prazos_por_ato`/`_hash_ato`."""
+    chave = _normalizar_num_processo(processo)
+    if not chave:
+        return []
+    return [item for item in listar_casos() if _normalizar_num_processo(item.get("processo") or "") == chave]
 
 
 def obter_caso(processo: str, ato: str | None = None) -> dict | None:
@@ -538,6 +580,89 @@ def definir_vinculo_manual(processo: str, paj: str) -> dict:
                                       "(use AAAA/UUU-NNNNN ou PAJ-AAAA-UUU-NNNNN)."}
     salvar_vinculo(processo, paj=paj.strip(), paj_norm=paj_norm, vinculo_status="manual")
     return {"ok": True, "caso": obter_caso(processo)}
+
+
+def obter_vinculo(processo: str) -> dict:
+    """Registro de vínculo de PAJ deste processo (`paj`/`paj_norm`/
+    `vinculo_status`/`atualizado_em`), lido DIRETO do disco — mesmo dado que
+    `listar_casos()` já mescla por processo (ver `_chave_vinculo`). `{}` se
+    nunca houve vínculo (nem "auto" pelo lembrete, nem manual). Usado por
+    `routes/prazos.py` pra a tabela de Prazos (que lê `eproc_intimacoes.
+    carregar_visivel()` puro, sem passar por `listar_casos()`) também
+    enxergar um vínculo já resolvido aqui — sem isso, um PAJ achado pela
+    busca secundária (`tentar_vincular_pajs_pendentes`) só aparecia na
+    Triagem de Intimações, nunca em Prazos."""
+    chave = _normalizar_num_processo(processo)
+    if not chave:
+        return {}
+    return _ler_raw().get(_chave_vinculo(chave)) or {}
+
+
+def tentar_vincular_pajs_pendentes() -> dict:
+    """Busca secundária de vínculo de PAJ — pedido explícito do usuário
+    (2026-09-25): "nos casos em que não houver PAJ associado, deve haver uma
+    rotina secundária para pesquisar se o processo já está associado a
+    algum PAJ". Pra cada processo hoje na caixa de Prazos e-proc SEM
+    NENHUM PAJ (nem pelo lembrete do e-proc, nem vínculo manual/automático
+    já salvo), tenta achar um PAJ já sincronizado no painel casando pelo
+    NÚMERO DO PROCESSO — mais preciso que casar por nome do assistido (sem
+    risco de homônimo/grafia diferente) — reaproveitando o MESMO mecanismo
+    já usado pela página "Movimentar Eproc + SISDPU"
+    (`services.paj_processo_link_service.resolver_pajs_de_processo`, que
+    cruza o cadastro de cada PAJ sincronizado — `metadata.json ->
+    processos_judiciais`, a fonte mais confiável — com o cache de Prazos
+    e-proc e o vínculo manual já existente).
+
+    Só vincula quando há EXATAMENTE 1 candidato — mais de um fica pendente,
+    do jeito que já era (nunca escolhe sozinha quando há ambiguidade, mesmo
+    princípio de segurança de `paj_processo_link_service`; o Defensor
+    resolve manualmente, mesma caixa de texto de sempre). Grava com
+    `vinculo_status="auto"` — mesmo valor/mesmo tratamento visual do vínculo
+    automático já existente (via lembrete), sem distinção na tela.
+
+    Sem chamada de rede — só lê arquivos JSON já em disco (cache de Prazos
+    e-proc + metadata.json de cada PAJ, este último com cache de 10s em
+    `paj_processo_link_service`) — por isso pode rodar em toda listagem
+    (Prazos e Triagem de Intimações), igual à purga.
+
+    Devolve `{"verificados": N, "vinculados": N}`."""
+    from ingestao import eproc_intimacoes
+    from services import paj_processo_link_service
+
+    cache = eproc_intimacoes.carregar()
+    if not cache.get("sincronizado_em"):
+        return {"verificados": 0, "vinculados": 0}
+
+    # Processo -> tem PAJ no lembrete (qualquer seção) ou não.
+    tem_lembrete: set[str] = set()
+    todos_processos: dict[str, str] = {}
+    for casos in (cache.get("secoes") or {}).values():
+        for c in casos or []:
+            processo = c.get("processo") or ""
+            chave = _normalizar_num_processo(processo)
+            if not chave:
+                continue
+            todos_processos.setdefault(chave, processo)
+            if c.get("paj"):
+                tem_lembrete.add(chave)
+
+    raw = _ler_raw()
+    pendentes = [
+        processo for chave, processo in todos_processos.items()
+        if chave not in tem_lembrete and not (raw.get(_chave_vinculo(chave)) or {}).get("paj_norm")
+    ]
+    if not pendentes:
+        return {"verificados": 0, "vinculados": 0}
+
+    vinculados = 0
+    for processo in pendentes:
+        candidatos = paj_processo_link_service.resolver_pajs_de_processo(processo)
+        if len(candidatos) == 1:
+            c = candidatos[0]
+            salvar_vinculo(processo, paj=c.get("paj_label") or "", paj_norm=c["paj_norm"], vinculo_status="auto")
+            vinculados += 1
+
+    return {"verificados": len(pendentes), "vinculados": vinculados}
 
 
 def descartar_caso(processo: str, ato: str) -> dict:

@@ -97,6 +97,13 @@
                      não mostramos a triagem crua (poderia trazer INSS/perito/etc.) NEM
                      nenhum aviso: só os dados do processo mesmo, sem a seção de
                      intimações. Ela só aparece quando há prazo confirmado no Painel. -->
+                <!-- Há prazo no Painel, mas sem identificador do procurador (cofre
+                     trancado/sem credencial "eproc" salva) não dá pra saber a quais
+                     partes associar — nunca mostra a intimação "adivinhando" a parte,
+                     só avisa (opção do usuário 2026-09-23). -->
+                <div class="mt-3 pt-3 border-t border-base-300" x-show="!carregando[idx] && !erro[idx] && temPrazosSemIdentidade(idx)">
+                    <span class="text-xs text-warning">⚠ Destranque o cofre (credencial do e-proc) para ver as intimações associadas a você neste processo.</span>
+                </div>
                 <div class="mt-3 pt-3 border-t border-base-300" x-show="!carregando[idx] && !erro[idx] && intimacoesAtivas(idx).length">
                     <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-2">
                         Intimações pendentes
@@ -110,6 +117,7 @@
                                     <th>Status</th>
                                     <th class="whitespace-nowrap">Enviado / Datas</th>
                                     <th>Ato referenciado</th>
+                                    <th>Ações</th>
                                 </tr>
                             </thead>
                             <tbody>
@@ -176,6 +184,22 @@
                                             </template>
                                             <span x-show="!it.evento_referenciado" class="text-base-content/30">—</span>
                                         </td>
+                                        <td class="text-xs">
+                                            <div class="flex flex-col items-start gap-1">
+                                                <button type="button" class="btn btn-xs btn-outline btn-success"
+                                                        @click="darMeraCienciaPaj(idx, it)"
+                                                        :disabled="meraCienciaRodando(idx, it)"
+                                                        title="Dispara agora: ciência no e-proc + Gerenciamento de Processo + movimentação no SISDPU">
+                                                    <span x-show="meraCienciaRodando(idx, it)" class="loading loading-spinner loading-xs"></span>
+                                                    Dar mera ciência
+                                                </button>
+                                                <button type="button" class="btn btn-xs btn-outline btn-info"
+                                                        @click="abrirPeticaoPara(idx)"
+                                                        title='Abre "Ações no Eproc" mais abaixo, já com este processo selecionado'>
+                                                    Peticionar
+                                                </button>
+                                            </div>
+                                        </td>
                                     </tr>
                                 </template>
                             </tbody>
@@ -235,4 +259,103 @@
                                     "abrirGerenciarProcesso(menuAbertoProc)",
                                     after='menuAbertoProc = null') }}
     </ul>
+</template>
+
+<!-- Modal de confirmação de "Dar mera ciência" (substitui confirm() nativo —
+     pedido do usuário 2026-09-24) — teleportado pro <body> pelo mesmo motivo
+     do menu acima (escapar do overflow:hidden do card .collapse). -->
+<template x-teleport="body">
+    <div class="modal" :class="{'modal-open': confirmDialog.show}" @click.self="_responderConfirmModal(false)">
+        <div class="modal-box w-full max-w-[50vw]">
+            <h3 class="font-bold text-base text-center bg-error/10 text-error border border-error/40 rounded-md py-2">Atenção</h3>
+            <p class="pt-3 text-sm">Ao prosseguir, serão executadas as seguintes ações de maneira irreversível no e-proc e no SISDPU:</p>
+            <div class="flex flex-col gap-3 py-3">
+                <div class="text-sm">
+                    <div>1) Peticionamento no e-proc com o evento:</div>
+                    <div class="pl-5 mt-1 text-base-content/70">• ciência, com renúncia ao prazo</div>
+                    <!-- Checklist "Selecione o(s) prazo(s) a ser(em) fechado(s)" —
+                         mesmo estilo/seção já usada em "Ações no Eproc" (pedido do
+                         usuário 2026-09-24: poder desmarcar algum evento do
+                         litisconsórcio antes de fechar). -->
+                    <div class="ret-acao-bloco mt-2 ml-5" x-show="confirmDialog.fase === 'confirmando'">
+                        <div class="ret-acao-titulo">Selecione o(s) prazo(s) a ser(em) fechado(s)</div>
+                        <div class="flex flex-col gap-1">
+                            <template x-for="p in confirmDialog.prazosDisponiveis" :key="p.evento_intimacao">
+                                <label class="flex items-start gap-2 cursor-pointer">
+                                    <input type="checkbox" class="checkbox checkbox-xs mt-0.5"
+                                           x-model="confirmDialog.prazosSelecionados[p.evento_intimacao]"
+                                           @change="_atualizarDescricaoSugerida()">
+                                    <span>
+                                        <span x-text="p.label"></span>
+                                        <span class="text-base-content/40 font-mono" x-text="' · ' + confirmDialog.numeroProcesso"></span>
+                                    </span>
+                                </label>
+                            </template>
+                        </div>
+                    </div>
+                </div>
+                <div class="text-sm">
+                    <div>2) Gerenciamento do processo judicial (substabelecimento):</div>
+                    <!-- Mesmos 2 dropdowns de "Ações no Eproc" (pedido do usuário
+                         2026-09-24), pré-preenchidos com o padrão configurado mas
+                         editáveis aqui só pra este disparo. -->
+                    <div class="pl-5 mt-1 flex items-center gap-2 flex-wrap" x-show="confirmDialog.fase === 'confirmando'">
+                        <select class="select select-bordered select-sm" x-model="confirmDialog.gerenciamentoTipo">
+                            <template x-for="t in tiposGerenciamento" :key="t.valor">
+                                <option :value="t.valor" x-text="t.rotulo"></option>
+                            </template>
+                        </select>
+                        <select class="select select-bordered select-sm min-w-[18rem]" x-show="confirmDialog.gerenciamentoTipo !== 'D'"
+                                x-model="confirmDialog.gerenciamentoProcuradorValor" @change="_onTrocarGerenciamentoProcurador()">
+                            <option value="">Escolha um Procurador</option>
+                            <template x-for="p in confirmDialog.procuradoresDropdown" :key="p.valor">
+                                <option :value="p.valor" x-text="p.rotulo"></option>
+                            </template>
+                        </select>
+                        <span x-show="confirmDialog.gerenciamentoTipo !== 'D' && !confirmDialog.procuradoresDropdown.length"
+                              class="text-[11px] text-base-content/50">
+                            configure em Configurações › e-proc
+                        </span>
+                    </div>
+                    <div class="pl-5 mt-1 text-base-content/70" x-show="confirmDialog.fase !== 'confirmando'"
+                         x-text="'• ' + (tiposGerenciamento.find(t => t.valor === confirmDialog.gerenciamentoTipo) || {}).rotulo
+                                 + (confirmDialog.gerenciamentoTipo !== 'D' ? (' → ' + (confirmDialog.gerenciamentoProcuradorRotulo || confirmDialog.gerenciamentoProcuradorValor)) : '')"></div>
+                </div>
+                <div class="text-sm">
+                    <div>3) Movimentação no SISDPU da fase petição de mera ciência, com descrição:</div>
+                    <!-- Caixa editável (pedido do usuário 2026-09-24) — sugestão
+                         pré-preenchida, mas o Defensor pode ajustar antes de
+                         disparar (mesmo padrão da página Intimações). -->
+                    <textarea class="textarea textarea-bordered textarea-sm w-[calc(100%-1.25rem)] ml-5 mt-1"
+                              rows="2" x-show="confirmDialog.fase === 'confirmando'"
+                              x-model="confirmDialog.descricaoMov"
+                              @input="confirmDialog.descricaoMovEditada = true"></textarea>
+                    <div class="pl-5 mt-1 text-base-content/70" x-show="confirmDialog.fase !== 'confirmando'"
+                         x-text="'• ' + confirmDialog.descricaoMov"></div>
+                </div>
+            </div>
+            <p class="text-sm font-medium" x-show="confirmDialog.fase === 'confirmando'">Deseja prosseguir?</p>
+            <!-- Fases "executando"/"concluido" (pedido do usuário 2026-09-24):
+                 o texto de andamento (antes mostrado na coluna "Ações" da
+                 tabela) passa a aparecer AQUI, centralizado, e o modal fica
+                 aberto até o fim (sucesso ou erro) — nunca fecha sozinho no
+                 meio da execução real. -->
+            <p class="text-sm font-medium text-center" x-show="confirmDialog.fase !== 'confirmando'" x-text="confirmDialog.status"></p>
+            <div class="modal-action">
+                <template x-if="confirmDialog.fase === 'confirmando'">
+                    <div class="flex gap-2">
+                        <button type="button" class="btn btn-sm" @click="_responderConfirmModal(false)">Cancelar</button>
+                        <button type="button" class="btn btn-sm btn-success" @click="_responderConfirmModal(true)"
+                                :disabled="!_algumPrazoSelecionado() || !confirmDialog.descricaoMov.trim() || !_gerenciamentoValido()">Confirmar</button>
+                    </div>
+                </template>
+                <template x-if="confirmDialog.fase === 'executando'">
+                    <span class="loading loading-spinner loading-sm"></span>
+                </template>
+                <template x-if="confirmDialog.fase === 'concluido'">
+                    <button type="button" class="btn btn-sm" @click="_fecharConfirmModal()">Fechar</button>
+                </template>
+            </div>
+        </div>
+    </div>
 </template>

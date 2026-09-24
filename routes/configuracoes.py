@@ -26,6 +26,20 @@ async def claude_testar():
     return JSONResponse(res, status_code=200 if res.get("ok") else 400)
 
 
+@router.get("/api/config/elaboracao", response_class=JSONResponse)
+async def get_config_elaboracao():
+    """Modelo/esforço usados por "Elaborar"/"Analisar" (BI, BPC, Pensão etc.) —
+    "" em cada campo = usa o default do .env (config.ELABORACAO_MODELO/EFFORT)."""
+    return JSONResponse({"ok": True, **config_painel_service.get_elaboracao_prefs()})
+
+
+@router.post("/api/config/elaboracao", response_class=JSONResponse)
+async def set_config_elaboracao(request: Request):
+    body = await request.json()
+    prefs = config_painel_service.set_elaboracao_prefs(body)
+    return JSONResponse({"ok": True, **prefs})
+
+
 @router.get("/configuracoes", response_class=HTMLResponse)
 async def pagina_configuracoes(request: Request):
     config = config_painel_service.ler_config()

@@ -2510,6 +2510,18 @@ async def rodar_paj_unico(
                 resumo["baixados"] = sum(
                     1 for f in pasta_pecas.iterdir() if f.is_file() and f.suffix.lower() != ".txt"
                 )
+            # `tramitacoes_caixa` — GARANTE que fica atualizado independente da
+            # forma de sincronização (pedido do usuário 2026-09-24: antes,
+            # esse campo só era calculado pela sync COMPLETA da caixa `rodar()`,
+            # deixando um PAJ sincronizado por um caminho avulso como este com
+            # o campo `None`/desatualizado até alguém reconferir na unha — ver
+            # `atualizar_tramitacoes_paj`). Best-effort: uma falha aqui não
+            # derruba a sincronização do PAJ em si, só fica sem essa atualização
+            # extra (o campo permanece no que já estava).
+            try:
+                await atualizar_tramitacoes_paj(paj_norm, log)
+            except Exception as e:  # noqa: BLE001
+                log(f"  [tramitacoes] falha ao atualizar (best-effort): {type(e).__name__}: {e}")
     except Exception as e:
         log(f"  [EXC] {type(e).__name__}: {e}")
         resumo["erros"].append(f"{alvo}: {e}")
@@ -2637,6 +2649,14 @@ async def rodar_paj_via_busca_global(
                 resumo["baixados"] = sum(
                     1 for f in pasta_pecas.iterdir() if f.is_file() and f.suffix.lower() != ".txt"
                 )
+            # `tramitacoes_caixa` — mesma garantia de `rodar_paj_unico` (ver nota
+            # lá): independe do PAJ estar de fato na caixa agora — se não
+            # estiver (comum pra watchlist), grava `[]` corretamente
+            # (`atualizar_tramitacoes_paj` já trata isso). Best-effort.
+            try:
+                await atualizar_tramitacoes_paj(paj_norm, log)
+            except Exception as e:  # noqa: BLE001
+                log(f"  [tramitacoes] falha ao atualizar (best-effort): {type(e).__name__}: {e}")
     except Exception as e:
         log(f"  [EXC] {type(e).__name__}: {e}")
         resumo["erros"].append(f"{alvo}: {e}")

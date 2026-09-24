@@ -74,6 +74,16 @@ function acoesSisdpuBlock(cfg) {
     // NOVO modelo de conclusão (lista) — null quando o chamador não passa
     // `tramitacoesCaixa` (ex.: Retornos), mantendo o modelo LEGADO (idTramite +
     // toggle Sim/Não) intacto pra quem não se beneficia da seleção múltipla.
+    // `modoListaTramitacoes`: true quando o chamador OPTOU pelo modelo novo —
+    // a CHAVE `tramitacoesCaixa` está presente no cfg, mesmo que o valor seja
+    // `null` (PAJ cujo campo nunca foi calculado — ver nota em paj_detail.html).
+    // Diferente de checar só `tramitacoesCaixa !== null`: sem esta distinção,
+    // um `null` de "nunca calculado" (paj_detail.html) e um `null` de "esta
+    // página nem usa isso" (retornos.html, que nunca passa a chave) ficariam
+    // indistinguíveis — e o refresh automático em init() (abaixo) dispararia
+    // à toa pra CADA linha da Retornos (que tem pajNorm mas não deve reconferir
+    // ao vivo — aquele trâmite é próprio, fora de tramitacoes_caixa).
+    const modoListaTramitacoes = "tramitacoesCaixa" in cfg;
     const tramitacoesCaixa = Array.isArray(cfg.tramitacoesCaixa) ? cfg.tramitacoesCaixa : null;
     // Pré-marca o "trâmite de trabalho" (idTramite), se ele estiver entre as
     // tramitações abertas — mesmo padrão do modal "Concluir PAJ da Caixa de
@@ -93,6 +103,7 @@ function acoesSisdpuBlock(cfg) {
         idTramite: cfg.idTramite || '',
         tramitacoesCaixa,
         idsTramiteSelecionados: idsTramiteSelecionadosInit,
+        _refrescandoTramitacoes: false,
         getDescricaoMov: getDescricaoMovFn,
         getDescricaoTram: getDescricaoTramFn,
         getValorInicialMov: getValorInicialMovFn,
@@ -190,6 +201,20 @@ function acoesSisdpuBlock(cfg) {
                 this.modelosDespacho = j.modelos_despacho || [];
             } catch (e) {}
             await this.carregarDocsPaj();
+            // Só quando o chamador optou pelo modelo lista (`modoListaTramitacoes`) E o
+            // valor ainda não foi calculado (`null` — PAJ sincronizado só por caminho
+            // avulso, nunca passou pela sync COMPLETA da caixa, que é quem preenche
+            // isto) — reconfere ao vivo, mesmo mecanismo já usado por
+            // concluirPajModalApp (app.js) antes de abrir o modal "Concluir PAJ da
+            // Caixa de Entrada". SEM esta checagem, `null` era silenciosamente tratado
+            // como "zero trâmites" (ver nota em paj_detail.html), mostrando "Não há
+            // trâmite aberto" com falsa certeza — bug real 2026-09-24 (PAJ
+            // 2026/029-03759). Guarda `_refrescandoTramitacoes` evita disparar 2x
+            // (Alpine chama init() duas vezes por instância).
+            if (modoListaTramitacoes && this.tramitacoesCaixa === null && this.pajNorm && !this._refrescandoTramitacoes) {
+                this._refrescandoTramitacoes = true;
+                await this._refrescarTramitacoesCaixa();
+            }
             // Antes de montar o editor — precisa do HTML salvo (se houver) pra passar
             // como valorInicial já na criação do Quill (mesmo padrão do "Ações no Eproc").
             // SEMPRE chama (sem gate por `rascunhoCarregado` aqui) — carregarRascunho()
@@ -446,6 +471,28 @@ function acoesSisdpuBlock(cfg) {
         copiarMovParaTram() { this.descTram = htmlParaTextoSimples(this.descMovEfetiva()); },
 
         // --- Concluir trâmite(s) da caixa de entrada ---
+        // Reconfere `tramitacoesCaixa` ao vivo (POST /atualizar-tramitacoes-caixa —
+        // mesma rota que concluirPajModalApp/app.js já usa) — chamado por init()
+        // só quando o valor chegou `null` (nunca calculado). Silencioso se falhar
+        // (sessão SISDPU fora do ar, sync ocupada etc.): melhor o console continuar
+        // usável (nesse caso ele fica mostrando "Não há trâmite aberto", que pode
+        // estar errado, mas o defensor sempre pode conferir no cabeçalho — ver
+        // "Concluir PAJ da Caixa de Entrada" — que tem sua própria reconferência).
+        async _refrescarTramitacoesCaixa() {
+            try {
+                const r = await fetch('/api/paj/' + encodeURIComponent(this.pajNorm) + '/atualizar-tramitacoes-caixa',
+                                       { method: 'POST' });
+                const d = await r.json().catch(() => ({}));
+                if (d && d.ok && Array.isArray(d.tramitacoes_caixa)) {
+                    this.tramitacoesCaixa = d.tramitacoes_caixa;
+                    const novos = {};
+                    this.tramitacoesCaixa.forEach((t) => {
+                        novos[t.id_tramite] = (t.id_tramite === (this.idTramite || ''));
+                    });
+                    this.idsTramiteSelecionados = novos;
+                }
+            } catch (e) {}
+        },
         // Ids marcados no modelo NOVO (lista de checkboxes) — vazio se
         // `tramitacoesCaixa` não foi passado (modelo legado não usa isto).
         idsTramiteSelecionadosArr() {
@@ -816,6 +863,18 @@ function acoesSisdpuBlock(cfg) {
                 this.sseStatus = '— conexão perdida (verifique o PAJ)';
                 this.sseLog.push({ level: 'erro', msg: this._avisoConexaoPerdida() });
                 this.$nextTick(() => { const b = this.$refs.acoesSisdpuSseBox; if (b) b.scrollTop = b.scrollHeight; });
+                // A movimentação em si quase sempre já foi efetivada no SISDPU quando a
+                // conexão cai (ver comentário de _avisoConexaoPerdida acima) — mesmo sem
+                // saber se tramitação/conclusão também rodaram, tenta atualizar a tabela
+                // de Movimentações (só leitura, sem marcar nada como concluído/Histórico)
+                // pra não deixá-la desatualizada esperando um F5 manual que nem sempre
+                // vem. Bug real 2026-09-23: 'done' nunca chegou (conexão caiu ou o
+                // handler travou em algum lugar) numa fila de 2 itens que TINHA
+                // executado os 2 no SISDPU — tabela ficou 2 movimentações atrasada até
+                // um refresh manual.
+                if (this.pajNorm && typeof window.atualizarMovimentacoesPaj === 'function') {
+                    window.atualizarMovimentacoesPaj(this.pajNorm).catch(() => {});
+                }
             };
         },
         // Executa a FILA inteira em sequência (mesma sessão do SISDPU) — chamado por
@@ -888,6 +947,13 @@ function acoesSisdpuBlock(cfg) {
                     + 'removidos da lista acima foram executados com sucesso; os que restaram continuam salvos '
                     + 'pra tentar de novo. Verifique o PAJ no SISDPU antes de executar de novo.' });
                 this.$nextTick(() => { const b = this.$refs.acoesSisdpuSseBox; if (b) b.scrollTop = b.scrollHeight; });
+                // Mesmo raciocínio do onerror de executar() acima — os itens já
+                // removidos da fila (item_done recebido) com certeza já foram
+                // efetivados no SISDPU; atualiza a tabela pra não ficar esperando um
+                // F5 manual (só leitura — não marca Histórico/concluído).
+                if (this.pajNorm && typeof window.atualizarMovimentacoesPaj === 'function') {
+                    window.atualizarMovimentacoesPaj(this.pajNorm).catch(() => {});
+                }
             };
         },
 

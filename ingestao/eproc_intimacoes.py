@@ -537,7 +537,20 @@ def caso_e_prazos_mesclados(numero: str) -> dict:
         return {"encontrado": False, "caso": None, "prazos": []}
     caso_repr: dict | None = None
     urgente = False
-    vistos: dict[tuple, dict] = {}
+    # Conta ocorrências da chave (evento+data_envio+prazo_dias) EM CADA
+    # categoria separadamente, e fica com o MAIOR count entre elas — nunca
+    # um dedup fixo pra 1 (isso escondia intimações SIMULTÂNEAS reais com
+    # texto idêntico dentro da MESMA categoria — o Painel do Procurador só
+    # mostra o 1º autor do processo, então 2+ intimações genuinamente
+    # distintas podem ser byte-a-byte idênticas, ver nota em `prazos.html:
+    # _expandirCaso`) nem a SOMA entre categorias (dobraria uma intimação
+    # real só por ela estar mirrorada em 2 categorias, ex. "pendente" +
+    # "pendente_urgente" — o próprio motivo desta mescla existir, ver acima).
+    # Bug real confirmado 2026-09-23 (PAJ 2023/029-03488, processo
+    # 5012327-49.2024.4.04.7000): 3 intimações reais, 2 com chave idêntica
+    # na MESMA categoria "prazo_aberto" — o dedup antigo reduzia pra 2.
+    melhor_amostra: dict[tuple, dict] = {}
+    melhor_contagem: dict[tuple, int] = {}
     for categoria, casos in (dados.get("secoes") or {}).items():
         for c in casos:
             if re.sub(r"\D", "", c.get("processo") or "") != alvo:
@@ -546,12 +559,20 @@ def caso_e_prazos_mesclados(numero: str) -> dict:
                 caso_repr = c
             if "urgente" in categoria or c.get("urgente"):
                 urgente = True
+            contagem_aqui: dict[tuple, int] = {}
             for p in c.get("prazos") or []:
                 chave = (p.get("evento", ""), p.get("data_envio", ""), str(p.get("prazo_dias") or ""))
-                vistos.setdefault(chave, p)
+                contagem_aqui[chave] = contagem_aqui.get(chave, 0) + 1
+                melhor_amostra.setdefault(chave, p)
+            for chave, n in contagem_aqui.items():
+                if n > melhor_contagem.get(chave, 0):
+                    melhor_contagem[chave] = n
     if caso_repr is None:
         return {"encontrado": False, "caso": None, "prazos": []}
-    return {"encontrado": True, "caso": {**caso_repr, "urgente": urgente}, "prazos": list(vistos.values())}
+    prazos: list[dict] = []
+    for chave, n in melhor_contagem.items():
+        prazos.extend([melhor_amostra[chave]] * n)
+    return {"encontrado": True, "caso": {**caso_repr, "urgente": urgente}, "prazos": prazos}
 
 
 def prazos_processo(numero: str) -> dict:

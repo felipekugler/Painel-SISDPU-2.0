@@ -102,9 +102,36 @@ async def api_prazos_intimacoes():
     já com a baixa LOCAL de prazos cumpridos dentro do painel aplicada (ver
     `services.prazo_baixa_service`), pra a tabela não continuar mostrando um
     prazo que o Defensor já resolveu por dentro do painel (peticionou, deu
-    mera ciência) até a próxima "Sincronizar intimações"."""
+    mera ciência) até a próxima "Sincronizar intimações".
+
+    Também tenta a busca secundária de vínculo de PAJ pra processos sem
+    nenhum PAJ reconhecido no lembrete (`intimacao_service.tentar_vincular_
+    pajs_pendentes` — pedido do usuário 2026-09-25) e PREENCHE `c["paj"]`
+    com qualquer vínculo já resolvido (`intimacao_service.obter_vinculo`) —
+    sem isso, um PAJ achado pela busca secundária só aparecia na Triagem de
+    Intimações (que já mescla o vínculo em `listar_casos()`), nunca aqui:
+    esta tabela lê `carregar_visivel()` puro, sem passar por lá. Best-effort
+    (só leitura local): falha não pode impedir a listagem normal."""
     from ingestao import eproc_intimacoes
-    return JSONResponse(eproc_intimacoes.carregar_visivel())
+    from services import intimacao_service
+
+    try:
+        intimacao_service.tentar_vincular_pajs_pendentes()
+    except Exception:
+        pass
+
+    dados = eproc_intimacoes.carregar_visivel()
+    try:
+        for casos in (dados.get("secoes") or {}).values():
+            for c in casos or []:
+                if c.get("paj") or not c.get("processo"):
+                    continue
+                vinc = intimacao_service.obter_vinculo(c["processo"])
+                if vinc.get("paj"):
+                    c["paj"] = vinc["paj"]
+    except Exception:
+        pass
+    return JSONResponse(dados)
 
 
 @router.get("/api/prazos/count", response_class=JSONResponse)

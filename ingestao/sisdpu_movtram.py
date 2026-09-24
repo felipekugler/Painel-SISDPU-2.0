@@ -429,7 +429,21 @@ async def _anexar_documentos_movimentacao(page, anexos: list[dict], tipo_arquivo
 async def listar_caixa_estruturada() -> dict:
     """Lê a caixa de entrada do usuário por linha (tabela do usuário), com id_tramite
     (data-rk), id (id_processo), paj, assistido, descrição e linha_texto (todas as
-    células). Retorna {ok, itens}."""
+    células). Retorna {ok, itens} — {ok: False} em falha de leitura, NUNCA
+    {ok: True, itens: []} nesse caso (ver checagem de página de erro abaixo).
+
+    🐛 Bug real 2026-09-24 (PAJ 2026/029-03759): esta função não tinha a MESMA
+    proteção que a irmã `sisdpu_client.caixa_de_entrada()` já tem contra página
+    de erro/sessão não confirmada do SISDPU — um "recurso temporariamente
+    indisponível" transitório (ou a tabela ainda não ter terminado de montar
+    via AJAX) virava silenciosamente `{ok: True, itens: []}`, indistinguível
+    de "caixa genuinamente vazia". Isso alimenta `tramitacoes_caixa` (ver
+    ingestao.sincronizador._ler_tramitacoes_estruturadas_por_paj) — uma
+    leitura ruim aqui gravava "zero trâmites" por engano num PAJ que na
+    verdade tinha um pendente, escondendo-o da seção "Concluir trâmite(s)"
+    em qualquer lugar que leia esse campo. Confirmado ao vivo: a MESMA
+    chamada, minutos depois, encontrou o trâmite normalmente — clássico sinal
+    de falha transitória de carregamento, não de lógica."""
     await _ensure_logged_in()
     page = await _get_page()
     await page.goto(f"{SISDPU_URL}/pages/caixaentrada/caixaEntrada.xhtml",
@@ -438,6 +452,13 @@ async def listar_caixa_estruturada() -> dict:
     await page.wait_for_timeout(800)
     if not await _resolver_conflito_login(page):
         return {"ok": False, "detalhe": _MSG_CONFLITO_SESSAO, "itens": []}
+    corpo_lower = (await page.inner_text("body")).lower()
+    if "recurso temporariamente indispon" in corpo_lower or "não foi possível completar a sua requisição" in corpo_lower:
+        return {"ok": False, "detalhe": "SISDPU retornou página de erro transitória ao abrir a caixa de entrada — "
+                                        "não é uma caixa vazia, tente de novo.", "itens": []}
+    if "unidade dpu" not in corpo_lower:
+        return {"ok": False, "detalhe": "sessão SIS-DPU não confirmada como ativa ao abrir a caixa de entrada "
+                                        "(página sem marca da área logada).", "itens": []}
     dados = await _eval_seguro(page, _JS_CAIXA_USUARIO)
     itens = dados.get("itens", []) if isinstance(dados, dict) else []
     _log.info("listar_caixa_estruturada: %d item(ns) na caixa do usuário.", len(itens))

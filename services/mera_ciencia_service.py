@@ -72,7 +72,11 @@ def _id_processo_sisdpu(paj_norm: str) -> str:
     return m.group(1) if m else ""
 
 
-async def dar_mera_ciencia(processo: str, ato: str, descricao_mov: str, log_cb) -> dict:
+async def dar_mera_ciencia(processo: str, ato: str, descricao_mov: str, log_cb,
+                            eventos_selecionados: list[str] | None = None,
+                            gerenciamento_tipo: str | None = None,
+                            gerenciamento_procurador_valor: str | None = None,
+                            gerenciamento_procurador_rotulo: str | None = None) -> dict:
     """Roda as 3 ações reais em sequência — parando no primeiro erro, sem
     tentar os próximos passos — pro ATO dado (`ato` identifica o sub-caso,
     ver módulo `intimacao_service` — mudança 2026-09-XX: "Dar mera ciência"
@@ -80,6 +84,24 @@ async def dar_mera_ciencia(processo: str, ato: str, descricao_mov: str, log_cb) 
     continua intocado, o Defensor repete a ação nele separadamente).
     `descricao_mov` é o texto já revisado/editado pelo Defensor na tela
     (nunca gerado às cegas aqui).
+
+    `gerenciamento_tipo`/`gerenciamento_procurador_valor` (pedido do usuário
+    2026-09-24): quando o Defensor precisa de um tipo/destino diferente do
+    padrão configurado — mesmos dropdowns "Gerenciar processo depois de
+    peticionar (substabelecer)?" já usados em "Ações no Eproc" — sobrepõem
+    `TIPO_GERENCIAMENTO`/o procurador padrão de Configurações › e-proc.
+    `None` (padrão, compat com o chamador antigo da página Intimações) usa
+    o comportamento de sempre.
+
+    `eventos_selecionados` (pedido do usuário 2026-09-24): quando um ato tem
+    litisconsórcio (mais de uma parte associada ao procurador no MESMO
+    evento/dia/prazo, ver `intimacao_ia_service._candidatos_do_ato`), o
+    Defensor pode desmarcar, no checklist do modal, algum(ns) evento(s) que
+    NÃO devem ser fechados agora — `None` (padrão, compat com o chamador
+    antigo da página Intimações) fecha TODOS os eventos identificados
+    automaticamente; uma lista explícita restringe aos eventos nela
+    contidos (nunca aos que faltarem — permite fechar só uma parte do
+    litisconsórcio de cada vez, mantendo o restante genuinamente aberto).
 
     Todo log emitido aqui também fica gravado em `mera_ciencia.log` no
     próprio registro de Intimações (`intimacao_service.salvar_estado`) —
@@ -107,28 +129,39 @@ async def dar_mera_ciencia(processo: str, ato: str, descricao_mov: str, log_cb) 
         msg = "Caso sem PAJ vinculado — não é possível dar mera ciência."
         log_cb("erro", msg)
         return {"ok": False, "erro": msg}
-    evento_ref = caso.get("evento_referenciado") or {}
-    evento_intimacao = evento_ref.get("evento_intimacao") or ""
-    coautores = evento_ref.get("evento_intimacao_coautores") or []
-    if not evento_intimacao:
-        # Caso NUNCA analisado (`evento_referenciado` só existe depois de
-        # "Analisar") — pedido explícito do usuário (2026-08-29): "quero que
-        # o botão esteja disponível sempre, independentemente de ter sido
-        # feita a análise". Resolve o MESMO casamento de evento ao vivo, sem
-        # IA — mesma função que já popula o badge "Ato referenciado"
-        # independente de análise (`obter_evento_referenciado_leve`), com
-        # os prazos DESTE ato específico (`caso["prazos"]`, já resolvido por
-        # `intimacao_service._agrupar_prazos_por_ato` em `obter_caso` acima).
-        from services import intimacao_ia_service
+    # SEMPRE recalcula ao vivo (nunca confia no `evento_referenciado` já
+    # persistido de uma análise anterior, mesmo que exista) — mesmo casamento
+    # que já popula o badge "Ato referenciado" independente de análise
+    # (`obter_evento_referenciado_leve`), com os prazos DESTE ato específico
+    # (`caso["prazos"]`, já resolvido por `intimacao_service._agrupar_prazos_
+    # por_ato` em `obter_caso` acima). Antes (até 2026-09-23) só recalculava
+    # quando o caso NUNCA tinha sido analisado — pedido original do usuário
+    # 2026-08-29: "quero que o botão esteja disponível sempre, independente
+    # de análise" — só que isso deixava um caso JÁ analisado (antes da
+    # correção de `_casar_evento_referenciado` que trocou a heurística de
+    # polo por casamento por parte associada ao procurador, ver
+    # `eproc_procurador_service`) preso ao evento ERRADO gravado em disco por
+    # uma análise antiga, sem nunca reconferir — uma ação IRREVERSÍVEL
+    # (fecha prazo de verdade no e-proc) não pode confiar em cache assim.
+    from services import intimacao_ia_service
 
-        leve = await intimacao_ia_service.obter_evento_referenciado_leve(processo, caso.get("prazos") or [])
-        evento_intimacao = (leve or {}).get("evento_intimacao") or ""
-        coautores = (leve or {}).get("evento_intimacao_coautores") or []
+    leve = await intimacao_ia_service.obter_evento_referenciado_leve(processo, caso.get("prazos") or [])
+    evento_intimacao = (leve or {}).get("evento_intimacao") or ""
+    coautores = (leve or {}).get("evento_intimacao_coautores") or []
     if not evento_intimacao:
         msg = ("Não foi possível identificar automaticamente o evento de intimação deste "
                "processo — não é possível marcar o prazo a fechar no e-proc.")
         log_cb("erro", msg)
         return {"ok": False, "erro": msg}
+
+    todos_disponiveis = [e for e in ([evento_intimacao] + list(coautores)) if e]
+    if eventos_selecionados is not None:
+        selecionados_str = {str(e) for e in eventos_selecionados if e}
+        todos_disponiveis = [e for e in todos_disponiveis if str(e) in selecionados_str]
+        if not todos_disponiveis:
+            msg = "Nenhum evento de intimação selecionado para fechamento."
+            log_cb("erro", msg)
+            return {"ok": False, "erro": msg}
 
     log: list[dict] = []
 
@@ -140,9 +173,10 @@ async def dar_mera_ciencia(processo: str, ato: str, descricao_mov: str, log_cb) 
 
     # Litisconsórcio ativo — outro(s) coautor(es) intimado(s) no MESMO evento/
     # dia/prazo (ver `intimacao_ia_service._casar_evento_referenciado`), cada
-    # um com seu próprio nº de evento que TAMBÉM precisa ser fechado.
-    todos_eventos = [evento_intimacao] + list(coautores)
-    todos_eventos = [e for e in todos_eventos if e]
+    # um com seu próprio nº de evento que TAMBÉM precisa ser fechado — a
+    # menos que o Defensor tenha desmarcado algum no checklist do modal (ver
+    # `eventos_selecionados` acima).
+    todos_eventos = todos_disponiveis
     prazos_labels = [f"Ref. Evento {e}" for e in todos_eventos]
 
     # 1a) e-proc — abre a aba de peticionamento e marca o(s) checkbox(es) de
@@ -177,21 +211,45 @@ async def dar_mera_ciencia(processo: str, ato: str, descricao_mov: str, log_cb) 
     resultado["eproc_confirmado"] = True
     registrar("ok", f"{processo}: ciência protocolada no e-proc.")
 
-    # Baixa LOCAL dos prazos deste ato (inclusive coautores em litisconsórcio
-    # ativo) — sem isso a tabela de Prazos e-proc (e tudo que dela deriva)
-    # só refletiria o fechamento na PRÓXIMA "Sincronizar intimações". Também
-    # é o que permite o Gerenciamento de Processo logo abaixo liberar sozinho
-    # quando este era o último prazo residual, sem esperar sincronização.
+    # Baixa LOCAL dos prazos REALMENTE fechados agora (inclusive coautores em
+    # litisconsórcio ativo) — sem isso a tabela de Prazos e-proc (e tudo que
+    # dela deriva) só refletiria o fechamento na PRÓXIMA "Sincronizar
+    # intimações". Também é o que permite o Gerenciamento de Processo logo
+    # abaixo liberar sozinho quando este era o último prazo residual, sem
+    # esperar sincronização.
+    #
+    # Marca só `len(todos_eventos)` ocorrências (nunca `caso["prazos"]`
+    # inteiro) — os prazos crus do Painel são BYTE-A-BYTE idênticos entre si
+    # num litisconsórcio simultâneo (mesmo evento+data_envio+prazo_dias pra
+    # cada coautor, é por isso que `prazo_baixa_service` conta por
+    # OCORRÊNCIA em vez de por chave booleana), então não há como apontar
+    # qual ocorrência crua corresponde a qual evento fechado — mas dá pra
+    # garantir a CONTAGEM certa: se o Defensor desmarcou 1 de 2 eventos no
+    # checklist, só 1 ocorrência é baixada, deixando a outra genuinamente
+    # visível (o prazo do coautor NÃO fechado continua realmente aberto no
+    # e-proc). Bug real corrigido 2026-09-24: antes baixava sempre TODAS as
+    # ocorrências, mesmo quando só parte do litisconsórcio foi fechada.
     from services import prazo_baixa_service
 
-    for p in caso.get("prazos") or []:
+    for p in (caso.get("prazos") or [])[:len(todos_eventos)]:
         prazo_baixa_service.marcar_baixa(processo, p, origem="mera-ciencia", detalhe=paj_norm)
 
-    # 2) e-proc — Gerenciamento de Processo (substabelecimento), padrão já
-    # configurado em Configurações › e-proc.
-    procurador_padrao = (config_painel_service.get_eproc_procuradores_prefs() or {}).get("procurador_padrao") or {}
-    procurador_valor = procurador_padrao.get("valor") or ""
-    if not procurador_valor:
+    # 2) e-proc — Gerenciamento de Processo (substabelecimento). Usa o
+    # tipo/procurador EXPLÍCITO do checklist do modal quando informado
+    # (`gerenciamento_tipo`/`gerenciamento_procurador_valor`); senão cai no
+    # padrão de sempre (Substituir procurador + padrão de Configurações ›
+    # e-proc).
+    tipo_gerenciamento = gerenciamento_tipo or TIPO_GERENCIAMENTO
+    if gerenciamento_procurador_valor is not None:
+        procurador_valor = gerenciamento_procurador_valor
+        procurador_rotulo = gerenciamento_procurador_rotulo or procurador_valor
+    else:
+        procurador_padrao = (config_painel_service.get_eproc_procuradores_prefs() or {}).get("procurador_padrao") or {}
+        procurador_valor = procurador_padrao.get("valor") or ""
+        procurador_rotulo = procurador_padrao.get("rotulo") or procurador_valor
+    # "Desassociar procurador" (tipo "D") não tem procurador DESTINO — só os
+    # demais tipos exigem um valor escolhido (mesma regra de "Ações no Eproc").
+    if tipo_gerenciamento != "D" and not procurador_valor:
         msg = ("Ciência protocolada, mas não há procurador padrão configurado em Configurações › "
                "e-proc — Gerenciamento de Processo e movimentação no SISDPU NÃO foram executados. "
                "Configure o procurador padrão e finalize este caso manualmente.")
@@ -200,9 +258,9 @@ async def dar_mera_ciencia(processo: str, ato: str, descricao_mov: str, log_cb) 
                                          mera_ciencia={"resultado": resultado, "log": log})
         return {"ok": False, "erro": msg, "resultado": resultado}
 
-    registrar("info", f"{processo}: executando Gerenciamento de Processo (substituir procurador → "
-                      f'{procurador_padrao.get("rotulo") or procurador_valor})…')
-    res_ger = await acoes_eproc_service.executar_gerenciamento_real(processo, TIPO_GERENCIAMENTO, procurador_valor)
+    registrar("info", f"{processo}: executando Gerenciamento de Processo "
+                      f'({tipo_gerenciamento}{" → " + procurador_rotulo if tipo_gerenciamento != "D" else ""})…')
+    res_ger = await acoes_eproc_service.executar_gerenciamento_real(processo, tipo_gerenciamento, procurador_valor)
     if not res_ger.get("ok"):
         if res_ger.get("bloqueado_por_residual"):
             # NÃO é erro fatal — outro ato (simultâneo ou autônomo) deste
@@ -307,7 +365,7 @@ async def dar_mera_ciencia(processo: str, ato: str, descricao_mov: str, log_cb) 
     registrar("ok", f"{processo}: movimentação registrada no SISDPU. Caso concluído.")
 
     intimacao_service.salvar_estado(
-        processo, status_geral="concluido", erro=None,
+        chave, status_geral="concluido", erro=None,
         mera_ciencia={"resultado": resultado, "log": log, "descricao_mov": descricao_mov,
                       "concluido_em": datetime.now().isoformat(timespec="seconds")},
     )

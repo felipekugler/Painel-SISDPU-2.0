@@ -57,9 +57,17 @@ async def api_listar_casos():
     lote, um bloqueio real do antivírus corporativo (FortiClient: exclusão
     recursiva de pastas por um processo de rede foi lida como possível
     ransomware). Best-effort: falha na purga não pode impedir a listagem
-    normal."""
+    normal. Também tenta a busca secundária de vínculo de PAJ pra processos
+    sem nenhum PAJ reconhecido (`intimacao_service.tentar_vincular_pajs_
+    pendentes` — pedido do usuário 2026-09-25), mesmo espírito best-effort:
+    só lê arquivos locais, mas uma falha aqui também não pode impedir a
+    listagem."""
     try:
         await intimacao_service.purgar_casos_resolvidos()
+    except Exception:
+        pass
+    try:
+        intimacao_service.tentar_vincular_pajs_pendentes()
     except Exception:
         pass
     return JSONResponse({"ok": True, "itens": intimacao_service.listar_casos()})
@@ -97,6 +105,29 @@ async def api_descartar(processo: str, ato: str):
     return JSONResponse(intimacao_service.descartar_caso(processo, ato))
 
 
+@router.get("/api/intimacoes/{processo}/atos", response_class=JSONResponse)
+async def api_atos_do_processo(processo: str):
+    """Todos os atos (1 por `chave_caso`, ver `intimacao_service.listar_casos`)
+    de UM processo, cada um com seus `prazos` crus (evento/data_envio/
+    prazo_dias) e o vínculo de PAJ — usado por telas que já sabem de um
+    prazo cru (ex. "Intimações pendentes" da página do PAJ,
+    `static/js/processo_judicial.js`) e precisam descobrir a qual
+    `chave_caso`/`ato` ele corresponde, sem reimplementar `_agrupar_prazos_
+    por_ato`/`_hash_ato` no front: o chamador casa localmente por
+    (evento, data_envio, prazo_dias)."""
+    itens = intimacao_service.casos_do_processo(processo)
+    casos = [{
+        "chave_caso": item["chave_caso"], "ato": item["chave_caso"].split(":", 1)[-1],
+        "paj_norm": item.get("paj_norm") or "", "vinculo_status": item.get("vinculo_status") or "",
+        "prazos": [
+            {"evento": p.get("evento", ""), "data_envio": p.get("data_envio", ""),
+             "prazo_dias": p.get("prazo_dias", "")}
+            for p in item.get("prazos") or []
+        ],
+    } for item in itens]
+    return JSONResponse({"ok": True, "casos": casos})
+
+
 @router.get("/api/intimacoes/{processo}/evento-referenciado", response_class=JSONResponse)
 async def api_evento_referenciado(processo: str, ato: str):
     """Devolve o(s) evento(s)/ato(s) do processo judicial referenciado(s)
@@ -107,13 +138,54 @@ async def api_evento_referenciado(processo: str, ato: str):
     evento, já baixados ou não) que a página do PAJ já mostra em
     "Intimações pendentes" (`templates/partials/processo_judicial.html` +
     `static/js/processo_judicial.js`) — aqui pra popular o mesmo badge na
-    listagem de Intimações, ANTES de rodar "Analisar"."""
+    listagem de Intimações, ANTES de rodar "Analisar".
+
+    CACHEADO EM DISCO por ato (`ato_referenciado_cache`, 2026-09-25 — pedido
+    explícito do usuário: "a intimação é estática, não faria sentido
+    descartar essa informação pra ter que reler de novo num acesso futuro
+    da página"): a identidade de um ato referenciado (qual evento, qual
+    parte) não muda enquanto o ato existir — abrir a Triagem de Intimações
+    toda vez disparava até 40 consultas ao vivo ao e-proc (uma por linha,
+    com um teto de 6 simultâneas pra não sobrecarregar o site deles), o que
+    tornava o carregamento perceptivelmente lento a cada visita. Validade do
+    cache: até o registro deste ATO ser apagado — o que só acontece quando
+    ele sai da caixa de Prazos e-proc sincronizada (`purgar_casos_
+    resolvidos`, chamada em toda listagem) OU quando alguma ferramenta do
+    painel realmente cumpre o prazo e o ato deixa de existir — nenhuma das
+    duas precisa de lógica de expiração própria aqui, o ciclo de vida do
+    registro já resolve isso sozinho. NUNCA cacheia um resultado `None`
+    (casamento não encontrado) — pode ser falha TRANSITÓRIA (cofre
+    trancado, e-proc fora do ar), não um fato permanente sobre o ato; nesse
+    caso tenta de novo ao vivo na próxima vez, sempre."""
     from services import intimacao_ia_service
     caso = intimacao_service.obter_caso(processo, ato)
     if not caso:
         return JSONResponse({"ok": False, "erro": "Caso não encontrado."}, status_code=404)
+
+    if "ato_referenciado_cache" in caso:
+        return JSONResponse({"ok": True, "dados": caso["ato_referenciado_cache"]})
+
     dados = await intimacao_ia_service.obter_evento_referenciado_leve(processo, caso.get("prazos") or [])
+    if dados is not None:
+        intimacao_service.salvar_estado(caso["chave_caso"], ato_referenciado_cache=dados)
     return JSONResponse({"ok": True, "dados": dados})
+
+
+@router.get("/api/intimacoes/{processo}/eventos-do-ato", response_class=JSONResponse)
+async def api_eventos_do_ato(processo: str, ato: str):
+    """Todos os eventos de intimação (candidatos ao vivo, já filtrados por
+    identidade — ver `intimacao_ia_service._candidatos_do_ato`) que casam
+    com ESTE ato, cada um com um rótulo pronto — alimenta o checklist
+    "Selecione o(s) prazo(s) a ser(em) fechado(s)" do modal de "Dar mera
+    ciência" na página do PAJ (pedido do usuário 2026-09-24, mesmo estilo já
+    usado em "Ações no Eproc"), deixando o Defensor escolher quais eventos
+    fechar quando há litisconsórcio (mais de um candidato no mesmo ato)."""
+    from services import intimacao_ia_service
+    caso = intimacao_service.obter_caso(processo, ato)
+    if not caso:
+        return JSONResponse({"ok": False, "erro": "Caso não encontrado."}, status_code=404)
+    dados = await intimacao_ia_service.listar_eventos_do_ato(processo, caso.get("prazos") or [])
+    return JSONResponse({"ok": True, **dados})
 
 
 # Trava simples contra 2 análises CONCORRENTES do MESMO ato — bug real
@@ -272,14 +344,21 @@ def _chave_mera_ciencia(processo: str, ato: str) -> str:
     return "mc:" + intimacao_service.chave_caso(processo, ato)
 
 
-async def _worker_mera_ciencia(job: _Job, processo: str, ato: str, descricao_mov: str) -> None:
+async def _worker_mera_ciencia(job: _Job, processo: str, ato: str, descricao_mov: str,
+                                eventos_selecionados: list[str] | None,
+                                gerenciamento_tipo: str | None, gerenciamento_procurador_valor: str | None,
+                                gerenciamento_procurador_rotulo: str | None) -> None:
     chave = job.chave
 
     def log_cb(level: str, msg: str) -> None:
         job.emitir({"level": level, "msg": msg})
 
     try:
-        resultado = await mera_ciencia_service.dar_mera_ciencia(processo, ato, descricao_mov, log_cb)
+        resultado = await mera_ciencia_service.dar_mera_ciencia(
+            processo, ato, descricao_mov, log_cb, eventos_selecionados=eventos_selecionados,
+            gerenciamento_tipo=gerenciamento_tipo,
+            gerenciamento_procurador_valor=gerenciamento_procurador_valor,
+            gerenciamento_procurador_rotulo=gerenciamento_procurador_rotulo)
     except Exception as e:  # noqa: BLE001 — nunca deixa o job sem "done"
         resultado = {"ok": False, "erro": f"{type(e).__name__}: {e}"}
         log_cb("erro", f"Falha inesperada: {e}")
@@ -289,7 +368,9 @@ async def _worker_mera_ciencia(job: _Job, processo: str, ato: str, descricao_mov
 
 
 @router.get("/api/intimacoes/{processo}/dar-mera-ciencia")
-async def api_dar_mera_ciencia(processo: str, ato: str, descricao: str = ""):
+async def api_dar_mera_ciencia(processo: str, ato: str, descricao: str = "", eventos: str = "",
+                                gerenciamento_tipo: str = "", gerenciamento_procurador_valor: str = "",
+                                gerenciamento_procurador_rotulo: str = ""):
     """SSE — IRREVERSÍVEL: dispara, para ESTE ATO (`ato` — identifica o
     sub-caso, ver módulo `intimacao_service`), as 3 ações reais e sempre
     iguais que fecham uma intimação de mera ciência (ciência com renúncia ao
@@ -300,18 +381,43 @@ async def api_dar_mera_ciencia(processo: str, ato: str, descricao: str = ""):
     do botão, ANTES do clique (o front também exige um `confirm()` explícito
     antes de chamar esta rota — ver `static/js/intimacoes.js:darMeraCiencia`).
 
+    `eventos` (opcional, pedido do usuário 2026-09-24): nºs de evento
+    separados por vírgula, pra restringir QUAIS eventos fechar quando o ato
+    tem litisconsórcio — ver `services.mera_ciencia_service.dar_mera_
+    ciencia`'s `eventos_selecionados`. Vazio (padrão, usado pela página
+    Intimações) fecha TODOS os eventos identificados automaticamente.
+
+    `gerenciamento_tipo`/`gerenciamento_procurador_valor`/`_rotulo` (opcional,
+    pedido do usuário 2026-09-24): mesmos dropdowns "Gerenciar processo
+    depois de peticionar (substabelecer)?" de "Ações no Eproc", pré-
+    preenchidos com o padrão configurado mas editáveis no modal — sobrepõem
+    o tipo/procurador padrão quando informados. Vazio usa o comportamento de
+    sempre (Substituir procurador + padrão de Configurações › e-proc).
+
     Mesmo padrão de job desacoplado (`_Job`/`_JOBS`) do "/analisar": navegar
     pra outra página nunca cancela a execução em andamento; uma 2ª chamada
     pro MESMO ato REATA na mesma transmissão em vez de disparar duas
-    vezes (`descricao` é ignorada nesse caso — só vale na 1ª chamada, que cria
-    o job)."""
+    vezes (todos os parâmetros são ignorados nesse caso — só valem na 1ª
+    chamada, que cria o job)."""
     chave = _chave_mera_ciencia(processo, ato)
     job = _JOBS.get(chave)
     if job is not None:
         return EventSourceResponse(_tail_job(job))
+    eventos_selecionados = [e.strip() for e in eventos.split(",") if e.strip()] or None
+    # `gerenciamento_tipo` presente = o front mandou o bloco INTEIRO de
+    # override (mesmo quando o procurador vem vazio de propósito — tipo "D"
+    # não tem destino). Só nesse caso repassa `gerenciamento_procurador_
+    # valor` como string (mesmo vazia) — nunca convertido pra `None`, senão
+    # `dar_mera_ciencia` cairia de volta no padrão configurado achando que
+    # não houve override nenhum.
+    tipo_override = gerenciamento_tipo or None
+    valor_override = gerenciamento_procurador_valor if tipo_override else None
+    rotulo_override = (gerenciamento_procurador_rotulo or None) if tipo_override else None
     job = _Job(chave, processo=processo, ato=ato)
     _JOBS[chave] = job
-    job.task = asyncio.create_task(_worker_mera_ciencia(job, processo, ato, descricao))
+    job.task = asyncio.create_task(
+        _worker_mera_ciencia(job, processo, ato, descricao, eventos_selecionados,
+                              tipo_override, valor_override, rotulo_override))
     return EventSourceResponse(_tail_job(job))
 
 

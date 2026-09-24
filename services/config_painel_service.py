@@ -499,14 +499,28 @@ def set_eproc_procuradores_prefs(d: dict) -> dict:
 # no front). Placeholders no texto ([NOME]/[CPF]/[PROCESSO]/[PAJ]/[LOCAL]/
 # [DATA]) são resolvidos no FRONT na hora de usar (ver static/js/acoes_eproc.js
 # e acoes_sisdpu.js), não aqui — aqui é só armazenamento.
+def _chave_ordenacao_nome(item: dict) -> str:
+    """Ordem alfabética tolerante a acento/caixa (ex.: "Ação" perto de
+    "Acordo", não jogado pro fim por causa do "ç") — mesmo espírito de
+    `_norm_oficio_key` acima, aqui só pra ordenar, não pra casar chave."""
+    s = unicodedata.normalize("NFKD", str(item.get("nome") or ""))
+    return "".join(c for c in s if not unicodedata.combining(c)).casefold()
+
+
 def _get_modelos_texto(chave: str) -> list[dict]:
     raw = _ler_raw()
-    return raw.get(chave) or []
+    itens = raw.get(chave) or []
+    # Ordem alfabética por nome (pedido do usuário 2026-09-23) — tanto pra
+    # listagem em Configurações quanto pro dropdown "Usar modelo"/"Usar
+    # despacho" (Ações no Eproc/SISDPU), que consome a MESMA lista.
+    return sorted(itens, key=_chave_ordenacao_nome)
 
 
 def _set_modelos_texto(chave: str, modelos: list[dict]) -> list[dict]:
     """Substitui a lista COMPLETA de modelos — gera `id` pros itens novos
-    (vêm do front sem id, ou com id vazio); descarta item sem nome."""
+    (vêm do front sem id, ou com id vazio); descarta item sem nome. Devolve
+    já em ordem alfabética (ver `_get_modelos_texto`) — o front usa o
+    retorno direto pra atualizar a tela sem precisar recarregar."""
     raw = _ler_raw()
     limpos: list[dict] = []
     for m in modelos or []:
@@ -520,6 +534,7 @@ def _set_modelos_texto(chave: str, modelos: list[dict]) -> list[dict]:
             "nome": nome,
             "texto": str(m.get("texto") or ""),
         })
+    limpos.sort(key=_chave_ordenacao_nome)
     raw[chave] = limpos
     _salvar_raw(raw)
     return limpos
@@ -692,6 +707,40 @@ def set_eproc_docs_retencao_dias(dias) -> int:
     raw["eproc_docs_retencao_dias"] = dias
     _salvar_raw(raw)
     return dias
+
+
+# --- Modelo/esforço do Claude usado na ELABORAÇÃO (botões "Elaborar"/"Analisar") ---
+# Editável em Configurações › Acesso › "Conexão com o Claude", sem precisar editar
+# arquivo nem reiniciar o painel (chat_service resolve isto A CADA sessão nova, não
+# faz cache). get_elaboracao_prefs() SEMPRE devolve um valor CONCRETO (nunca "") —
+# se o usuário nunca escolheu nada na tela, resolve pro valor de fábrica embutido em
+# config.py (ELABORACAO_MODELO/ELABORACAO_EFFORT) — assim a tela mostra direto a
+# opção realmente em uso, sem precisar de um item "padrão" à parte na lista.
+_EFFORTS_VALIDOS = ("low", "medium", "high", "xhigh", "max")
+
+
+def get_elaboracao_prefs() -> dict:
+    raw = _ler_raw()
+    modelo = str(raw.get("elaboracao_modelo") or "").strip()
+    effort = str(raw.get("elaboracao_effort") or "").strip().lower()
+    if not modelo or effort not in _EFFORTS_VALIDOS:
+        import config as _config
+
+        modelo = modelo or (_config.ELABORACAO_MODELO or "opus[1m]")
+        effort = effort if effort in _EFFORTS_VALIDOS else (_config.ELABORACAO_EFFORT or "xhigh")
+    return {"modelo": modelo, "effort": effort}
+
+
+def set_elaboracao_prefs(d: dict) -> dict:
+    raw = _ler_raw()
+    if "modelo" in d:
+        raw["elaboracao_modelo"] = str(d.get("modelo") or "").strip()
+    if "effort" in d:
+        effort = str(d.get("effort") or "").strip().lower()
+        if effort in _EFFORTS_VALIDOS:
+            raw["elaboracao_effort"] = effort
+    _salvar_raw(raw)
+    return get_elaboracao_prefs()
 
 
 def sigla_de_oficio(raw: str) -> str:

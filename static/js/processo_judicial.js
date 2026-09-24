@@ -23,11 +23,59 @@ function processoJudicialBlock(cfg) {
     return {
         processos: cfg.processos || [],
         audiencias: cfg.audiencias || [],
-        resultados: {},        // idx -> resposta de /api/eproc-mcp/triagem (intimacoes + eventos)
+        resultados: {},        // idx -> resposta de /api/eproc-mcp/triagem (intimacoes + eventos + cabecalho)
         prazosProcurador: {},  // idx -> prazos do MEU Painel do Procurador (cache da aba Prazos) | null = sem info
         carregando: {},   // idx -> bool
         erro: {},         // idx -> string
         baixando: {},     // "idx:numeroEvento" -> bool
+        // Identificador do procurador logado (reaproveita a credencial de LOGIN
+        // do e-proc já cadastrada no cofre — ver services/eproc_procurador_
+        // service.py) — usado pra saber a quais partes do processo EU estou
+        // associado, sem adivinhar por polo. Vazio quando o cofre está
+        // trancado/sem credencial "eproc" salva: ver `temPrazosSemIdentidade`.
+        meuIdentificador: '',
+        atosPorProcesso: {},     // idx -> [{chave_caso, ato, paj_norm, prazos:[...]}] | null (ainda não carregado)
+        meraCienciaBusy: {},     // chave (idx + ':' + evento) -> bool
+        // Mesma lista estática de `static/js/acoes_eproc.js:tiposGerenciamento`
+        // (espelha `eproc_client.TIPOS_GERENCIAMENTO`) — reaproveitada aqui pro
+        // dropdown "tipo" do item 2 do modal (pedido do usuário 2026-09-24:
+        // trazer os MESMOS 2 dropdowns de "Ações no Eproc" em vez de texto).
+        tiposGerenciamento: [
+            { valor: 'S', rotulo: 'Substituir procurador' },
+            { valor: 'C', rotulo: 'Associar procurador' },
+            { valor: 'D', rotulo: 'Desassociar procurador' },
+            { valor: 'T', rotulo: 'Substituição Transitória' },
+        ],
+        // Modal de confirmação (substitui o confirm() nativo do navegador —
+        // pedido do usuário 2026-09-24) antes de "Dar mera ciência".
+        // `descricaoAto`: dado fixo deste caso, só exibição/montagem da
+        // sugestão. `prazosDisponiveis`: [{evento_intimacao, label}] — TODOS
+        // os candidatos identificados (por identidade); `prazosSelecionados`:
+        // evento_intimacao -> bool, o checklist "Selecione o(s) prazo(s) a
+        // ser(em) fechado(s)" (mesmo estilo de "Ações no Eproc") — o Defensor
+        // pode desmarcar algum antes de confirmar (ex.: litisconsórcio em que
+        // só parte deve fechar agora). `gerenciamentoTipo`/
+        // `gerenciamentoProcuradorValor`/`Rotulo` e `procuradoresDropdown`:
+        // mesmos 2 dropdowns de "Ações no Eproc" (pedido do usuário
+        // 2026-09-24), pré-preenchidos com o padrão configurado mas
+        // editáveis aqui — só pra ESTE disparo, não altera a configuração
+        // salva. `descricaoMov`/`descricaoMovEditada`: texto sugerido da
+        // movimentação no SISDPU, agora em caixa EDITÁVEL (pedido do usuário
+        // 2026-09-24) — recalculado ao vivo conforme o checklist muda, MAS
+        // só enquanto o Defensor não tiver editado à mão (mesma convenção já
+        // usada em `static/js/intimacoes.js:_descricaoEditada`). `resolver` é
+        // a função `resolve` da Promise devolvida por `_confirmarModal`.
+        // `fase`: 'confirmando' (checklist + dropdowns + Cancelar/Confirmar)
+        // -> 'executando' (spinner, `status` mostra o andamento ao vivo — o
+        // modal FICA ABERTO durante a execução real, nunca fecha sozinho no
+        // meio) -> 'concluido' (só então aparece "Fechar").
+        confirmDialog: {
+            show: false, resolver: null, fase: 'confirmando', status: '', numeroProcesso: '',
+            descricaoAto: '', prazosDisponiveis: [], prazosSelecionados: {},
+            gerenciamentoTipo: 'S', gerenciamentoProcuradorValor: '', gerenciamentoProcuradorRotulo: '',
+            procuradoresDropdown: [],
+            descricaoMov: '', descricaoMovEditada: false,
+        },
 
         // Minimenu "Consultar processo (MCP) / Abrir no navegador" do número
         // do processo — mesmo padrão de posicionamento usado em prazos.html/
@@ -41,7 +89,24 @@ function processoJudicialBlock(cfg) {
         posMenu: { top: 0, left: 0 },
 
         async init() {
-            await Promise.all(this.processos.map((_, idx) => this.carregarIntimacoes(idx)));
+            await Promise.all([
+                this.carregarIdentidade(),
+                ...this.processos.map((_, idx) => this.carregarIntimacoes(idx)),
+            ]);
+        },
+
+        // Mesmo endpoint já usado pela tela de Configurações (exibe "cadastrado
+        // · <usuario>") — reaproveitado aqui só pra saber QUEM é o procurador
+        // logado, nunca a senha. Vazio (cofre trancado/sem credencial "eproc")
+        // = identidade indisponível, ver `temPrazosSemIdentidade`.
+        async carregarIdentidade() {
+            try {
+                const r = await fetch('/api/config/eproc/status');
+                const d = await r.json();
+                this.meuIdentificador = (d && d.usuario) || '';
+            } catch (e) {
+                this.meuIdentificador = '';
+            }
         },
 
         async carregarIntimacoes(idx) {
@@ -101,96 +166,87 @@ function processoJudicialBlock(cfg) {
         // MEU Painel do Procurador (cache da aba Prazos), ao contrário, NUNCA
         // traz intimação de quem eu não sou procurador — não precisa adivinhar
         // nada, é o universo certo por definição (cobre representante legal e
-        // litisconsórcio automaticamente, sem heurística de nome ou de polo).
+        // litisconsórcio automaticamente).
         //
         // Por isso o PAINEL é a fonte PRINCIPAL do que aparece aqui — não um
         // filtro aplicado sobre a triagem. A triagem MCP só ENRIQUECE cada
         // prazo do Painel (evento_referenciado, documentos), quando dá pra casar
-        // por (mesmo dia de envio + mesmo nº de dias, ainda não usado por outro
-        // prazo do Painel — um-para-um, evita casar o mesmo evento da triagem
-        // com dois prazos do Painel). Sem casar, o prazo do Painel aparece do
-        // mesmo jeito, só sem link de documento.
+        // por (mesmo dia de envio + mesmo nº de dias + MESMA parte associada a
+        // mim, ainda não usado por outro prazo do Painel — um-para-um, evita
+        // casar o mesmo evento da triagem com dois prazos do Painel). Sem casar,
+        // o prazo do Painel aparece do mesmo jeito, só sem link de documento.
         //
-        // (Tentei antes usar a triagem como universo e "confirmar" contra o
-        // Painel, com desempate por polo ativo/passivo quando duas intimações
-        // tinham timing idêntico — falha quando a DPU representa o polo passivo
-        // (réu), caso comum. Invertido: o Painel já É o universo, não precisa
-        // desempate nenhum.)
+        // "Mesma parte associada a mim" (2026-09-23) substituiu por completo a
+        // antiga heurística de "polo ativo" (assumia a DPU sempre autora/
+        // requerente, contra o INSS) — ela escolhia a parte ERRADA sempre que a
+        // DPU representava o polo passivo. Caso real que expôs isso: PAJ
+        // 2021/029-02882/processo 5011174-83.2021.4.04.7000 (Curadoria — DPU
+        // representa uma RÉ numa disputa de dependentes de pensão por morte; a
+        // heurística escolhia a intimação da autora, já fechada, e escondia a
+        // da assistida real, ainda aberta). Não há mais adivinhação de papel/
+        // polo nenhuma: `cabecalho.partes[*].representantes[*].identificador`
+        // (já vem de graça na mesma resposta da triagem) diz exatamente a quais
+        // partes o procurador logado está associado.
+        _normalizarNome(s) {
+            return (s || '').replace(/\s+/g, ' ').trim().toUpperCase();
+        },
+        _partesDoProcurador(idx) {
+            const alvo = this._normalizarNome(this.meuIdentificador);
+            const nomes = new Set();
+            if (!alvo) return nomes;
+            const r = this.resultados[idx];
+            const partes = (r && r.cabecalho && r.cabecalho.partes) || [];
+            partes.forEach((p) => {
+                const reps = p.representantes || [];
+                if (reps.some((rep) => this._normalizarNome(rep.identificador) === alvo)) {
+                    nomes.add(this._normalizarNome(p.nome));
+                }
+            });
+            return nomes;
+        },
+        _parteIntimadaEhMinha(parteIntimada, minhasPartes) {
+            if (!minhasPartes.size) return false;
+            const s = parteIntimada || '';
+            const i = s.indexOf(' - ');
+            const nome = i === -1 ? s : s.slice(i + 3);
+            return minhasPartes.has(this._normalizarNome(nome));
+        },
+        // Sem identificador do procurador (cofre trancado/sem credencial "eproc"
+        // salva), NÃO há como saber a quais partes associar — nunca arrisca
+        // mostrar (poderia ser de outra parte, ex. INSS) nem esconder (poderia
+        // ser real e nossa). Ver `temPrazosSemIdentidade` — mostra um aviso
+        // pedindo pra destrancar, em vez de uma seção vazia sem explicação.
         //
-        // Papéis que NUNCA são a parte representada pela DPU — perito,
-        // testemunha, terceiro. Diferente de Autor/Réu (a DPU pode estar em
-        // QUALQUER polo dependendo do caso — por isso não dá pra usar polo pra
-        // decidir "é meu"), esses papéis são estruturalmente sempre de outra
-        // pessoa; excluir é seguro em qualquer caso, não uma adivinhação.
-        // Sem isso, quando o Painel não tem dado nenhum pro processo (fail-
-        // open) e a única intimação ativa na janela é a de um perito (ex.:
-        // prazo pra entregar laudo), ela aparecia como se fosse da DPU.
-        _papelDe(it) {
-            return (it.parte_intimada || '').split(/[-–]/)[0].trim().toUpperCase();
-        },
-        _ehTerceiroNuncaDpu(it) {
-            // MPF, Unidade Externa (ex.: AGU-Cálculos) e Agência da Previdência Social
-            // são da MESMA natureza de Perito/Testemunha/Terceiro: papéis estruturais
-            // do processo que a DPU jamais representa — seguros de excluir sempre,
-            // não é uma adivinhação de polo. Faltava "MPF" aqui: intimação de
-            // fiscal-da-lei (comum em Requisição de Pagamento) foi escolhida por
-            // engano como rótulo de um prazo do Painel do Procurador quando as
-            // intimações dos assistidos já estavam fechadas (ciência dada) e só
-            // sobravam MPF/INSS como candidatos com mesmo dia+prazo — nenhum dos
-            // dois é polo ativo, e o desempate caía no primeiro da lista (MPF).
-            // Bug real relatado 2026-08-18 (PAJ 2024/029-01535).
-            return ['PERITO', 'PERITA', 'TESTEMUNHA', 'TERCEIRO', 'ASSISTENTE TÉCNICO', 'ASSISTENTE TECNICO',
-                     'MPF', 'UNIDADE EXTERNA', 'AGÊNCIA DA PREVIDÊNCIA SOCIAL', 'AGENCIA DA PREVIDENCIA SOCIAL']
-                .includes(this._papelDe(it));
-        },
-        // Polos que a DPU tipicamente representa no Previdenciário (o segurado,
-        // contra o INSS — sempre réu/requerido/executado/impetrado). A triagem MCP
-        // traz uma intimação por PARTE do processo (autor E réu, com mesmo dia/
-        // prazo quando saem juntas — ex. sentença) — sem esta preferência, casar só
-        // por dia+dias podia pegar a intimação do INSS em vez da do assistido,
-        // mesmo o prazo do Painel sendo garantidamente da DPU (o Painel só lista
-        // prazos onde EU sou procurador — só faltava desempatar QUAL parte da
-        // triagem corresponde). Mesma heurística de
-        // `acoes_eproc_service._PAPEL_POLO_ATIVO` (Python). Bug real corrigido
-        // 2026-08-13 (PAJ 2026/029-01734: o prazo mostrado era o do INSS).
-        _PAPEL_POLO_ATIVO: ['AUTOR', 'REQUERENTE', 'IMPETRANTE', 'EXEQUENTE', 'RECLAMANTE', 'RECORRENTE'],
-        // SEM fail-open (removido — era o problema real): sem prazo confirmado
-        // no Painel pra este processo, o universo é VAZIO. Nunca cai pra
-        // mostrar a triagem MCP crua (que pode trazer INSS, perito, etc.) só
-        // porque o Painel não tem dado — a seção de intimações simplesmente
-        // não aparece (ver `intimacoesAtivas` abaixo e o x-show no partial),
-        // em vez de arriscar mostrar algo que nunca esteve confirmado como
-        // sendo da DPU.
+        // Com identificador disponível: sem prazo confirmado no Painel pra este
+        // processo, o universo é VAZIO — nunca cai pra mostrar a triagem MCP
+        // crua (poderia trazer INSS/perito/etc.) só porque o Painel não tem
+        // dado (ver `temPrazosSemIdentidade`/x-show no partial).
         intimacoesAtivas(idx) {
             const lista = this.prazosProcurador[idx];
-            if (!lista || !lista.length) return [];
+            if (!lista || !lista.length || !this.meuIdentificador) return [];
 
             const r = this.resultados[idx];
-            // TODAS as intimações da triagem (ativas E já fechadas), exceto papéis
-            // que a DPU nunca representa. Precisamos das FECHADAS também: um prazo
-            // do Painel do Procurador cujo correspondente na triagem já fechou (ex.:
-            // recurso protocolado, ciência dada) precisa DESAPARECER daqui — não
-            // continuar aparecendo com dados crus/desatualizados do cache, e pior,
-            // podendo casar por engano com a intimação AINDA aberta de outra parte
-            // (ex. o INSS) só por ela ter sobrado como único candidato quando a
-            // nossa já não entrava na busca por estar fechada. Bug real confirmado
+            // TODAS as intimações da triagem (ativas E já fechadas) — precisamos
+            // das FECHADAS também: um prazo do Painel do Procurador cujo
+            // correspondente na triagem já fechou (ex.: recurso protocolado,
+            // ciência dada) precisa DESAPARECER daqui — não continuar aparecendo
+            // com dados crus/desatualizados do cache. Bug real confirmado
             // 2026-08-22 (PAJ 2026/029-02440: Recurso Inominado já protocolado
             // fechando a intimação do assistido; a tela continuava "pendente"
             // mostrando a intimação — ainda aberta — do INSS no lugar).
-            const todas = (r ? (r.intimacoes || []) : []).filter((it) => !this._ehTerceiroNuncaDpu(it));
+            const todas = r ? (r.intimacoes || []) : [];
+            const minhasPartes = this._partesDoProcurador(idx);
             const usadas = new Set();
             return lista.map((p) => {
                 const diaP = this._soData(p.data_envio);
                 const diasP = parseInt(p.prazo_dias, 10);
-                // Junta TODOS os candidatos do mesmo dia+dias (pode haver mais de um —
-                // ex. sentença intima autor E réu no mesmo evento/dia) e prefere o
-                // polo ativo (ver _PAPEL_POLO_ATIVO) — nunca escolhe o primeiro que
-                // aparecer na triagem (podia ser o do INSS). A preferência de polo
-                // decide QUAL candidato é "o nosso" independente de estar aberto ou
-                // fechado — só depois de achar o nosso é que olhamos se fechou.
+                // Junta TODOS os candidatos do mesmo dia+dias que sejam de uma
+                // parte associada a mim — pode haver mais de um só quando eu
+                // represento mais de uma parte no MESMO ato (litisconsórcio).
                 const candidatos = [];
                 todas.forEach((it, i) => {
                     if (usadas.has(i)) return;
+                    if (!this._parteIntimadaEhMinha(it.parte_intimada, minhasPartes)) return;
                     // data_hora = expedição da PRÓPRIA intimação (o que casa com o
                     // "data_envio" do Painel do Procurador) — NÃO enviado_em (sub-dado
                     // "Domicílio Judicial Eletrônico: Enviado em...", momento distinto
@@ -202,24 +258,16 @@ function processoJudicialBlock(cfg) {
                     candidatos.push(i);
                 });
                 if (candidatos.length) {
-                    candidatos.sort((a, b) => {
-                        const poloA = this._PAPEL_POLO_ATIVO.includes(this._papelDe(todas[a])) ? 0 : 1;
-                        const poloB = this._PAPEL_POLO_ATIVO.includes(this._papelDe(todas[b])) ? 0 : 1;
-                        if (poloA !== poloB) return poloA - poloB;
-                        // Dentro do MESMO polo, prefere a intimação ainda ATIVA — evita
-                        // pegar por engano uma intimação ANTIGA/já fechada da mesma parte
-                        // que, por coincidência, tem o mesmo dia+prazo de uma outra
-                        // intimação (de ato diferente) ainda em curso. Sem isso, a busca
-                        // ampliada pra achar prazo fechado (ver comentário acima) podia
-                        // escolher a fechada e ESCONDER um prazo genuinamente aberto — bug
-                        // real confirmado 2026-08-24 (PAJ 2026/029-01909: JADIRO tinha 2
-                        // intimações de 5 dias no mesmo dia — uma antiga já encerrada por
-                        // petição, outra da decisão de tutela, ainda aberta — e o
-                        // desempate só por polo escolhia a fechada).
-                        const ativaA = todas[a].ativa ? 0 : 1;
-                        const ativaB = todas[b].ativa ? 0 : 1;
-                        return ativaA - ativaB;
-                    });
+                    // Todos os candidatos aqui já são MINHAS partes (nome batido
+                    // via cabecalho.partes) — não sobra ambiguidade de polo pra
+                    // desempatar; prefere só o ainda ATIVO entre eles (evita pegar
+                    // por engano uma intimação ANTIGA/já fechada da mesma parte
+                    // que, por coincidência, tem o mesmo dia+prazo de uma outra
+                    // intimação — de ato diferente — ainda em curso). Bug real
+                    // confirmado 2026-08-24 (PAJ 2026/029-01909: JADIRO tinha 2
+                    // intimações de 5 dias no mesmo dia — uma antiga já encerrada
+                    // por petição, outra da decisão de tutela, ainda aberta).
+                    candidatos.sort((a, b) => (todas[a].ativa ? 0 : 1) - (todas[b].ativa ? 0 : 1));
                     const iMatch = candidatos[0];
                     usadas.add(iMatch);
                     const it = todas[iMatch];
@@ -229,7 +277,15 @@ function processoJudicialBlock(cfg) {
                     // sincronização) ainda o liste; null aqui = removido do resultado
                     // (ver .filter(Boolean) no fim). Se ainda ativo, mostra normal
                     // (já tem evento_referenciado/docs).
-                    return it.ativa ? it : null;
+                    // `_painelEvento`/`_painelDataEnvio`/`_painelPrazoDias`: os 3
+                    // campos CRUS do Painel do Procurador (nunca os da triagem, que
+                    // têm nomes/formatos diferentes) — únicos que `intimacao_service.
+                    // _hash_ato` usa pra identificar o ato; preservados aqui pra
+                    // `_chaveCasoDe` conseguir cruzar esta linha com `/api/intimacoes/
+                    // {processo}/atos` sem precisar reimplementar o hash no front.
+                    return it.ativa
+                        ? { ...it, _painelEvento: p.evento, _painelDataEnvio: p.data_envio, _painelPrazoDias: p.prazo_dias }
+                        : null;
                 }
                 // Sem correspondência na triagem (fora da janela de eventos, p.ex.)
                 // — mostra só com os dados do próprio Painel, sem link de documento.
@@ -246,11 +302,343 @@ function processoJudicialBlock(cfg) {
                     previsao_ciencia_ficta: p.inicio_estimado || '',
                     evento_referenciado: null,
                     dias_restantes: null,
+                    _painelEvento: p.evento, _painelDataEnvio: p.data_envio, _painelPrazoDias: p.prazo_dias,
                 };
             }).filter(Boolean);
         },
         totalIntimacoesAtivas() {
             return this.processos.reduce((acc, _, idx) => acc + this.intimacoesAtivas(idx).length, 0);
+        },
+        // Há prazo no Painel pra este processo, mas sem identificador do
+        // procurador não dá pra saber a quais partes associar — mostra um
+        // aviso pedindo pra destrancar o cofre, em vez de uma tabela vazia
+        // sem explicação (opção escolhida pelo usuário 2026-09-23: nunca
+        // arriscar mostrar intimação de outra parte só pra não ficar vazio).
+        temPrazosSemIdentidade(idx) {
+            const lista = this.prazosProcurador[idx];
+            return !this.meuIdentificador && !!(lista && lista.length);
+        },
+
+        // --- "Dar mera ciência" / atalho de petição — badges na coluna ao lado
+        // de "Ato referenciado" (pedido do usuário 2026-09-23). Reaproveita 100%
+        // do backend já usado pela página Intimações (`services.mera_ciencia_
+        // service`, endpoint SSE `/api/intimacoes/{processo}/dar-mera-ciencia`)
+        // — só precisa resolver, aqui, a qual `chave_caso`/`ato` esta LINHA
+        // corresponde (a página Intimações já recebe isso pronto de
+        // `listar_casos()`; aqui a origem do dado é outra, a triagem ao vivo +
+        // Painel, sem esse hash calculado). "1 clique puro" (pedido explícito
+        // do usuário 2026-09-24): sem caixa de revisão — a descrição é
+        // resolvida e disparada no mesmo clique, só com um confirm() nativo
+        // mostrando o texto antes de protocolar de verdade.
+
+        // Busca (1x por processo, sob demanda) os atos já conhecidos por
+        // `intimacao_service` pra este processo — cada um com seus prazos
+        // crus (evento/data_envio/prazo_dias), usados só pra cruzar com
+        // `_painelEvento`/`_painelDataEnvio`/`_painelPrazoDias` da linha.
+        async _carregarAtosDoProcesso(idx) {
+            if (this.atosPorProcesso[idx]) return this.atosPorProcesso[idx];
+            const numero = this.processos[idx].processo_judicial;
+            try {
+                const r = await (await fetch(`/api/intimacoes/${encodeURIComponent(numero)}/atos`)).json();
+                this.atosPorProcesso[idx] = (r && r.ok) ? (r.casos || []) : [];
+            } catch (e) {
+                this.atosPorProcesso[idx] = [];
+            }
+            return this.atosPorProcesso[idx];
+        },
+        // Casa esta linha (pelos 3 campos crus preservados em `intimacoesAtivas`)
+        // contra os atos do processo — mesma identidade (evento+data_envio+
+        // prazo_dias) que `intimacao_service._hash_ato` usa pra gerar o
+        // `chave_caso`, só que comparada aqui, nunca recalculada (o hash em si
+        // é implementação interna do backend, não precisa ser replicado).
+        _acharAto(it, casos) {
+            for (const caso of casos || []) {
+                const bate = (caso.prazos || []).some((p) =>
+                    p.evento === it._painelEvento && p.data_envio === it._painelDataEnvio
+                    && String(p.prazo_dias) === String(it._painelPrazoDias));
+                if (bate) return caso;
+            }
+            return null;
+        },
+        _chaveMeraCiencia(idx, it) {
+            return idx + ':' + (it._painelEvento || '') + '|' + (it._painelDataEnvio || '') + '|' + (it._painelPrazoDias || '');
+        },
+        meraCienciaRodando(idx, it) {
+            return !!this.meraCienciaBusy[this._chaveMeraCiencia(idx, it)];
+        },
+        // Sugestão da descrição da movimentação no SISDPU, montada a partir
+        // dos eventos MARCADOS no checklist (não mais todos os disponíveis —
+        // pedido do usuário 2026-09-24: poder desmarcar algum evento do
+        // litisconsórcio antes de fechar). Só uma SUGESTÃO agora — o texto
+        // final vem de `confirmDialog.descricaoMov` (caixa editável, pedido
+        // do usuário 2026-09-24), ver `_atualizarDescricaoSugerida`.
+        // Função PURA (não lê `this.confirmDialog` — recebe tudo por
+        // parâmetro) pra poder ser chamada tanto ANTES do modal existir
+        // (sugestão inicial, ver `darMeraCienciaPaj`) quanto DEPOIS (recálculo
+        // ao vivo, ver `_atualizarDescricaoSugerida`), sem duplicar a lógica.
+        _descricaoMeraCiencia(prazosDisponiveis, prazosSelecionados, descricaoAto) {
+            const eventos = (prazosDisponiveis || [])
+                .filter((p) => prazosSelecionados[p.evento_intimacao])
+                .map((p) => String(p.evento_intimacao));
+            if (!eventos.length) return '';
+            const plural = eventos.length > 1;
+            return `Ciente da intimação do${plural ? 's' : ''} evento${plural ? 's' : ''} `
+                 + `(${eventos.join(', ')}), referente a ${descricaoAto || 'ato judicial'}.`;
+        },
+        // Chamada a cada clique num checkbox do checklist — só recalcula a
+        // sugestão enquanto o Defensor não tiver editado a caixa de texto à
+        // mão (mesma convenção de `static/js/intimacoes.js:_descricaoEditada`
+        // — nunca sobrescreve uma edição manual).
+        _atualizarDescricaoSugerida() {
+            const cd = this.confirmDialog;
+            if (cd.descricaoMovEditada) return;
+            cd.descricaoMov = this._descricaoMeraCiencia(cd.prazosDisponiveis, cd.prazosSelecionados, cd.descricaoAto);
+        },
+        _algumPrazoSelecionado() {
+            return Object.values(this.confirmDialog.prazosSelecionados || {}).some(Boolean);
+        },
+        // "Desassociar procurador" (tipo "D") não tem procurador destino —
+        // só os demais tipos exigem um escolhido (mesma regra de "Ações no
+        // Eproc"/do backend, ver `mera_ciencia_service.dar_mera_ciencia`).
+        _gerenciamentoValido() {
+            const cd = this.confirmDialog;
+            return cd.gerenciamentoTipo === 'D' || !!cd.gerenciamentoProcuradorValor;
+        },
+        // Guarda o rótulo junto do valor pro log/histórico ficarem legíveis
+        // (mesmo padrão de `static/js/acoes_eproc.js:onTrocarProcuradorDestino`).
+        _onTrocarGerenciamentoProcurador() {
+            const cd = this.confirmDialog;
+            const p = (cd.procuradoresDropdown || []).find((p) => p.valor === cd.gerenciamentoProcuradorValor);
+            cd.gerenciamentoProcuradorRotulo = p ? p.rotulo : '';
+        },
+        // Modal de confirmação simples (substitui confirm() nativo) — devolve
+        // uma Promise<boolean>, resolvida pelos botões do modal teleportado
+        // (ver templates/partials/processo_judicial.html). `dados`:
+        // {descricaoAto, prazosDisponiveis, prazosSelecionados,
+        // gerenciamentoTipo, gerenciamentoProcuradorValor,
+        // gerenciamentoProcuradorRotulo, procuradoresDropdown, descricaoMov}.
+        _confirmarModal(dados) {
+            return new Promise((resolve) => {
+                this.confirmDialog = {
+                    show: true, resolver: resolve, fase: 'confirmando', status: '',
+                    numeroProcesso: dados.numeroProcesso,
+                    descricaoAto: dados.descricaoAto,
+                    prazosDisponiveis: dados.prazosDisponiveis,
+                    prazosSelecionados: dados.prazosSelecionados,
+                    gerenciamentoTipo: dados.gerenciamentoTipo,
+                    gerenciamentoProcuradorValor: dados.gerenciamentoProcuradorValor,
+                    gerenciamentoProcuradorRotulo: dados.gerenciamentoProcuradorRotulo,
+                    procuradoresDropdown: dados.procuradoresDropdown,
+                    descricaoMov: dados.descricaoMov, descricaoMovEditada: false,
+                };
+            });
+        },
+        _responderConfirmModal(ok) {
+            // Só faz algo na fase "confirmando" — clique no backdrop/Cancelar
+            // durante a execução real NUNCA fecha o modal (ver `_fecharConfirmModal`,
+            // só habilitada depois de concluído). Confirmar sem prazo marcado,
+            // sem descrição ou com gerenciamento incompleto tampouco faz nada
+            // (botão já fica desabilitado nesses casos, isto aqui é só a
+            // segunda trava).
+            if (this.confirmDialog.fase !== 'confirmando') return;
+            if (ok && (!this._algumPrazoSelecionado() || !this.confirmDialog.descricaoMov.trim()
+                       || !this._gerenciamentoValido())) return;
+            const resolver = this.confirmDialog.resolver;
+            if (ok) {
+                this.confirmDialog.fase = 'executando';
+                this.confirmDialog.resolver = null;
+            } else {
+                this._fecharConfirmModal();
+            }
+            if (resolver) resolver(ok);
+        },
+        _fecharConfirmModal() {
+            this.confirmDialog = {
+                show: false, resolver: null, fase: 'confirmando', status: '', numeroProcesso: '',
+                descricaoAto: '', prazosDisponiveis: [], prazosSelecionados: {},
+                gerenciamentoTipo: 'S', gerenciamentoProcuradorValor: '', gerenciamentoProcuradorRotulo: '',
+                procuradoresDropdown: [], descricaoMov: '', descricaoMovEditada: false,
+            };
+        },
+        async darMeraCienciaPaj(idx, it) {
+            const chaveBusy = this._chaveMeraCiencia(idx, it);
+            if (this.meraCienciaBusy[chaveBusy]) return;
+            const numero = this.processos[idx].processo_judicial;
+
+            this.meraCienciaBusy[chaveBusy] = true;
+            // Sem texto de status aqui (pedido do usuário 2026-09-24) — só o
+            // spinner do botão (via `meraCienciaRodando`) enquanto resolve o ato
+            // e a descrição por trás; a 1ª coisa visível pro Defensor é o modal
+            // de confirmação. `_executarMeraCienciaSSE` assume o controle de `meraCienciaBusy`
+            // (zera sozinha ao terminar, sucesso ou erro) só depois de disparada
+            // — `entregue` marca esse ponto pra este `finally` só zerar `busy` nos
+            // caminhos de saída ANTES dela (ato não encontrado, sem descrição,
+            // cancelado no confirm()).
+            let entregue = false;
+            try {
+                const casos = await this._carregarAtosDoProcesso(idx);
+                const caso = this._acharAto(it, casos);
+                if (!caso) {
+                    alert('Não foi possível localizar este ato na Triagem Inteligente de Intimações '
+                        + '— abra a página "Intimações" para tratar este caso.');
+                    return;
+                }
+                if (caso.paj_norm && window._paj_norm && caso.paj_norm !== window._paj_norm) {
+                    alert('Este processo está vinculado a outro PAJ (' + caso.paj_norm + ') na página '
+                        + 'Intimações — corrija o vínculo lá antes de continuar por aqui.');
+                    return;
+                }
+
+                // Checklist "Selecione o(s) prazo(s) a ser(em) fechado(s)" — mesmo
+                // estilo/pedido do usuário 2026-09-24 de "Ações no Eproc". Todos os
+                // candidatos identificados (por identidade — ver `eproc_procurador_
+                // service`) vêm pré-marcados; o Defensor pode desmarcar algum antes
+                // de confirmar (ex.: litisconsórcio em que só um coautor deve
+                // fechar agora).
+                const eventosResp = await (await fetch(`/api/intimacoes/${encodeURIComponent(numero)}/eventos-do-ato?ato=${encodeURIComponent(caso.ato)}`)).json();
+                const prazosDisponiveis = (eventosResp && eventosResp.ok) ? (eventosResp.itens || []) : [];
+                if (!prazosDisponiveis.length) {
+                    alert('Não foi possível identificar automaticamente o evento de intimação — '
+                        + 'use a página "Intimações" para tratar este caso.');
+                    return;
+                }
+                const prazosSelecionados = {};
+                prazosDisponiveis.forEach((p) => { prazosSelecionados[p.evento_intimacao] = true; });
+
+                // Dropdowns "Gerenciar processo depois de peticionar
+                // (substabelecer)?" — mesmos 2 elementos de "Ações no Eproc"
+                // (pedido do usuário 2026-09-24), pré-preenchidos com o padrão
+                // configurado mas editáveis só pra ESTE disparo.
+                let procuradoresDropdown = [];
+                let gerenciamentoProcuradorValor = '';
+                let gerenciamentoProcuradorRotulo = '';
+                try {
+                    const cfg = await (await fetch('/api/config/eproc-procuradores')).json();
+                    procuradoresDropdown = (cfg.procuradores_favoritos && cfg.procuradores_favoritos.length)
+                        ? cfg.procuradores_favoritos : (cfg.procuradores_todos || []);
+                    const padrao = cfg && cfg.procurador_padrao;
+                    if (padrao) {
+                        gerenciamentoProcuradorValor = padrao.valor || '';
+                        gerenciamentoProcuradorRotulo = padrao.rotulo || '';
+                    }
+                } catch (e) { /* segue sem padrão — o Defensor escolhe na hora */ }
+
+                const descricaoSugerida = this._descricaoMeraCiencia(
+                    prazosDisponiveis, prazosSelecionados, eventosResp.descricao_ato || '');
+
+                const confirmado = await this._confirmarModal({
+                    descricaoAto: eventosResp.descricao_ato || '',
+                    prazosDisponiveis, prazosSelecionados,
+                    numeroProcesso: numero,
+                    gerenciamentoTipo: 'S', gerenciamentoProcuradorValor, gerenciamentoProcuradorRotulo,
+                    procuradoresDropdown,
+                    descricaoMov: descricaoSugerida,
+                });
+                if (!confirmado) return;
+
+                const cd = this.confirmDialog;
+                const eventosSelecionados = prazosDisponiveis
+                    .filter((p) => prazosSelecionados[p.evento_intimacao])
+                    .map((p) => String(p.evento_intimacao));
+                const descricao = cd.descricaoMov.trim();
+                const gerTipo = cd.gerenciamentoTipo;
+                const gerValor = gerTipo === 'D' ? '' : cd.gerenciamentoProcuradorValor;
+                const gerRotulo = gerTipo === 'D' ? '' : cd.gerenciamentoProcuradorRotulo;
+
+                entregue = true;
+                await this._executarMeraCienciaSSE(idx, chaveBusy, numero, caso.ato, descricao, eventosSelecionados,
+                                                    gerTipo, gerValor, gerRotulo);
+            } finally {
+                if (!entregue) this.meraCienciaBusy[chaveBusy] = false;
+            }
+        },
+        _executarMeraCienciaSSE(idx, chaveBusy, numero, ato, descricao, eventosSelecionados,
+                                 gerenciamentoTipo, gerenciamentoProcuradorValor, gerenciamentoProcuradorRotulo) {
+            return new Promise((resolve) => {
+                this.confirmDialog.status = 'Executando…';
+                const qs = new URLSearchParams({
+                    descricao, ato, eventos: (eventosSelecionados || []).join(','),
+                    gerenciamento_tipo: gerenciamentoTipo || '',
+                    gerenciamento_procurador_valor: gerenciamentoProcuradorValor || '',
+                    gerenciamento_procurador_rotulo: gerenciamentoProcuradorRotulo || '',
+                });
+                const es = new EventSource(`/api/intimacoes/${encodeURIComponent(numero)}/dar-mera-ciencia?${qs}`);
+                es.addEventListener('log', (ev) => {
+                    try { this.confirmDialog.status = JSON.parse(ev.data).msg; } catch (e) { /* ignore */ }
+                });
+                es.addEventListener('done', async (ev) => {
+                    let res = {};
+                    try { res = JSON.parse(ev.data); } catch (e) { /* ignore */ }
+                    this.meraCienciaBusy[chaveBusy] = false;
+                    es.close();
+                    if (res.ok) {
+                        // Sucesso (pedido do usuário 2026-09-24): atualiza as
+                        // movimentações do PAJ (mesma função global já usada pelo
+                        // ícone de atualizar da tabela de movimentações) e recarrega
+                        // a página inteira — nunca fica só no "Concluído ✓" sem dar
+                        // pro Defensor a conferência visual do que foi lançado no
+                        // SISDPU. Nunca resolve/chega no `finally` daqui pra baixo —
+                        // a própria navegação encerra este fluxo.
+                        this.confirmDialog.status = 'Concluído ✓ — atualizando movimentações do PAJ…';
+                        if (typeof window.atualizarMovimentacoesPaj === 'function' && window._paj_norm) {
+                            try { await window.atualizarMovimentacoesPaj(window._paj_norm); } catch (e) { /* ignore */ }
+                        }
+                        window.location.reload();
+                        return;
+                    }
+                    this.confirmDialog.status = 'Erro: ' + (res.erro || 'falha desconhecida');
+                    this.confirmDialog.fase = 'concluido';
+                    await this.carregarIntimacoes(idx);
+                    resolve();
+                });
+                es.onerror = () => {
+                    this.confirmDialog.status = 'Erro de conexão com o servidor';
+                    this.confirmDialog.fase = 'concluido';
+                    this.meraCienciaBusy[chaveBusy] = false;
+                    es.close();
+                    resolve();
+                };
+            });
+        },
+
+        // Atalho "petição" — expande e rola até "Ações no Eproc" (já embutida
+        // mais abaixo na própria página do PAJ), pré-selecionando o processo
+        // quando o PAJ tem mais de um vinculado. Módulo separado (x-data
+        // próprio, `acoesEprocBlock`) — acessado via `Alpine.$data()` sobre o
+        // elemento com `id="acoes-eproc-block"` (ver nota em templates/
+        // paj_detail.html), nunca por `$refs` (quebra quando x-ref e x-data
+        // ficam no mesmo elemento — ver memória "Alpine x-ref on same element
+        // as x-data").
+        async abrirPeticaoPara(idx) {
+            const numero = this.processos[idx].processo_judicial;
+            const el = document.getElementById('acoes-eproc-block');
+            if (!el) return;
+            const bloco = Alpine.$data(el);
+            if (!bloco) return;
+            try {
+                // NUNCA `bloco.abrir()` direto — é um TOGGLE (fecharia se já
+                // estivesse aberto). Garante aberto+carregado de forma
+                // idempotente, replicando só a metade "abrir" do toggle.
+                if (!bloco.aberto) {
+                    bloco.aberto = true;
+                    await bloco._carregarAoAbrir();
+                }
+                if (bloco.processos && bloco.processos.length > 1 && bloco.processoSelecionado !== numero) {
+                    bloco.processoSelecionado = numero;
+                    await bloco.trocarProcesso();
+                }
+            } finally {
+                // `finally`: rola mesmo se abrir/trocar processo falhar no meio
+                // (ex.: falha de rede ao carregar prazos) — sem isso, uma
+                // exceção ali impedia a linha de baixo de rodar, e o clique
+                // parecia "não fazer nada" além de abrir o cabeçalho. `$nextTick`
+                // (não `requestAnimationFrame`) espera o Alpine terminar de
+                // desocultar o conteúdo (`x-show="aberto"`) — sem isso, o
+                // `scrollIntoView` podia medir a altura ainda colapsada (bug
+                // real relatado 2026-09-24: "abre mas não rola").
+                await new Promise((resolve) => this.$nextTick(resolve));
+                el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+            }
         },
 
         // Mesma paleta usada em prazos.html/eproc_consultar.html: amarelo=aberta,

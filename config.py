@@ -50,19 +50,30 @@ TIMEOUT_OCR_POR_PAGINA_SEG = int(os.getenv("TIMEOUT_OCR_POR_PAGINA_SEG", "30"))
 OCR_PREPROC_ATIVO = os.getenv("OCR_PREPROC", "1") not in ("0", "false", "False", "")
 OCR_PREPROC_TIMEOUT_SEG = int(os.getenv("OCR_PREPROC_TIMEOUT_SEG", "600"))
 
-# Modelo usado pela ELABORACAO de pecas (Claude Code CLI), tanto individual
-# quanto em lote. Default: Opus com janela de 1M tokens — o melhor pra analise
-# juridica densa (le todos os anexos sem estourar contexto). Fixar aqui evita
-# depender do default da conta (~/.claude/settings.json). Ajuste no .env se
-# precisar: ELABORACAO_MODELO=opus / sonnet / claude-opus-4-8 / etc. Defina
-# vazio ("") pra deixar o CLI escolher o default da conta.
-ELABORACAO_MODELO = os.getenv("ELABORACAO_MODELO", "opus[1m]")
+# Modelo/esforco (--model/--effort do Claude CLI) usados pela ELABORACAO de
+# pecas e pelo "Analisar" (BI/BPC/Pensao etc.), tanto individual quanto em
+# lote. Estes dois valores sao só o FALLBACK de fábrica: o controle do dia a
+# dia é em Configurações › Acesso › "Conexão com o Claude" no próprio painel
+# (painel_config.json, via config_painel_service.get_elaboracao_prefs() —
+# ver chat_service.ChatSession._resolver_modelo_effort()), que tem
+# prioridade e não exige restart. Só editar aqui/no .env se quiser MUDAR o
+# valor de fábrica em si (o que a tela usa quando os campos estão em
+# branco) — não é mais o lugar prático de ajustar isso no dia a dia.
+# Default: Opus 5 com janela de 1M tokens — o melhor pra analise juridica densa
+# (le todos os anexos sem estourar contexto). ID versionado explicito (nao o
+# apelido "opus"): testado ao vivo em 23/09/2026 e confirmado que o apelido
+# generico "opus"/"opus[1m]" resolvia pro Opus 4.8 (mais antigo) nesta conta/
+# instalacao do CLI, nao pro mais recente — apelido NAO garante "sempre o
+# mais novo" (ver conversa). Atualizado de "opus[1m]" (Opus 4.8) para
+# "claude-opus-5[1m]" (Opus 5) a pedido do usuario, mesmo dia. Fixar aqui
+# evita depender do default da conta (~/.claude/settings.json). Vazio ("")
+# pra deixar o CLI escolher o default da conta.
+ELABORACAO_MODELO = os.getenv("ELABORACAO_MODELO", "claude-opus-5[1m]")
 
-# Nivel de ESFORCO (--effort do Claude CLI) da elaboracao — controla quanto o
-# modelo raciocina/gasta tokens. Valores: low, medium, high (default do CLI),
-# xhigh, max. Default aqui: xhigh (racioco profundo recomendado pra Opus 4.x em
-# tarefas analiticas; "max" rende ganho pequeno por custo bem maior). Fixar aqui
-# evita depender do ambiente (CLAUDE_CODE_EFFORT_LEVEL). Vazio = default do CLI.
+# Nivel de ESFORCO — controla quanto o modelo raciocina/gasta tokens. Valores:
+# low, medium, high (default do CLI), xhigh, max. Default aqui: xhigh
+# (raciocinio profundo recomendado pra Opus 4.x em tarefas analiticas; "max"
+# rende ganho pequeno por custo bem maior). Vazio = default do CLI.
 ELABORACAO_EFFORT = os.getenv("ELABORACAO_EFFORT", "xhigh")
 
 # Triagem inteligente do "Elaborar todos" (modo automatico). Roteia a skill por

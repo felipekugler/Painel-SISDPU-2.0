@@ -290,28 +290,6 @@ def _so_data(s: str) -> str:
     return m.group(1) if m else ""
 
 
-# Papéis que NUNCA são a parte representada pela DPU (perito, testemunha, terceiro,
-# MPF, unidade externa, agência da previdência) — mesma lista de
-# `_ehTerceiroNuncaDpu` em processo_judicial.js (sincronizada 2026-08-18 depois de
-# um caso real em que a intimação do MPF foi escolhida por engano como rótulo de
-# um prazo do Painel do Procurador — PAJ 2024/029-01535). Excluir é seguro em
-# qualquer caso (não é uma adivinhação de polo).
-_PAPEL_TERCEIRO = {"PERITO", "PERITA", "TESTEMUNHA", "TERCEIRO", "ASSISTENTE TECNICO", "ASSISTENTE TÉCNICO",
-                   "MPF", "UNIDADE EXTERNA", "AGÊNCIA DA PREVIDÊNCIA SOCIAL", "AGENCIA DA PREVIDENCIA SOCIAL"}
-# Polos que a DPU tipicamente representa no Previdenciário (o segurado, contra o
-# INSS — sempre réu/requerido/executado/impetrado). A triagem MCP traz uma
-# intimação por PARTE do processo (autor E réu, com mesmo dia/prazo quando saem
-# juntas — ex. sentença) — sem essa preferência, casar só por dia+dias poderia
-# pegar a intimação do INSS em vez da do assistido. Usado só como DESEMPATE
-# quando há mais de um candidato pro mesmo dia+dias; não temos garantia de que a
-# DPU nunca representa o polo passivo, mas é a heurística certa pra este módulo.
-_PAPEL_POLO_ATIVO = {"AUTOR", "REQUERENTE", "IMPETRANTE", "EXEQUENTE", "RECLAMANTE", "RECORRENTE"}
-
-
-def _papel_de(parte_intimada: str) -> str:
-    return (parte_intimada or "").split(" - ", 1)[0].strip().upper()
-
-
 async def listar_prazos(numeros_processo: list[str]) -> list[dict]:
     """Prazos abertos/pendentes (cache de Prazos e-proc, escopado ao MEU Painel do
     Procurador — só intimações da DPU, nunca da parte contrária) para os processos
@@ -334,14 +312,17 @@ async def listar_prazos(numeros_processo: list[str]) -> list[dict]:
     exato, o nº do próprio evento de intimação (`evento_intimacao` — não confundir
     com o evento REFERENCIADO, ex. a Sentença) e a parte intimada com o papel na
     frente ("AUTOR - Fulano"). A triagem traz TODAS as partes (inclusive a
-    contrária, ex. INSS) — por isso o casamento continua ancorado no Painel do
-    Procurador (só o que é da DPU), igual a `processo_judicial.js`: por processo,
-    casa cada prazo do Painel com a intimação da triagem de MESMO DIA de envio e
-    MESMO nº de dias (um-para-um, via `usadas`, evita casar duas vezes o mesmo
-    evento). Sem casamento (processo sem triagem disponível, ou nenhum evento
+    contrária, ex. INSS) — o casamento usa `eproc_procurador_service` (cabeçalho
+    de partes do processo + identificador do procurador logado) pra restringir
+    às partes que EU realmente represento, sem adivinhar por polo: por processo,
+    casa cada prazo do Painel com a intimação da triagem de MESMO DIA de envio,
+    MESMO nº de dias e da MESMA parte associada a mim (um-para-um, via `usadas`,
+    evita casar duas vezes o mesmo evento). Sem casamento (processo sem triagem
+    disponível, identidade indisponível — cofre trancado —, ou nenhum evento
     bate — ex. cache desatualizado), `label` fica vazio e o front cai no formato
     aproximado antigo (evento + prazo + final)."""
     from ingestao import eproc_intimacoes, eproc_mcp_client
+    from services import eproc_procurador_service
 
     alvo = [n for n in (numeros_processo or []) if n]
     if not alvo:
@@ -363,11 +344,14 @@ async def listar_prazos(numeros_processo: list[str]) -> list[dict]:
     if not por_processo:
         return []
 
+    meu_id = eproc_procurador_service.meu_identificador()
+
     # 1 triagem por PROCESSO distinto (não por prazo) — barata o bastante (só os
     # processos deste PAJ, tipicamente 1).
-    triagens: dict[str, list[dict]] = {}
+    triagens: dict[str, tuple[list[dict], set[str]]] = {}
     for num, entry in por_processo.items():
         intimacoes: list[dict] = []
+        minhas_partes: set[str] = set()
         for instancia in (1, 2):
             try:
                 res = await eproc_mcp_client.triagem_processo(entry["processo"], instancia=instancia)
@@ -375,35 +359,37 @@ async def listar_prazos(numeros_processo: list[str]) -> list[dict]:
                 res = None
             if res and not res.get("erro"):
                 intimacoes = res.get("intimacoes") or []
+                minhas_partes = eproc_procurador_service.partes_do_procurador(
+                    res.get("cabecalho") or {}, meu_id)
                 break
-        triagens[num] = intimacoes
+        triagens[num] = (intimacoes, minhas_partes)
 
     itens: list[dict] = []
     for num, entry in por_processo.items():
-        intimacoes = triagens.get(num) or []
+        intimacoes, minhas_partes = triagens.get(num) or ([], set())
         usadas: set[int] = set()
         for idx, p in enumerate(entry["prazos"]):
             dia_p = _so_data(p.get("data_envio", ""))
             dias_p = str(p.get("prazo_dias") or "")
-            # Junta TODOS os candidatos do mesmo dia+dias (pode haver mais de um —
-            # ex. sentença intima autor E réu no mesmo evento/dia) e prefere o polo
-            # ativo (ver _PAPEL_POLO_ATIVO) — nunca escolhe pelo primeiro da lista.
+            # Junta TODOS os candidatos do mesmo dia+dias que sejam de uma parte
+            # associada a mim (ver eproc_procurador_service) — pode haver mais de
+            # um só quando eu represento mais de uma parte no MESMO ato (ex.
+            # litisconsórcio); nunca escolhe pelo primeiro da lista.
             candidatos = []
             for i, it in enumerate(intimacoes):
                 if i in usadas or not it.get("ativa"):
                     continue
-                papel = _papel_de(it.get("parte_intimada", ""))
-                if papel in _PAPEL_TERCEIRO:
+                if not eproc_procurador_service.parte_intimada_e_minha(
+                        it.get("parte_intimada", ""), minhas_partes):
                     continue
                 if _so_data(it.get("data_hora", "")) != dia_p:
                     continue
                 if dias_p and str(it.get("prazo_dias") or "") != dias_p:
                     continue
-                candidatos.append((i, it, papel))
+                candidatos.append((i, it))
             label = ""
             if candidatos:
-                candidatos.sort(key=lambda c: 0 if c[2] in _PAPEL_POLO_ATIVO else 1)
-                i, it, _papel = candidatos[0]
+                i, it = candidatos[0]
                 usadas.add(i)
                 nome = (it.get("parte_intimada") or "").split(" - ", 1)
                 nome = nome[1] if len(nome) > 1 else nome[0]

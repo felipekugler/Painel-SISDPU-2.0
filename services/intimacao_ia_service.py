@@ -77,14 +77,16 @@ def _so_data(s: str) -> str:
     return m.group(1) if m else ""
 
 
-async def _triagem_com_fallback(processo: str) -> tuple[list[dict], int]:
+async def _triagem_com_fallback(processo: str) -> tuple[list[dict], dict, int]:
     """Tenta a triagem MCP na 1ª e depois na 2ª instância — mesmo padrão de
     `services.acoes_eproc_service.listar_prazos`. Devolve `(intimacoes,
-    instancia)` — a instância importa pra depois baixar o documento certo
-    (`_documentos_evento`), já que `baixar_documentos_evento` exige a instância
-    correta (bug real corrigido: antes ficava hardcoded em 1, então um
-    processo só encontrado na 2ª instância nunca conseguia baixar o texto do
-    ato referenciado)."""
+    cabecalho, instancia)` — a instância importa pra depois baixar o
+    documento certo (`_documentos_evento`), já que `baixar_documentos_evento`
+    exige a instância correta (bug real corrigido: antes ficava hardcoded em
+    1, então um processo só encontrado na 2ª instância nunca conseguia
+    baixar o texto do ato referenciado). `cabecalho` alimenta
+    `eproc_procurador_service.partes_do_procurador` (já vem de graça na
+    mesma chamada, sem custo extra)."""
     from ingestao import eproc_mcp_client
 
     for instancia in (1, 2):
@@ -93,62 +95,47 @@ async def _triagem_com_fallback(processo: str) -> tuple[list[dict], int]:
         except Exception:
             res = None
         if res and not res.get("erro"):
-            return res.get("intimacoes") or [], instancia
-    return [], 1
+            return res.get("intimacoes") or [], res.get("cabecalho") or {}, instancia
+    return [], {}, 1
 
 
-# Mesmas listas/heurística de `services.acoes_eproc_service._PAPEL_TERCEIRO` /
-# `_PAPEL_POLO_ATIVO` (duplicadas aqui, mesma convenção de pequenos helpers
-# repetidos entre módulos deste painel) — ESTE é o 3º lugar que precisa dessa
-# heurística (o 1º é `acoes_eproc_service.listar_prazos`, o 2º é
-# `static/js/processo_judicial.js::intimacoesAtivas()`, já documentados como
-# "não é código compartilhado, os dois precisam ser atualizados juntos" — agora
-# são 3). Bug real corrigido (2026-08-29): `_casar_evento_referenciado` casava
-# só por dia de envio + nº de dias, sem excluir terceiro (perito/testemunha/MPF)
-# nem preferir o polo ativo — a triagem MCP traz uma intimação POR PARTE do
-# processo (autor e réu, com o mesmo dia/prazo quando saem juntas, ex.
-# sentença), então pegar a primeira da lista podia casar com a intimação do
-# INSS/de um terceiro em vez da do assistido, gravando um `evento_intimacao`
-# que nunca aparece na tela de peticionamento pro procurador da DPU — por isso
-# o checkbox de prazo nunca batia com nada em "Dar mera ciência", mesmo a
-# intimação sendo real e conhecida no Painel do Procurador.
-_PAPEL_TERCEIRO = {"PERITO", "PERITA", "TESTEMUNHA", "TERCEIRO", "ASSISTENTE TECNICO", "ASSISTENTE TÉCNICO",
-                   "MPF", "UNIDADE EXTERNA", "AGÊNCIA DA PREVIDÊNCIA SOCIAL", "AGENCIA DA PREVIDENCIA SOCIAL"}
-_PAPEL_POLO_ATIVO = {"AUTOR", "REQUERENTE", "IMPETRANTE", "EXEQUENTE", "RECLAMANTE", "RECORRENTE"}
-
-
-def _papel_de(parte_intimada: str) -> str:
-    return (parte_intimada or "").split(" - ", 1)[0].strip().upper()
-
-
-async def _casar_evento_referenciado(processo: str, prazos_do_ato: list[dict]) -> dict | None:
-    """Localiza o evento referenciado por ESTE ATO específico — `prazos_do_
-    ato` é o grupo já resolvido por `intimacao_service._agrupar_prazos_por_
-    ato` (via `obter_caso(processo, ato)["prazos"]`), nunca mais "os prazos
-    do processo inteiro, pega o mais urgente" (mudança 2026-09-XX, pedido
-    explícito do usuário: "o foco é a intimação, não o processo" — antes, um
-    processo com 2 atos autônomos só tinha o mais próximo analisado, o outro
-    ficava invisível pra sempre).
-
-    `prazos_do_ato` pode ter mais de 1 item só quando são "simultâneos"
-    (mesmo ato, o Painel raspa 1 linha por parte representada) — todos
+async def _candidatos_do_ato(processo: str, prazos_do_ato: list[dict]) -> tuple[list[dict], int]:
+    """Todas as intimações AO VIVO (não só a "principal") que casam com ESTE
+    ATO — base compartilhada de `_casar_evento_referenciado` (fecha o ato,
+    devolve principal+coautores) e `listar_eventos_do_ato` (lista completa
+    pro checklist "Selecione o(s) prazo(s)..." do modal de "Dar mera
+    ciência" — pedido do usuário 2026-09-24, mesmo estilo do checklist já
+    usado em "Ações no Eproc"). `prazos_do_ato` é o grupo já resolvido por
+    `intimacao_service._agrupar_prazos_por_ato` (via `obter_caso(processo,
+    ato)["prazos"]") — pode ter mais de 1 item só quando são "simultâneos"
+    (mesmo ato, o Painel raspa 1 linha por parte representada), mas todos
     compartilham a MESMA assinatura dia+dias por definição do agrupamento,
-    então usar só `prazos_do_ato[0]` já basta pra achar o casamento; não
-    precisa iterar cada um.
+    então usar só `prazos_do_ato[0]` já basta pra achar o casamento.
 
-    Mesmo critério de casamento (dia de envio + nº de dias) de sempre,
-    incluindo o mesmo desempate por papel (exclui terceiro, prefere polo
-    ativo — ver comentário acima). None se não houver casamento possível
-    (cache desatualizado, ou nenhuma intimação bate)."""
+    Casamento por dia de envio + nº de dias + parte associada a MIM (ver
+    `services.eproc_procurador_service` — cabeçalho de partes do processo
+    cruzado com o identificador do procurador logado). Substituiu por
+    completo (2026-09-23) a antiga heurística de "polo ativo", que assumia
+    a DPU sempre no polo ativo e por isso escolhia a parte ERRADA sempre
+    que a DPU representava o polo passivo (ver `eproc_procurador_service`
+    pro caso real que expôs isso).
+
+    Devolve `([], instancia)` se não houver casamento possível (cache
+    desatualizado, identidade indisponível — cofre trancado —, ou nenhuma
+    intimação bate)."""
+    from services import eproc_procurador_service
+
     if not prazos_do_ato:
-        return None
+        return [], 1
     prazo = prazos_do_ato[0]
-    intimacoes, instancia = await _triagem_com_fallback(processo)
+    intimacoes, cabecalho, instancia = await _triagem_com_fallback(processo)
     if not intimacoes:
-        return None
+        return [], instancia
+    minhas_partes = eproc_procurador_service.partes_do_procurador(
+        cabecalho, eproc_procurador_service.meu_identificador())
     dia_p = _so_data(prazo.get("data_envio", ""))
     if not dia_p:
-        return None
+        return [], instancia
     try:
         dias_p = int(prazo.get("prazo_dias") or -1)
     except (TypeError, ValueError):
@@ -157,8 +144,7 @@ async def _casar_evento_referenciado(processo: str, prazos_do_ato: list[dict]) -
     for it in intimacoes:
         if not it.get("ativa", True):
             continue
-        papel = _papel_de(it.get("parte_intimada", ""))
-        if papel in _PAPEL_TERCEIRO:
+        if not eproc_procurador_service.parte_intimada_e_minha(it.get("parte_intimada", ""), minhas_partes):
             continue
         if _so_data(it.get("data_hora", "")) != dia_p:
             continue
@@ -168,23 +154,74 @@ async def _casar_evento_referenciado(processo: str, prazos_do_ato: list[dict]) -
             dias_it = -1
         if dias_p != -1 and dias_it != -1 and dias_p != dias_it:
             continue
-        candidatos.append((it, papel))
-    if not candidatos:
+        candidatos.append(it)
+    # Ordena por nº de evento — só estética (o rótulo/descrição de "Dar mera
+    # ciência" lê melhor "eventos 38, 39" do que na ordem crua em que a
+    # triagem devolveu); não afeta qual é o "principal" nem quais fecham.
+    def _num_evento(it: dict) -> int:
+        try:
+            return int(it.get("evento_intimacao") or 0)
+        except (TypeError, ValueError):
+            return 0
+    candidatos.sort(key=_num_evento)
+    return candidatos, instancia
+
+
+async def _casar_evento_referenciado(processo: str, prazos_do_ato: list[dict]) -> dict | None:
+    """Localiza o evento referenciado por ESTE ATO específico — devolve o
+    candidato PRINCIPAL + eventuais coautores (litisconsórcio ativo — mais
+    de uma parte associada a mim intimada no MESMO evento/dia/prazo, ex.
+    casal, cocredores de uma mesma RPV, em qualquer polo). A triagem MCP
+    traz UMA intimação POR PESSOA, cada uma com seu PRÓPRIO nº de evento, e
+    cada uma precisa do SEU PRÓPRIO "Ciência, com renúncia ao prazo" pra
+    fechar de verdade — fechar só a do 1º nome da lista deixa o prazo do 2º
+    coautor aberto. Caso real que expôs isso (2026-08-29, PAJ
+    2026/029-00675): RPV intimada a MANOEL e a LUCIANE no mesmo Ofício
+    Requisitório/dia/prazo — sem isto, "Dar mera ciência" guardava só o
+    evento de um dos dois e o outro prazo "nunca batia" no checkbox.
+
+    None se não houver casamento possível (ver `_candidatos_do_ato`)."""
+    candidatos, instancia = await _candidatos_do_ato(processo, prazos_do_ato)
+    if not candidatos or not prazos_do_ato:
         return None
-    candidatos.sort(key=lambda c: 0 if c[1] in _PAPEL_POLO_ATIVO else 1)
-    principal = candidatos[0][0]
-    # Litisconsórcio ativo (mais de um autor/requerente intimado no MESMO
-    # evento/dia — ex. casal, cocredores de uma mesma RPV): a triagem MCP
-    # traz UMA intimação POR PESSOA, cada uma com seu PRÓPRIO nº de evento,
-    # e cada uma precisa do SEU PRÓPRIO "Ciência, com renúncia ao prazo"
-    # pra fechar de verdade — fechar só a do 1º nome da lista deixa o prazo
-    # do 2º coautor aberto. Caso real que expôs isso (2026-08-29, PAJ
-    # 2026/029-00675): RPV intimada a MANOEL e a LUCIANE no mesmo Ofício
-    # Requisitório/dia/prazo — sem isto, "Dar mera ciência" guardava só
-    # o evento de um dos dois e o outro prazo "nunca batia" no checkbox.
-    outros_polo_ativo = [it for it, papel in candidatos[1:] if papel in _PAPEL_POLO_ATIVO]
-    return {"prazo": prazo, "intimacao": principal, "instancia": instancia,
-            "outros_polo_ativo": outros_polo_ativo}
+    principal = candidatos[0]
+    outros_coautores = candidatos[1:]
+    return {"prazo": prazos_do_ato[0], "intimacao": principal, "instancia": instancia,
+            "outros_coautores": outros_coautores}
+
+
+async def listar_eventos_do_ato(processo: str, prazos_do_ato: list[dict]) -> dict:
+    """Todos os candidatos (ao vivo, já filtrados por identidade — ver
+    `_candidatos_do_ato`) que casam com ESTE ato, cada um com um rótulo
+    pronto pro checklist "Selecione o(s) prazo(s) a ser(em) fechado(s)" do
+    modal de "Dar mera ciência" na página do PAJ (pedido do usuário
+    2026-09-24) — MESMO formato oficial já usado em "Ações no Eproc"
+    (`acoes_eproc_service.listar_prazos`/`static/js/acoes_eproc.js:
+    prazoLabel`), ex.: "Expedida/certificada a intimação eletrônica -
+    Sentença (10/09/2026 15:59:41) - Ref. Evento 35 - ELIO OMAR ZORZINI
+    HERNANDEZ" (faltava o rótulo+data/hora aqui — bug real relatado
+    2026-09-24: "faltam os dados da intimação, como ato referenciado, data,
+    hora etc"). `descricao_ato` é o mesmo pro grupo inteiro (é o MESMO ato
+    referenciado, ex. "Ato ordinatório praticado" ou "Juntado(a) - Ofício
+    Requisitório Nr. ..."), usado pra montar a descrição da movimentação no
+    SISDPU.
+
+    Devolve `{"descricao_ato": str, "itens": [{"evento_intimacao", "label"}, ...]}`
+    — `itens` vazio se não houver casamento possível."""
+    candidatos, _ = await _candidatos_do_ato(processo, prazos_do_ato)
+    itens = []
+    descricao_ato = ""
+    for it in candidatos:
+        er = it.get("evento_referenciado")
+        if not descricao_ato:
+            descricao_ato = (er.get("descricao", "") if isinstance(er, dict) else "") or it.get("rotulo", "")
+        nome = (it.get("parte_intimada") or "").split(" - ", 1)
+        nome = nome[1] if len(nome) > 1 else nome[0]
+        evento = it.get("evento_intimacao")
+        label = (f'{it.get("rotulo", "")} ({it.get("data_hora", "")}) '
+                 f'- Ref. Evento {evento} - {nome}').strip()
+        itens.append({"evento_intimacao": evento, "label": label})
+    return {"descricao_ato": descricao_ato, "itens": itens}
 
 
 async def obter_evento_referenciado_leve(processo: str, prazos_do_ato: list[dict]) -> dict | None:
@@ -246,11 +283,21 @@ async def obter_evento_referenciado_leve(processo: str, prazos_do_ato: list[dict
         "instancia": instancia,
         "evento_intimacao": it.get("evento_intimacao"),
         "evento_intimacao_coautores": [
-            co.get("evento_intimacao") for co in (casamento.get("outros_polo_ativo") or [])
+            co.get("evento_intimacao") for co in (casamento.get("outros_coautores") or [])
             if co.get("evento_intimacao")
         ],
         "rotulo": it.get("rotulo", ""),
         "evento_descricao": er.get("descricao", "") if isinstance(er, dict) else "",
+        # `parte_intimada` (2026-09-25): a parte JÁ CASADA POR IDENTIDADE (ver
+        # `_candidatos_do_ato`/`eproc_procurador_service` — nunca mais "polo
+        # ativo/autor" às cegas), formato cru do MCP ("PAPEL - NOME"). Exposta
+        # aqui pra alimentar a coluna "Nome" da tabela de Intimações
+        # (`static/js/intimacoes.js:nomeAssistido`) — achado real do usuário
+        # (2026-09-25): a coluna mostrava OAB-PR/EMGEA (o outro polo) em vez
+        # do assistido de verdade sempre que a DPU representava o polo
+        # passivo, porque o parser antigo (`it.partes` cru) sempre assumia
+        # polo ativo.
+        "parte_intimada": it.get("parte_intimada", ""),
     }
     if not eventos_ref_nums:
         return {**base, "atos_referenciados": []}
@@ -855,16 +902,17 @@ async def analisar_processo(processo: str, ato: str, prazos_do_ato: list[dict], 
             "parte_intimada": it.get("parte_intimada", ""),
             "prazo_dias": prazo.get("prazo_dias"),
             "final_prazo": prazo.get("final_prazo") or prazo.get("final_estimado") or "",
-            # Litisconsórcio ativo — outro(s) autor(es)/requerente(s) intimados no
-            # MESMO evento/dia/prazo que este (ver `_casar_evento_referenciado`),
-            # cada um com seu PRÓPRIO nº de evento de intimação que também precisa
-            # ser fechado. Consumido só por "Dar mera ciência"
+            # Litisconsórcio — outra(s) parte(s) ASSOCIADAS A MIM (ver
+            # `eproc_procurador_service`) intimadas no MESMO evento/dia/prazo
+            # que este (ver `_casar_evento_referenciado`), cada uma com seu
+            # PRÓPRIO nº de evento de intimação que também precisa ser
+            # fechado. Consumido só por "Dar mera ciência"
             # (`mera_ciencia_service.dar_mera_ciencia`) pra marcar TODOS os
             # checkboxes de prazo do processo, não só o do 1º nome — o
             # resumo/IA em si continua sobre o mesmo conteúdo (mesmo ato, só
             # a parte muda).
             "evento_intimacao_coautores": [
-                co.get("evento_intimacao") for co in (casamento.get("outros_polo_ativo") or [])
+                co.get("evento_intimacao") for co in (casamento.get("outros_coautores") or [])
                 if co.get("evento_intimacao")
             ],
         }
@@ -2891,6 +2939,531 @@ async def gerar_conferencia_sentenca_homologatoria(processo: str, ato: str, paj_
 
 
 # --------------------------------------------------------------------------
+# Fluxo dedicado: intimação de SENTENÇA DE MÉRITO (procedente, parcialmente
+# procedente, improcedente ou extinção) — pedido explícito do usuário
+# (2026-09-24, caso real de treino: PAJ 2025/029-01021, processo
+# 5060150-19.2024.4.04.7000, DPU como curadora especial do corréu SAMUEL
+# HENRIQUE REZENDE SIMOES sem oposição ao pedido do autor — sentença de
+# procedência favorável à mãe/autora, logo SEM interesse recursal do lado
+# representado pela DPU). MUITO mais complexo que o batimento da sentença
+# homologatória de acordo — exige uma cadeia de 5 julgamentos, cada um
+# dependente do anterior:
+#
+# 1. REPRESENTAÇÃO: quem a DPU representa (autor ou réu), a partir da
+#    intimação e das partes associadas — base de tudo que vem depois (a
+#    análise de interesse recursal só faz sentido do ponto de vista de QUEM
+#    a DPU defende, nunca do processo como um todo).
+# 2. NATUREZA DA ATUAÇÃO: representação ORDINÁRIA (pedido de assistência +
+#    outorga de poderes, tipicamente evento 1) OU CURADORIA ESPECIAL
+#    (nomeação pela Justiça Federal — citação por edital/hora certa, réu
+#    revel, incapaz sem representante). Se curadoria especial: hipótese
+#    legal + CONFLITO DE INTERESSES com o autor (sim = defesa plena; não =
+#    atuação PRÓ-FORMA, sem interesse recursal real mesmo com resultado
+#    formalmente desfavorável ao curatelado).
+# 3. TESE SUSTENTADA: síntese objetiva do que foi defendido (pedidos, teses,
+#    provas), lendo TODAS as manifestações processuais relevantes — não só
+#    o ato principal, ao contrário dos outros fluxos especializados.
+# 4. RESULTADO DA SENTENÇA: procedente/parcial/improcedente/extinção, e se é
+#    FAVORÁVEL ou DESFAVORÁVEL aos interesses de quem a DPU representa
+#    (nunca ao processo em geral).
+# 5. ORIENTAÇÃO: CIENCIA (sem interesse recursal) / EMBARGOS (vício sanável
+#    — indicar os pontos omissos) / RECURSO (inominado ou apelação conforme
+#    o rito — indicar pontos de sucumbência e teses recursais, objetivo e
+#    conciso, SEM aprofundamento) / ANALISAR_DETALHADAMENTE (não deu pra
+#    concluir com segurança algum dos passos acima). NUNCA gera a peça
+#    recursal/embargos de verdade — mesma restrição de segurança dos demais
+#    fluxos especializados: só orienta, o Defensor decide e redige.
+# --------------------------------------------------------------------------
+
+_PREFIXOS_SIGLA_MANIFESTACAO = ("PET", "CONTEST", "IMPUGN", "ALEGFIN", "RECINO", "APELA", "CONTRARRAZ")
+
+
+def _eh_sentenca_merito(sigla_principal: str, evento_descricao: str) -> bool:
+    """Gatilho deste fluxo — COMPLEMENTO de `_eh_sentenca_homologatoria`:
+    mesma sigla SENT* do ato principal, mas SEM "HOMOLOG" na descrição do
+    evento (ex.: "Julgado procedente o pedido", "Julgado improcedente",
+    "Extinto o processo sem resolução de mérito")."""
+    sigla_principal = (sigla_principal or "").strip().upper()
+    if not sigla_principal.startswith(_PREFIXO_SIGLA_SENTENCA):
+        return False
+    return "HOMOLOG" not in (evento_descricao or "").upper()
+
+
+def _localizar_documentos_sentenca_merito(eventos: list[dict], evento_sent_ref: str,
+                                           limite_manifestacoes: int = 12) -> dict:
+    """Varre a timeline (ascendente, já em memória) e localiza:
+
+    - `evento_sentenca`: a própria sentença de mérito.
+    - `peticao_inicial`: 1º evento com documento "INIC*" (mesma heurística
+      dos demais fluxos especializados).
+    - `evento_curadoria`: 1º evento, em QUALQUER ponto antes da sentença,
+      cuja descrição contenha "CURADOR" (ex.: "Nomeação de curador
+      especial") — sinal de que a DPU pode atuar como curadora especial,
+      não em representação ordinária. None se não encontrado (não decide
+      nada sozinho — a IA ainda confere pelo conteúdo).
+    - `manifestacoes`: eventos ENTRE a petição inicial e a sentença com
+      documento de sigla de manifestação (`_PREFIXOS_SIGLA_MANIFESTACAO`)
+      OU `ator_tipo == "procurador"` — TODAS as partes, não só a
+      representada pela DPU (a IA precisa ler o que a parte contrária
+      também alegou/produziu). Deliberadamente mais abrangente que os
+      outros fluxos (que buscam 1-2 documentos específicos): aqui o pedido
+      explícito do usuário é "ler todas as manifestações processuais
+      anteriores para entender a tese sustentada". Cortado em
+      `limite_manifestacoes` (as MAIS RECENTES, mais próximas da sentença)
+      se passar disso — processos com litígio longo poderiam gerar um
+      prompt gigante; `manifestacoes_cortadas=True` avisa quando isso
+      acontece (nunca corta em silêncio)."""
+    evento_sent = next((ev for ev in eventos if str(ev.get("numero")) == str(evento_sent_ref)), None)
+    if not evento_sent:
+        return {"evento_sentenca": None, "peticao_inicial": None, "evento_curadoria": None,
+                "manifestacoes": [], "manifestacoes_cortadas": False}
+    numero_sent = int(evento_sent.get("numero") or 0)
+    anteriores = [ev for ev in eventos if int(ev.get("numero") or 0) < numero_sent]
+
+    peticao_inicial = None
+    for ev in eventos:
+        if any((d.get("sigla") or "").upper().startswith("INIC") for d in (ev.get("documentos") or [])):
+            peticao_inicial = ev
+            break
+
+    evento_curadoria = None
+    for ev in anteriores:
+        if "CURADOR" in (ev.get("descricao") or "").upper():
+            evento_curadoria = ev
+            break
+
+    numero_inicial = int(peticao_inicial.get("numero") or 0) if peticao_inicial else 0
+    manifestacoes = []
+    for ev in anteriores:
+        numero_ev = int(ev.get("numero") or 0)
+        if numero_ev <= numero_inicial:
+            continue
+        docs = ev.get("documentos") or []
+        if not docs:
+            continue
+        siglas = [(d.get("sigla") or "").upper() for d in docs]
+        eh_manifestacao = (
+            any(s.startswith(pref) for s in siglas for pref in _PREFIXOS_SIGLA_MANIFESTACAO)
+            or ev.get("ator_tipo") == "procurador"
+        )
+        if eh_manifestacao:
+            manifestacoes.append(ev)
+    manifestacoes.sort(key=lambda ev: int(ev.get("numero") or 0))
+
+    manifestacoes_cortadas = False
+    if len(manifestacoes) > limite_manifestacoes:
+        manifestacoes = manifestacoes[-limite_manifestacoes:]
+        manifestacoes_cortadas = True
+
+    return {
+        "evento_sentenca": evento_sent, "peticao_inicial": peticao_inicial,
+        "evento_curadoria": evento_curadoria, "manifestacoes": manifestacoes,
+        "manifestacoes_cortadas": manifestacoes_cortadas,
+    }
+
+
+def _montar_texto_linha_do_tempo(eventos: list[dict], numero_inicio: int, numero_fim: int,
+                                  limite: int = 60) -> str:
+    """Lista compacta (número/data/rótulo/autor) dos eventos ENTRE
+    `numero_inicio` e `numero_fim` (inclusive) — mesmo formato/espírito de
+    `_montar_texto_andamentos_posteriores`, mas pro INTERVALO da petição
+    inicial até a sentença, não só "depois de". Dá à IA uma visão geral do
+    andamento processual mesmo pros eventos cujo documento não foi baixado
+    individualmente (só as `manifestacoes` relevantes são, ver
+    `_localizar_documentos_sentenca_merito`) — ajuda a perceber a natureza
+    da atuação da DPU (ex.: decisão que nomeia curador especial, decisão
+    saneadora que define os pontos controvertidos) sem precisar baixar
+    TUDO."""
+    intervalo = [ev for ev in eventos
+                 if numero_inicio <= int(ev.get("numero") or 0) <= numero_fim]
+    if not intervalo:
+        return ""
+    aviso = ""
+    if len(intervalo) > limite:
+        aviso = f"\n(mostrando só os {limite} mais recentes de {len(intervalo)} eventos do intervalo)"
+        intervalo = intervalo[-limite:]
+    linhas = []
+    for ev in intervalo:
+        desc = (ev.get("descricao") or "").strip()
+        if len(desc) > 160:
+            desc = desc[:160] + "…"
+        ator = ev.get("ator_tipo") or ""
+        linhas.append(f"- Evento {ev.get('numero', '?')} ({ev.get('data_hora', '')}): {desc}"
+                      + (f" [autor: {ator}]" if ator else ""))
+    return "\n".join(linhas) + aviso
+
+
+def _montar_prompt_sentenca_merito(processo: str, cabecalho: dict,
+                                    secoes: list[tuple[str, list[tuple[str, Path]]]],
+                                    linha_do_tempo: str = "", minhas_partes: set[str] | None = None) -> str:
+    """Monta o prompt do fluxo de conferência de sentença de MÉRITO —
+    instrução escrita pra esta feature a partir de um caso real ensinado
+    pelo usuário (2026-09-24, PAJ 2025/029-01021). MUITO mais complexo que a
+    sentença homologatória de acordo (que só faz um batimento de dados): uma
+    cadeia de 5 julgamentos dependentes entre si — quem a DPU representa,
+    como ela atua (ordinária ou curadoria especial, com ou sem conflito de
+    interesses), a tese sustentada, o resultado e se ele é favorável, e só
+    então a orientação final. NUNCA gera a peça de embargos/recurso —
+    mesma restrição de segurança dos demais fluxos especializados.
+
+    `minhas_partes` (opcional): nomes das partes associadas ao procurador
+    logado no e-proc, já resolvidos por `services.eproc_procurador_service.
+    partes_do_procurador` (cadastro oficial de partes/representantes do
+    processo — MESMO mecanismo que já substituiu, 2026-09-23, a antiga
+    heurística de "polo ativo" no casamento de intimação). Passar isso como
+    FATO conhecido evita que a IA precise adivinhar quem a DPU representa
+    só lendo documentos — a parte mais arriscada de errar desta análise
+    inteira. Vazio quando a identidade não pôde ser resolvida (cofre
+    trancado, sem credencial "eproc" salva, ou o cadastro do processo não
+    bateu) — nesse caso a IA cai no modo antigo (determinar só pela leitura
+    dos documentos), com um aviso explícito de que o dado automático não
+    está disponível."""
+    classe = cabecalho.get("classe") or ""
+    competencia = cabecalho.get("competencia") or ""
+    partes = cabecalho.get("partes") or []
+    partes_txt = "\n".join(f"- {p.get('tipo', '')}: {p.get('nome', '')}" for p in partes) or "(não informado)"
+
+    if minhas_partes:
+        minhas_partes_txt = (
+            "DADO CONFIÁVEL (cadastro oficial de partes/representantes do processo, já resolvido "
+            "automaticamente — use como base, mas confirme e cite evidência dos documentos se "
+            "possível): a DPU representa, NESTE processo: " + ", ".join(sorted(minhas_partes)) + "."
+        )
+    else:
+        minhas_partes_txt = (
+            "Não foi possível resolver automaticamente quem a DPU representa neste processo "
+            "(identidade do procurador logado indisponível, ou o cadastro de partes não bateu) — "
+            "determine isso você mesmo, com cautela redobrada, lendo a intimação recebida e a "
+            "petição inicial."
+        )
+
+    partes_bloco = [
+        "#PERSONA",
+        "Você é um Defensor Público Federal que atua em processos previdenciários/assistenciais, "
+        "avaliando sentenças de MÉRITO (procedência, procedência parcial, improcedência ou "
+        "extinção) para decidir a providência cabível antes de dar ciência ao assistido.",
+        "",
+        "#CONTEXTO",
+        f"Processo {processo} — classe: {classe!r}, competência: {competencia!r}.",
+        "Partes do cabeçalho do processo:",
+        partes_txt,
+        "",
+        minhas_partes_txt,
+        "",
+        "Uma sentença de MÉRITO foi proferida e juntada aos autos. Diferente de uma sentença "
+        "homologatória de acordo (que só exige um batimento de dados contra uma proposta), esta "
+        "análise exige entender quem a DPU representa, COMO ela atua no processo, e SE há "
+        "interesse recursal contra o que foi decidido. Siga TODOS os passos abaixo, na ordem, sem "
+        "pular etapas — cada um depende da conclusão do anterior.",
+        "",
+        "#TAREFA",
+        "1. REPRESENTAÇÃO: identifique COM PRECISÃO quem a DPU representa neste processo — "
+        "autor(a) ou réu/executado — e o NOME da parte. Use o DADO CONFIÁVEL acima quando "
+        "disponível (é o cadastro oficial de partes/representantes do processo); na ausência dele, "
+        "determine a partir do cabeçalho do processo, da intimação recebida e da petição inicial. "
+        "Isso é a base de TUDO que vem depois: a análise de interesse recursal só faz sentido do "
+        "ponto de vista de QUEM a DPU defende, nunca do processo como um todo ou do resultado geral "
+        "da ação.",
+        "2. NATUREZA DA ATUAÇÃO: verifique se a atuação da DPU se dá pelas vias ORDINÁRIAS de "
+        "representação processual (o assistido procurou a DPU — pedido de assistência judiciária + "
+        "outorga de poderes, tipicamente perto do evento 1) OU se a DPU atua como CURADORA "
+        "ESPECIAL (nomeação pela Justiça Federal — hipóteses típicas: citação por edital/hora "
+        "certa, réu revel, parte incapaz sem representante). Veja a seção \"DESIGNAÇÃO DE "
+        "CURADORIA ESPECIAL\" abaixo, se localizada, e cite o Nº DO EVENTO que evidencia a "
+        "natureza da atuação.",
+        "   - Se for CURADORIA ESPECIAL: identifique a hipótese legal e avalie se há CONFLITO DE "
+        "INTERESSES entre o representado e a parte autora/exequente.",
+        "     - Havendo conflito de interesses genuíno (ex.: o réu curatelado tem defesa de mérito "
+        "real a opor ao pedido — nega o débito, contesta o direito etc.): a atuação da DPU é "
+        "defesa PLENA, com todos os interesses processuais normais de qualquer parte.",
+        "     - NÃO havendo conflito de interesses real (ex.: o interesse do réu curatelado na "
+        "verdade COINCIDE com o do autor — caso típico: curadoria de um dependente menor/incapaz "
+        "numa ação em que a procedência não prejudica em nada seus interesses): a atuação é "
+        "apenas PRÓ-FORMA — existe defesa técnica processual, mas NÃO há interesse recursal REAL a "
+        "proteger, mesmo que o resultado seja formalmente \"contrário\" ao curatelado.",
+        "3. TESE SUSTENTADA: leia TODAS as manifestações processuais relevantes já apresentadas no "
+        "processo (contestação, réplica, impugnações, alegações finais — ver seção "
+        "\"MANIFESTAÇÕES PROCESSUAIS\" abaixo) e sintetize, objetivamente: qual foi a tese de "
+        "defesa/pretensão sustentada pela parte que a DPU representa, quais foram os pedidos "
+        "formulados, e quais provas foram produzidas/consideradas relevantes (perícia, prova "
+        "documental, testemunhal). Isso é indispensável para avaliar, no próximo passo, se a "
+        "sentença acolheu ou rejeitou corretamente essa tese.",
+        "4. RESULTADO DA SENTENÇA: leia a SENTENÇA e diga, objetivamente: ela julgou PROCEDENTE, "
+        "PARCIALMENTE PROCEDENTE, IMPROCEDENTE, ou EXTINGUIU o processo (com ou sem resolução de "
+        "mérito — diga o motivo)? Em seguida, avalie se o resultado é FAVORÁVEL ou DESFAVORÁVEL "
+        "aos interesses da parte que a DPU representa (nunca ao processo em geral ou à parte "
+        "contrária). Lembre-se do item 2: se a DPU atua como curadora especial SEM conflito de "
+        "interesses real, um resultado formalmente \"contrário\" ao réu curatelado pode não ser "
+        "substancialmente desfavorável — avalie a partir do interesse DE VERDADE, não só do polo "
+        "processual.",
+        "5. ORIENTAÇÃO FINAL: com base em TUDO acima, decida entre estas quatro:",
+        "   - CIENCIA: não há interesse recursal — a sentença foi favorável aos interesses reais da "
+        "parte representada, OU é curadoria especial pró-forma sem conflito de interesses (mesmo "
+        "com resultado formalmente desfavorável), OU qualquer outra razão objetiva pela qual não "
+        "há motivo para recorrer.",
+        "   - EMBARGOS: a sentença tem algum vício sanável por embargos de declaração (omissão, "
+        "contradição, obscuridade, erro material) que precisa ser corrigido antes de decidir sobre "
+        "outros recursos. Indique OBJETIVAMENTE cada ponto omisso/contraditório/obscuro.",
+        "   - RECURSO: há interesse recursal de MÉRITO contra a sentença (recurso inominado, se "
+        "Juizado Especial Federal; apelação, se rito comum). Indique, de forma OBJETIVA E CONCISA "
+        "(sem aprofundamento doutrinário, sem desenvolver a tese por extenso): (a) os pontos de "
+        "SUCUMBÊNCIA — o que exatamente foi decidido contra os interesses do representado; (b) as "
+        "TESES RECURSAIS cabíveis — teses já conhecidas a repetir, ou teses novas a levantar, "
+        "sempre ligadas ao motivo ESPECÍFICO da improcedência/procedência parcial identificado na "
+        "sentença (ex.: requisito legal tido por não cumprido, prova considerada insuficiente, "
+        "interpretação questionável do juízo).",
+        "   - ANALISAR_DETALHADAMENTE: você não conseguiu concluir com segurança quem a DPU "
+        "representa, a natureza da atuação, ou o resultado da sentença — explique exatamente o que "
+        "falta pro Defensor resolver manualmente.",
+        "",
+        "Dois exemplos REAIS do NÍVEL DE OBJETIVIDADE esperado quando a orientação for RECURSO "
+        "(ilustração de ESTILO — não são deste processo, não os repita aqui):",
+        "a) \"BPC improcedente pelo não cumprimento do requisito econômico. Há viabilidade recursal "
+        "sustentando necessidade de exclusão do Bolsa Família da renda familiar; dedução de "
+        "despesas comprovadas e não consideradas pelo juízo; e flexibilização do critério de renda "
+        "para 1/2 salário mínimo (art. 20, §11-A, Lei 8.742/93).\"",
+        "b) \"BPC improcedente por não enquadramento em deficiência de longo prazo. Há viabilidade "
+        "recursal pois os documentos comprovam [X, Y, Z] limitações que restringem a participação "
+        "social e a competição em igualdade de condições, e não houve avaliação social para "
+        "análise biopsicossocial (nulidade por cerceamento de defesa).\"",
+        "",
+        "IMPORTANTE: este fluxo NUNCA gera a petição/minuta de embargos ou recurso de verdade — "
+        "sua resposta é só a classificação e os 5 blocos pedidos; a redação (se houver) fica por "
+        "conta do Defensor.",
+        "",
+        "---",
+        "",
+        f"# DOCUMENTOS DO PROCESSO {processo} (para a análise pedida acima)",
+        "",
+        "Os documentos abaixo NÃO estão transcritos aqui — abra e LEIA cada um com sua ferramenta "
+        "Read antes de concluir.",
+    ]
+    for titulo, docs in secoes:
+        partes_bloco.append(f"\n## {titulo}")
+        if docs:
+            for sigla, caminho in docs:
+                partes_bloco.append(f"- {sigla}: {caminho}")
+        else:
+            partes_bloco.append("(nenhum documento localizado nesta seção)")
+
+    if linha_do_tempo:
+        partes_bloco += [
+            "",
+            "## LINHA DO TEMPO DO PROCESSO (só número/data/rótulo/autor, sem conteúdo de documento "
+            "— visão geral do andamento processual, útil pra perceber a natureza da atuação da DPU "
+            "mesmo em eventos cujo documento não foi baixado individualmente)",
+            linha_do_tempo,
+        ]
+
+    partes_bloco += [
+        "",
+        "---",
+        "",
+        "# FORMATO TÉCNICO DA RESPOSTA (instrução do sistema, não do usuário — siga à risca)",
+        "Comece a resposta com uma linha EXATA, sem mais nada nela:",
+        "CLASSIFICACAO: CIENCIA",
+        "ou",
+        "CLASSIFICACAO: EMBARGOS",
+        "ou",
+        "CLASSIFICACAO: RECURSO",
+        "ou",
+        "CLASSIFICACAO: ANALISAR_DETALHADAMENTE",
+        "",
+        "Depois dessa linha, EXATAMENTE estes 5 marcadores, cada um seguido do respectivo texto "
+        "(marcador sozinho numa linha, sem mais nada nela — se não conseguir concluir alguma "
+        "seção, diga isso explicitamente no texto dela em vez de omitir o marcador). Cada seção "
+        "deve ser OBJETIVA E CONCISA, sem aprofundamento doutrinário nem repetição entre seções:",
+        "### REPRESENTACAO",
+        "(quem a DPU representa — autor ou réu, nome da parte, nº do evento-base — ver item 1)",
+        "### NATUREZA_ATUACAO",
+        "(ordinária ou curadoria especial; se curadoria, hipótese legal + conflito de interesses "
+        "sim/não, com justificativa — ver item 2)",
+        "### TESE_SUSTENTADA",
+        "(síntese objetiva do que foi defendido: pedidos, teses, provas — ver item 3)",
+        "### RESULTADO_SENTENCA",
+        "(procedente/parcial/improcedente/extinção + favorável ou desfavorável ao representado — "
+        "ver item 4)",
+        "### ORIENTACAO",
+        "(a decisão do item 5, com a fundamentação objetiva correspondente — pontos omissos se "
+        "EMBARGOS, sucumbência+teses se RECURSO)",
+        "",
+        "NÃO inclua nenhum bloco de código, petição, embargos ou minuta nesta resposta — só os 5 "
+        "blocos pedidos, cada um com texto corrido (sem markdown).",
+    ]
+    return "\n".join(partes_bloco)
+
+
+_SECOES_SENTENCA_MERITO = ("REPRESENTACAO", "NATUREZA_ATUACAO", "TESE_SUSTENTADA",
+                           "RESULTADO_SENTENCA", "ORIENTACAO")
+
+
+def _parse_classificacao_sentenca_merito(saida: str) -> dict:
+    """Extrai `{classificacao, representacao, natureza_atuacao, tese_sustentada,
+    resultado_sentenca, justificativa}` da resposta estruturada da IA (ver
+    formato pedido em `_montar_prompt_sentenca_merito`). Classificação
+    ausente/não reconhecida -> ANALISAR_DETALHADAMENTE (nunca arrisca CIENCIA
+    silenciosa — o risco de perder um prazo recursal por engano é grave
+    demais pra esse fallback ser qualquer outra coisa).
+
+    Defensivo com o parsing dos 5 marcadores (mesmo padrão da sentença
+    homologatória/RPV): se a IA não seguir o formato à risca, NUNCA descarta
+    o texto em silêncio — o que não casar com nenhum marcador cai inteiro em
+    `justificativa`."""
+    saida = saida or ""
+    m_class = re.search(r"CLASSIFICACAO:\s*(CIENCIA|EMBARGOS|RECURSO|ANALISAR_DETALHADAMENTE)",
+                        saida, re.IGNORECASE)
+    classificacao_raw = m_class.group(1).upper() if m_class else "ANALISAR_DETALHADAMENTE"
+    mapa_classificacao = {
+        "CIENCIA": "SENTENCA_MERITO_CIENCIA",
+        "EMBARGOS": "SENTENCA_MERITO_EMBARGOS",
+        "RECURSO": "SENTENCA_MERITO_RECURSO",
+        "ANALISAR_DETALHADAMENTE": "SENTENCA_MERITO_ANALISAR",
+    }
+    classificacao = mapa_classificacao[classificacao_raw]
+
+    resto = saida[m_class.end():] if m_class else saida
+    marcadores = list(re.finditer(
+        r"###\s*(" + "|".join(_SECOES_SENTENCA_MERITO) + r")\s*\n", resto, re.IGNORECASE))
+    secoes: dict[str, str] = {}
+    for i, mo in enumerate(marcadores):
+        inicio = mo.end()
+        fim = marcadores[i + 1].start() if i + 1 < len(marcadores) else len(resto)
+        secoes[mo.group(1).upper()] = resto[inicio:fim].strip()
+
+    sobra = resto[:marcadores[0].start()].strip() if marcadores else resto.strip()
+
+    representacao = secoes.get("REPRESENTACAO", "")
+    natureza_atuacao = secoes.get("NATUREZA_ATUACAO", "")
+    tese_sustentada = secoes.get("TESE_SUSTENTADA", "")
+    resultado_sentenca = secoes.get("RESULTADO_SENTENCA", "")
+    justificativa = secoes.get("ORIENTACAO", "") or sobra
+    if not justificativa:
+        justificativa = "A IA não devolveu uma orientação textual clara — revise manualmente."
+
+    return {
+        "classificacao": classificacao,
+        "representacao": representacao[:1000],
+        "natureza_atuacao": natureza_atuacao[:2000],
+        "tese_sustentada": tese_sustentada[:3000],
+        "resultado_sentenca": resultado_sentenca[:1500],
+        "justificativa": justificativa[:4000],
+    }
+
+
+async def gerar_conferencia_sentenca_merito(processo: str, ato: str, paj_norm: str, pasta_paj: Path,
+                                             log_cb: LogCb) -> dict:
+    """Fluxo especializado completo: localiza a petição inicial, a
+    designação de curadoria especial (se houver), as manifestações
+    processuais relevantes e a sentença de mérito na timeline do e-proc,
+    monta o prompt e pede à IA que percorra a cadeia de 5 julgamentos (quem
+    a DPU representa -> natureza da atuação -> tese sustentada -> resultado
+    -> orientação) e conclua. NUNCA gera minuta — só classifica (CIENCIA,
+    EMBARGOS, RECURSO ou ANALISAR_DETALHADAMENTE) e explica, para o Defensor
+    decidir a providência e redigir, se for o caso (pedido explícito do
+    usuário). `ato` identifica o sub-caso (ver módulo `intimacao_service`)."""
+    chave = intimacao_service.chave_caso(processo, ato)
+    caso = intimacao_service.obter_caso(processo, ato)
+    evento_ref = (caso or {}).get("evento_referenciado") or {}
+    instancia = evento_ref.get("instancia", 1)
+    evento_sent_ref = evento_ref.get("evento_referenciado")
+
+    log_cb("info", "Fluxo especializado de sentença de mérito: lendo a timeline completa do "
+                   "processo…")
+    eventos, cabecalho = await _timeline_e_cabecalho(processo, instancia)
+    if not eventos:
+        msg = "Não foi possível ler a timeline completa do processo (MCP)."
+        log_cb("erro", msg)
+        intimacao_service.salvar_estado(chave, status_geral="erro", erro=msg)
+        return {"ok": False, "erro": msg}
+
+    achados = _localizar_documentos_sentenca_merito(eventos, evento_sent_ref)
+    evento_sent = achados["evento_sentenca"]
+    if not evento_sent:
+        msg = f"Não localizei o evento {evento_sent_ref} (sentença) na timeline do processo."
+        log_cb("erro", msg)
+        intimacao_service.salvar_estado(chave, status_geral="erro", erro=msg)
+        return {"ok": False, "erro": msg}
+
+    secoes: list[tuple[str, list[tuple[str, Path]]]] = []
+
+    if achados["peticao_inicial"]:
+        ev_inic = achados["peticao_inicial"]
+        log_cb("info", f"Petição inicial: evento {ev_inic['numero']}.")
+        docs_inic = await _caminhos_documentos_evento(processo, instancia, ev_inic, ("INIC",), log_cb)
+        secoes.append((f"PETIÇÃO INICIAL (evento {ev_inic['numero']})", docs_inic))
+    else:
+        log_cb("muted", "Não localizei a petição inicial (sigla INIC*) na timeline.")
+
+    if achados["evento_curadoria"]:
+        ev_cur = achados["evento_curadoria"]
+        log_cb("info", f"Possível designação de curadoria especial: evento {ev_cur['numero']}.")
+        docs_cur = await _caminhos_documentos_evento(processo, instancia, ev_cur, None, log_cb)
+        secoes.append((f"DESIGNAÇÃO DE CURADORIA ESPECIAL (evento {ev_cur['numero']})", docs_cur))
+
+    if achados["manifestacoes"]:
+        aviso_corte = " (só as mais recentes — processo com muitas manifestações)" \
+            if achados["manifestacoes_cortadas"] else ""
+        log_cb("info", f"{len(achados['manifestacoes'])} manifestação(ões) processual(is) "
+                       f"relevante(s){aviso_corte}: "
+                       + ", ".join(str(ev["numero"]) for ev in achados["manifestacoes"]) + ".")
+        for ev in achados["manifestacoes"]:
+            docs_manif = await _caminhos_documentos_evento(processo, instancia, ev, None, log_cb)
+            secoes.append((f"MANIFESTAÇÃO PROCESSUAL (evento {ev['numero']})", docs_manif))
+    else:
+        log_cb("muted", "Nenhuma manifestação processual localizada entre a petição inicial e a "
+                        "sentença.")
+
+    log_cb("info", f"Sentença: evento {evento_sent['numero']}.")
+    docs_sent = await _caminhos_documentos_evento(processo, instancia, evento_sent, None, log_cb)
+    secoes.append((f"SENTENÇA (evento {evento_sent['numero']})", docs_sent))
+
+    numero_inicial = int((achados["peticao_inicial"] or {}).get("numero") or 1)
+    numero_sent = int(evento_sent.get("numero") or 0)
+    linha_do_tempo = _montar_texto_linha_do_tempo(eventos, numero_inicial, numero_sent)
+
+    # Quem a DPU representa — mesmo cadastro oficial de partes/representantes
+    # já usado pra casar a intimação certa (`eproc_procurador_service`,
+    # substituiu a antiga heurística de "polo ativo" em 2026-09-23). Passar
+    # isso como fato conhecido evita que a IA precise adivinhar o passo mais
+    # arriscado de errar desta análise inteira.
+    from services import eproc_procurador_service
+
+    identificador = eproc_procurador_service.meu_identificador()
+    minhas_partes = eproc_procurador_service.partes_do_procurador(cabecalho, identificador)
+    if minhas_partes:
+        log_cb("info", f"DPU representa (cadastro oficial de partes): {', '.join(sorted(minhas_partes))}.")
+    else:
+        log_cb("muted", "Não foi possível resolver automaticamente quem a DPU representa "
+                        "(identidade do procurador indisponível ou cadastro não bateu) — a IA vai "
+                        "determinar isso pela leitura dos documentos.")
+
+    prompt = _montar_prompt_sentenca_merito(processo, cabecalho, secoes, linha_do_tempo, minhas_partes)
+    log_cb("info", "Pedindo à IA a percorrer a análise completa (representação, natureza da "
+                   "atuação, tese sustentada, resultado e orientação) — pode levar alguns "
+                   "minutos…")
+    saida, erro = await _chamar_claude_texto(prompt, timeout=900)
+    if erro:
+        log_cb("erro", f"Falha ao conferir a sentença de mérito: {erro}")
+        intimacao_service.salvar_estado(chave, status_geral="erro", erro=erro)
+        return {"ok": False, "erro": erro}
+
+    parsed = _parse_classificacao_sentenca_merito(saida)
+    classificacao = parsed["classificacao"]
+    log_cb("ok", f"Classificação: {classificacao} (sem minuta — este fluxo não gera petição).")
+    confronto = {
+        "classificacao": classificacao, "justificativa": parsed["justificativa"],
+        "representacao": parsed["representacao"],
+        "natureza_atuacao": parsed["natureza_atuacao"],
+        "tese_sustentada": parsed["tese_sustentada"],
+        "resultado_sentenca": parsed["resultado_sentenca"],
+        "diligencias": [], "destinatario_diligencia": "", "precisa_documentos": False,
+    }
+    intimacao_service.salvar_estado(chave, confronto=confronto, minuta=None,
+                                    status_geral="aguardando_revisao", erro=None)
+    return {"ok": True, "confronto": confronto, "minuta": None}
+
+
+# --------------------------------------------------------------------------
 # Encadeamento completo
 # --------------------------------------------------------------------------
 
@@ -3005,6 +3578,31 @@ async def rodar_pipeline(processo: str, ato: str, log_cb: LogCb) -> dict:
             return r_sent
         log_cb("ok", "Triagem concluída (fluxo especializado de sentença homologatória) — pronta "
                     "para revisão do Defensor.")
+        return {"ok": True}
+
+    # Mesma sigla SENT*, mas SEM "HOMOLOG" na descrição do evento — sentença
+    # de MÉRITO (procedente/parcial/improcedente/extinção), não de acordo.
+    # Análise bem mais complexa (ver comentário no topo da seção): quem a
+    # DPU representa, natureza da atuação (ordinária ou curadoria especial,
+    # com ou sem conflito de interesses), tese sustentada, resultado e só
+    # então a orientação (ciência/embargos/recurso). NUNCA gera minuta.
+    if _eh_sentenca_merito(sigla_principal, evento_descricao):
+        log_cb("novo", f"Ato principal é uma sentença de mérito ({sigla_principal}) — usando o "
+                       "fluxo especializado de análise, não o confronto genérico.")
+        intimacao_service.salvar_estado(chave, escopo_verificacao={
+            "modo": "especializado_sentenca_merito",
+            "motivo": "Fluxo dedicado a sentença de mérito — analisa quem a DPU representa, a "
+                      "natureza da atuação (representação ordinária ou curadoria especial) e o "
+                      "interesse recursal contra o resultado; não precisa sincronizar o PAJ nem "
+                      "rodar o confronto genérico. Nunca gera minuta — só classifica e explica.",
+            "escalonado": False, "motivo_escalonamento": None,
+        })
+        r_merito = await gerar_conferencia_sentenca_merito(
+            processo, ato, caso["paj_norm"], Path(config.PAJS_DIR) / caso["paj_norm"], log_cb)
+        if not r_merito.get("ok"):
+            return r_merito
+        log_cb("ok", "Triagem concluída (fluxo especializado de sentença de mérito) — pronta para "
+                    "revisão do Defensor.")
         return {"ok": True}
 
     r2 = await confrontar_com_paj(processo, ato, log_cb)

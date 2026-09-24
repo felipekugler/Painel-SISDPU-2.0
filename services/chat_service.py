@@ -200,6 +200,27 @@ class ChatSession:
         # reenvia o PROMPT_MAX.
         self.instrucao_inicial: str | None = None
 
+    def _resolver_modelo_effort(self) -> tuple[str, str]:
+        """Modelo/effort desta sessão: override por sessão (triagem inteligente,
+        ex. effort "max" num HARD CASE) > preferência salva em Configurações ›
+        Acesso › "Conexão com o Claude" (painel_config.json, lida do disco a
+        cada chamada — editável sem reiniciar o painel; já vem sempre com um
+        valor concreto, ver get_elaboracao_prefs()). O fallback pro
+        ELABORACAO_MODELO/EFFORT do config.py só entra em jogo se a leitura
+        acima falhar por algum motivo (ver contextlib.suppress abaixo)."""
+        modelo = self.modelo_override or ""
+        effort = self.effort_override or ""
+        if not modelo or not effort:
+            with contextlib.suppress(Exception):
+                from services.config_painel_service import get_elaboracao_prefs
+
+                prefs = get_elaboracao_prefs()
+                modelo = modelo or prefs.get("modelo") or ""
+                effort = effort or prefs.get("effort") or ""
+        modelo = modelo or ELABORACAO_MODELO
+        effort = effort or ELABORACAO_EFFORT
+        return modelo, effort
+
     def _start_subprocess(self) -> bool:
         """Inicia o subprocess Claude Code CLI e a thread leitora.
 
@@ -218,11 +239,11 @@ class ChatSession:
             "--permission-mode",
             "bypassPermissions",
         ]
-        # Modelo/esforco: override por sessao (triagem inteligente) tem prioridade
-        # sobre os globais. Fixar no comando garante determinismo (nao herda o
-        # default da conta nem o CLAUDE_EFFORT do shell, que e' read-only de hook).
-        modelo = self.modelo_override or ELABORACAO_MODELO
-        effort = self.effort_override or ELABORACAO_EFFORT
+        # Modelo/esforco: override por sessao (triagem inteligente) > preferencia
+        # salva em Configuracoes (editavel em runtime, sem restart) > default do
+        # .env. Fixar no comando garante determinismo (nao herda o default da
+        # conta nem o CLAUDE_EFFORT do shell, que e' read-only de hook).
+        modelo, effort = self._resolver_modelo_effort()
         if modelo:
             cmd += ["--model", modelo]
         if effort:

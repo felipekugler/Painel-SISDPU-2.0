@@ -1,7 +1,11 @@
 {# Módulo reutilizável "Ações no Eproc" — peticionamento no processo judicial vinculado
    ao PAJ (EM CONSTRUÇÃO). Inclua dentro de x-data="acoesEprocBlock({...})" (ver
    static/js/acoes_eproc.js) — autocontido, não depende do escopo pai. #}
-<div class="ret-acoes p-3">
+{# id fixo: alvo do atalho "petição" da seção "Intimações pendentes"
+   (static/js/processo_judicial.js:abrirPeticaoPara), que acessa este bloco
+   via Alpine.$data(document.getElementById(...)) — nunca $refs (quebra
+   quando x-ref e x-data ficam no mesmo elemento). #}
+<div id="acoes-eproc-block" class="ret-acoes p-3">
     <button type="button" class="flex items-center justify-between w-full text-left" @click="abrir()">
         <span class="ret-card-label mb-0">Ações no Eproc</span>
         <svg class="ret-caret" :class="aberto ? 'ret-caret-open' : ''"

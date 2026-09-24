@@ -631,6 +631,14 @@ async def executar_fila_stream(
 
     total = len(itens)
     concluidos: list[int] = []
+    # Rastreia o último `mov_seq` visto entre os itens da fila — é o mesmo campo que
+    # o resultado de `executar_stream` (execução única) usa pra sinalizar "uma
+    # movimentação de fato foi registrada" (ver posExecucaoPaj() em app.js, que só
+    # dispara a sincronização leve de Movimentações quando `resultado.mov_seq` é
+    # truthy). O resultado FINAL da fila nunca tinha essa chave — a sincronização
+    # leve e o reload nunca eram reaproveitados corretamente após uma fila (bug
+    # relatado 2026-09-24: "atualizar movimentações" e refresh não rodavam).
+    mov_seq_fila: int | None = None
     for i, item in enumerate(itens):
         item = item or {}
         yield _ev("novo", f"— Movimentação {i + 1}/{total} —")
@@ -647,6 +655,8 @@ async def executar_fila_stream(
                 resultado_item = ev.get("resultado") or {}
             else:
                 yield ev
+        if resultado_item.get("mov_seq"):
+            mov_seq_fila = resultado_item["mov_seq"]
         # 'ja_ausente' conta como "nada mais a fazer aqui" mesmo com ok=False — mesmo
         # critério usado no resto do módulo (não é uma falha real, o trâmite já tinha
         # saído da caixa antes desta execução).
@@ -658,9 +668,10 @@ async def executar_fila_stream(
                 "detalhe": f"Movimentação {i + 1}/{total} falhou — execução da fila interrompida "
                            f"({resultado_item.get('detalhe', '')}).",
                 "itens_concluidos": concluidos,
+                "mov_seq": mov_seq_fila,
             }}
             return
         concluidos.append(i)
 
     yield _ev("ok", f"Fila concluída — {total}/{total} movimentação(ões) executada(s) com sucesso.")
-    yield {"done": True, "resultado": {"ok": True, "itens_concluidos": concluidos}}
+    yield {"done": True, "resultado": {"ok": True, "itens_concluidos": concluidos, "mov_seq": mov_seq_fila}}

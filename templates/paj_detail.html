@@ -83,7 +83,16 @@
     // PAJ da Caixa de Entrada" pra saber se precisa abrir o modal de escolha
     // (N>1) ou seguir direto (N<=1), e por "Ações no SISDPU" (ver
     // acoesSisdpuBlock abaixo) pra oferecer TODAS pra conclusão.
-    window._paj_tramitacoes_caixa = {{ (meta.tramitacoes_caixa or []) | tojson }};
+    // SEM `or []` de propósito: `null` (PAJ sincronizado só por caminho avulso
+    // — busca global/watchlist/sync de 1 PAJ — nunca passou pela sync COMPLETA
+    // da caixa, que é quem calcula isto) precisa chegar como `null` de verdade
+    // no JS, distinto de `[]` ("já verifiquei, é zero mesmo") — bug real
+    // 2026-09-24 (PAJ 2026/029-03759): colapsar pra `[]` aqui fazia "Ações no
+    // SISDPU" mostrar "Não há trâmite aberto" com falsa certeza, quando na
+    // real o campo nunca tinha sido calculado. Cada consumidor decide o que
+    // fazer com `null` (concluirPajModalApp já sempre reconfere ao vivo antes
+    // de abrir; acoesSisdpuBlock agora faz o mesmo só quando `null`).
+    window._paj_tramitacoes_caixa = {{ meta.tramitacoes_caixa | default(none) | tojson }};
     // Config inicial da tabela COMPARTILHADA de movimentações (partials/movimentacoes_tabela.html).
     window.__movInicial = {
       movs: window._paj_movimentacoes,
@@ -590,10 +599,10 @@
                     <thead class="bg-base-300 sticky top-0 z-10">
                         <tr>
                             <th>Data</th>
-                            <th>Grupo/Destinatário</th>
                             <th>Remetente</th>
-                            <th>Prazo</th>
+                            <th>Grupo/Destinatário</th>
                             <th>Descrição</th>
+                            <th>Prazo</th>
                             <th>Conclusão</th>
                         </tr>
                     </thead>
@@ -603,10 +612,10 @@
                                     ? 'background-color: color-mix(in srgb, currentColor 3%, transparent);'
                                     : 'background-color: color-mix(in srgb, currentColor 7%, transparent);'">
                                 <td class="text-xs whitespace-nowrap" x-text="t.data || '-'"></td>
-                                <td class="text-sm" x-text="t.local || '-'"></td>
                                 <td class="text-sm" x-text="t.remetente || '-'"></td>
-                                <td class="text-xs whitespace-nowrap" x-text="t.prazo || '-'"></td>
+                                <td class="text-sm" x-text="t.local || '-'"></td>
                                 <td class="text-sm whitespace-normal break-words" x-text="t.descricao || '-'"></td>
+                                <td class="text-xs whitespace-nowrap" x-text="t.prazo || '-'"></td>
                                 <td class="text-xs whitespace-nowrap" x-text="t.conclusao || '—'"></td>
                             </tr>
                         </template>
@@ -1368,7 +1377,7 @@
         <div style="display: contents;"
              x-data="acoesSisdpuBlock({
                          idProcesso: '{{ dados.id_processo }}', paj: '{{ meta.paj }}', pajNorm: '{{ paj_norm }}',
-                         idTramite: '{{ dados.id_tramite }}', tramitacoesCaixa: window._paj_tramitacoes_caixa || [],
+                         idTramite: '{{ dados.id_tramite }}', tramitacoesCaixa: window._paj_tramitacoes_caixa,
                          onExecutado: (res) => posExecucaoPaj('{{ paj_norm }}', res),
                      })" x-init="init()">
             <!-- justify-end quando há seta+e-proc (aproxima o botão do
