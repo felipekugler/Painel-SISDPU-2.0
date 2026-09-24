@@ -596,11 +596,21 @@ function baixarAnexosDesde(pajNorm) {
  * Também roda aqui, e ESPERA terminar, a sincronização LEVE (só movimentações,
  * sem anexos) da tabela de Movimentações — reusa a MESMA função do ícone de
  * atualizar (`atualizarMovimentacoesPaj()`, com seu modal de progresso), só
- * quando uma MOVIMENTAÇÃO de fato foi registrada com sucesso (`resultado.fase`
- * truthy e a etapa de movimentação não falhou: `status` só vem "falha" quando
- * é exatamente essa etapa que não deu certo — tramitação/conclusão que
- * falharem DEPOIS ainda deixam a movimentação valendo, por isso "parcial"/
- * "ja_ausente" também disparam a atualização).
+ * quando uma MOVIMENTAÇÃO de fato foi registrada com sucesso (`resultado.mov_seq`
+ * truthy — SÓ vem preenchido pelo backend quando a etapa de movimentar rodou E
+ * deu certo, ver services/acoes_sisdpu_service.py linha ~588; tramitação/
+ * conclusão que falharem DEPOIS ainda deixam a movimentação valendo, por isso
+ * "parcial"/"ja_ausente" também disparam a atualização — só filtra "falha").
+ *
+ * BUG CORRIGIDO 2026-09-23: esta checagem usava `resultado.fase` (não
+ * `mov_seq`) — só que o backend NUNCA devolve uma chave "fase" no resultado
+ * (só "concluido"/"tramitado_para"/"mov_seq"/"concluidos", ver o mesmo trecho
+ * acima), então a condição era SEMPRE falsa e a atualização de movimentações
+ * nunca rodava, pra NENHUM chamador — inclusive "Desarquivar PAJ", que lança
+ * uma fase nova e por isso mais dependia disto (relatado pelo usuário
+ * 2026-09-23: página recarregava mas continuava com status/movimentações
+ * antigos, porque o reload sempre corria ANTES de qualquer dado novo existir
+ * pra recarregar).
  *
  * IMPORTANTE: isto precisa ser ESPERADO (não só disparado) por quem chama —
  * static/js/acoes_sisdpu.js recarrega a página inteira logo depois de chamar
@@ -609,7 +619,7 @@ function baixarAnexosDesde(pajNorm) {
  * página recarregava mostrando as movimentações ainda desatualizadas — foi
  * exatamente o bug relatado em 2026-08-13 com o disparo por evento antigo. */
 async function posExecucaoPaj(pajNorm, resultado) {
-    if (resultado && resultado.fase && resultado.status !== 'falha') {
+    if (resultado && resultado.mov_seq && resultado.status !== 'falha') {
         try { await atualizarMovimentacoesPaj(pajNorm); } catch (e) {}
     }
     try {

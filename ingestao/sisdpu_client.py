@@ -671,6 +671,41 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str = "44",
                     const principalPf = assistidosPf.find(a => a.principal) || assistidosPf[0];
                     if (principalPf.cpf) r.cpf_assistido = principalPf.cpf;
                 }
+
+                // Representante(s) Legal(is) — tabela de MESMA ESTRUTURA da de
+                // Assistidos, logo em seguida no DOM (mesmo tipo de componente
+                // PrimeFaces — sem id fixo conhecido, por isso localizada POR
+                // POSICAO: primeiro container ".ui-datatable" seguinte ao dos
+                // assistidos que tenha ao menos uma linha com link de pessoa —
+                // e não por id). So existe quando o PAJ tem representante
+                // cadastrado (ex.: curatela/tutela — assistido incapaz) — nunca
+                // capturado ate aqui (relatado pelo usuario 2026-09-23, PAJ
+                // 2026/029-01102).
+                const wrapperPF = tblPF.closest('.ui-datatable') || tblPF;
+                let tblRepresentantes = wrapperPF.nextElementSibling;
+                let saltosRepresentantes = 0;
+                while (tblRepresentantes && saltosRepresentantes < 5) {
+                    if (tblRepresentantes.querySelector('tbody tr td a[href*="idPessoa="]')) break;
+                    tblRepresentantes = tblRepresentantes.nextElementSibling;
+                    saltosRepresentantes++;
+                }
+                if (tblRepresentantes) {
+                    const representantesLegais = [];
+                    for (const tr of tblRepresentantes.querySelectorAll('tbody tr')) {
+                        const cells = tr.querySelectorAll('td');
+                        if (cells.length < 3) continue;
+                        const linkPessoa = cells[1]?.querySelector('a[href*="idPessoa="]');
+                        const href = linkPessoa?.getAttribute('href') || '';
+                        const mp = href.match(/idPessoa=(\\d+)/);
+                        if (!mp) continue;
+                        let nome = (linkPessoa.textContent || '').trim();
+                        nome = nome.replace(/\\s*\\(\\d+\\s*PAJ'?S\\)\\s*$/i, '').trim();
+                        const cpfTexto = (cells[2]?.textContent || '').trim().split('\\n')[0].trim();
+                        const cpf = /\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}/.test(cpfTexto) ? cpfTexto : '';
+                        representantesLegais.push({ idPessoa: mp[1], nome, cpf });
+                    }
+                    if (representantesLegais.length) r.representantes_legais = representantesLegais;
+                }
             }
 
             const pajMatch = body.match(/(\\d{4}\\/\\d{3}-\\d+)\\s*-\\s*PAJ\\s+([^\\n]+)/);
@@ -1734,6 +1769,36 @@ async def buscar_paj_global(
                     r.assistidos_pf = assistidosPf;
                     const principalPf = assistidosPf.find(a => a.principal) || assistidosPf[0];
                     if (principalPf.cpf) r.cpf_assistido = principalPf.cpf;
+                }
+
+                // Representante(s) Legal(is) — ver comentário completo na mesma
+                // extração em movimentacoes_paj (função irmã, mais acima neste
+                // arquivo). Localizado por POSIÇÃO (tabela seguinte à de
+                // Assistidos), não por id.
+                const wrapperPF = tblPF.closest('.ui-datatable') || tblPF;
+                let tblRepresentantes = wrapperPF.nextElementSibling;
+                let saltosRepresentantes = 0;
+                while (tblRepresentantes && saltosRepresentantes < 5) {
+                    if (tblRepresentantes.querySelector('tbody tr td a[href*="idPessoa="]')) break;
+                    tblRepresentantes = tblRepresentantes.nextElementSibling;
+                    saltosRepresentantes++;
+                }
+                if (tblRepresentantes) {
+                    const representantesLegais = [];
+                    for (const tr of tblRepresentantes.querySelectorAll('tbody tr')) {
+                        const cells = tr.querySelectorAll('td');
+                        if (cells.length < 3) continue;
+                        const linkPessoa = cells[1]?.querySelector('a[href*="idPessoa="]');
+                        const href = linkPessoa?.getAttribute('href') || '';
+                        const mp = href.match(/idPessoa=(\\d+)/);
+                        if (!mp) continue;
+                        let nome = (linkPessoa.textContent || '').trim();
+                        nome = nome.replace(/\\s*\\(\\d+\\s*PAJ'?S\\)\\s*$/i, '').trim();
+                        const cpfTexto = (cells[2]?.textContent || '').trim().split('\\n')[0].trim();
+                        const cpf = /\\d{3}\\.\\d{3}\\.\\d{3}-\\d{2}/.test(cpfTexto) ? cpfTexto : '';
+                        representantesLegais.push({ idPessoa: mp[1], nome, cpf });
+                    }
+                    if (representantesLegais.length) r.representantes_legais = representantesLegais;
                 }
             }
 

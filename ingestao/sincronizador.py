@@ -909,6 +909,21 @@ async def _processar_paj_pos_detalhamento(
     # Snapshot da estrutura bruta devolvida pelo SISDPU para diagnostico/posteridade
     metadata["sisdpu_raw"] = det
 
+    # "Última sincronização" (templates/paj_detail.html) — timestamp real de
+    # quando o PAINEL efetivamente conversou com o SISDPU sobre este PAJ,
+    # atualizado em TODA sincronização que passa por aqui (caixa, avulsa via
+    # busca global, watchlist). Diferente de `data_mov_caixa` (a data da
+    # PRÓPRIA linha do trâmite na caixa — só existe/atualiza enquanto o PAJ
+    # está ativamente na caixa): usar `data_mov_caixa` como "última
+    # sincronização" era o bug relatado pelo usuário 2026-09-23 — um PAJ
+    # concluído (fora da caixa, ex. PAJ-2025-029-03370) ou sincronizado via
+    # busca global nunca atualiza `data_mov_caixa` de novo, então a UI
+    # mostrava sempre a mesma data antiga mesmo após uma sync levíssima bem
+    # sucedida.
+    import datetime as _dt_sinc
+
+    metadata["ultima_sincronizacao_em"] = _dt_sinc.datetime.now().isoformat(timespec="seconds")
+
     # Campos de `sisdpu_raw` cuja extracao e' fragil (dependem do layout/estado
     # da pagina de detalhamento no momento exato do evaluate() — ver
     # sisdpu_client.py, movimentacoes_paj/buscar_paj_global): se o SISDPU nao
@@ -920,7 +935,7 @@ async def _processar_paj_pos_detalhamento(
     # PAJ-2026-029-03259) — auditoria subsequente achou o mesmo padrao de risco
     # nos demais campos abaixo, corrigidos juntos na mesma leva.
     sisdpu_raw_antigo = meta_antiga.get("sisdpu_raw") or {}
-    for _campo in ("narrativa", "assistidos_pf", "audiencias"):
+    for _campo in ("narrativa", "assistidos_pf", "audiencias", "representantes_legais"):
         if not metadata["sisdpu_raw"].get(_campo) and sisdpu_raw_antigo.get(_campo):
             metadata["sisdpu_raw"][_campo] = sisdpu_raw_antigo[_campo]
 
@@ -2906,7 +2921,7 @@ async def buscar_resumo_via_busca(
     # esta nao devolveu (mesmo raciocinio/auditoria de
     # _processar_paj_pos_detalhamento, ver comentario lá).
     sisdpu_raw_antigo = meta_antiga.get("sisdpu_raw") or {}
-    for _campo in ("narrativa", "assistidos_pf", "audiencias"):
+    for _campo in ("narrativa", "assistidos_pf", "audiencias", "representantes_legais"):
         if not metadata["sisdpu_raw"].get(_campo) and sisdpu_raw_antigo.get(_campo):
             metadata["sisdpu_raw"][_campo] = sisdpu_raw_antigo[_campo]
 

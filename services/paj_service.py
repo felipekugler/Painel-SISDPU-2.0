@@ -626,6 +626,14 @@ def ler_paj(paj_norm: str) -> dict | None:
     # página do PAJ, que só aparece quando há mais de um.
     assistidos_pf = sisdpu_raw.get("assistidos_pf") or []
 
+    # Representante(s) Legal(is) — tabela irmã da de Assistidos (mesma posição
+    # no DOM do SISDPU, ver ingestao/sisdpu_client.py), só presente quando o
+    # PAJ tem representante cadastrado (ex.: curatela/tutela, assistido
+    # incapaz). Cada item: {idPessoa, nome, cpf}. Usado pela seção
+    # "Representante(s) Legal(is)" da página do PAJ, logo abaixo de
+    # "Assistidos" — ao contrário desta, aparece já com 1 item (não exige >1).
+    representantes_legais = sisdpu_raw.get("representantes_legais") or []
+
     # id_processo / id_tramite: extraidos da URL de detalhamento gravada pelo sync
     # (sisdpu_client.movimentacoes_paj grava "url" em sisdpu_raw), no formato
     # ".../detalhamentoProcesso.xhtml?idTramite=NNN&caixaEntrada=true&id=NNN&tp=D".
@@ -669,6 +677,7 @@ def ler_paj(paj_norm: str) -> dict | None:
         "pecas_geradas": pecas_judiciais,
         "anexos_sisdpu": anexos_sisdpu,
         "assistidos_pf": assistidos_pf,
+        "representantes_legais": representantes_legais,
         "movimentacoes": movs_sorted,
         "max_seq_mov": max_seq_mov,
         "arquivamento": arquivamento,
