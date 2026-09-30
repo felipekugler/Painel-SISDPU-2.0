@@ -30,11 +30,12 @@
     </div>
 
     <div class="text-sm text-base-content/60 mb-4">
-        Relação de PAJs da Caixa de Entrada cuja tramitação tem a descrição
-        <em>"Atendimento de Retorno"</em>. Ao sincronizar, o painel lê a caixa, extrai as
-        informações do PAJ (descrição integral do retorno + últimas movimentações) e envia
-        para análise da IA. Clique numa linha para ver o <strong>Resumo IA</strong>, o
-        histórico de movimentações e a <strong>Sugestão IA</strong> (editável).
+        Nesta página é possível fazer tratamento em separado das tramitações da Caixa de
+        Entrada que tem a descrição <em>"Atendimento de Retorno"</em>.
+        Ao sincronizar, o painel lê a caixa de entrada e identifica os trâmites de
+        atendimento de retorno, extrai as informações do PAJ e processa com análise da
+        IA, retornando o <strong>Resumo</strong> e uma <strong>sugestão de ação</strong>
+        (editável).
     </div>
 
     <!-- Tabela -->
@@ -67,7 +68,7 @@
                             <th class="w-[95px]">Ofício</th>
                             <th class="w-40">Processo</th>
                             <th>Descrição do retorno</th>
-                            <th class="w-28 text-center">Ações</th>
+                            <th class="w-36 text-center">Ações</th>
                         </tr>
                     </thead>
                     <template x-for="r in g.itens" :key="r.id_tramite">
@@ -160,41 +161,51 @@
                                 </td>
                                 <td class="text-center align-top" @click.stop>
                                     <div class="flex flex-col items-center gap-1">
-                                        <button class="btn btn-xs btn-outline"
-                                                @click="toggle(r)">Despachar</button>
                                         <div x-data="{ aberto: false, top: 0, left: 0 }">
-                                            <button type="button" x-ref="btnSync" class="btn btn-xs btn-outline"
+                                            <button type="button" x-ref="btnSync" class="btn btn-xs btn-outline whitespace-nowrap"
                                                     :disabled="r._ressync"
                                                     title="Escolher o tipo de sincronização deste PAJ"
                                                     @click="const rect = $el.getBoundingClientRect();
-                                                            left = Math.min(rect.left, window.innerWidth - 264);
-                                                            top = (window.innerHeight - rect.bottom < 220) ? (rect.top - 208) : (rect.bottom + 4);
+                                                            left = Math.min(rect.left, window.innerWidth - 296);
+                                                            top = (window.innerHeight - rect.bottom < 280) ? (rect.top - 268) : (rect.bottom + 4);
                                                             aberto = !aberto">
                                                 <span x-show="r._ressync" class="loading loading-spinner loading-xs"></span>
-                                                <span x-show="!r._ressync">Sincronizar</span>
+                                                <span x-show="!r._ressync">Re-sincronizar</span>
                                             </button>
                                             <!-- x-teleport: escapa do overflow-x-auto da tabela (senão o minimenu
                                                  fica cortado nas últimas linhas — não extrapola o contêiner). Fica
                                                  fixo na viewport, posição calculada no clique; fecha ao clicar fora
                                                  (com guarda pro próprio botão, senão o mesmo clique que abre já fecha). -->
+                                            <!-- 3 níveis — MESMA nomenclatura/semântica do dashboard e da página do
+                                                 PAJ (ver [[painel-sisdpu-sync-niveis-3-hipoteses]]): descrição
+                                                 principal idêntica às dos dois lá; a 2ª linha da Levíssima é um
+                                                 acréscimo específico da Retornos (dica de uso pós "erro de conexão"). -->
                                             <template x-teleport="body">
                                                 <ul x-show="aberto" x-cloak
                                                     @click.outside="if (!$refs.btnSync.contains($event.target)) aberto = false"
                                                     :style="'position:fixed; top:' + top + 'px; left:' + left + 'px;'"
-                                                    class="menu menu-xs bg-base-100 rounded-box z-[1000] w-64 p-1 shadow border border-base-300">
+                                                    class="menu menu-xs bg-base-100 rounded-box z-[1000] w-72 p-1 shadow border border-base-300">
                                                     <li>
-                                                        <a @click.stop="ressincronizarPaj(r, false); aberto = false">
+                                                        <a @click.stop="ressincronizarPaj(r, 'levissima'); aberto = false">
                                                             <div class="flex flex-col items-start py-0.5">
-                                                                <span class="font-semibold">Sincronização leve</span>
-                                                                <span class="text-[10.5px] text-base-content/50 whitespace-normal">ofício, assistido, movimentações — sem documentos. Útil pra conferir se mov./tram./conclusão realmente saiu após um "erro de conexão".</span>
+                                                                <span class="font-semibold">Levíssima</span>
+                                                                <span class="text-[10.5px] text-base-content/50 whitespace-normal">dados básicos (movimentações e metadata)</span>
                                                             </div>
                                                         </a>
                                                     </li>
                                                     <li>
-                                                        <a @click.stop="ressincronizarPaj(r, true); aberto = false">
+                                                        <a @click.stop="ressincronizarPaj(r, 'leve'); aberto = false">
                                                             <div class="flex flex-col items-start py-0.5">
-                                                                <span class="font-semibold">Sincronização completa</span>
-                                                                <span class="text-[10.5px] text-base-content/50 whitespace-normal">com documentos das movimentações — igual à aba PAJs. Mais lenta.</span>
+                                                                <span class="font-semibold">Leve</span>
+                                                                <span class="text-[10.5px] text-base-content/50 whitespace-normal">dados básicos + relação de documentos, sem baixar</span>
+                                                            </div>
+                                                        </a>
+                                                    </li>
+                                                    <li>
+                                                        <a @click.stop="ressincronizarPaj(r, 'completa'); aberto = false">
+                                                            <div class="flex flex-col items-start py-0.5">
+                                                                <span class="font-semibold">Completa</span>
+                                                                <span class="text-[10.5px] text-base-content/50 whitespace-normal">dados básicos + relação de documentos + download</span>
                                                             </div>
                                                         </a>
                                                     </li>
@@ -214,17 +225,33 @@
                             <tr x-show="expandido[r.id_tramite]" class="ret-cards-row">
                                 <td></td>
                                 <td colspan="6" class="bg-base-100">
-                                    <!-- Caixas onde o PAJ está aberto -->
-                                    <div class="ret-caixas mx-2 mt-2 mb-1 p-2">
-                                        <span class="ret-card-label">Caixas onde o PAJ está aberto</span>
+                                    <!-- Caixas onde o PAJ está aberto + histórico de tramitações — igual à
+                                         página do PAJ (caixasAbertasApp, static/js/app.js), adaptado ao
+                                         escopo por linha da Retornos: mesma fonte (uma única chamada a
+                                         /api/paj/<paj>/tramitacoes, ver carregarCaixas(r) acima), populada
+                                         sob demanda ao expandir a linha (ver toggle()). O modal do
+                                         histórico é COMPARTILHADO (1 por página, populado ao abrir — ver
+                                         abrirHistoricoTramitacoes/tramModal* abaixo), diferente da página
+                                         do PAJ (1 modal, só 1 linha por página lá). -->
+                                    <div class="ret-caixas mx-2 mt-2 mb-1 p-2 flex items-center flex-wrap gap-1">
+                                        <span class="ret-card-label !mb-0">Caixas onde o PAJ está aberto</span>
                                         <span x-show="r._caixasLoad" class="loading loading-spinner loading-xs ml-2"></span>
                                         <template x-for="c in (r._caixas || [])" :key="c.local + c.data">
                                             <span class="badge badge-outline ml-1" style="border-color:var(--accent);color:var(--accent)"
                                                   :title="(c.remetente ? ('de ' + c.remetente + ' · ') : '') + (c.descricao || '')"
                                                   x-text="c.local"></span>
                                         </template>
-                                        <span x-show="!r._caixasLoad && r._caixas && r._caixas.length === 0"
+                                        <span x-show="!r._caixasLoad && !r._caixasFalhou && r._caixas && r._caixas.length === 0"
                                               class="text-base-content/40 text-xs ml-2">nenhuma tramitação em aberto</span>
+                                        <span x-show="!r._caixasLoad && r._caixasFalhou" class="text-warning text-xs ml-2 flex items-center gap-1.5" :title="r._caixasErro">
+                                            ⚠ não foi possível verificar agora
+                                            <button type="button" class="link link-hover text-[11px]" @click="carregarCaixas(r, true)">tentar de novo</button>
+                                        </span>
+                                        <button type="button" class="btn btn-ghost btn-xs ml-auto" @click="abrirHistoricoTramitacoes(r)"
+                                                :disabled="r._caixasLoad || r._caixasFalhou || !(r._tramitacoes && r._tramitacoes.length)"
+                                                title="Últimas tramitações deste PAJ (histórico completo, concluídas ou não)">
+                                            <span x-text="r._caixasLoad ? '...' : (r._caixasFalhou ? '—' : ((r._tramitacoes ? r._tramitacoes.length : 0) + ' tramitações'))"></span>
+                                        </button>
                                     </div>
                                     <div class="grid grid-cols-1 lg:grid-cols-2 gap-3 py-2 pr-2">
                                         <!-- Card Resumo IA -->
@@ -285,23 +312,71 @@
                                             </button>
                                         </div>
                                     </div>
-                                    <!-- Ações no SISDPU (módulo reutilizável — static/js/acoes_sisdpu.js) -->
-                                    <div class="mx-2 mb-2"
-                                         x-data="acoesSisdpuBlock({
-                                             idProcesso: r.id_processo, paj: r.paj, pajNorm: r.paj_norm, idTramite: r.id_tramite,
-                                             getValorInicialMov: () => r._sug,
-                                             onExecutado: (res) => posExecucaoRetorno(r, res),
-                                         })" x-init="init()">
-                                        {% include "partials/acoes_sisdpu.html" %}
-                                    </div>
-                                    <!-- Ações no Eproc (módulo reutilizável — static/js/acoes_eproc.js) —
-                                         só existe quando o PAJ tem processo judicial vinculado. -->
-                                    <div class="mx-2 mb-2" x-show="(r.processos_judiciais || []).length"
-                                         x-data="acoesEprocBlock({
-                                             processos: r.processos_judiciais || [],
-                                             paj: r.paj, pajNorm: r.paj_norm,
-                                         })" x-init="init()">
-                                        {% include "partials/acoes_eproc.html" %}
+                                    <!-- Ações no SISDPU + Ações no e-proc — seção UNIFICADA, mesma estrutura
+                                         (grid 3 colunas + seta dupla p/ movimentação conjunta) da página do
+                                         PAJ (paj_detail.html) — pedido do usuário 2026-09-26. Só a CASCA
+                                         visual foi portada; cada bloco continua com seu PRÓPRIO x-data
+                                         (acoesSisdpuBlock/acoesEprocBlock) e onExecutado próprios da
+                                         Retornos (posExecucaoRetorno), sem lógica de execução nova. Ver os
+                                         comentários equivalentes em paj_detail.html (grid-row fixo nos 3
+                                         botões, display:contents nos x-data, etc.) para o motivo de cada
+                                         detalhe de layout. -->
+                                    <div class="bg-base-200 rounded-lg border border-base-300 px-3 py-2.5 mx-2 mb-2">
+                                        <div class="grid gap-3 items-start"
+                                             :style="(r.processos_judiciais && r.processos_judiciais.length) ? 'grid-template-columns: 1fr auto 1fr;' : 'grid-template-columns: 1fr;'">
+                                            <div style="display: contents;"
+                                                 x-data="acoesSisdpuBlock({
+                                                     idProcesso: r.id_processo, paj: r.paj, pajNorm: r.paj_norm, idTramite: r.id_tramite,
+                                                     getValorInicialMov: () => r._sug,
+                                                     onExecutado: (res) => posExecucaoRetorno(r, res),
+                                                 })" x-init="init()">
+                                                <div class="flex"
+                                                     :class="(r.processos_judiciais && r.processos_judiciais.length) ? 'justify-end' : 'justify-center'"
+                                                     style="grid-column: 1; grid-row: 1;">
+                                                    <button type="button" @click="abrir()"
+                                                            class="btn btn-sm btn-outline btn-success gap-1.5"
+                                                            title="Movimentar, tramitar ou concluir este PAJ diretamente no SISDPU">
+                                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5"></path></svg>
+                                                        Ações no SISDPU
+                                                    </button>
+                                                </div>
+                                                <div x-show="aberto" x-transition x-cloak class="mt-3 pt-3 border-t border-base-300" style="grid-column: 1 / -1;">
+                                                    {% include "partials/acoes_sisdpu.html" %}
+                                                </div>
+                                            </div>
+
+                                            <button type="button" x-show="(r.processos_judiciais || []).length"
+                                                    class="btn btn-sm btn-circle border-none shrink-0 self-center"
+                                                    style="background: linear-gradient(90deg, #16a34a, #2563eb); grid-column: 2; grid-row: 1;"
+                                                    @click="movimentarConjunto('', r.paj_norm)"
+                                                    title="Movimentar Sisdpu e Eproc simultaneamente">
+                                                <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
+                                                </svg>
+                                            </button>
+
+                                            <div style="display: contents;" x-show="(r.processos_judiciais || []).length"
+                                                 x-data="acoesEprocBlock({
+                                                     processos: r.processos_judiciais || [],
+                                                     paj: r.paj, pajNorm: r.paj_norm,
+                                                 })" x-init="init()">
+                                                <div class="flex justify-start" style="grid-column: 3; grid-row: 1;">
+                                                    <button type="button" @click="abrir()"
+                                                            class="btn btn-sm btn-outline btn-info gap-1.5"
+                                                            title="Peticionar ou lançar evento no processo judicial (e-proc) vinculado a este PAJ">
+                                                        <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
+                                                            <circle cx="8.5" cy="9" r="6.5" fill-opacity="1"></circle>
+                                                            <circle cx="16" cy="10.5" r="4.5" fill-opacity="0.55"></circle>
+                                                            <circle cx="12.5" cy="16.5" r="3" fill-opacity="0.8"></circle>
+                                                        </svg>
+                                                        Ações no e-proc
+                                                    </button>
+                                                </div>
+                                                <div x-show="aberto" x-transition x-cloak class="mt-3 pt-3 border-t border-base-300" style="grid-column: 1 / -1;">
+                                                    {% include "partials/acoes_eproc.html" %}
+                                                </div>
+                                            </div>
+                                        </div>
                                     </div>
                                 </td>
                             </tr>
@@ -335,6 +410,53 @@
                 <button class="btn btn-sm" @click="movModal=false">Fechar</button>
             </div>
         </div>
+    </div>
+
+    <!-- Modal de histórico de tramitações — mesma tabela/estilo do modal "Últimas
+         tramitações" da página do PAJ (caixasAbertasApp), só que COMPARTILHADO (1
+         por página, populado por linha ao abrir — ver abrirHistoricoTramitacoes). -->
+    <div class="modal" :class="{'modal-open': tramModalAberta}">
+        <div class="modal-box max-w-[85vw] max-h-[72vh] flex flex-col p-0">
+            <div class="flex items-center justify-between gap-3 px-6 pt-5 pb-3 shrink-0 border-b border-base-300">
+                <h3 class="font-bold text-lg" x-text="tramModalTitulo"></h3>
+                <button type="button" class="btn btn-sm btn-circle btn-ghost"
+                        @click="tramModalAberta = false" title="Fechar">✕</button>
+            </div>
+            <div class="overflow-y-auto overflow-x-auto flex-1 px-6 py-3">
+                <table class="table table-sm w-full">
+                    <thead class="bg-base-300 sticky top-0 z-10">
+                        <tr>
+                            <th>Data</th>
+                            <th>Remetente</th>
+                            <th>Grupo/Destinatário</th>
+                            <th>Descrição</th>
+                            <th>Prazo</th>
+                            <th>Conclusão</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="(t, idx) in tramModalItens" :key="idx">
+                            <tr :style="idx % 2 === 0
+                                    ? 'background-color: color-mix(in srgb, currentColor 3%, transparent);'
+                                    : 'background-color: color-mix(in srgb, currentColor 7%, transparent);'">
+                                <td class="text-xs whitespace-nowrap" x-text="t.data || '-'"></td>
+                                <td class="text-sm" x-text="t.remetente || '-'"></td>
+                                <td class="text-sm" x-text="t.local || '-'"></td>
+                                <td class="text-sm whitespace-normal break-words" x-text="t.descricao || '-'"></td>
+                                <td class="text-xs whitespace-nowrap" x-text="t.prazo || '-'"></td>
+                                <td class="text-xs whitespace-nowrap" x-text="t.conclusao || '—'"></td>
+                            </tr>
+                        </template>
+                        <tr x-show="!tramModalItens.length">
+                            <td colspan="6" class="text-center text-base-content/40 text-sm py-4">
+                                Nenhuma tramitação encontrada.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+        <form method="dialog" class="modal-backdrop"><button type="button" @click="tramModalAberta = false">fechar</button></form>
     </div>
 
     <!-- Modal de progresso (SSE) -->
@@ -421,6 +543,9 @@ function retornosPage() {
     return {
         itens: [], expandido: {},
         carregando: false, sincronizando: false, ressincronizando: false, atualizando: false,
+        // Modal compartilhado "Últimas tramitações" (histórico) — mesmo padrão do
+        // modal de movimentações abaixo (1 modal por página, populado ao abrir).
+        tramModalAberta: false, tramModalTitulo: '', tramModalItens: [],
         sseAberto: false, sseLog: [], sseStatus: '', sseTitulo: 'Sincronizando retornos', _es: null,
         movModal: false, movTitulo: '',
 
@@ -439,9 +564,14 @@ function retornosPage() {
                     // caixas abertas: já vêm da sincronização (cache); null = fallback lazy
                     _caixas: Array.isArray(r.caixas_abertas) ? r.caixas_abertas : null,
                     _caixasLoad: false,
+                    // histórico de tramitações (igual à página do PAJ — caixasAbertasApp):
+                    // NUNCA pré-cacheado na sincronização, sempre carregado sob demanda
+                    // (mesmo gatilho de carregarCaixas). false/[] pré-semeados de propósito
+                    // (nunca deixar undefined — trava :disabled do Alpine, ver memória).
+                    _tramitacoes: [], _caixasFalhou: false, _caixasErro: '',
                     _ressync: false,
-                    // Toggle do minimenu "Sincronizar" — dispara IA (resumo/sugestão) só
-                    // quando o usuário marcar; independente do modo leve/completo.
+                    // Toggle do minimenu "Re-sincronizar" — dispara IA (resumo/sugestão) só
+                    // quando o usuário marcar; independente do nível (levíssima/leve/completa).
                     _syncComIA: false,
                     // Estrela da watchlist (ver carregarWatchlist) — populado em lote,
                     // não um fetch por linha.
@@ -513,14 +643,34 @@ function retornosPage() {
             try { await fetch('/api/prazos/abrir-processo?url=' + encodeURIComponent(intimacao.processo_url)); }
             catch (e) {}
         },
-        async carregarCaixas(r) {
-            if (r._caixas || r._caixasLoad) return;  // já carregado / carregando
-            r._caixasLoad = true;
+        // `forcar=true` ignora o guard de "já carregado" — usado pelo link "tentar
+        // de novo" quando a verificação anterior falhou (r._caixasFalhou). Mesma
+        // fonte/endpoint da página do PAJ (caixasAbertasApp): uma ÚNICA navegação
+        // ao SISDPU traz tanto as caixas abertas quanto as últimas tramitações.
+        async carregarCaixas(r, forcar) {
+            if (!forcar && (r._caixas || r._caixasLoad)) return;  // já carregado / carregando
+            r._caixasLoad = true; r._caixasFalhou = false; r._caixasErro = '';
             try {
-                const j = await (await fetch('/api/retornos/' + encodeURIComponent(r.id_tramite) + '/caixas-abertas')).json();
-                r._caixas = j.abertas || [];
-            } catch (e) { r._caixas = []; }
-            finally { r._caixasLoad = false; }
+                const j = await (await fetch('/api/paj/' + encodeURIComponent(r.paj_norm) + '/tramitacoes?limite=10')).json();
+                if (j.ok === false) {
+                    r._caixasFalhou = true;
+                    r._caixasErro = j.erro || 'Não foi possível verificar agora.';
+                    r._caixas = []; r._tramitacoes = [];
+                } else {
+                    r._caixas = j.abertas || [];
+                    r._tramitacoes = j.tramitacoes || [];
+                }
+            } catch (e) {
+                r._caixasFalhou = true;
+                r._caixasErro = 'Falha de conexão ao verificar.';
+                r._caixas = []; r._tramitacoes = [];
+            } finally { r._caixasLoad = false; }
+        },
+        abrirHistoricoTramitacoes(r) {
+            if (!r._tramitacoes || !r._tramitacoes.length) return;
+            this.tramModalTitulo = 'Últimas tramitações — ' + r.paj;
+            this.tramModalItens = r._tramitacoes;
+            this.tramModalAberta = true;
         },
         grupos() {
             // Agrupa os retornos por classificação da IA para agilizar as ações.
@@ -556,15 +706,17 @@ function retornosPage() {
             // Entrega ao componente COMPARTILHADO (o modal contém o partial que escuta o evento).
             window.dispatchEvent(new CustomEvent('mov-tabela-carregar', { detail: cfg }));
         },
-        async ressincronizarPaj(r, completo) {
+        // `nivel`: 'levissima' | 'leve' | 'completa' — mesma nomenclatura do
+        // dashboard/página do PAJ (ver [[painel-sisdpu-sync-niveis-3-hipoteses]]).
+        async ressincronizarPaj(r, nivel) {
             if (r._ressync) return;
             if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
             r._ressync = true; this.ressincronizando = true;
             const ia = !!r._syncComIA;
-            this.sseTitulo = (completo ? 'Sincronização completa' : 'Sincronização leve')
-                + (ia ? ' + IA' : '') + ' — ' + r.paj;
+            const rotulos = { levissima: 'Levíssima', leve: 'Leve', completa: 'Completa' };
+            this.sseTitulo = (rotulos[nivel] || nivel) + (ia ? ' + IA' : '') + ' — ' + r.paj;
             this.sseLog = []; this.sseStatus = ''; this.sseAberto = true;
-            const qs = new URLSearchParams({ completo: completo ? '1' : '0', ia: ia ? '1' : '0' });
+            const qs = new URLSearchParams({ nivel: nivel, ia: ia ? '1' : '0' });
             const es = new EventSource('/api/retornos/' + encodeURIComponent(r.id_tramite) + '/ressincronizar-paj?' + qs.toString());
             this._es = es;
             es.addEventListener('log', (ev) => {

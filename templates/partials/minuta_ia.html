@@ -1,7 +1,8 @@
-{# Console "Gerar Minuta" — revelado pelo botão da barra de ações (ver
-   paj_detail.html, mesmo padrão de "Ações no SISDPU"/"Ações no e-proc").
-   O modal de seleção de documentos REAPROVEITA ipsis litteris as tabelas
-   compartilhadas do painel (não duplica nada):
+{# Console "Gerar Minuta" — revelado ao clicar num dos 2 itens do menu
+   "Minutar Petição" (ver paj_detail.html), que já abrem o modal de seleção
+   de documentos direto (sem dropdown de tipo aqui dentro — `tipoSlug` já
+   vem setado por quem abriu). O modal REAPROVEITA ipsis litteris as
+   tabelas compartilhadas do painel (não duplica nada):
      - aba "Processo": partials/eventos_processo_tabela.html (mesma tabela de
        "Consultar processo"), em modo seleção (eventos_processo.js).
      - aba "PAJ": partials/movimentacoes_tabela.html (mesma tabela da aba
@@ -9,17 +10,8 @@
    Clicar no badge do documento SELECIONA em vez de abrir/baixar — mesmo
    gesto de sempre, só que o destino agora é a IA em vez do navegador. #}
 <div class="flex items-center gap-2 flex-wrap">
-    <select class="select select-bordered select-sm" x-model="tipoSlug" x-show="tipos.length">
-        <template x-for="t in tipos" :key="t.slug">
-            <option :value="t.slug" x-text="t.label"></option>
-        </template>
-    </select>
-    <span class="text-xs text-base-content/40" x-show="!tipos.length">Nenhum tipo de minuta configurado ainda.</span>
-
-    <button type="button" class="btn btn-sm btn-outline gap-1" :disabled="!tipos.length || gerando" @click="abrirModal()">
-        📝 Selecionar documentos e gerar
-    </button>
-
+    <span class="text-xs font-semibold uppercase tracking-wide text-base-content/50" x-show="tipoSlug"
+          x-text="labelAtivo || (tipos.find(t => t.slug === tipoSlug) || {}).label || tipoSlug"></span>
     <span class="loading loading-spinner loading-xs" x-show="gerando"></span>
     <span class="text-xs text-base-content/50" x-show="gerando">Gerando minuta com IA…</span>
 </div>
@@ -83,6 +75,21 @@
                 </template>
             </select>
         </div>
+
+        <!-- Cópia da caixa "Orientação diretiva" (x-model no MESMO
+             orientacaoDiretiva do container "Ações com IA", ancestor deste
+             componente — ver _orientacaoDiretiva() em minuta_ia.js). Mesmo
+             motivo de "Calcular Tempo de Contribuição"/"Calcular Qualidade
+             de Segurado": o backdrop do modal bloqueia clique na caixa
+             original da página enquanto o modal está aberto — quem digita a
+             orientação DEPOIS de abrir o modal (o mais comum) via a caixa de
+             fora tinha o texto silenciosamente ignorado. -->
+        <label class="form-control mb-3">
+            <span class="label-text text-xs mb-1">Orientação diretiva para esta minuta (opcional)</span>
+            <textarea x-model="orientacaoDiretiva" rows="2"
+                      class="textarea textarea-bordered textarea-sm text-xs"
+                      placeholder="Ex.: sustente a tese X; não mencione Y; foque em Z"></textarea>
+        </label>
 
         <div role="tablist" class="tabs tabs-boxed tabs-sm mb-3 w-fit">
             <a role="tab" class="tab" :class="abaAtiva === 'processo' ? 'tab-active' : ''" @click="abaAtiva = 'processo'">

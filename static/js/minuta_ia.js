@@ -11,18 +11,31 @@
 // formata o texto ATUAL da caixa (já revisado) sem chamar IA de novo.
 //
 // Uso:
-//   <div x-data="minutaIaApp('{{ paj_norm }}')" x-init="init(window._paj_processos_judiciais_completo)">
+//   <div x-data="minutaIaApp('{{ paj_norm }}', '{{ meta.paj }}')" x-init="init(window._paj_processos_judiciais_completo)">
 //     {% include "partials/minuta_ia.html" %}
 //   </div>
 //
 // A leitura da seleção nos dois componentes-filho (tabProcesso/tabPaj) é
 // feita sob demanda via Alpine.$data($refs.*) — não há bridging por evento
 // nem estado duplicado aqui; este componente só LÊ o que o filho já mantém.
-function minutaIaApp(pajNorm) {
+function minutaIaApp(pajNorm, pajLabel) {
     return {
         pajNorm: pajNorm,
+        pajLabel: pajLabel || '',
         tipos: [],
         tipoSlug: '',
+        // Rótulo mostrado no topo da caixa quando a origem NÃO é um dos
+        // `tipos` da IA (ver "Petição padrão" abaixo) — os botões de tipo de
+        // IA continuam usando o lookup em `tipos` (não mexi neles).
+        labelAtivo: '',
+
+        // --- "Petição padrão" — insere um modelo já cadastrado (Config-
+        // urações › e-proc › Modelos de petição) direto na caixa, com os
+        // MESMOS placeholders/mecanismo de "Usar modelo" (ver
+        // acoes_eproc.js/rich_editor.js) — sem chamar IA.
+        modelosPadrao: [],
+        mostrarSubmenuPadrao: false,
+        usandoModeloPadrao: false,
 
         processos: [],
         processoSelecionado: '',
@@ -64,7 +77,7 @@ function minutaIaApp(pajNorm) {
                 // Judicial" não tem o que mostrar; abre direto na "PAJ".
                 this.abaAtiva = 'paj';
             }
-            await Promise.all([this.carregarTipos(), this.fetchStatus()]);
+            await Promise.all([this.carregarTipos(), this.carregarModelosPadrao(), this.fetchStatus()]);
             if (this.status === 'running') this._iniciarPolling();
         },
 
@@ -76,6 +89,76 @@ function minutaIaApp(pajNorm) {
                 if (this.tipos.length) this.tipoSlug = this.tipos[0].slug;
             } catch (e) {
                 console.warn('Falha ao carregar tipos de minuta:', e);
+            }
+        },
+
+        async carregarModelosPadrao() {
+            try {
+                const resp = await fetch('/api/minutas/modelos-padrao');
+                const data = await resp.json();
+                this.modelosPadrao = data.modelos || [];
+            } catch (e) {
+                console.warn('Falha ao carregar modelos de petição padrão:', e);
+            }
+        },
+
+        // Insere o modelo escolhido NA POSIÇÃO DO CURSOR da caixa de edição
+        // da minuta — mesmo gesto/mesma resolução de placeholders de "Usar
+        // modelo" (Ações no Eproc — ver acoes_eproc.js::usarModeloPeticao),
+        // sem apagar o que já estiver escrito: dá pra compor mais de um
+        // modelo, ou complementar com texto próprio antes/depois, antes de
+        // "Gerar arquivo". Sem IA: depois de cada inserção, persiste o texto
+        // JÁ COMPOSTO (não só o fragmento novo) como "done" no backend (ver
+        // usar_modelo_padrao em minuta_ia_service.py) — pra sobreviver a um
+        // reload igual o rascunho da IA já sobrevive via "Gravar".
+        async usarModeloPadrao(modeloId) {
+            const modelo = this.modelosPadrao.find((m) => m.id === modeloId);
+            if (!modelo) return;
+            this.mostrarSubmenuPadrao = false;
+            this.usandoModeloPadrao = true;
+            this.erro = '';
+            try {
+                const org = window._identificacaoOrgao || {};
+                const subs = {
+                    '[PROCESSO]': this.processoSelecionado || '',
+                    '[PAJ]': this.pajLabel || '',
+                    '[DATA]': dataPorExtenso(),
+                    '[OFICIO]': org.oficio || '',
+                    '[UNIDADE]': org.unidade || '',
+                    '[DEFENSOR]': org.defensor_nome || '',
+                    '[CARGO]': org.defensor_cargo || '',
+                };
+                try {
+                    const j = await (await fetch('/api/acoes-eproc/qualificacao/' + encodeURIComponent(this.pajNorm))).json();
+                    if (j.nome) subs['[NOME]'] = j.nome;
+                    if (j.cpf) subs['[CPF]'] = j.cpf;
+                } catch (e) { /* segue sem — modelo fica com [NOME]/[CPF] literais */ }
+
+                const htmlModelo = paraHtmlSeTextoPuro(modelo.texto);
+                const textoResolvido = resolverPlaceholders(htmlModelo, subs);
+
+                this.tipoSlug = 'padrao';
+                this.labelAtivo = 'Petição padrão';
+                this.arquivos = [];
+                this.erroArquivo = '';
+                this.status = 'done';
+                await this._montarEditorSeNecessario();
+                if (this._editorMinuta) {
+                    this._editorMinuta.insertHTML(textoResolvido);
+                } else {
+                    this.minutaTexto = (this.minutaTexto ? this.minutaTexto + '\n\n' : '') + htmlParaTextoSimples(textoResolvido);
+                }
+                this.gravado = false;
+
+                const resp = await fetch('/api/minutas/usar-modelo/' + encodeURIComponent(this.pajNorm), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ peticao_html: this.minutaEfetiva() }),
+                });
+                const j2 = await resp.json();
+                if (!j2.ok) this.erro = j2.erro || 'Falha ao gravar o modelo inserido.';
+            } finally {
+                this.usandoModeloPadrao = false;
             }
         },
 
@@ -151,6 +234,20 @@ function minutaIaApp(pajNorm) {
             return d ? d.selecionadosIA.size : 0;
         },
 
+        // Caixa compartilhada "Orientação diretiva para análise da IA" —
+        // mora no x-data do container "Ações com IA" (elemento ANCESTOR
+        // deste componente, não filho — por isso sobe com closest() em vez
+        // de usar $refs, mesmo motivo/mesma técnica de _dataProcesso()/
+        // _dataPaj() acima, só que na direção oposta). Mesma variável usada
+        // por "Analisar"/"Calcular Tempo de Contribuição"/"Calcular
+        // Qualidade de Segurado" (ver paj_detail.html).
+        _orientacaoDiretiva() {
+            const container = this.$el.parentElement && this.$el.parentElement.closest('[x-data]');
+            if (!container) return '';
+            const d = window.Alpine.$data(container);
+            return (d && d.orientacaoDiretiva) || '';
+        },
+
         abrirModal() {
             this.modalAberto = true;
             this.erro = '';
@@ -187,10 +284,16 @@ function minutaIaApp(pajNorm) {
                 ...(dProcesso ? Array.from(dProcesso.selecionadosIA.values()) : []),
                 ...(dPaj ? Array.from(dPaj.selecionadosIA.values()) : []),
             ];
-            if (!documentos.length) {
-                this.erro = 'Selecione ao menos um documento (processo ou PAJ) antes de gerar a minuta.';
-                return;
-            }
+            // SEM bloqueio incondicional aqui — pedido do usuário, 2026-09-29:
+            // "Petição genérica" não exige documento nenhum (a Orientação
+            // Diretiva sozinha já pode bastar); quem decide isso por tipo é o
+            // back-end (`documentos_obrigatorios` em TIPOS_MINUTA, ver
+            // minuta_ia_service.iniciar), não uma checagem fixa aqui — senão
+            // essa exigência nunca dependia do tipo escolhido, bug real
+            // relatado pelo usuário (bloqueava mesmo a "Petição genérica").
+            // Sem documentos E sem orientação, o back-end recusa e devolve
+            // `erro` explicando o que falta — tratado abaixo, mesmo caminho
+            // de sempre.
             this.gerando = true;
             this.erro = '';
             this.erroArquivo = '';
@@ -203,6 +306,7 @@ function minutaIaApp(pajNorm) {
                         processo: this.processoSelecionado,
                         tipo_slug: this.tipoSlug,
                         documentos: documentos,
+                        orientacao: this._orientacaoDiretiva(),
                     }),
                 });
                 const j = await resp.json();

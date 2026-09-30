@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import shutil
 import sys
@@ -21,6 +22,8 @@ from datetime import datetime
 from pathlib import Path
 
 import config
+
+_log = logging.getLogger("acoes_eproc")
 
 # Rascunhos de petição ("Gravar" p/ peticionar mais tarde) — mesma convenção de
 # `dados/` na raiz do PAINEL SISDPU usada por `eproc_mcp_client.EPROC_DOCS_DIR`
@@ -408,6 +411,30 @@ async def listar_prazos(numeros_processo: list[str]) -> list[dict]:
     return itens
 
 
+async def resolver_classe_processo(numero: str) -> dict:
+    """Classe processual (ex.: "Cumprimento de Sentença contra Fazenda Pública
+    (JEF)") de UM processo, via `/api/eproc-mcp/consultar` (MNI/raspador HTTP —
+    sem abrir aba no navegador do e-proc, mesma tool usada em "Consultar
+    processo"). Alimenta o rótulo do <select> "Processo judicial a movimentar"
+    quando o PAJ tem mais de um processo vinculado (pedido do usuário
+    2026-09-29 — distinguir os processos só por número/juízo era pouco pra
+    escolher o certo).
+
+    Tenta 1ª e 2ª instância nesta ordem, mesma convenção já usada em
+    `listar_prazos`/`calcular_residual_prazos` (nenhum campo local guarda a
+    instância de cada processo do PAJ) — para no primeiro que resolver."""
+    from ingestao import eproc_mcp_client
+
+    for instancia in (1, 2):
+        try:
+            res = await eproc_mcp_client.consultar_processo(numero, instancia=instancia)
+        except Exception:
+            res = None
+        if res and not res.get("erro") and res.get("classe"):
+            return {"ok": True, "classe": res["classe"]}
+    return {"ok": False, "classe": ""}
+
+
 def resolver_prazo_por_id(prazo_id: str) -> dict | None:
     """Devolve o registro CRU do prazo (com `data_envio`, usado pra casar contra
     a triagem MCP — ver `peticao_ia_service`) + o `caso` (processo/assunto/
@@ -601,6 +628,7 @@ async def montar_resumo_execucao(paj_norm: str) -> dict:
     ids_selecionados = [pid for pid, sel in (rascunho.get("prazos_selecionados") or {}).items() if sel]
     prazos_labels: list[str] = []
     prazos_nao_resolvidos: list[str] = []
+    prazos_raw_resolvidos: dict[str, dict] = {}
     if ids_selecionados:
         itens = await listar_prazos([processo])
         por_id = {it["id"]: it for it in itens}
@@ -608,8 +636,26 @@ async def montar_resumo_execucao(paj_norm: str) -> dict:
             it = por_id.get(pid)
             if it and it.get("label"):
                 prazos_labels.append(it["label"])
+                # Resolve e GRAVA o dado CRU (evento/data_envio/prazo_dias) já
+                # AGORA, no mesmo instante em que soubemos que este id ainda é
+                # válido — não deixa pra uma segunda consulta independente na
+                # hora de confirmar (`confirmar_peticionamento_real`), que já
+                # rodou numa janela de tempo diferente e falhou em resolver 1
+                # de 2 prazos selecionados no mesmo peticionamento (bug real
+                # 2026-09-26, PAJ 2026/029-01734, processo
+                # 5035343-61.2026.4.04.7000 — causa exata não reconstruída,
+                # mas o padrão "2 consultas independentes ao mesmo cache em
+                # momentos diferentes" é o suspeito óbvio). Persistido no
+                # PRÓPRIO rascunho (abaixo) pra sobreviver até a confirmação.
+                resolvido = resolver_prazo_por_id(pid)
+                if resolvido:
+                    prazos_raw_resolvidos[pid] = resolvido["prazo"]
             else:
                 prazos_nao_resolvidos.append(pid)
+        if prazos_raw_resolvidos:
+            salvar_rascunho(paj_norm, {**rascunho, "prazos_raw_resolvidos": {
+                **(rascunho.get("prazos_raw_resolvidos") or {}), **prazos_raw_resolvidos,
+            }})
 
     return {
         "ok": True, "processo": processo, "evento": evento,
@@ -856,12 +902,39 @@ async def confirmar_peticionamento_real(paj_norm: str, processo: str) -> dict:
         from services import prazo_baixa_service
 
         ids_selecionados = [pid for pid, sel in (rascunho.get("prazos_selecionados") or {}).items() if sel]
+        prazos_raw_resolvidos = rascunho.get("prazos_raw_resolvidos") or {}
         for pid in ids_selecionados:
-            resolvido = resolver_prazo_por_id(pid)
-            if resolvido:
+            # Prefere o dado CRU já resolvido e GRAVADO em `montar_resumo_execucao`
+            # (no momento em que o resumo foi montado pra revisão, ver lá) —
+            # só faz uma consulta nova se por algum motivo não tiver sido
+            # persistido (rascunho antigo, ou fluxo que pulou o resumo). Evita
+            # uma SEGUNDA consulta independente ao cache de `eproc_intimacoes`
+            # aqui, que é exatamente onde o bug de 2026-09-26 aconteceu.
+            prazo_bruto = prazos_raw_resolvidos.get(pid)
+            if not prazo_bruto:
+                resolvido = resolver_prazo_por_id(pid)
+                prazo_bruto = resolvido["prazo"] if resolvido else None
+            if prazo_bruto:
                 prazo_baixa_service.marcar_baixa(
-                    processo, resolvido["prazo"], origem="eproc-peticionamento",
+                    processo, prazo_bruto, origem="eproc-peticionamento",
                     detalhe=f"{paj_norm} — {evento}" if evento else paj_norm)
+            else:
+                # NUNCA pode passar em silêncio — sem isso, um prazo genuinamente
+                # fechado no e-proc (via _marcar_prazos_fechar, que já rodou com
+                # sucesso nesta mesma chamada) ficava com a baixa LOCAL perdida
+                # sem deixar rastro nenhum: a tabela de Prazos e-proc continuava
+                # mostrando "pendente" até a próxima sincronização real, e
+                # ninguém sabia o motivo. Bug real 2026-09-26 (PAJ
+                # 2026/029-01734, processo 5035343-61.2026.4.04.7000): 2 prazos
+                # selecionados no mesmo peticionamento, só 1 registrou baixa —
+                # o outro (`pid` aqui) não resolveu mais contra o cache de
+                # `eproc_intimacoes` no momento da confirmação (cache pode ter
+                # mudado entre a seleção do checkbox e a confirmação real).
+                _log.warning(
+                    "Baixa local de prazo NAO registrada: id=%s nao resolveu contra o cache atual "
+                    "(processo=%s, paj=%s, evento=%s) — prazo pode ter fechado no e-proc mas a "
+                    "tabela local so refletira isso na proxima sincronizacao real.",
+                    pid, processo, paj_norm, evento)
         # Registro no Histórico do painel — próprio pra este ato (nunca existia
         # antes: peticionar no e-proc não deixava rastro nenhum ali, só a
         # movimentação SISDPU consequente, quando executada em algum console

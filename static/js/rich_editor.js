@@ -43,6 +43,7 @@ function criarEditorRico(elId, opts) {
     }
     if (opts.valorInicial) quill.clipboard.dangerouslyPasteHTML(opts.valorInicial);
     else if (opts.valorInicialTexto) quill.setText(opts.valorInicialTexto);
+    _ativarListaAlfabetica(quill);
     return {
         quill: quill,
         // Um editor "vazio" no Quill ainda emite '<p><br></p>' — normaliza pra
@@ -84,6 +85,70 @@ function criarEditorRico(elId, opts) {
         isEmpty() { return quill.getText().trim().length === 0 && !quill.root.querySelector('img'); },
         focus() { quill.focus(); },
     };
+}
+
+// "Lista" alfabética (a) b) c)...) — pedido do usuário, 2026-09-28. Quill só
+// tem lista numérica/com marcadores nativas (sem opção de estilo "a, b, c");
+// criar um formato de verdade pra isso mexeria no modelo interno do Quill
+// (Parchment/Attributor), frágil e sensível à versão carregada via CDN. Em
+// vez disso: reconhece o padrão "x) " já digitado no INÍCIO da linha e, ao
+// apertar Enter com o cursor no FIM dela, prossegue pra próxima letra
+// automaticamente — é só texto comum no HTML final (mesmo tratamento que
+// qualquer parágrafo já recebe em `_html_para_docx`, sem precisar reconhecer
+// nenhum marcador especial na hora de gerar o .docx). Enter numa linha
+// "x) " ainda vazia sai da sequência (não insere mais nenhuma letra) —
+// mesmo gesto de sair de uma lista de verdade.
+//
+// Ouve em CAPTURE no `document` (não em `quill.root`) pra rodar ANTES do
+// tratamento padrão de Enter que o próprio Quill já registra na construção
+// (na mesma fase/mesmo elemento, quem registrou primeiro roda primeiro —
+// nosso `criarEditorRico` só chama isto DEPOIS de `new Quill(...)`, então um
+// listener nosso no próprio elemento sempre rodaria depois do do Quill).
+const _RE_ITEM_LISTA_ALFA = /^([a-zA-Z])\)\s(.*)$/;
+
+function _ativarListaAlfabetica(quill) {
+    document.addEventListener('keydown', function(ev) {
+        if (ev.key !== 'Enter' || ev.shiftKey || ev.ctrlKey || ev.metaKey || ev.altKey) return;
+        if (!quill.root.contains(ev.target)) return;
+        const sel = quill.getSelection();
+        if (!sel || sel.length > 0) return;
+
+        const [linha] = quill.getLine(sel.index);
+        if (!linha) return;
+        const inicioLinha = quill.getIndex(linha);
+        const fimLinha = inicioLinha + linha.length() - 1; // -1: exclui o '\n' do próprio blot
+        if (sel.index !== fimLinha) return; // Enter no MEIO da linha — comportamento normal
+
+        const textoLinha = quill.getText(inicioLinha, fimLinha - inicioLinha);
+        const m = textoLinha.match(_RE_ITEM_LISTA_ALFA);
+        if (!m) return;
+
+        ev.preventDefault();
+        ev.stopPropagation();
+
+        if (!m[2].trim()) {
+            // "x) " ainda vazia + Enter — sai da sequência: só apaga o
+            // marcador solto (a linha em si já existe, não precisa de outra
+            // quebra — inserir mais um '\n' aqui duplicava a linha em branco).
+            quill.deleteText(inicioLinha, textoLinha.length, 'user');
+            quill.setSelection(inicioLinha, 0, 'user');
+            return;
+        }
+
+        const letra = m[1];
+        const letraMinuscula = letra.toLowerCase();
+        let inserir;
+        if (letraMinuscula === 'z') {
+            // esgotou o alfabeto — Enter normal, sem mais nenhuma letra.
+            inserir = '\n';
+        } else {
+            let proxima = String.fromCharCode(letraMinuscula.charCodeAt(0) + 1);
+            if (letra === letra.toUpperCase()) proxima = proxima.toUpperCase();
+            inserir = `\n${proxima}) `;
+        }
+        quill.insertText(sel.index, inserir, 'user');
+        quill.setSelection(sel.index + inserir.length, 0, 'user');
+    }, true);
 }
 
 // Reduz HTML (de um editor rico) a texto simples com quebras de linha razoáveis.

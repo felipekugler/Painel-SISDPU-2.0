@@ -12,9 +12,11 @@ store). Futuras páginas (PAJ detail, Watchlist etc.) podem chamar este módulo 
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import json
 import re
+import subprocess
 import unicodedata
 import uuid
 from datetime import date, timedelta
@@ -675,3 +677,94 @@ async def executar_fila_stream(
 
     yield _ev("ok", f"Fila concluída — {total}/{total} movimentação(ões) executada(s) com sucesso.")
     yield {"done": True, "resultado": {"ok": True, "itens_concluidos": concluidos, "mov_seq": mov_seq_fila}}
+
+
+# ---------------------------------------------------------------------------
+# "Gerar Síntese do PAJ" — botão ao lado de "Usar modelo" (descrição da
+# movimentação): analisa o PROMPT_MAX do PAJ e gera, por IA, um texto corrido
+# com a síntese cronológica da tramitação. Chamada one-shot ao Claude CLI —
+# "motor simples" (mesmo padrão de services.intimacao_ia_service.
+# _chamar_claude_texto / services.minuta_ia_service): prompt por STDIN,
+# cwd fora de qualquer workspace de skills (o PROMPT_MAX já traz todo o fato
+# relevante do caso embutido no próprio prompt — não precisa de acesso a
+# CLAUDE.md/skills/bases pra essa tarefa de transformação de texto).
+# ---------------------------------------------------------------------------
+
+_SINTESE_PAJ_PROMPT = """Gere o tópico "SÍNTESE DA TRAMITAÇÃO DO PAJ": texto corrido, sem títulos internos, sem bullets, em ordem cronológica.
+
+- 1º parágrafo: "Trata-se de pretensão de [benefício], requerida administrativamente por [assistido] (NB/DER se houver), em razão de [fato gerador, com data]. O INSS indeferiu o pedido sob o fundamento de que [motivo técnico do indeferimento]."
+- Parágrafos seguintes: um por marco relevante (análise prévia, despacho, arquivamento, desarquivamento, documento decisivo), cada um iniciado por marcador temporal ("Em [data]..." / "Em despacho de [data] (mov. X)...") citando o nº da movimentação entre parênteses quando disponível.
+- Ao mencionar documento/declaração nova, extrair o conteúdo concreto (datas, teor específico) — nunca resumir como "foram apresentados documentos".
+- Não repetir fundamentação jurídica já exposta em parágrafo anterior; reportar só o fato/conclusão novo de cada marco.
+- Não incluir frase de fechamento/transição para a análise atual — a síntese termina no último fato registrado no PAJ.
+- Separar parágrafos com linha em branco. Tom técnico-direto, sem travessão."""
+
+
+def _extrair_texto_puro(saida: str) -> str:
+    """Remove cercas de código markdown, se o modelo insistir em envolver a
+    resposta nelas apesar da instrução de responder só com o texto puro —
+    mesma defesa de services.intimacao_ia_service._extrair_bloco_html."""
+    texto = (saida or "").strip()
+    m = re.match(r"^```[a-zA-Z]*\s*(.*?)```\s*$", texto, re.DOTALL)
+    return m.group(1).strip() if m else texto
+
+
+async def _chamar_claude_texto_sintese(prompt: str, timeout: int = 180) -> tuple[str, str | None]:
+    """Chamada one-shot ao Claude CLI — ver docstring da seção acima. Roda em
+    thread (`asyncio.to_thread`) pra não bloquear o loop de eventos do FastAPI
+    durante a chamada bloqueante. Retorna (texto, erro) — erro None em sucesso."""
+    from services.chat_service import CLAUDE_CMD
+    from services.peticao_ia_service import MODELOS_DIR
+
+    cmd = [*CLAUDE_CMD, "-p", "--permission-mode", "bypassPermissions"]
+    try:
+        proc = await asyncio.to_thread(
+            subprocess.run, cmd, cwd=str(MODELOS_DIR), input=prompt,
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=timeout,
+        )
+    except Exception as e:  # noqa: BLE001
+        return "", f"{type(e).__name__}: {e}"
+    saida = (proc.stdout or "").strip()
+    if not saida:
+        erro_txt = (proc.stderr or "").strip()
+        return "", f"Resposta vazia da IA.{(' ' + erro_txt[-500:]) if erro_txt else ''}"
+    return saida, None
+
+
+async def gerar_sintese_paj(paj_norm: str) -> dict:
+    """Gera a "SÍNTESE DA TRAMITAÇÃO DO PAJ" por IA a partir do PROMPT_MAX do
+    PAJ (cabeçalho/narrativa/movimentações já consolidados pelo painel) —
+    botão "Gerar Síntese do PAJ" ao lado de "Usar modelo". O texto retornado é
+    inserido no CURSOR do editor de descrição da movimentação pelo frontend
+    (mesmo `insertHTML()` de usarModeloDespacho), sem apagar o que já
+    estiver escrito."""
+    pasta = PAJS_DIR / paj_norm
+    if not pasta.exists():
+        return {"ok": False, "detalhe": "PAJ não encontrado."}
+
+    prompt_max_path = pasta / "PROMPT_MAX.md"
+    if not prompt_max_path.exists():
+        from services.prompt_builder import gerar_prompt_max
+
+        with contextlib.suppress(Exception):
+            gerar_prompt_max(paj_norm)
+    prompt_max = ""
+    if prompt_max_path.exists():
+        with contextlib.suppress(Exception):
+            prompt_max = prompt_max_path.read_text(encoding="utf-8", errors="replace")
+    if not prompt_max.strip():
+        return {"ok": False, "detalhe": "Não foi possível montar o contexto do PAJ (PROMPT_MAX)."}
+
+    prompt = (
+        "Contexto do PAJ (gerado pelo painel a partir do SISDPU):\n\n"
+        "--- INICIO DO PROMPT_MAX ---\n"
+        f"{prompt_max.strip()}\n"
+        "--- FIM DO PROMPT_MAX ---\n\n"
+        f"{_SINTESE_PAJ_PROMPT}\n\n"
+        "Responda apenas com o texto solicitado — sem cercas de código markdown, "
+        "sem comentários antes ou depois."
+    )
+    texto, erro = await _chamar_claude_texto_sintese(prompt)
+    if erro:
+        return {"ok": False, "detalhe": erro}
+    return {"ok": True, "texto": _extrair_texto_puro(texto)}

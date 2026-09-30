@@ -597,34 +597,46 @@ async def atualizar_caixa() -> dict:
     return {"ok": True, "total_caixa": len(ids_caixa), "removidos": removidos, "mensagem": "", "log": log}
 
 
-async def ressincronizar_paj_stream(id_tramite: str, completo: bool = False,
+NIVEIS_SYNC = ("levissima", "leve", "completa")
+
+
+async def ressincronizar_paj_stream(id_tramite: str, nivel: str = "levissima",
                                     ia: bool = False) -> AsyncIterator[dict]:
-    """Ressincroniza UM retorno já conhecido — modo e IA são escolhas INDEPENDENTES no
-    minimenu do botão "Sincronizar" de cada linha (mesmo padrão do dropdown "Consultar
-    processo"), pra deixar o usuário disparar a IA só quando for realmente necessário:
+    """Ressincroniza UM retorno já conhecido — MESMOS 3 níveis (nomenclatura e
+    semântica) do "Sincronizar caixa"/"Sincronizar PAJ" do dashboard (ver
+    [[painel-sisdpu-sync-niveis-3-hipoteses]]), escolhidos no minimenu do botão
+    "Re-sincronizar" de cada linha (mesmo padrão do dropdown "Consultar processo"):
 
-    `completo=False` (**Sincronização leve**, padrão): `baixar_anexos=False,
-    extrair_documentos=False, esperas_curtas=True` — só refresca o núcleo do metadata
-    (ofício, assistido, pretensão, movimentações, caixas abertas), sem indexar
-    documentos. É rápida o bastante pra ser usada como "conferência": depois de um
-    "erro de conexão" no console Ações no SISDPU (mov→tram→conclui — ver
-    [[project_painel_retornos]]), verificar aqui se a movimentação/tramitação/conclusão
-    realmente foi efetivada no SISDPU antes de decidir o que reexecutar.
+    - `nivel="levissima"` (padrão): `baixar_anexos=False, extrair_documentos=False,
+      esperas_curtas=True` — só dados básicos (movimentações e metadata: ofício,
+      assistido, pretensão, caixas abertas). É rápida o bastante pra ser usada como
+      "conferência": depois de um "erro de conexão" no console Ações no SISDPU
+      (mov→tram→conclui — ver [[project_painel_retornos]]), verificar aqui se a
+      movimentação/tramitação/conclusão realmente foi efetivada no SISDPU antes de
+      decidir o que reexecutar.
+    - `nivel="leve"`: `baixar_anexos=False, extrair_documentos=True,
+      esperas_curtas=True` — dados básicos + relação de documentos por seq, SEM
+      baixar os PDFs (só indexa os links — mesmo custo de navegação da levíssima,
+      um pouco mais lenta pela extração em si).
+    - `nivel="completa"`: `baixar_anexos=True, extrair_documentos=True,
+      esperas_curtas=False` — dados básicos + relação de documentos + download —
+      o MESMO caminho que a aba PAJs usa em "Completa" (popula a coluna
+      "Documentos" do modal compartilhado com os arquivos já baixados).
 
-    `completo=True` (**Sincronização completa**): `baixar_anexos=True,
-    extrair_documentos=True, esperas_curtas=False` — o MESMO caminho que a aba PAJs usa
-    em "Sincronizar (com anexos)" (baixa e indexa os documentos de cada movimentação,
-    populando a coluna "Documentos" do modal compartilhado igual à aba PAJs).
-
-    `ia=True` (independente do modo acima): ao final, dispara uma reanálise da IA
+    `ia=True` (independente do nível acima): ao final, dispara uma reanálise da IA
     (mesma lógica de `reanalisar()`) — resumo/sugestão são recalculados e substituem
     os salvos. Fica desligado por padrão porque a maior parte das ressincronizações
-    de UM PAJ é justamente conferência rápida (ver caso de uso do modo leve acima),
-    onde a IA não agrega nada e só custa tempo.
+    de UM PAJ é justamente conferência rápida (nível levíssima), onde a IA não
+    agrega nada e só custa tempo.
 
     Em qualquer combinação: NUNCA é a sincronização pesada da aba PAJs propriamente
     dita (roda aqui mesmo, sem navegar para /paj/...). A IA também está disponível à
     parte no botão "Reanálise pela IA", sem precisar ressincronizar nada."""
+    if nivel not in NIVEIS_SYNC:
+        nivel = "levissima"
+    baixar_anexos = nivel == "completa"
+    extrair_documentos = nivel != "levissima"
+    esperas_curtas = nivel != "completa"
     store = _ler_store()
     rec = store.get(id_tramite)
     if not rec:
@@ -666,13 +678,10 @@ async def ressincronizar_paj_stream(id_tramite: str, completo: bool = False,
         "data": it.get("data_envio", ""),
         "desc": (it.get("descricao", "") + " | " + it.get("linha_texto", "")).strip(),
     }
-    if completo:
-        yield _ev("info", "Regravando dados unificados (completo: baixando e indexando documentos)…")
-    else:
-        yield _ev("info", "Regravando dados unificados (leve: sem documentos)…")
+    yield _ev("info", f"Regravando dados unificados (nível: {nivel})…")
     _, exc, eventos = await _com_auto_reconexao(lambda: sincronizador._processar_paj(
-        adapter, _log_noop, baixar_anexos=completo,
-        extrair_documentos=completo, esperas_curtas=not completo))
+        adapter, _log_noop, baixar_anexos=baixar_anexos,
+        extrair_documentos=extrair_documentos, esperas_curtas=esperas_curtas))
     for ev in eventos:
         yield ev
     if exc is not None:
@@ -740,7 +749,7 @@ async def ressincronizar_paj_stream(id_tramite: str, completo: bool = False,
         else:
             yield _ev("muted", "IA indisponível (claude não encontrado ou desligado) — sem reanálise.")
 
-    modo_txt = ('completo' if completo else 'leve') + (' + IA' if ia else '')
+    modo_txt = nivel + (' + IA' if ia else '')
     yield _ev("ok", f"{paj} — ressincronizado com sucesso ({modo_txt}).")
     yield {"done": True, "resultado": {"ok": True}}
 
@@ -770,16 +779,6 @@ async def algum_id_processo() -> str:
     except Exception:  # noqa: BLE001
         pass
     return ""
-
-
-async def caixas_abertas(id_tramite: str) -> dict:
-    """Onde o PAJ do retorno está aberto agora (tramitações sem conclusão)."""
-    rec = _ler_store().get(id_tramite)
-    idp = (rec or {}).get("id_processo", "")
-    if not idp:
-        return {"ok": False, "abertas": [], "detalhe": "id_processo ausente (sincronize)."}
-    abertas = await movtram.caixas_abertas_paj(idp)
-    return {"ok": True, "abertas": abertas}
 
 
 async def registrar_pos_execucao(id_tramite: str, resultado: dict) -> dict:

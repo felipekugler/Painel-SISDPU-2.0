@@ -364,6 +364,11 @@ def _contexto_paj(paj_norm: str) -> dict:
     assistido = meta.get("assistido_caixa") or meta.get("assistido") or ""
     cpf = sisdpu_raw.get("cpf_assistido", "")
     processo = _numero_processo_unico(meta)
+    # Rótulo de EXIBIÇÃO do PAJ ("2026/029-00897") — não o identificador de
+    # pasta `paj_norm` ("PAJ-2026-029-00897"), que já carrega o prefixo "PAJ-"
+    # embutido. Usar `paj_norm` na linha "PAJ: {...}" do cabeçalho da petição
+    # duplicava a palavra ("PAJ: PAJ-2026-029-00897") — bug real 2026-09-25.
+    paj_label = meta.get("paj") or paj_norm
 
     movs_raw = (meta.get("detalhes_sisdpu") or {}).get("movimentacoes") or sisdpu_raw.get("movimentacoes") or []
     movs_ordenadas = sorted(movs_raw, key=lambda m: m.get("seq", 0))
@@ -374,7 +379,8 @@ def _contexto_paj(paj_norm: str) -> dict:
         "descricao": _strip_html(m.get("descricao", ""))[:500],
     } for m in ultimas]
 
-    return {"assistido": assistido, "cpf": cpf, "processo": processo, "movimentacoes": movimentacoes}
+    return {"assistido": assistido, "cpf": cpf, "processo": processo,
+            "movimentacoes": movimentacoes, "paj_label": paj_label}
 
 
 def _numero_processo_unico(meta: dict) -> str:
@@ -474,7 +480,7 @@ def _montar_prompt(paj_norm: str, atos: list[dict], docx_destino: Path) -> str:
         + (f", CPF {ctx['cpf']}" if ctx["cpf"] else "") + "\n"
         f"- Processo judicial: {processo} — partes: {partes}\n"
         f"- Assunto: {assunto or '(não informado)'}\n"
-        f"- PAJ (referência interna DPU, NÃO aparece pro juízo — só controle): {paj_norm}\n\n"
+        f"- PAJ (referência interna DPU, NÃO aparece pro juízo — só controle): {ctx['paj_label']}\n\n"
         + bloco_mov
         + "\n"
         + "\n".join(blocos_ato)
@@ -497,7 +503,13 @@ def _montar_prompt(paj_norm: str, atos: list[dict], docx_destino: Path) -> str:
         f"{processo}'. NÃO escreva você mesmo esse cabeçalho com `par()`/`r()` — chame só a função.\n"
         "3. Logo após o `enderecamento()`, ANTES da qualificação, insira uma linha adicional "
         "(mesmo padrão de `par()`/`r()`, alinhado à esquerda, sem recuo) com a referência do "
-        f"PAJ: 'PAJ: {paj_norm}' — é controle interno da Defensoria, não precisa de destaque.\n"
+        f"PAJ: 'PAJ: {ctx['paj_label']}' — é controle interno da Defensoria, não precisa de destaque. "
+        "NÃO repita a palavra \"PAJ\" — o valor já vem pronto pra exibição, só escreva-o como está. "
+        "Logo depois desta linha, 3 parágrafos em branco (`blank()`) antes da qualificação — "
+        "o `enderecamento()` já deixa os espaços em branco certos para quando NÃO há linha de "
+        "PAJ no meio; com ela, é você quem tem que abrir esses 3 `blank()` explicitamente, senão "
+        "a qualificação vem colada na linha do PAJ (bug real 2026-09-25, mesma regra já usada em "
+        "`minuta_ia_service.py`).\n"
         "4. `qualificacao(doc, nome_da_parte, nome_da_peca)` — nome_da_parte em maiúsculas "
         "(a função já faz isso), nome_da_peca escolhido por você conforme o que a petição "
         "efetivamente faz (ex.: 'PETIÇÃO', 'PETIÇÃO DE JUNTADA DE DOCUMENTOS', conforme cabível "
@@ -546,7 +558,7 @@ def incluir_nos_anexos(paj_norm: str, peticao_html: str) -> dict:
     pdf_path = pasta_paj / f"{nome}.pdf"
 
     try:
-        _html_para_docx(peticao_html, docx_path)
+        _gerar_docx_sem_viuva(peticao_html, docx_path)
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "erro": f"Falha ao formatar a petição: {type(e).__name__}: {e}"[:400]}
 
@@ -599,7 +611,8 @@ _RE_LINHA_SEM_RECUO = re.compile(
 )
 
 
-def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, data: str | None = None) -> None:
+def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, data: str | None = None,
+                     quebras_autos: int = 3, quebras_qualificacao: int = 3, quebras_assinatura: int = 2) -> None:
     """HTML da Quill -> .docx no padrão DPU. Cada `<p>`/`<li>` vira um
     parágrafo justificado com recuo de 1ª linha (mesmo estilo de `par()`);
     `<strong>/<b>`, `<em>/<i>`, `<u>` viram negrito/itálico/sublinhado por
@@ -607,18 +620,42 @@ def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, da
     sempre reconstruído do zero via `assinatura()`, pra garantir centralização
     e negrito corretos independente do que a extração/edição preservou.
 
+    Formatação de BLOCO do Quill (recuo/citação e listas) também é honrada
+    agora (bug real relatado pelo usuário, 2026-09-28: o Quill marca recuo
+    com `class="ql-indent-N"` num `<p>`, e citação com a própria tag
+    `<blockquote>` — nenhum dos dois carrega texto de marcador de lista de
+    verdade no `<li>` (isso é gerado por CSS a partir do `<ol>`/`<ul>` pai) —
+    ver `_eh_citacao`/`_marcador_lista` abaixo):
+      - `<blockquote>` ou `<p class="ql-indent-N">` (N>=1) vira o MESMO
+        estilo de `citacao_texto()`/`citacao_jurisprudencia()` já usado nas
+        demais peças (recuo bilateral 2,5cm, sem recuo de 1ª linha, fonte
+        10) — itálico/negrito do texto original continuam por cima disso.
+      - `<li>` ganha o marcador ("• " ou "1. "/"2. "/... reiniciado a cada
+        lista) como texto literal antes do conteúdo, com um recuo simples
+        (não é uma lista numerada de verdade do Word — decisão do usuário,
+        2026-09-28: mais simples e sempre renderiza igual).
+
     `termos`/`data`: repassados direto pra `assinatura()` — defaults (False/
     None) são o fecho padrão fixado pelo Defensor (18/08/2026): "Curitiba,
     <data de hoje por extenso>." + nome/cargo, SEM "Termos em que pede
     deferimento" e SEM o antigo placeholder "data do protocolo eletrônico"
-    — removidos de todas as peças, sem exceção."""
+    — removidos de todas as peças, sem exceção.
+
+    `quebras_autos`/`quebras_qualificacao`/`quebras_assinatura`: nº de
+    parágrafos em branco antes do "Autos nº", antes da qualificação, e entre
+    a data e o nome no fecho (padrão 3/3/2 — igual ao que já existia).
+    Ajustáveis só pelo mecanismo anti-viúva (ver
+    `_gerar_docx_sem_viuva`/`_PERFIS_ESPACAMENTO_ASSINATURA` abaixo — pedido
+    do usuário, 2026-09-28): quando o fecho (Curitiba/data/nome/cargo) sai
+    sozinho numa página nova, compactar um pouco esses espaços pode bastar
+    pra puxá-lo de volta pra mesma página do resto do corpo."""
     sys.path.insert(0, str(MODELOS_DIR))
     from bs4 import BeautifulSoup, NavigableString
 
     from peticao_base import Cm, FI, assinatura, blank, novo_documento, par, r as escrever_run, salvar
 
     soup = BeautifulSoup(peticao_html or "", "html.parser")
-    blocos = soup.find_all(["p", "li"])
+    blocos = soup.find_all(["p", "li", "blockquote"])
     if not blocos:
         # Sem nenhuma tag de bloco (textarea simples, sem Quill) — texto puro
         # com quebras de linha; separa por linha em vez de virar 1 parágrafo só.
@@ -628,6 +665,7 @@ def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, da
     doc, _ = novo_documento()
     linha_anterior_era_paj = False
     linha_anterior_era_enderecamento = False
+    contadores_lista: dict[int, int] = {}  # id(<ol>/<ul>) -> próximo número/marcador já emitido
     for bloco in blocos:
         runs = _extrair_runs(bloco, NavigableString)
         texto_puro = "".join(t for t, _b, _i, _u in runs).strip()
@@ -641,15 +679,35 @@ def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, da
         eh_enderecamento = bool(_RE_LINHA_ENDERECO.match(texto_puro))
         sem_recuo = eh_autos or eh_paj or eh_enderecamento
 
+        eh_li = bloco.name == "li"
+        # `ql-indent-N` também aparece num `<li>` pra indicar NÍVEL de
+        # aninhamento da lista — nesse caso não é citação, é só a lista
+        # (tratada abaixo via `marcador`), senão um item de lista aninhado
+        # sairia formatado (errado) como citação.
+        classes = bloco.get("class") or []
+        eh_citacao = (not eh_li) and (
+            bloco.name == "blockquote" or any(str(c).startswith("ql-indent-") for c in classes)
+        )
+
+        marcador = ""
+        if eh_li:
+            pai = bloco.parent
+            if pai is not None and getattr(pai, "name", "") == "ol":
+                contador = contadores_lista.get(id(pai), 0) + 1
+                contadores_lista[id(pai)] = contador
+                marcador = f"{contador}. "
+            else:
+                marcador = "• "
+
         # 3 quebras em branco ANTES do número dos autos, e 3 ANTES do
         # parágrafo de qualificação (o primeiro parágrafo comum logo após a
         # linha do PAJ) — mesma regra do enderecamento()/prompt de geração,
         # perdida na extração pro texto editável (bug real, 18/08/2026).
         if eh_autos:
-            for _ in range(3):
+            for _ in range(quebras_autos):
                 blank(doc)
         if linha_anterior_era_paj and not sem_recuo:
-            for _ in range(3):
+            for _ in range(quebras_qualificacao):
                 blank(doc)
         # 8 quebras em branco ("EXCELENTÍSSIMO..." direto pro corpo, SEM
         # linha de Autos/PAJ no meio — padrão de peças como a de impugnação
@@ -665,12 +723,131 @@ def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, da
         linha_anterior_era_paj = eh_paj
         linha_anterior_era_enderecamento = eh_enderecamento
 
-        p = par(doc, fi=(Cm(0) if sem_recuo else FI))
-        for texto, bold, italic, underline in runs:
+        if sem_recuo:
+            p = par(doc, fi=Cm(0))
+        elif eh_citacao:
+            # Só recuo à ESQUERDA (pedido do usuário, 2026-09-28: o recuo
+            # bilateral de citacao_texto()/citacao_jurisprudencia() deixava a
+            # margem direita "desalinhada" do parágrafo comum). `FI` (recuo
+            # de 1ª linha do corpo) + 1cm — ver `peticao_base.FI = Cm(3)`.
+            p = par(doc, fi=Cm(0), li=FI + Cm(1))
+        elif eh_li:
+            p = par(doc, fi=Cm(0), li=Cm(1))
+        else:
+            p = par(doc, fi=FI)
+
+        runs_para_escrever = ([(marcador, False, False, False)] if marcador else []) + runs
+        for texto, bold, italic, underline in runs_para_escrever:
             if texto:
-                escrever_run(p, texto, bold=bold, italic=italic, underline=underline)
-    assinatura(doc, termos=termos, data=data)
+                escrever_run(p, texto, bold=bold, italic=italic, underline=underline, small=eh_citacao)
+    assinatura(doc, termos=termos, data=data, blanks_apos_data=quebras_assinatura)
     salvar(doc, str(docx_path))
+
+
+# Perfis de (quebras_autos, quebras_qualificacao, quebras_assinatura) tentados
+# em ordem por `_gerar_docx_sem_viuva` — o 1º É o padrão de sempre (3/3/2) e
+# NUNCA conta como tentativa (só confere se já está tudo bem); os 3 seguintes
+# são as tentativas de verdade, cada vez mais compactas, na ordem pedida pelo
+# usuário (2026-09-28): primeiro reduz o espaço depois do endereçamento
+# (antes da qualificação) e o espaço do fecho (entre data e nome); só se isso
+# não bastar, reduz também o espaço antes do "Autos nº".
+_PERFIS_ESPACAMENTO_ASSINATURA: list[tuple[int, int, int]] = [
+    (3, 3, 2),  # padrão — sempre a 1ª tentativa, não conta no limite de 3
+    (3, 2, 1),
+    (2, 1, 1),
+    (1, 1, 0),
+]
+
+
+def _assinatura_esta_viuva(doc) -> bool:
+    """True se ALGUMA parte do bloco de assinatura (data/nome/cargo) caiu
+    numa página DIFERENTE da do último parágrafo de verdade do corpo — o
+    "batimento" que interessa, não a contagem de páginas em si.
+
+    Âncora: o ÚLTIMO parágrafo do documento inteiro, que é SEMPRE "Defensor
+    Público Federal" (é literalmente a última coisa que `assinatura()`
+    escreve) — mais robusto que procurar a linha da data por regex (que
+    dependia do formato exato da data por extenso). A partir dele, anda pra
+    trás pulando qualquer linha do PRÓPRIO fecho (branco, data, nome — todas
+    batem em `_RE_LINHA_ASSINATURA`) até achar o último parágrafo real do
+    corpo.
+
+    Bug real encontrado (PAJ 2026/029-03714, 2026-09-28): o `keep_with_next`
+    agora aplicado em `assinatura()` já deveria impedir o Word de quebrar
+    página NO MEIO do bloco (nome numa página, cargo sozinho na seguinte) —
+    mas essa checagem aqui não dependia mais de reproduzir esse caso, já que
+    agora ela olha a página do parágrafo FINAL de verdade (o cargo), que só
+    fica em página diferente do corpo quando o bloco INTEIRO foi mesmo
+    empurrado pra uma página nova.
+
+    `doc` é um Document do Word/COM já aberto. Não levanta exceção por
+    documento fora do padrão esperado (sem parágrafos, etc.) — nesse caso
+    assume que não há viúva, pra não travar a geração por causa disso."""
+    total = doc.Paragraphs.Count
+    if total < 2:
+        return False
+    idx_cargo = total  # sempre "Defensor Público Federal" — ver assinatura()
+
+    idx_corpo = idx_cargo - 1
+    while idx_corpo >= 1:
+        texto = doc.Paragraphs(idx_corpo).Range.Text.rstrip("\r\x07").strip()
+        if texto and not _RE_LINHA_ASSINATURA.match(texto):
+            break
+        idx_corpo -= 1
+    if idx_corpo < 1:
+        return False
+
+    pagina_corpo = doc.Paragraphs(idx_corpo).Range.Information(3)  # wdActiveEndPageNumber
+    pagina_assinatura = doc.Paragraphs(idx_cargo).Range.Information(3)
+    return pagina_assinatura != pagina_corpo
+
+
+def _gerar_docx_sem_viuva(peticao_html: str, docx_path: Path, termos: bool = False, data: str | None = None) -> None:
+    """Gera o .docx (mesmo `_html_para_docx` de sempre) e, se o fecho
+    (Curitiba/data/nome/cargo) sair sozinho numa página nova ("viúvo" — bug
+    real relatado pelo usuário, 2026-09-28), tenta até 3 espaçamentos mais
+    compactos (ver `_PERFIS_ESPACAMENTO_ASSINATURA`) até ele voltar pra MESMA
+    página do último parágrafo do corpo. Esgotadas as tentativas, mantém o
+    último perfil tentado (o mais compacto) mesmo que ainda esteja viúvo —
+    nunca falha a geração por causa disso.
+
+    Só o Word de verdade sabe onde cada parágrafo cai numa página (python-docx
+    não pagina nada) — por isso mede reabrindo no Word/COM (mesmo mecanismo
+    já usado por `_docx_para_pdf`), reaproveitando UMA ÚNICA instância do
+    Word entre as tentativas (mais rápido que abrir o app de novo a cada
+    uma)."""
+    import pythoncom
+    import win32com.client as win32
+
+    perfil_atual = _PERFIS_ESPACAMENTO_ASSINATURA[0]
+    _html_para_docx(peticao_html, docx_path, termos=termos, data=data,
+                     quebras_autos=perfil_atual[0], quebras_qualificacao=perfil_atual[1],
+                     quebras_assinatura=perfil_atual[2])
+
+    pythoncom.CoInitialize()
+    try:
+        word = win32.Dispatch("Word.Application")
+        word.Visible = False
+        word.DisplayAlerts = False
+        try:
+            for perfil in _PERFIS_ESPACAMENTO_ASSINATURA:
+                if perfil != perfil_atual:
+                    _html_para_docx(peticao_html, docx_path, termos=termos, data=data,
+                                     quebras_autos=perfil[0], quebras_qualificacao=perfil[1],
+                                     quebras_assinatura=perfil[2])
+                    perfil_atual = perfil
+                doc = word.Documents.Open(str(docx_path.resolve()), ReadOnly=True)
+                try:
+                    if not _assinatura_esta_viuva(doc):
+                        return
+                finally:
+                    doc.Close(SaveChanges=False)
+        finally:
+            word.Quit()
+    finally:
+        pythoncom.CoUninitialize()
+    # Esgotadas as tentativas (perfil mais compacto já aplicado, salvo em
+    # docx_path) — segue mesmo assim, sem travar a geração por causa disso.
 
 
 def _extrair_runs(bloco, navigable_string_cls) -> list[tuple[str, bool, bool, bool]]:

@@ -51,6 +51,14 @@ function acoesEprocBlock(cfg) {
         // MAIS DE UM vinculado — evita movimentar/peticionar no processo errado).
         // Com só 1 (ou 0), fica vazio e carregarPrazos() usa todos os vinculados.
         processoSelecionado: '',
+        // Classe processual de cada processo (numero -> classe, ex.: "Cumprimento
+        // de Sentença contra Fazenda Pública (JEF)") — só buscada quando há MAIS
+        // DE UM processo vinculado (o <select> te ajuda a escolher o certo; com
+        // só 1, não há o que escolher). Consulta leve via MCP (sem navegador —
+        // ver resolver_classe_processo), carregada uma vez por abertura do
+        // console. Pedido do usuário 2026-09-29: número + juízo sozinhos eram
+        // pouco pra diferenciar processos do mesmo PAJ à primeira vista.
+        classesProcesso: {}, carregandoClasses: false,
 
         // Chave de armazenamento do RASCUNHO desta petição (evento/anexos/prazos
         // marcados) — usada em TODAS as URLs `/api/acoes-eproc/rascunho/...` e na
@@ -142,6 +150,18 @@ function acoesEprocBlock(cfg) {
         ],
 
         async init() {
+            // Avisa qualquer página-mãe que precise saber qual processo está
+            // ativo AGORA (ex.: "Movimentar Eproc + SISDPU" — o próprio módulo
+            // resolve a ambiguidade de mais de um processo vinculado, e a
+            // página-mãe só escuta pra manter seu `processoConfirmado` em
+            // sincronia; ver movimentar_conjunto.html). Registrado ANTES de
+            // qualquer coisa poder mudar `processoSelecionado` (pré-seleção
+            // automática em _carregarAoAbrir() OU troca manual no <select>) —
+            // $watch só dispara em mudanças DEPOIS de registrado. Página que
+            // não escuta o evento (a maioria) não é afetada em nada.
+            this.$watch('processoSelecionado', (numero) => {
+                window.dispatchEvent(new CustomEvent('processo-eproc-selecionado', { detail: { numero, pajNorm: this.pajNorm } }));
+            });
             await this.carregarPreferencias();
             // Consumidores que já nascem com aberto:true no cfg (ex.: a página do
             // PAJ, que pula o clique no cabeçalho para já mostrar o console aberto)
@@ -228,6 +248,7 @@ function acoesEprocBlock(cfg) {
             if (!this.rascunhoCarregado) await this.carregarRascunho();
             if (!this.prazosCarregados) await this.carregarPrazos();
             if (!this.docsCarregados) await this.carregarDocsPaj();
+            if (this.processos.length > 1) this.carregarClassesProcessos();  // não bloqueia — enche o rótulo quando chegar
             // Trava síncrona ANTES do primeiro `await` (mesmo motivo/padrão do
             // _montarEditorMov() em acoes_sisdpu.js): init() chamado duas vezes por
             // instância (redundância x-init + auto-init do Alpine) + um `await` antes
@@ -529,6 +550,33 @@ function acoesEprocBlock(cfg) {
                 this.prazos = j.itens || [];
             } catch (e) { this.prazos = []; }
             finally { this.carregandoPrazos = false; }
+        },
+        // Busca a classe processual de cada processo (numero -> classe) — uma
+        // requisição leve por processo, em paralelo, sem bloquear o resto do
+        // console (chamado sem `await` em _carregarAoAbrir). Silenciosa por
+        // processo: se um falhar (ex.: processo não encontrado via MCP), o
+        // rótulo do <select> só cai pro texto sem classe pra aquele item —
+        // nunca impede escolher/usar os demais.
+        async carregarClassesProcessos() {
+            this.carregandoClasses = true;
+            try {
+                await Promise.all((this.processos || []).map(async (p) => {
+                    if (!p.numero || this.classesProcesso[p.numero]) return;
+                    try {
+                        const j = await (await fetch('/api/acoes-eproc/classe-processo?numero=' + encodeURIComponent(p.numero))).json();
+                        if (j.ok && j.classe) this.classesProcesso[p.numero] = j.classe;
+                    } catch (e) {}
+                }));
+            } finally {
+                this.carregandoClasses = false;
+            }
+        },
+        // Rótulo do <select> "Processo judicial a movimentar": número — classe
+        // (se já carregada) — juízo (se houver). Ex.: "5014914-73.2026.4.04.7000
+        // — Cumprimento de Sentença contra Fazenda Pública (JEF) — Juízo D...".
+        labelProcesso(p) {
+            const classe = this.classesProcesso[p.numero];
+            return p.numero + (classe ? (' — ' + classe) : '') + (p.juizo ? (' — ' + p.juizo) : '');
         },
         // Prioriza o rótulo OFICIAL do e-proc (`label`, montado no backend a partir
         // da triagem MCP — mesmo texto que aparece na tela de peticionamento, ex.:

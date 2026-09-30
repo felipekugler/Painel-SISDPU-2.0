@@ -49,10 +49,26 @@ function analiseIaApp(pajNorm, tipoPadrao) {
         renderedSummary() {
             if (!this.summary) return '';
             try {
-                return marked.parse(this.summary);
+                return marked.parse(this.textoFinal());
             } catch (e) {
                 return this.summary;
             }
+        },
+
+        // Corta o "pensamento em voz alta" da IA — mensagens de progresso
+        // (carregando playbook, lendo documentos etc.) que vêm concatenadas
+        // ANTES do diagnóstico final no mesmo campo `summary` (pedido do
+        // usuário, 2026-09-29: "o pensamento em voz alta não nos interessa").
+        // O diagnóstico final sempre abre com uma heading nível 2 ("##
+        // Diagnóstico ...", convenção das skills de teses-dpu e do prompt
+        // genérico — ver _montar_instrucao_diagnostico em
+        // analise_pretensao_service.py); a narração de progresso é só prosa,
+        // sem heading nenhuma. Se não achar nenhuma "## " (formato
+        // inesperado), mostra o texto completo — fallback seguro pra nunca
+        // esconder conteúdo de verdade.
+        textoFinal() {
+            const m = this.summary.match(/^##\s+.+$/m);
+            return m ? this.summary.slice(m.index) : this.summary;
         },
 
         async fetchStatus() {

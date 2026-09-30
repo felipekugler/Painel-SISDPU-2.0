@@ -36,22 +36,35 @@
                     <!-- "Usar modelo" — despachos padrão cadastrados em Configurações ›
                          SISDPU (texto padrão + placeholders [NOME]/[CPF]/[PAJ]/[DATA]).
                          INSERE no cursor — não substitui o que já estiver escrito (mesmo
-                         comportamento de "Usar modelo" em Ações no Eproc). -->
-                    <div class="flex items-center justify-end gap-2 mb-1" x-show="modelosDespacho.length">
-                        <div class="dropdown dropdown-end">
+                         comportamento de "Usar modelo" em Ações no Eproc).
+                         "Gerar Síntese do PAJ" — analisa o PROMPT_MAX do PAJ por IA e
+                         gera um texto corrido com a síntese cronológica da tramitação;
+                         mesmo comportamento de inserção no cursor. Só existe quando há
+                         PAJ local (pajNorm) — depende do PROMPT_MAX, que só existe pra
+                         PAJs já sincronizados. -->
+                    <div class="flex items-center justify-end gap-2 mb-1">
+                        <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="gerandoSinteseIA"
+                                x-show="pajNorm" @click="gerarSinteseIA()"
+                                title="Analisa o PAJ (PROMPT_MAX) e gera, por IA, um texto corrido com a síntese cronológica da tramitação — insere no cursor, não substitui o que já estiver escrito.">
+                            <span x-show="gerandoSinteseIA" class="loading loading-spinner loading-xs"></span>
+                            <span x-show="!gerandoSinteseIA">🧠 Gerar Síntese do PAJ</span>
+                            <span x-show="gerandoSinteseIA">Gerando…</span>
+                        </button>
+                        <div class="dropdown dropdown-end" x-show="modelosDespacho.length">
                             <button type="button" tabindex="0" class="btn btn-xs btn-outline gap-1" :disabled="usandoModeloDespacho"
                                     title="Insere o texto de um despacho padrão no cursor, com NOME/CPF/PAJ/DATA já preenchidos (quando houver PAJ vinculado).">
                                 <span x-show="usandoModeloDespacho" class="loading loading-spinner loading-xs"></span>
                                 <span x-show="!usandoModeloDespacho">📋 Usar modelo</span>
                                 <span x-show="usandoModeloDespacho">Inserindo…</span>
                             </button>
-                            <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-64 p-1 shadow border border-base-300">
+                            <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-max max-w-[28rem] p-1 shadow border border-base-300">
                                 <template x-for="m in modelosDespacho" :key="m.id">
-                                    <li><a @click="usarModeloDespacho(m.id)" x-text="m.nome"></a></li>
+                                    <li><a class="whitespace-nowrap" @click="usarModeloDespacho(m.id)" x-text="m.nome"></a></li>
                                 </template>
                             </ul>
                         </div>
                     </div>
+                    <div class="text-[11px] text-error mb-1" x-show="erroSinteseIA" x-text="erroSinteseIA"></div>
                     <div class="text-[11px] text-error mb-1" x-show="erroUsarModeloDespacho" x-text="erroUsarModeloDespacho"></div>
                     <div :id="uidMov" x-show="quillMovOk"></div>
                     <textarea x-show="!quillMovOk" class="textarea textarea-bordered textarea-sm w-full text-[12.5px]"

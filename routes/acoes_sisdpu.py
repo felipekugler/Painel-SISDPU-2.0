@@ -4,6 +4,8 @@ reutilizável em qualquer página do painel — não depende da Retornos.
 - GET  /movimentacoes-pendentes          — página: lista os rascunhos salvos.
 - GET  /api/acoes-sisdpu/preferencias    — favoritas/frequentes de fases e caixas.
 - GET  /api/acoes-sisdpu/pecas-ia/{paj_norm} — arquivos da subpasta "Peças IA" do PAJ.
+- POST /api/acoes-sisdpu/sintese-paj/{paj_norm} — gera por IA a "SÍNTESE DA
+  TRAMITAÇÃO DO PAJ" (botão ao lado de "Usar modelo").
 - POST /api/acoes-sisdpu/anexo-externo   — upload de um anexo externo (staging).
 - POST /api/acoes-sisdpu/anexo-externo/remover — descarta um anexo externo staged.
 - GET/POST/DELETE /api/acoes-sisdpu/rascunho/{paj_norm} — rascunho de movimentação.
@@ -52,6 +54,15 @@ async def api_pecas_ia(paj_norm: str):
     """Arquivos da subpasta "Peças IA" do PAJ (petições/peças geradas pela análise
     de pretensão) — alimenta o modal "Adicionar Petições IA"."""
     return JSONResponse({"ok": True, "itens": acoes_sisdpu_service.listar_pecas_ia(paj_norm)})
+
+
+@router.post("/api/acoes-sisdpu/sintese-paj/{paj_norm}", response_class=JSONResponse)
+async def api_sintese_paj(paj_norm: str):
+    """Gera por IA a "SÍNTESE DA TRAMITAÇÃO DO PAJ" (texto corrido, a partir do
+    PROMPT_MAX do PAJ) — botão "Gerar Síntese do PAJ" ao lado de "Usar modelo".
+    Chamada bloqueante (pode levar dezenas de segundos), mas síncrona pro
+    frontend — mesmo padrão de /api/valor-causa/{paj_norm}."""
+    return JSONResponse(await acoes_sisdpu_service.gerar_sintese_paj(paj_norm))
 
 
 @router.post("/api/acoes-sisdpu/anexo-externo", response_class=JSONResponse)

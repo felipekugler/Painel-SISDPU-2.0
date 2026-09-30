@@ -45,6 +45,11 @@ def _normalizar(s: str) -> str:
     return re.sub(r"\s+", " ", (s or "").strip()).upper()
 
 
+def _sem_acento(s: str) -> str:
+    import unicodedata
+    return "".join(c for c in unicodedata.normalize("NFD", s or "") if unicodedata.category(c) != "Mn")
+
+
 def partes_do_procurador(cabecalho: dict, identificador: str) -> set[str]:
     """Nomes (normalizados) das partes do processo cujo(s) representante(s)
     (`cabecalho.partes[*].representantes[*]`) têm este `identificador` —
@@ -71,9 +76,27 @@ def parte_intimada_e_minha(parte_intimada: str, minhas_partes: set[str]) -> bool
     pelo rótulo de papel: "REU" no cabeçalho de partes aparece como
     "REQUERIDO"/"EXECUTADO"/"IMPETRADO"/... na intimação, dependendo da
     classe processual — nome é o único campo estável entre as duas
-    representações."""
-    if not minhas_partes:
-        return False
+    representações.
+
+    Exceção literal, independente de `minhas_partes`: quando o NOME intimado
+    é a própria "Defensoria Pública da União" (ex. papel "INTERESSADO" —
+    curadoria especial/terceiro interessado, onde `cabecalho.partes[*]
+    .representantes` não lista ninguém pro réu, então `partes_do_procurador`
+    nunca teria como achar isso por identificador). Bug real 2026-09-25 (PAJ
+    2018/029-01953, processo 5048558-22.2017.4.04.7000): réu sem
+    representante nenhum no cabeçalho, intimação foi endereçada direto à
+    "INTERESSADO - DEFENSORIA PÚBLICA DA UNIÃO" — `minhas_partes` ficava
+    vazio e o prazo nunca casava, sumindo do resumo de execução E da
+    seleção real de fechamento no e-proc (não só da tela). Não é uma
+    heurística de polo (a mesma que este módulo eliminou, ver docstring do
+    arquivo) — é un match textual direto e sem ambiguidade: só existe uma
+    Defensoria Pública da União num processo, e ela SEMPRE sou eu quando
+    estou logado com uma credencial DPU."""
     partes = (parte_intimada or "").split(" - ", 1)
     nome = partes[1] if len(partes) > 1 else partes[0]
+    nome_norm = _sem_acento(_normalizar(nome))
+    if "DEFENSORIA PUBLICA DA UNIAO" in nome_norm:
+        return True
+    if not minhas_partes:
+        return False
     return _normalizar(nome) in minhas_partes

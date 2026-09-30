@@ -4,7 +4,8 @@
 {% block content_class %}flex flex-col flex-1 p-0{% endblock %}
 
 {% block content %}
-<div x-data="movimentarConjuntoApp()" x-init="init()" x-cloak class="flex flex-col flex-1">
+<div x-data="movimentarConjuntoApp()" x-init="init()" x-cloak class="flex flex-col flex-1"
+     @processo-eproc-selecionado.window="if ($event.detail.pajNorm === pajNorm) processoConfirmado = $event.detail.numero">
 
   <div class="px-8 pt-6 pb-2">
     <h1 class="text-3xl font-semibold tracking-tight">Movimentar Eproc + SISDPU</h1>
@@ -71,19 +72,15 @@
         </div>
       </div>
 
-      <!-- Ambiguidade: mais de um processo candidato pro PAJ informado -->
-      <div class="alert alert-error text-xs" x-show="processoCandidatos.length > 1">
-        <div class="flex flex-col gap-1 w-full">
-          <strong>⚠ Mais de um processo relacionado a este PAJ — confira e escolha o correto:</strong>
-          <select class="select select-bordered select-sm w-full max-w-md" x-model="processoConfirmado"
-                  @change="processoInput = processoConfirmado">
-            <option value="">Selecione…</option>
-            <template x-for="c in processoCandidatos" :key="c.numero">
-              <option :value="c.numero" x-text="c.numero + (c.juizo ? (' — ' + c.juizo) : '')"></option>
-            </template>
-          </select>
-        </div>
-      </div>
+      <!-- Ambiguidade de PROCESSO (mais de um vinculado ao PAJ) NÃO tem mais
+           caixa própria aqui — o próprio card "Ações no Eproc" abaixo já
+           resolve isso no seu <select> interno "Processo judicial a
+           movimentar" (mesmo alerta vermelho, agora dentro do módulo — pedido
+           do usuário 2026-09-29). Esta página só entrega TODOS os candidatos
+           pra ele (ver `processos:` no x-data do card) e escuta de volta qual
+           foi escolhido via o evento `processo-eproc-selecionado` (ver
+           `@processo-eproc-selecionado.window` no elemento raiz desta página
+           e o `$watch` em acoes_eproc.js:init()). -->
     </div>
   </div>
 
@@ -97,17 +94,25 @@
     <div class="bg-info/10 border border-info/30 rounded-lg p-3 h-full flex flex-col">
       <div class="ret-card-label mb-2">Ações no Eproc</div>
       <div class="bg-base-200 rounded-lg flex-1 flex flex-col p-3">
-        <template x-if="processoConfirmado">
-          <div class="flex-1" :key="processoConfirmado + '|' + pajNorm" id="eprocCard"
+        <!-- Com mais de um processo candidato pro PAJ (ambiguidade — ver
+             resolverProcessosDoPaj()), o card já monta com TODOS eles: o
+             próprio <select> interno "Processo judicial a movimentar" (alerta
+             vermelho) resolve qual usar, em vez de uma caixa de escolha à
+             parte fora do módulo. `:key` não inclui o processo ESCOLHIDO (só
+             pajNorm + candidatos) — trocar a seleção no dropdown não pode
+             remontar o card do zero, senão perde evento/anexos/petição já
+             preenchidos. -->
+        <template x-if="processoConfirmado || processoCandidatos.length > 1">
+          <div class="flex-1" :key="pajNorm + '|' + (processoCandidatos.length > 1 ? 'ambiguo' : processoConfirmado)" id="eprocCard"
                x-data="acoesEprocBlock({
-                           processos: [{ numero: processoConfirmado }],
+                           processos: processoCandidatos.length > 1 ? processoCandidatos : [{ numero: processoConfirmado }],
                            paj: pajLabel || processoConfirmado, pajNorm: pajNorm,
                            aberto: true,
                        })" x-init="init()">
             {% include "partials/acoes_eproc.html" %}
           </div>
         </template>
-        <div x-show="!processoConfirmado" class="flex-1 flex items-center justify-center text-sm text-base-content/40 text-center">
+        <div x-show="!processoConfirmado && processoCandidatos.length <= 1" class="flex-1 flex items-center justify-center text-sm text-base-content/40 text-center">
           Informe o número do processo acima.
         </div>
       </div>
@@ -122,6 +127,18 @@
                x-data="acoesSisdpuBlock({
                            idProcesso: '', paj: pajLabel, pajNorm: pajNorm,
                            aberto: true,
+                           // Sem esta CHAVE presente (mesmo `null`), o card nunca
+                           // pede nem mostra o(s) trâmite(s) aberto(s) na caixa de
+                           // entrada pra concluir — nem no modelo lista nem no
+                           // legado (que também exige `idTramite`, que esta página
+                           // nunca teve). `null` liga o modelo lista E dispara a
+                           // busca AO VIVO (_refrescarTramitacoesCaixa, dentro do
+                           // próprio init() do card) assim que `pajNorm` estiver
+                           // pronto — mesmo mecanismo da página do PAJ. Bug real
+                           // 2026-09-25 (PAJ 2026/029-00450): tramitação real aberta
+                           // na caixa, seção Concluir trâmite(s) não aparecia
+                           // NADA (nem a lista, nem o aviso de não haver trâmite aberto).
+                           tramitacoesCaixa: null,
                            // Sem isso, a movimentação no SISDPU executada a partir
                            // desta página NUNCA registrava no Histórico do painel
                            // (posExecucaoPaj só roda se o chamador chamar — bug real
@@ -165,49 +182,161 @@
             <div class="text-sm">Processo: <span class="font-mono" x-text="resumoEproc.processo"></span></div>
             <div class="text-sm">Evento: <span x-text="resumoEproc.evento"></span></div>
             <div class="text-xs text-warning" x-show="resumoEproc.evento_sem_anexo">Este evento não aceita anexos.</div>
-            <div class="text-sm" x-show="(resumoEproc.prazos || []).length">
-              <strong>Prazo(s) a fechar:</strong>
-              <ul class="list-disc ml-5 mt-1">
-                <template x-for="p in resumoEproc.prazos" :key="p"><li class="text-xs" x-text="p"></li></template>
-              </ul>
+            <div class="text-sm mt-1">
+              Prazo(s) a fechar:
+              <template x-if="(resumoEproc.prazos || []).length">
+                <ul class="list-disc ml-8 mt-1">
+                  <template x-for="p in resumoEproc.prazos" :key="p"><li class="text-xs" x-text="p"></li></template>
+                </ul>
+              </template>
+              <div class="text-xs text-base-content/40 ml-8 mt-1" x-show="!(resumoEproc.prazos || []).length">Nenhum</div>
+              <!-- Defesa contra o mesmo formato de bug já visto no módulo "Ações no
+                   Eproc" isolado (que já mostra isto): um prazo pode estar
+                   SELECIONADO no rascunho e mesmo assim não aparecer na lista acima
+                   se o casamento ao vivo (label oficial + nº do evento, necessário
+                   pra marcar o checkbox certo no e-proc — ver
+                   eproc_client._marcar_prazos_fechar) falhar por algum motivo (ex.
+                   parte intimada não reconhecida como "minha" — bug real
+                   2026-09-25, PAJ 2018/029-01953, processo
+                   5048558-22.2017.4.04.7000, corrigido em
+                   eproc_procurador_service.parte_intimada_e_minha, mas mantém-se
+                   este aviso pra qualquer caso futuro não previsto). Sem isto, o
+                   prazo desaparecia SILENCIOSAMENTE tanto da tela quanto do que de
+                   fato é marcado pra fechar no e-proc — nunca pode passar
+                   despercebido. -->
+              <div class="text-xs text-error ml-8 mt-1" x-show="(resumoEproc.prazos_nao_resolvidos || []).length">
+                ⚠ <span x-text="resumoEproc.prazos_nao_resolvidos.length"></span> prazo(s) selecionado(s) no rascunho não puderam ser identificados agora —
+                NÃO serão fechados nesta execução. Confira em "Ações no Eproc" antes de prosseguir.
+              </div>
             </div>
-            <div class="text-xs" x-show="!resumoEproc.evento_sem_anexo && (resumoEproc.documentos || []).length">
-              <strong x-text="resumoEproc.documentos.length"></strong> documento(s):
-              <span x-text="resumoEproc.documentos.map(d => d.nome).join(', ')"></span>
+            <div class="text-sm mt-1">
+              Anexos:
+              <template x-if="!resumoEproc.evento_sem_anexo && (resumoEproc.documentos || []).length">
+                <ul class="list-disc ml-8 mt-1">
+                  <template x-for="(d, di) in resumoEproc.documentos" :key="di"><li class="text-xs" x-text="d.nome"></li></template>
+                </ul>
+              </template>
+              <div class="text-xs text-base-content/40 ml-8 mt-1" x-show="resumoEproc.evento_sem_anexo || !(resumoEproc.documentos || []).length">Nenhum</div>
             </div>
-            <div class="text-xs text-base-content/60 mt-1" x-show="resumoEproc.gerenciamento && resumoEproc.gerenciamento.ativo">
-              + Gerenciamento de processo configurado (executa logo após peticionar).
+            <div class="text-sm mt-1">
+              Gerenciamento de processo:
+              <template x-if="resumoEproc.gerenciamento && resumoEproc.gerenciamento.ativo">
+                <ul class="list-disc ml-8 mt-1">
+                  <li class="text-xs" x-text="resumoEproc.gerenciamento.tipo_label + ' - ' + (resumoEproc.gerenciamento.procurador_rotulo || 'Não informado')"></li>
+                </ul>
+              </template>
+              <div class="text-xs text-base-content/40 ml-8 mt-1" x-show="!(resumoEproc.gerenciamento && resumoEproc.gerenciamento.ativo)">Não configurado</div>
             </div>
           </div>
           <div class="border border-success/30 bg-success/10 rounded p-3" x-show="resumoSisdpu">
             <div class="text-sm font-semibold mb-1">No SISDPU</div>
+            <div class="text-sm">PAJ: <span x-text="pajLabel || 'Não informado'"></span></div>
             <!-- Fila (2+ movimentações em sequência) — "Adicionar à fila" no card à
-                 direita; ver static/js/acoes_sisdpu.js:executarFila. -->
+                 direita; ver static/js/acoes_sisdpu.js:executarFila. Cada
+                 movimentação em seu PRÓPRIO card, no mesmo padrão de campos do
+                 formulário único abaixo (Movimento/Trâmite/Anexos/Conclusão,
+                 todos sempre visíveis) — pedido do usuário 2026-09-25: antes a
+                 fila aparecia como uma lista corrida, sem separação clara entre
+                 uma movimentação e outra. -->
             <template x-if="resumoSisdpu && resumoSisdpu.fila.length">
-              <div class="text-sm">
+              <div class="text-sm mt-1">
                 <strong x-text="resumoSisdpu.fila.length"></strong> movimentação(ões) na fila:
-                <ul class="list-disc ml-5 mt-1">
+                <div class="flex flex-col gap-2 mt-1">
                   <template x-for="(item, i) in resumoSisdpu.fila" :key="i">
-                    <li class="text-xs">
-                      <span x-text="(item.fase || 'sem movimentar')"></span>
-                      <span x-show="item.grupo"> · tramitar p/ <span x-text="item.grupo"></span></span>
-                      <span x-show="(item.anexos || []).length"> · <span x-text="item.anexos.length"></span> anexo(s)</span>
-                    </li>
+                    <div class="border border-success/30 rounded p-2">
+                      <div class="text-xs font-semibold mb-1">Movimentação <span x-text="i + 1"></span></div>
+                      <div>Movimento (fase):
+                        <span x-show="item.fase" x-text="item.fase"></span>
+                        <span class="text-base-content/40" x-show="!item.fase">Nenhum</span>
+                      </div>
+                      <div>Trâmite para a caixa:
+                        <span x-show="item.grupo" x-text="item.grupo"></span>
+                        <span class="text-base-content/40" x-show="!item.grupo">Nenhum</span>
+                      </div>
+                      <div class="mt-1">
+                        Anexos:
+                        <template x-if="(item.anexos || []).length">
+                          <ul class="list-disc ml-8 mt-1">
+                            <template x-for="(a, ai) in item.anexos" :key="ai">
+                              <li class="text-xs" x-text="(a.descricao || a.nome) + ' · ' + (a.tipo_arquivo || a.tipoArquivo || 'Não informado')"></li>
+                            </template>
+                          </ul>
+                        </template>
+                        <span class="text-base-content/40" x-show="!(item.anexos || []).length">Nenhum</span>
+                      </div>
+                      <div class="mt-1">
+                        Conclusão de trâmite:
+                        <template x-if="(item.concluir_detalhes || []).length">
+                          <ul class="list-disc ml-8 mt-1">
+                            <template x-for="(t, ti) in item.concluir_detalhes" :key="ti">
+                              <li class="text-xs">
+                                <span x-text="t.descricao"></span>
+                                <span class="block text-base-content/50" x-show="t.remetente || t.data_envio"
+                                      x-text="(t.remetente || '') + (t.remetente && t.data_envio ? ' · ' : '') + (t.data_envio || '')"></span>
+                              </li>
+                            </template>
+                          </ul>
+                        </template>
+                        <span class="text-base-content/40" x-show="!(item.concluir_detalhes || []).length">Não será concluído</span>
+                      </div>
+                    </div>
                   </template>
-                </ul>
+                </div>
               </div>
             </template>
             <!-- SEM fila, o formulário atual (fase/tramitar/concluir preenchidos
                  direto no card, sem precisar de "Adicionar à fila") É a própria
                  movimentação que vai executar — fila é só pra quando há MAIS de
                  uma. Bug real corrigido (2026-09-18): antes isto aparecia como
-                 aviso de "não entra na execução" mesmo executando normalmente. -->
-            <template x-if="resumoSisdpu && !resumoSisdpu.fila.length && resumoSisdpu.formularioAtual">
-              <div class="text-sm">
-                <span x-text="resumoSisdpu.formularioAtual.fase ? ('Movimentar (fase): ' + resumoSisdpu.formularioAtual.fase) : 'Sem movimentação'"></span>
-                <span x-show="resumoSisdpu.formularioAtual.grupo"> · tramitar p/ <span x-text="resumoSisdpu.formularioAtual.grupo"></span></span>
-                <span x-show="(resumoSisdpu.formularioAtual.anexos || []).length"> · <span x-text="resumoSisdpu.formularioAtual.anexos.length"></span> anexo(s)</span>
-                <span x-show="resumoSisdpu.formularioAtual.concluir"> · vai concluir trâmite(s) da caixa</span>
+                 aviso de "não entra na execução" mesmo executando normalmente.
+                 Todos os campos aparecem SEMPRE (pedido do usuário 2026-09-25),
+                 em branco/"Não selecionado" quando não configurados — a revisão
+                 final não deve depender do usuário lembrar o que deixou de
+                 preencher. -->
+            <template x-if="resumoSisdpu && !resumoSisdpu.fila.length">
+              <div class="text-sm mt-1">
+                <div>Movimento (fase):
+                  <span x-show="resumoSisdpu.formularioAtual && resumoSisdpu.formularioAtual.fase" x-text="resumoSisdpu.formularioAtual.fase"></span>
+                  <span class="text-base-content/40" x-show="!(resumoSisdpu.formularioAtual && resumoSisdpu.formularioAtual.fase)">Nenhum</span>
+                </div>
+                <div>Trâmite para a caixa:
+                  <span x-show="resumoSisdpu.formularioAtual && resumoSisdpu.formularioAtual.grupo" x-text="resumoSisdpu.formularioAtual.grupo"></span>
+                  <span class="text-base-content/40" x-show="!(resumoSisdpu.formularioAtual && resumoSisdpu.formularioAtual.grupo)">Nenhum</span>
+                </div>
+                <div class="mt-1">
+                  Anexos:
+                  <template x-if="resumoSisdpu.formularioAtual && (resumoSisdpu.formularioAtual.anexos || []).length">
+                    <ul class="list-disc ml-8 mt-1">
+                      <template x-for="(a, ai) in resumoSisdpu.formularioAtual.anexos" :key="ai">
+                        <li class="text-xs" x-text="(a.descricao || a.nome) + ' · ' + (a.tipo_arquivo || a.tipoArquivo || 'Não informado')"></li>
+                      </template>
+                    </ul>
+                  </template>
+                  <span class="text-base-content/40" x-show="!(resumoSisdpu.formularioAtual && (resumoSisdpu.formularioAtual.anexos || []).length)">Nenhum</span>
+                </div>
+                <div class="mt-1">
+                  Conclusão de trâmite:
+                  <template x-if="resumoSisdpu.formularioAtual && resumoSisdpu.formularioAtual.concluir && (resumoSisdpu.formularioAtual.concluir_detalhes || []).length">
+                    <ul class="list-disc ml-8 mt-1">
+                      <template x-for="(t, ti) in resumoSisdpu.formularioAtual.concluir_detalhes" :key="ti">
+                        <li class="text-xs">
+                          <span x-text="t.descricao"></span>
+                          <span class="block text-base-content/50" x-show="t.remetente || t.data_envio"
+                                x-text="(t.remetente || '') + (t.remetente && t.data_envio ? ' · ' : '') + (t.data_envio || '')"></span>
+                        </li>
+                      </template>
+                    </ul>
+                  </template>
+                  <!-- Fallback: concluir=true mas sem o objeto completo do trâmite (ex.:
+                       tramitacoesCaixa ainda não chegou da busca ao vivo) — não deve
+                       acontecer no fluxo normal (a busca já terminou antes do usuário
+                       marcar o checkbox), mas evita ficar em branco se acontecer. -->
+                  <div class="text-xs ml-8 mt-1"
+                       x-show="resumoSisdpu.formularioAtual && resumoSisdpu.formularioAtual.concluir && !(resumoSisdpu.formularioAtual.concluir_detalhes || []).length">
+                    Concluir o trâmite da caixa de entrada
+                  </div>
+                  <div class="text-xs text-base-content/40 ml-8 mt-1" x-show="!(resumoSisdpu.formularioAtual && resumoSisdpu.formularioAtual.concluir)">Não será concluído</div>
+                </div>
               </div>
             </template>
             <!-- COM fila já montada E o formulário editado de novo por cima — aí
@@ -216,9 +345,6 @@
             <div class="text-xs text-warning mt-1" x-show="resumoSisdpu && resumoSisdpu.fila.length && resumoSisdpu.formularioAtual">
               ⚠ Há um formulário preenchido no card do SISDPU que ainda não foi adicionado à fila —
               ele NÃO entra na execução, só o que está na lista acima. Volte lá e clique em "Adicionar à fila" se quiser incluí-lo também.
-            </div>
-            <div class="text-sm text-base-content/40" x-show="resumoSisdpu && !resumoSisdpu.fila.length && !resumoSisdpu.formularioAtual">
-              Sem movimentação configurada.
             </div>
           </div>
           <div class="text-[11px] text-warning font-medium border border-warning/40 rounded p-2">
@@ -379,6 +505,14 @@ function movimentarConjuntoApp() {
         const j = await (await fetch('/api/acoes-eproc/executar/' + encodeURIComponent(eprocData.chaveRascunho()) + '/resumo')).json();
         if (!j.ok) { this.resumoErro = j.erro || 'Falha ao montar o resumo do e-proc.'; return; }
         this.resumoEproc = j;
+        // Rótulo legível do tipo de gerenciamento (o backend só devolve a CHAVE —
+        // "S"/"C"/"D"/"T" — ver TIPOS_GERENCIAMENTO no eproc_client; o catálogo com
+        // os rótulos só existe no card do e-proc) — resolvido aqui, uma vez, pra o
+        // template de revisão poder mostrar "Substituir procurador" em vez da sigla.
+        if (this.resumoEproc.gerenciamento && this.resumoEproc.gerenciamento.ativo) {
+            const g = this.resumoEproc.gerenciamento;
+            g.tipo_label = (eprocData.tiposGerenciamento.find((t) => t.valor === g.tipo) || {}).rotulo || g.tipo;
+        }
         // Reflete a FILA de movimentações (2+ em sequência — "Adicionar à fila"
         // no card, ver static/js/acoes_sisdpu.js:executarFila), não só o
         // formulário único de antes — sem isso, um SISDPU só com itens na fila
@@ -386,13 +520,27 @@ function movimentarConjuntoApp() {
         // movimentação configurada" mesmo tendo o que executar (bug real
         // 2026-09-11: usuário com 1 petição + 1 arquivamento na fila).
         const temFormularioAtual = !!(sisdpuData && (sisdpuData.fase || sisdpuData.grupo || sisdpuData.concluirEfetivo()));
+        // Descrição de verdade do(s) trâmite(s) marcado(s) pra concluir (não só um
+        // "vai concluir" genérico) — cruza ids (do formulário atual via
+        // idsTramiteSelecionadosArr, ou de cada item da fila via seu próprio
+        // id_tramites) com `tramitacoesCaixa` (a mesma lista mostrada no card, com
+        // descricao/remetente/data_envio) pra achar o objeto completo de cada um.
+        // Reusado pelo formulário atual E por cada item da fila (2026-09-25) — o
+        // card já tinha o texto certo (é o mesmo do checkbox), só faltava repassar.
+        const tramitacoesPorId = {};
+        ((sisdpuData && sisdpuData.tramitacoesCaixa) || []).forEach((t) => { tramitacoesPorId[t.id_tramite] = t; });
+        const detalhesConcluir = (ids) => (ids || []).map((id) => tramitacoesPorId[id]).filter(Boolean)
+          .map((t) => ({ descricao: t.descricao || '—', remetente: t.remetente || '', data_envio: t.data_envio || '' }));
+        const idsConcluirSel = (sisdpuData && sisdpuData.idsTramiteSelecionadosArr) ? sisdpuData.idsTramiteSelecionadosArr() : [];
         this.resumoSisdpu = sisdpuData ? {
           fila: (sisdpuData.fila || []).map((item) => ({
             fase: item.fase, grupo: item.grupo, anexos: item.anexos || [],
+            concluir_detalhes: detalhesConcluir(item.id_tramites),
           })),
           formularioAtual: temFormularioAtual ? {
             fase: sisdpuData.fase, grupo: sisdpuData.grupo,
             anexos: sisdpuData.anexosStagedParaEnviar(), concluir: sisdpuData.concluirEfetivo(),
+            concluir_detalhes: detalhesConcluir(idsConcluirSel),
           } : null,
         } : null;
         this.resultadoEproc = null; this.resultadoGerenciamento = null; this.erroExecucao = '';

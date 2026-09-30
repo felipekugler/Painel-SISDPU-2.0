@@ -333,8 +333,15 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
         # mesmo filtro por extensao da aba Peças (EXTENSOES_PECA), senão
         # arquivos internos (foto, LEMBRETES.json, calcular_cnis.json etc.)
         # inflavam essa contagem tambem (pedido do usuario 2026-09-18).
+        # Conta também "Peças IA/": desde 2026-09-28 TODA minuta do painel
+        # (elaboração/lote, triagem, Discutir) é salva lá — sem isto o lote
+        # deixaria de reconhecer o PAJ como "já elaborado".
         n_pecas_geradas = 0
-        for f in pasta.iterdir():
+        _pasta_pecas_ia = pasta / "Peças IA"
+        _arqs_pecas = list(pasta.iterdir()) + (
+            list(_pasta_pecas_ia.iterdir()) if _pasta_pecas_ia.is_dir() else []
+        )
+        for f in _arqs_pecas:
             if not f.is_file() or f.name in IGNORAR:
                 continue
             if f.suffix.lstrip(".").lower() not in EXTENSOES_PECA:

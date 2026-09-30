@@ -331,6 +331,24 @@ def _montar_contexto_retomada(mensagens: list[dict]) -> str:
     return "\n".join(linhas)
 
 
+def _instrucao_pasta_minutas(paj_norm: str) -> str:
+    """Onde salvar qualquer minuta/peca gerada na conversa. Sem isto o Claude
+    escolhia a pasta sozinho (achado real 2026-09-28: PAJ-2025-029-02519 ganhou
+    uma subpasta `Minutas/` que o painel nao enxerga). Regra do usuario: TODA
+    minuta gerada no painel vai para `Peças IA/` do PAJ — a pasta listada na
+    aba Peças e nos pickers "Adicionar Petições IA" (e-proc e SISDPU).
+    Vai tanto no prompt inicial quanto no de retomada."""
+    pasta = PAJS_DIR / paj_norm / "Peças IA"
+    return (
+        "**Onde salvar arquivos**: se o Defensor pedir uma minuta/peca/despacho "
+        f"(ou qualquer arquivo final), salve-o SEMPRE em `{pasta}\\` (crie a "
+        "subpasta se nao existir). Nunca crie outras subpastas (ex.: `Minutas`) "
+        "nem salve na raiz do PAJ. Scripts/arquivos auxiliares de geracao "
+        "(.py, rascunhos .txt intermediarios) nao devem ficar nessa pasta — use "
+        "uma pasta temporaria e apague-os ao final."
+    )
+
+
 def _montar_prompt_inicial(paj_norm: str, skill_slug: str | None) -> str:
     """Cabecalho da PRIMEIRA mensagem da conversa (sem historico previo).
 
@@ -356,7 +374,8 @@ def _montar_prompt_inicial(paj_norm: str, skill_slug: str | None) -> str:
         "este chat para explorar tese, testar hipotese, fazer pergunta sobre "
         "o caso, brainstorm estrategico, esclarecer duvida juridica vinculada "
         "ao PAJ. **Nao produza peca formal** a menos que o Defensor peca "
-        "explicitamente; nesse caso, siga as skills do workspace normalmente.\n"
+        "explicitamente; nesse caso, siga as skills do workspace normalmente.\n\n"
+        f"{_instrucao_pasta_minutas(paj_norm)}\n"
         f"{skill_bloco}\n"
         "Contexto do PAJ (gerado pelo painel — pode ler `sisdpu.txt` na pasta "
         "do PAJ se precisar de mais detalhes):\n\n"
@@ -459,7 +478,10 @@ class ChatLivreSession:
                 # Conversa reaberta: contexto de retomada (sem PROMPT_MAX porque
                 # o historico ja contem a discussao em andamento).
                 contexto = _montar_contexto_retomada(historico_anterior)
-                payload = contexto + "\n\n--- NOVA MENSAGEM DO DEFENSOR ---\n\n" + texto
+                payload = (
+                    contexto + "\n\n" + _instrucao_pasta_minutas(self.paj_norm)
+                    + "\n\n--- NOVA MENSAGEM DO DEFENSOR ---\n\n" + texto
+                )
             else:
                 # Conversa nova: cabecalho com PROMPT_MAX como contexto.
                 cabecalho = _montar_prompt_inicial(self.paj_norm, skill_slug)

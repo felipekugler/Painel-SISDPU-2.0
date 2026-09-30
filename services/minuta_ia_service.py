@@ -64,7 +64,9 @@ from pathlib import Path
 
 from config import PAJS_DIR
 from services.chat_service import CLAUDE_CMD
-from services.peticao_ia_service import MODELOS_DIR, _REGRAS_FORMATO, _docx_para_html, _docx_para_pdf, _html_para_docx
+from services.peticao_ia_service import (
+    MODELOS_DIR, _REGRAS_FORMATO, _docx_para_html, _docx_para_pdf, _gerar_docx_sem_viuva,
+)
 
 TESES_DPU_DIR = Path(r"C:\Claude\teses-dpu")
 
@@ -73,11 +75,50 @@ TESES_DPU_DIR = Path(r"C:\Claude\teses-dpu")
 # `_ler_area_texto`; o Claude não abre esses arquivos, o painel lê e embute
 # no prompt). Primeira migrada: BI - Laudo Médico Pericial (Project do
 # claude.ai) -> areas/beneficio-incapacidade/.
+#
+# `instrucao_estilo` (opcional): substitui `_INSTRUCAO_ESTILO_PADRAO` (peça
+# curta de 3-6 parágrafos, certa pra uma manifestação reativa simples) por
+# uma própria, quando a peça exigir outra extensão/estrutura — ver
+# "contrarrazoes-recurso" abaixo, adicionada 2026-09-25.
 TIPOS_MINUTA: dict[str, dict] = {
+    # Primeira opção do menu (ordem de inserção no dict = ordem no menu/
+    # dropdown) — pedido do usuário, 2026-09-26: opção "coringa" sem
+    # playbook de matéria fixo, guiada pela Orientação Diretiva + documentos
+    # selecionados (ver areas/peticao-generica/CLAUDE.md).
+    "peticao-generica": {
+        "label": "Petição genérica",
+        "area_dir": TESES_DPU_DIR / "areas" / "peticao-generica",
+        "documentos_sugeridos": "os documentos relevantes ao propósito descrito na "
+                                "Orientação Diretiva",
+        # Único tipo em que documento é OPCIONAL — a Orientação Diretiva
+        # sozinha pode bastar (ex.: o Defensor já dita o conteúdo todo na
+        # caixa, sem precisar reanexar nada que já conste dos autos). Os
+        # demais tipos continuam exigindo ao menos 1 documento (default
+        # True — ver `iniciar()`/`_gerar_worker`).
+        "documentos_obrigatorios": False,
+    },
     "bi-laudo-pericial": {
         "label": "Manifestação sobre laudo médico pericial (BI)",
         "area_dir": TESES_DPU_DIR / "areas" / "beneficio-incapacidade",
         "documentos_sugeridos": "laudo pericial e petição inicial",
+    },
+    "contrarrazoes-recurso": {
+        "label": "Contrarrazões de Recurso",
+        "area_dir": TESES_DPU_DIR / "areas" / "contrarrazoes-recurso",
+        "documentos_sugeridos": "recurso interposto, decisão/sentença recorrida, "
+                                "petição inicial e/ou contestação",
+        "instrucao_estilo": (
+            "## ATENÇÃO — estrutura desta peça\n"
+            "Contrarrazões de recurso são MAIS substanciais que uma manifestação simples — "
+            "NÃO se limite a 3-6 parágrafos. Siga os blocos descritos nos critérios acima "
+            "(seção 2 do playbook): abertura, síntese da decisão recorrida, síntese do "
+            "recurso, preliminar (só se cabível), rebate de CADA ponto do recurso "
+            "separadamente (um ou mais parágrafos por ponto, na mesma ordem do recurso), "
+            "pedido final. Mesmo assim, em texto corrido — SEM tópicos numerados formais "
+            "(nada de \"I – DOS FATOS\", \"II – DO DIREITO\" etc.), mantendo o estilo pessoal "
+            "de parágrafos bem delimitados por bloco/ponto rebatido, não títulos "
+            "romanos.\n\n"
+        ),
     },
 }
 
@@ -94,6 +135,22 @@ _lock = threading.Lock()
 
 def status(paj_norm: str) -> dict:
     return _status.get(paj_norm, {"status": "idle"})
+
+
+def usar_modelo_padrao(paj_norm: str, peticao_html: str) -> dict:
+    """"Petição padrão" — o front já resolveu os placeholders do modelo
+    escolhido (mesmo mecanismo de "Usar modelo" de Ações no Eproc/Ações no
+    SISDPU — ver static/js/rich_editor.js) e manda aqui o HTML pronto. Grava
+    direto em `_status` como "done", no mesmo formato que `_gerar_worker`
+    deixaria ao terminar — sem chamar IA nenhuma — pra reaproveitar a MESMA
+    caixa de edição e os botões "Gravar"/"Gerar arquivo (DOC/PDF)" já
+    prontos, sem duplicar nada desse fluxo."""
+    with _lock:
+        _status[paj_norm] = {
+            "status": "done", "erro": "", "peticao_html": peticao_html,
+            "concluido_em": datetime.now().isoformat(timespec="seconds"),
+        }
+    return {"ok": True}
 
 
 def salvar_rascunho(paj_norm: str, peticao_html: str) -> dict:
@@ -115,17 +172,25 @@ def _falhar(paj_norm: str, erro: str) -> None:
         _status[paj_norm] = {"status": "error", "erro": erro}
 
 
-def iniciar(paj_norm: str, processo: str, tipo_slug: str, documentos: list[dict]) -> dict:
+def iniciar(paj_norm: str, processo: str, tipo_slug: str, documentos: list[dict], orientacao: str = "") -> dict:
     """Valida e dispara a geração em background. `documentos`: lista de
     {origem: "processo", ...} ou {origem: "paj", caminho: "Arquivos/xxx.pdf"}
     — já resolvida pelo front a partir das 2 abas do modal de seleção.
+    `orientacao`: texto opcional da caixa "Orientação diretiva para análise
+    da IA" (compartilhada com "Analisar"/"Calcular Tempo de Contribuição"/
+    "Calcular Qualidade de Segurado" — ver paj_detail.html), lida pelo front
+    da mesma variável Alpine e enviada aqui (ver static/js/minuta_ia.js).
     Retorna {ok, status, erro?}."""
     cfg = TIPOS_MINUTA.get(tipo_slug)
     if not cfg:
         return {"ok": False, "erro": f"Tipo de minuta desconhecido: {tipo_slug!r}."}
     documentos = [d for d in (documentos or []) if d.get("origem")]
     if not documentos:
-        return {"ok": False, "erro": "Selecione ao menos um documento (processo ou PAJ) antes de gerar a minuta."}
+        if cfg.get("documentos_obrigatorios", True):
+            return {"ok": False, "erro": "Selecione ao menos um documento (processo ou PAJ) antes de gerar a minuta."}
+        if not (orientacao or "").strip():
+            return {"ok": False, "erro": "Preencha a Orientação Diretiva ou selecione ao menos um documento "
+                                          "antes de gerar a minuta."}
 
     atual = _status.get(paj_norm)
     if atual and atual.get("status") == "running":
@@ -134,12 +199,12 @@ def iniciar(paj_norm: str, processo: str, tipo_slug: str, documentos: list[dict]
     with _lock:
         _status[paj_norm] = {"status": "running", "erro": "", "iniciado_em": datetime.now().isoformat(timespec="seconds")}
 
-    t = threading.Thread(target=_gerar_worker, args=(paj_norm, processo, tipo_slug, documentos), daemon=True)
+    t = threading.Thread(target=_gerar_worker, args=(paj_norm, processo, tipo_slug, documentos, orientacao), daemon=True)
     t.start()
     return {"ok": True, "status": "running"}
 
 
-def _gerar_worker(paj_norm: str, processo: str, tipo_slug: str, documentos: list[dict]) -> None:
+def _gerar_worker(paj_norm: str, processo: str, tipo_slug: str, documentos: list[dict], orientacao: str = "") -> None:
     try:
         cfg = TIPOS_MINUTA[tipo_slug]
         area_dir: Path = cfg["area_dir"]
@@ -148,7 +213,12 @@ def _gerar_worker(paj_norm: str, processo: str, tipo_slug: str, documentos: list
         pasta_pecas_ia.mkdir(parents=True, exist_ok=True)
 
         caminhos = _resolver_documentos(paj_norm, processo, documentos)
-        if not caminhos:
+        # Falha só se HAVIA documento(s) selecionado(s) e nenhum resolveu (erro
+        # real — download/arquivo sumido). Sem seleção nenhuma (permitido só
+        # pra tipos com documentos_obrigatorios=False, ex.: "peticao-generica")
+        # segue em frente com `caminhos` vazio — a peça se apoia só na
+        # Orientação Diretiva/conhecimento geral.
+        if documentos and not caminhos:
             _falhar(paj_norm, "Não foi possível localizar nenhum dos documentos selecionados "
                                "(falha ao baixar do e-proc, ou arquivo do PAJ não existe mais em disco).")
             return
@@ -156,7 +226,8 @@ def _gerar_worker(paj_norm: str, processo: str, tipo_slug: str, documentos: list
         criterio_area = _ler_area_texto(area_dir)
         paj_exibicao = _paj_exibicao(paj_norm)
         antes = _listar_arquivos(pasta_pecas_ia)
-        prompt = _montar_prompt(paj_exibicao, processo, criterio_area, caminhos, pasta_pecas_ia)
+        prompt = _montar_prompt(paj_exibicao, processo, criterio_area, caminhos, pasta_pecas_ia,
+                                 orientacao=orientacao, cfg=cfg)
 
         # Prompt por STDIN (não argumento) — mesmo motivo de peticao_ia_service.py:
         # o texto dos documentos-fonte facilmente passa do limite de linha de
@@ -361,15 +432,59 @@ async def _resolver_async(paj_norm: str, processo: str, documentos: list[dict]) 
     return unicos
 
 
-def _montar_prompt(paj_exibicao: str, processo: str, criterio_area: str, caminhos: list[Path], pasta_destino: Path) -> str:
-    lista_docs = "\n".join(f"- `{c}`" for c in caminhos)
+_INSTRUCAO_ESTILO_PADRAO = (
+    "## ATENÇÃO — isto é uma MANIFESTAÇÃO CURTA, não uma petição inicial\n"
+    "3 a 6 parágrafos em texto corrido, no total. NÃO estruture em tópicos numerados "
+    "(nada de \"I – DOS FATOS\", \"II – DO DIREITO\" etc.) e não invente seções que os "
+    "critérios acima não pedirem. Onde os critérios listarem itens a)/b)/c) como "
+    "conteúdo a abordar, isso é só a ORGANIZAÇÃO do que considerar — no texto final "
+    "viram parágrafos corridos, sem letras/números aparecendo na peça.\n\n"
+)
+
+
+def _montar_prompt(paj_exibicao: str, processo: str, criterio_area: str, caminhos: list[Path], pasta_destino: Path,
+                    orientacao: str = "", cfg: dict | None = None) -> str:
+    # Sem documento nenhum (só permitido pra tipos com documentos_obrigatorios=
+    # False, ex.: "peticao-generica") — a peça se apoia só na Orientação
+    # Diretiva/conhecimento geral; deixa isso EXPLÍCITO pro modelo em vez de
+    # uma seção "Documentos-fonte" vazia e muda esperando conteúdo ali.
+    lista_docs = ("\n".join(f"- `{c}`" for c in caminhos) if caminhos
+                  else "(nenhum documento foi selecionado — baseie-se na Orientação Diretiva "
+                       "abaixo e no que for de conhecimento geral pertinente)")
     nome_sugerido = pasta_destino / f"manifestacao-{datetime.now().strftime('%d-%m-%Y')}.docx"
+    cfg = cfg or {}
+
+    # Orientação diretiva do Defensor (caixa compartilhada com "Analisar"/
+    # "Calcular Tempo de Contribuição"/"Calcular Qualidade de Segurado" — ver
+    # paj_detail.html/static/js/minuta_ia.js). Mesmo texto/posicionamento de
+    # analise_pretensao_service.py — logo no início, antes até dos critérios
+    # da área, pra pesar desde o começo do raciocínio.
+    bloco_orientacao = ""
+    if orientacao:
+        bloco_orientacao = (
+            "## ORIENTAÇÃO DIRETIVA DO DEFENSOR (leia com atenção — é uma decisão já "
+            "tomada pelo Defensor sobre o caso, não uma sugestão a ser questionada)\n"
+            f'"{orientacao}"\n\n'
+            "Direcione a redação conforme essa orientação, evitando desenvolver ou "
+            "sugerir abordagens que o Defensor já descartou. Se algo nos documentos "
+            "contradizer claramente a orientação, sinalize isso ENTRE COLCHETES no "
+            "texto da peça em vez de simplesmente ignorar ou seguir cegamente.\n\n"
+        )
+
+    # Instrução de tamanho/estrutura da peça — cada tipo de minuta pode
+    # substituir a padrão (peça curta, sem tópicos — certa pra uma
+    # manifestação reativa simples) por uma própria, quando a peça exigir
+    # outra estrutura (ex.: Contrarrazões de Recurso, que rebate vários
+    # pontos e se beneficia de alguma estruturação — ver TIPOS_MINUTA).
+    instrucao_estilo = cfg.get("instrucao_estilo") or _INSTRUCAO_ESTILO_PADRAO
+
     return (
         f"Redija uma manifestação sobre os documentos abaixo, no processo judicial "
         f"{processo or '(ver documentos)'} (PAJ {paj_exibicao} — referência interna da DPU, "
         "não aparece pro juízo).\n\n"
         "## Documentos-fonte selecionados pelo Defensor (leia todos antes de redigir)\n"
         f"{lista_docs}\n\n"
+        + bloco_orientacao +
         "## Critérios desta área — LEIA COM ATENÇÃO (define a classificação do caso e o "
         "conteúdo jurídico da peça; já embutido aqui, NÃO precisa abrir nenhum arquivo "
         "pra ler isso)\n"
@@ -380,12 +495,7 @@ def _montar_prompt(paj_exibicao: str, processo: str, criterio_area: str, caminho
         "parágrafo no INÍCIO da sua resposta de texto (fora do arquivo gerado). Lacunas/"
         "dúvidas vão sinalizadas ENTRE COLCHETES dentro do próprio texto da peça, não "
         "como pergunta.\n\n"
-        "## ATENÇÃO — isto é uma MANIFESTAÇÃO CURTA, não uma petição inicial\n"
-        "3 a 6 parágrafos em texto corrido, no total. NÃO estruture em tópicos numerados "
-        "(nada de \"I – DOS FATOS\", \"II – DO DIREITO\" etc.) e não invente seções que os "
-        "critérios acima não pedirem. Onde os critérios listarem itens a)/b)/c) como "
-        "conteúdo a abordar, isso é só a ORGANIZAÇÃO do que considerar — no texto final "
-        "viram parágrafos corridos, sem letras/números aparecendo na peça.\n\n"
+        + instrucao_estilo
         + _REGRAS_FORMATO +
         "\n---\n\n"
         "## Como gerar o arquivo\n"
@@ -437,11 +547,11 @@ def formatar_e_salvar(paj_norm: str, tipo_slug: str, peticao_html: str) -> dict:
     """"Gerar arquivo (DOC/PDF)" — pega o texto ATUAL da caixa de edição (já
     revisado/ajustado manualmente pelo Defensor, ou o rascunho da IA sem
     alteração) e o formata no padrão DPU (`peticao_base.py`, via
-    `_html_para_docx` — mesma função de "Incluir petição nos anexos" em
-    `peticao_ia_service.py`), sem chamar IA — rápido e síncrono (mas quem
-    chama deve rodar em thread — conversão via Word/COM é bloqueante).
-    Salva em `Peças IA/` (docx + pdf), sobrescrevendo se já existir um do
-    mesmo tipo no mesmo dia."""
+    `_gerar_docx_sem_viuva` — mesma função de "Incluir petição nos anexos" em
+    `peticao_ia_service.py`, já com o ajuste anti-viúva do fecho embutido),
+    sem chamar IA — rápido e síncrono (mas quem chama deve rodar em thread —
+    conversão via Word/COM é bloqueante). Salva em `Peças IA/` (docx + pdf),
+    sobrescrevendo se já existir um do mesmo tipo no mesmo dia."""
     texto_limpo = re.sub(r"<[^>]+>", "", peticao_html or "").strip()
     if not texto_limpo:
         return {"ok": False, "erro": "A caixa de texto está vazia — escreva ou gere o texto antes de gerar o arquivo."}
@@ -456,7 +566,7 @@ def formatar_e_salvar(paj_norm: str, tipo_slug: str, peticao_html: str) -> dict:
         # termos=False + data por extenso (não o placeholder "data do
         # protocolo eletrônico" do fluxo de Ações no Eproc) — minuta é peça
         # pronta pra uso imediato, não vai ser protocolada por aqui.
-        _html_para_docx(peticao_html, docx_path, termos=False, data=_data_por_extenso())
+        _gerar_docx_sem_viuva(peticao_html, docx_path, termos=False, data=_data_por_extenso())
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "erro": f"Falha ao formatar a minuta: {type(e).__name__}: {e}"[:400]}
 

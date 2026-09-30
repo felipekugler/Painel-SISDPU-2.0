@@ -14,7 +14,7 @@ de webshell/backdoor comum em EDR corporativo), não o arquivo/pasta em si.
 Por isso este script existe: roda como um subprocesso separado, nasce, faz
 só a geração desta UMA minuta, termina — nunca fica com nada escutando rede.
 Reaproveita as funções JÁ TESTADAS de `services.peticao_ia_service`
-(`_html_para_docx`/`_docx_para_pdf`) e `services.intimacao_ia_service`
+(`_gerar_docx_sem_viuva`/`_docx_para_pdf`) e `services.intimacao_ia_service`
 (`_colorir_colchetes_vermelho`), só muda ONDE elas rodam.
 
 Uso: `python services/_docx_worker.py <docx_path> <pdf_path>`, com o HTML da
@@ -50,10 +50,10 @@ def main() -> int:
     html = sys.stdin.buffer.read().decode("utf-8")
 
     from services.intimacao_ia_service import _colorir_colchetes_vermelho
-    from services.peticao_ia_service import _docx_para_pdf, _html_para_docx
+    from services.peticao_ia_service import _docx_para_pdf, _gerar_docx_sem_viuva
 
     try:
-        _html_para_docx(html, docx_path)
+        _gerar_docx_sem_viuva(html, docx_path)
         _colorir_colchetes_vermelho(docx_path)
         _docx_para_pdf(docx_path, pdf_path)
     except Exception as e:  # noqa: BLE001

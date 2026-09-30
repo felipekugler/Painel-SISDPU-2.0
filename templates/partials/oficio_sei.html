@@ -1,0 +1,101 @@
+{# Console "Minutar Ofício" (SEI) — ver static/js/oficio_sei.js e
+   services/oficio_sei_service.py. Campos = seções do modelo de Ofício da
+   COFE CTB no processo 08166.000183/2017-39. #}
+<div class="flex items-center gap-2 flex-wrap">
+    <span class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Ofício no SEI · 08166.000183/2017-39 · COFE CTB</span>
+    <span class="loading loading-spinner loading-xs" x-show="status === 'running'"></span>
+    <span class="text-xs text-base-content/50" x-show="status === 'running'">Redigindo ofício com IA…</span>
+    <span class="ml-auto flex items-center gap-2">
+        <span class="badge badge-sm badge-success gap-1" x-show="seiConectado" x-cloak>SEI conectado</span>
+        <button type="button" class="btn btn-xs btn-outline" x-show="!seiConectado" x-cloak
+                :disabled="conectando" @click="conectarSei()"
+                title="Abre a página de login oficial da DPU (LDAP). Sua senha não passa pelo painel.">
+            <span x-show="conectando" class="loading loading-spinner loading-xs"></span>
+            <span x-text="conectando ? 'Aguardando login…' : 'Conectar ao SEI'"></span>
+        </button>
+    </span>
+</div>
+
+<div class="text-xs text-error mt-1" x-show="status === 'error' && erro" x-text="erro"></div>
+
+<div class="mt-2 flex flex-col gap-2" x-show="status === 'done'" x-cloak>
+    <div class="alert alert-warning py-2 text-xs" x-show="observacoes">
+        <span><b>Conferir antes de criar:</b> <span x-text="observacoes"></span></span>
+    </div>
+
+    <label class="form-control">
+        <span class="label-text text-xs mb-1">Destinatário (uma informação por linha: órgão, endereço, CEP/cidade, e-mail)</span>
+        <textarea x-model="destinatario" @input="gravado = false" rows="4"
+                  class="textarea textarea-bordered textarea-sm text-xs leading-5"></textarea>
+    </label>
+    <div class="grid md:grid-cols-2 gap-2">
+        <label class="form-control">
+            <span class="label-text text-xs mb-1">Assunto</span>
+            <input type="text" x-model="assunto" @input="gravado = false" class="input input-bordered input-sm text-xs">
+        </label>
+        <label class="form-control">
+            <span class="label-text text-xs mb-1">Referência</span>
+            <input type="text" x-model="referencia" @input="gravado = false" class="input input-bordered input-sm text-xs">
+        </label>
+    </div>
+    <div>
+        <span class="label-text text-xs">Corpo (número, data, timbre e assinatura são colocados pelo SEI)</span>
+        <div class="mt-1" :id="uidCorpo" x-show="quillOk"></div>
+        <textarea x-show="!quillOk" x-model="corpoTexto" rows="10"
+                  class="textarea textarea-bordered w-full text-[12.5px] leading-[1.6]"></textarea>
+    </div>
+
+    <div class="flex items-center gap-2 flex-wrap">
+        <button type="button" class="btn btn-xs btn-ghost" @click="descartar()">Descartar</button>
+        <button type="button" class="btn btn-xs btn-outline" @click="redigir()"
+                title="Redige de novo com a Orientação Diretiva atual">Redigir de novo</button>
+        <span class="ml-auto text-[11px] text-success" x-show="gravado" x-cloak>Gravado ✓</span>
+        <button type="button" class="btn btn-xs btn-outline" :disabled="gravando" @click="gravar()">
+            <span x-show="gravando" class="loading loading-spinner loading-xs"></span>Gravar
+        </button>
+        <button type="button" class="btn btn-xs btn-primary" :disabled="criando" @click="pedirConfirmacao()"
+                title="Cria a minuta (não assinada) no processo 08166.000183/2017-39">
+            <span x-show="criando" class="loading loading-spinner loading-xs"></span>
+            <span x-text="criando ? 'Criando no SEI…' : 'Criar no SEI'"></span>
+        </button>
+    </div>
+    <div class="text-xs text-error" x-show="erroCriar" x-text="erroCriar"></div>
+</div>
+
+<div class="text-xs text-error mt-1" x-show="status !== 'done' && erroCriar" x-text="erroCriar"></div>
+
+<!-- Ofícios já criados no SEI para este PAJ -->
+<div class="mt-3" x-show="criados.length" x-cloak>
+    <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1">Ofícios criados no SEI</div>
+    <div class="flex flex-col gap-1">
+        <template x-for="o in criados.slice().reverse()" :key="o.documento_id">
+            <div class="flex items-center gap-2 flex-wrap text-xs bg-base-100 border border-base-300 rounded px-2 py-1.5">
+                <span class="font-semibold" x-text="'Ofício ' + (o.numero_sei || '(nº a confirmar)')"></span>
+                <span class="text-base-content/60" x-text="o.destinatario"></span>
+                <span class="text-base-content/40" x-text="dataHora(o.criado_em)"></span>
+                <span class="badge badge-xs badge-warning" x-show="o.avisos && o.avisos.length" :title="(o.avisos || []).join(' | ')">conferir</span>
+                <a :href="o.link" target="_blank" rel="noopener" class="btn btn-xs btn-success ml-auto"
+                   title="Abre o SEI já no documento. A assinatura é feita por você, com sua senha, no SEI.">
+                    Abrir para assinar
+                </a>
+            </div>
+        </template>
+    </div>
+    <p class="text-[11px] text-base-content/50 mt-1">Depois de assinado, o envio ao destinatário continua com a assessoria.</p>
+</div>
+
+<!-- Confirmação de gravação no SEI -->
+<dialog class="modal" :open="confirmando" @close="confirmando = false">
+    <div class="modal-box max-w-lg">
+        <h3 class="font-bold text-lg mb-2">Criar ofício no SEI?</h3>
+        <p class="text-sm mb-2">Será criada uma <b>minuta não assinada</b> de Ofício no processo
+            <b>08166.000183/2017-39</b>, unidade <b>COFE CTB</b>:</p>
+        <div class="text-xs bg-base-200 rounded p-2 mb-2 whitespace-pre-line" x-text="destinatario.split('\n')[0] + '\nAssunto: ' + assunto"></div>
+        <p class="text-xs text-base-content/60">Um documento criado só pode ser excluído pelo SEI web. A assinatura é feita por você depois, no SEI.</p>
+        <div class="modal-action">
+            <button type="button" class="btn btn-sm btn-ghost" @click="confirmando = false">Cancelar</button>
+            <button type="button" class="btn btn-sm btn-primary" @click="criarNoSei()">Criar no SEI</button>
+        </div>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button type="button" @click="confirmando = false">fechar</button></form>
+</dialog>

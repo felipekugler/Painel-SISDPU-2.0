@@ -85,12 +85,6 @@ async def api_reanalisar(id_tramite: str, request: Request):
     return JSONResponse(await retornos_service.reanalisar(id_tramite, body.get("prompt", "")))
 
 
-@router.get("/api/retornos/{id_tramite}/caixas-abertas", response_class=JSONResponse)
-async def api_caixas_abertas(id_tramite: str):
-    """Caixas/usuários onde o PAJ está aberto agora (badge acima dos cards)."""
-    return JSONResponse(await retornos_service.caixas_abertas(id_tramite))
-
-
 @router.post("/api/retornos/{id_tramite}/pos-execucao", response_class=JSONResponse)
 async def api_pos_execucao(id_tramite: str, request: Request):
     """Chamado pelo frontend logo após o console genérico "Ações no SISDPU" concluir
@@ -105,8 +99,8 @@ async def api_pos_execucao(id_tramite: str, request: Request):
     return JSONResponse(await retornos_service.registrar_pos_execucao(id_tramite, resultado))
 
 
-async def _stream_ressincronizar_paj(id_tramite: str, completo: bool, ia: bool):
-    async for ev in retornos_service.ressincronizar_paj_stream(id_tramite, completo=completo, ia=ia):
+async def _stream_ressincronizar_paj(id_tramite: str, nivel: str, ia: bool):
+    async for ev in retornos_service.ressincronizar_paj_stream(id_tramite, nivel=nivel, ia=ia):
         if ev.get("done"):
             yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
         else:
@@ -114,24 +108,26 @@ async def _stream_ressincronizar_paj(id_tramite: str, completo: bool, ia: bool):
 
 
 @router.get("/api/retornos/{id_tramite}/ressincronizar-paj")
-async def ressincronizar_paj(id_tramite: str, completo: int = 0, ia: int = 0):
-    """Ressincroniza SÓ este PAJ — modo e IA escolhidos INDEPENDENTEMENTE no minimenu
-    do botão "Sincronizar" de cada linha:
+async def ressincronizar_paj(id_tramite: str, nivel: str = "levissima", ia: int = 0):
+    """Ressincroniza SÓ este PAJ — nível e IA escolhidos INDEPENDENTEMENTE no minimenu
+    do botão "Re-sincronizar" de cada linha. `nivel` são os MESMOS 3 níveis do
+    dashboard/página do PAJ (ver [[painel-sisdpu-sync-niveis-3-hipoteses]]):
 
-    `completo=0` (padrão, **leve**): sem baixar anexos/OCR nem indexar documentos,
-    esperas curtas — só o núcleo do metadata (ofício, assistido, pretensão,
-    movimentações). Serve pra conferir rapidamente se uma movimentação/tramitação/
-    conclusão foi mesmo efetivada no SISDPU (ex.: após um "erro de conexão" no
-    console Ações no SISDPU), sem pagar o custo da extração de documentos.
+    `nivel=levissima` (padrão): sem baixar anexos nem indexar documentos, esperas
+    curtas — só o núcleo do metadata (ofício, assistido, pretensão, movimentações).
+    Serve pra conferir rapidamente se uma movimentação/tramitação/conclusão foi
+    mesmo efetivada no SISDPU (ex.: após um "erro de conexão" no console Ações no
+    SISDPU), sem pagar o custo da extração de documentos.
 
-    `completo=1`: baixa e indexa os documentos das movimentações (igual à aba PAJs
-    em "Sincronizar com anexos").
+    `nivel=leve`: + relação de documentos por seq, SEM baixar os PDFs.
 
-    `ia=1` (independente do modo): reanalisa com a IA (resumo/sugestão) ao final —
+    `nivel=completa`: + download dos PDFs — igual à aba PAJs em "Completa".
+
+    `ia=1` (independente do nível): reanalisa com a IA (resumo/sugestão) ao final —
     o usuário liga isso só quando precisar de uma análise nova, evitando o custo em
-    toda ressincronização leve de conferência.
+    toda ressincronização levíssima de conferência.
 
     Em qualquer combinação, NUNCA é a sincronização pesada da aba PAJs propriamente dita."""
-    return EventSourceResponse(_stream_ressincronizar_paj(id_tramite, completo=bool(completo), ia=bool(ia)))
+    return EventSourceResponse(_stream_ressincronizar_paj(id_tramite, nivel=nivel, ia=bool(ia)))
 
 

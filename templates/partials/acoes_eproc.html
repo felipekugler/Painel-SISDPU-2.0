@@ -16,16 +16,25 @@
     </button>
     <div x-show="aberto" class="flex flex-col gap-3 text-[12.5px] mt-3">
         <!-- Seleção do processo judicial — só aparece quando o PAJ tem MAIS DE UM
-             processo vinculado, para não movimentar/peticionar no processo errado. -->
-        <div class="ret-acao-bloco" x-show="processos.length > 1">
-            <div class="ret-acao-titulo">Processo judicial a movimentar</div>
-            <select class="select select-bordered select-sm w-full" x-model="processoSelecionado" @change="trocarProcesso()">
-                <template x-for="p in processos" :key="p.numero">
-                    <option :value="p.numero" x-text="p.numero + (p.juizo ? (' — ' + p.juizo) : '')"></option>
-                </template>
-            </select>
-            <div class="text-[11px] text-warning mt-1">
-                Este PAJ tem mais de um processo judicial vinculado — confira qual está selecionado antes de continuar.
+             processo vinculado, para não movimentar/peticionar no processo errado.
+             Alerta em vermelho (não o "ret-acao-bloco" neutro dos demais campos)
+             — chama atenção de propósito pra uma escolha que importa. Mesmo
+             destaque que "Movimentar Eproc + SISDPU" já usava numa caixa
+             SEPARADA, fora deste módulo, pra resolver ambiguidade de processo;
+             unificado aqui dentro (pedido do usuário 2026-09-29) — aquela
+             página agora só entrega TODOS os candidatos e deixa este <select>
+             decidir, em vez de uma tela de escolha à parte. -->
+        <div class="alert alert-error text-xs" x-show="processos.length > 1">
+            <div class="flex flex-col w-full gap-1">
+                <strong>PAJ com mais de um processo judicial vinculado. Escolha o que deseja movimentar:</strong>
+                <select class="select select-bordered select-sm w-full" x-model="processoSelecionado" @change="trocarProcesso()">
+                    <template x-for="p in processos" :key="p.numero">
+                        <option :value="p.numero" x-text="labelProcesso(p)"></option>
+                    </template>
+                </select>
+                <div class="text-[11px] opacity-70" x-show="carregandoClasses">
+                    <span class="loading loading-spinner loading-xs"></span> Consultando classe processual…
+                </div>
             </div>
         </div>
         <!-- Prazos a fechar -->
@@ -82,9 +91,9 @@
                             <span x-show="!usandoModelo">📋 Usar modelo</span>
                             <span x-show="usandoModelo">Inserindo…</span>
                         </button>
-                        <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-64 p-1 shadow border border-base-300" x-show="modelosPeticao.length">
+                        <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-max max-w-[28rem] p-1 shadow border border-base-300" x-show="modelosPeticao.length">
                             <template x-for="m in modelosPeticao" :key="m.id">
-                                <li><a @click="usarModeloPeticao(m.id)" x-text="m.nome"></a></li>
+                                <li><a class="whitespace-nowrap" @click="usarModeloPeticao(m.id)" x-text="m.nome"></a></li>
                             </template>
                         </ul>
                     </div>

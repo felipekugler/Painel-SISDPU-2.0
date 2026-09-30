@@ -10,7 +10,7 @@ from __future__ import annotations
 from fastapi import APIRouter, Request
 from fastapi.responses import JSONResponse
 
-from services import minuta_ia_service
+from services import config_painel_service, minuta_ia_service
 
 router = APIRouter()
 
@@ -21,16 +21,37 @@ async def api_minutas_tipos():
     return JSONResponse({"ok": True, "tipos": minuta_ia_service.listar_tipos()})
 
 
+@router.get("/api/minutas/modelos-padrao", response_class=JSONResponse)
+async def api_minutas_modelos_padrao():
+    """Submenu "Petição padrão" do menu "Minutar Petição" — MESMO cadastro de
+    "Modelos de petição" de Configurações › e-proc, sem duplicar nada."""
+    return JSONResponse({"ok": True, "modelos": config_painel_service.get_eproc_modelos_peticao()})
+
+
+@router.post("/api/minutas/usar-modelo/{paj_norm}", response_class=JSONResponse)
+async def api_minutas_usar_modelo(paj_norm: str, request: Request):
+    """"Petição padrão" — grava na caixa de edição o texto de um modelo já
+    cadastrado (placeholders já resolvidos pelo front), sem chamar IA. Body:
+    {peticao_html}."""
+    body = await request.json()
+    peticao_html = body.get("peticao_html") or ""
+    res = minuta_ia_service.usar_modelo_padrao(paj_norm, peticao_html)
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
+
+
 @router.post("/api/minutas/gerar/{paj_norm}", response_class=JSONResponse)
 async def api_minutas_gerar(paj_norm: str, request: Request):
     """Dispara a geração da minuta em background. Body:
     {processo, tipo_slug, documentos: [{origem:"processo", evento_numero} |
-    {origem:"paj", caminho}]}."""
+    {origem:"paj", caminho}], orientacao?}. `orientacao`: texto opcional da
+    caixa "Orientação diretiva para análise da IA" (compartilhada com
+    Analisar/Calcular Tempo de Contribuição/Calcular Qualidade de Segurado)."""
     body = await request.json()
     processo = (body.get("processo") or "").strip()
     tipo_slug = (body.get("tipo_slug") or "").strip()
     documentos = body.get("documentos") or []
-    res = minuta_ia_service.iniciar(paj_norm, processo, tipo_slug, documentos)
+    orientacao = (body.get("orientacao") or "").strip()
+    res = minuta_ia_service.iniciar(paj_norm, processo, tipo_slug, documentos, orientacao)
     return JSONResponse(res, status_code=200 if res.get("ok") else 400)
 
 

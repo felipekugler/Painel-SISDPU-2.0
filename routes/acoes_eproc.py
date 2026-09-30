@@ -77,6 +77,13 @@ async def api_prazos(processo: list[str] = Query(default=[])):
     return JSONResponse({"ok": True, "itens": await acoes_eproc_service.listar_prazos(processo)})
 
 
+@router.get("/api/acoes-eproc/classe-processo", response_class=JSONResponse)
+async def api_classe_processo(numero: str):
+    """Classe processual de UM processo — alimenta o rótulo do <select>
+    "Processo judicial a movimentar" quando o PAJ tem mais de um vinculado."""
+    return JSONResponse(await acoes_eproc_service.resolver_classe_processo(numero))
+
+
 @router.get("/api/acoes-eproc/pecas-ia/{paj_norm}", response_class=JSONResponse)
 async def api_pecas_ia(paj_norm: str):
     """Arquivos da subpasta "Peças IA" do PAJ (petições/peças geradas pela análise

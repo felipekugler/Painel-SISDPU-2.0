@@ -101,8 +101,8 @@ def _montar_instrucao(paj_pasta, prompt_content: str, skill_slug: str | None) ->
         + "**OBRIGATORIO**: produzir o TEXTO da peca/despacho/oficio/orientacao, em "
         "linguagem apropriada, pronto pra copiar no SISDPU / protocolar / expedir. "
         "Nao basta dizer o que fazer — redija o produto final.\n\n"
-        f"Salve o(s) arquivo(s) gerado(s) em `{paj_pasta}\\` "
-        "(ex: `despacho.txt`, `peticao.txt`, `recurso.txt`, `oficio.txt`, "
+        f"Salve o(s) arquivo(s) gerado(s) em `{paj_pasta}\\` (crie a subpasta se "
+        "nao existir; nunca na raiz do PAJ nem em outra subpasta) (ex:`despacho.txt`, `peticao.txt`, `recurso.txt`, `oficio.txt`, "
         "`orientacao.txt`, `parecer.txt`). Esforco proporcional ao produto. "
         "Geracao de .docx/.pdf e feita depois, pelo botao do painel.\n\n"
         "Ao final, apresente um **RESUMO ESTRUTURADO**:\n\n"
@@ -301,7 +301,7 @@ class ChatSession:
             self.send_message(
                 "Sua sessão anterior foi interrompida pelo limite de uso (cota), que "
                 "já foi renovado. Continue exatamente de onde parou e finalize o "
-                "produto deste PAJ: salve o(s) arquivo(s) na pasta do PAJ e apresente "
+                "produto deste PAJ: salve o(s) arquivo(s) na subpasta `Peças IA` do PAJ e apresente "
                 "o RESUMO ESTRUTURADO ao final."
             )
             return True
@@ -341,7 +341,10 @@ class ChatSession:
 
         # Envia PROMPT_MAX como prompt inicial
         prompt_content = prompt_path.read_text(encoding="utf-8", errors="replace")
-        paj_pasta = PAJS_DIR / self.paj_norm
+        # Toda minuta gerada no painel vai para "Peças IA/" (regra do usuario
+        # 2026-09-28) — e' a pasta que a aba Peças e os pickers "Adicionar
+        # Petições IA" (e-proc/SISDPU) enxergam. Antes ia para a raiz do PAJ.
+        paj_pasta = PAJS_DIR / self.paj_norm / "Peças IA"
         if self.instrucao_inicial:
             # Fase 1 da triagem: instrução custom (classificar/recomendar, SEM
             # elaborar) + o contexto do PROMPT_MAX anexado.
@@ -386,17 +389,19 @@ class ChatSession:
         if not self._start_subprocess():
             return False
 
-        paj_pasta = PAJS_DIR / self.paj_norm
+        paj_pasta = PAJS_DIR / self.paj_norm / "Peças IA"
         instrucao = (
             f"Voce elaborou anteriormente uma peca/despacho para o PAJ {self.paj_norm}. "
-            f"O(s) arquivo(s) gerado(s) estao salvos em `{paj_pasta}\\`.\n\n"
+            f"O(s) arquivo(s) gerado(s) estao salvos em `{paj_pasta}\\` (elaboracoes "
+            f"antigas podem estar na raiz `{paj_pasta.parent}\\`).\n\n"
             f"O defensor solicita a seguinte **CORRECAO**:\n\n"
             f"{correcao}\n\n"
             f"Por favor:\n"
             f"1. Leia o(s) arquivo(s) ja gerados em `{paj_pasta}\\` para recuperar "
             f"   o texto elaborado anteriormente\n"
             f"2. Aplique a correcao solicitada\n"
-            f"3. Salve a versao atualizada sobrescrevendo o arquivo anterior\n"
+            f"3. Salve a versao atualizada em `{paj_pasta}\\` (crie a subpasta se "
+            f"   nao existir), sobrescrevendo o arquivo anterior se ja estiver la\n"
             f"4. Apresente o **RESUMO ESTRUTURADO** ao final no mesmo formato padrao\n\n"
             f"Siga o `CLAUDE.md` do workspace Oficio Geral (terminologia DPU, estilo, "
             f"assinatura etc). Nao pergunte nada — refaca diretamente.\n\n"

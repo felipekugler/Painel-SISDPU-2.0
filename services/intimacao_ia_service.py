@@ -50,7 +50,6 @@ import asyncio
 import contextlib
 import json
 import re
-import shutil
 import subprocess
 import sys
 import time
@@ -1298,15 +1297,15 @@ async def _gerar_despacho(processo: str, paj_norm: str, pasta_paj: Path, caso: d
     evento_ref = caso.get("evento_referenciado") or {}
     sufixo = _sufixo_arquivo_seguro(evento_ref.get("evento_referenciado"))
     nome = f"despacho_intimacao_{sufixo}"
-    # Convenção do PAJ: despachos ficam na RAIZ da pasta do PAJ, nome
-    # começando com "despacho" (ver services.paj_service.PREFIXOS_DESPACHO) —
-    # é o que faz o despacho aparecer categorizado corretamente na listagem
-    # de documentos do PAJ. Mantido aqui por compatibilidade.
-    # Checa colisão nas DUAS pastas onde o despacho é gravado (raiz + cópia
-    # em "Peças IA" logo abaixo) — ver `_nome_minuta_livre`.
-    nome = _nome_minuta_livre(nome, pasta_paj, pasta_paj / "Peças IA")
-    docx_path = pasta_paj / f"{nome}.docx"
-    pdf_path = pasta_paj / f"{nome}.pdf"
+    # Salvo SÓ em "Peças IA/" (regra do usuário 2026-09-28: toda minuta do
+    # painel vai para lá). Antes ia para a raiz do PAJ + uma cópia em "Peças
+    # IA" — a raiz existia por causa da aba "Despachos" (PREFIXOS_DESPACHO),
+    # removida em 2026-09-18.
+    pasta_destino = pasta_paj / "Peças IA"
+    pasta_destino.mkdir(parents=True, exist_ok=True)
+    nome = _nome_minuta_livre(nome, pasta_destino)
+    docx_path = pasta_destino / f"{nome}.docx"
+    pdf_path = pasta_destino / f"{nome}.pdf"
 
     erro_docx = await _gerar_docx_pdf(despacho_html, docx_path, pdf_path)
     if erro_docx:
@@ -1315,23 +1314,8 @@ async def _gerar_despacho(processo: str, paj_norm: str, pasta_paj: Path, caso: d
         intimacao_service.salvar_estado(chave, status_geral="erro", erro=msg)
         return {"ok": False, "erro": msg}
 
-    # TAMBÉM salva uma cópia em "Peças IA/" (pedido do usuário) — é a pasta
-    # que o console "Ações no e-proc" já lista no picker "Adicionar Petições
-    # IA" (`templates/partials/acoes_eproc.html`), então o despacho fica
-    # visível/selecionável no mesmo lugar que as petições, sem precisar caçar
-    # o arquivo manualmente na raiz do PAJ. Best-effort: se a cópia falhar
-    # por algum motivo, não invalida a minuta em si (já salva e íntegra na
-    # raiz) — só loga um aviso.
-    try:
-        pasta_pecas_ia = pasta_paj / "Peças IA"
-        pasta_pecas_ia.mkdir(parents=True, exist_ok=True)
-        shutil.copy2(docx_path, pasta_pecas_ia / docx_path.name)
-        shutil.copy2(pdf_path, pasta_pecas_ia / pdf_path.name)
-    except Exception as e:  # noqa: BLE001
-        log_cb("muted", f"Despacho salvo, mas não consegui copiar também para 'Peças IA': {e}")
-
     minuta = {"tipo": "despacho", "caminho": str(docx_path), "gerado_em": datetime.now().isoformat(timespec="seconds")}
-    log_cb("ok", f"Minuta de despacho salva em: {docx_path} (e em Peças IA/).")
+    log_cb("ok", f"Minuta de despacho salva em: {docx_path}")
     intimacao_service.salvar_estado(chave, minuta=minuta, status_geral="aguardando_revisao")
     return {"ok": True, "minuta": minuta}
 

@@ -141,6 +141,10 @@ function acoesSisdpuBlock(cfg) {
         // fica vazio de propósito, sem escolher um arbitrariamente — pedido
         // do usuário 2026-09-16).
         modelosDespacho: [], usandoModeloDespacho: false, erroUsarModeloDespacho: '',
+        // "Gerar Síntese do PAJ" — botão ao lado de "Usar modelo": dispara
+        // análise por IA (PROMPT_MAX do PAJ) e insere o resultado no cursor do
+        // editor da movimentação. Só existe quando há PAJ local (pajNorm).
+        gerandoSinteseIA: false, erroSinteseIA: '',
         prazo: 0, prazoData: '', concluir: true, exec: false,
 
         // Anexos da MOVIMENTAÇÃO — lista staged única, misturando origem 'externo'
@@ -431,6 +435,32 @@ function acoesSisdpuBlock(cfg) {
                 }
             } finally {
                 this.usandoModeloDespacho = false;
+            }
+        },
+        // "Gerar Síntese do PAJ" — analisa o PROMPT_MAX do PAJ por IA e insere
+        // o texto no CURSOR do editor da Movimentação, NÃO substitui o que já
+        // estiver escrito (mesmo comportamento de usarModeloDespacho() acima).
+        // Chamada bloqueante (pode levar dezenas de segundos) — sem confirm(),
+        // o botão fica desabilitado com spinner enquanto roda.
+        async gerarSinteseIA() {
+            if (this.gerandoSinteseIA || this.getDescricaoMov || !this.pajNorm) return;
+            this.erroSinteseIA = '';
+            this.gerandoSinteseIA = true;
+            try {
+                const r = await fetch('/api/acoes-sisdpu/sintese-paj/' + encodeURIComponent(this.pajNorm), { method: 'POST' });
+                const d = await r.json().catch(() => ({}));
+                if (!d.ok) { this.erroSinteseIA = d.detalhe || 'Falha ao gerar a síntese.'; return; }
+                const html = paraHtmlSeTextoPuro(d.texto || '');
+                if (this._editorMov) {
+                    this._editorMov.insertHTML(html);
+                } else {
+                    // Sem Quill (CDN fora do ar) — mesmo fallback de usarModeloDespacho().
+                    this.descMov = (this.descMov ? this.descMov + '\n\n' : '') + (d.texto || '');
+                }
+            } catch (e) {
+                this.erroSinteseIA = 'Falha de conexão ao gerar a síntese.';
+            } finally {
+                this.gerandoSinteseIA = false;
             }
         },
         fasesDropdown() { return this.fasesFav.length ? this.fasesFav : this.fasesTodas; },
