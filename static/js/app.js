@@ -1639,6 +1639,23 @@ function consultarProcessoMcp(numero) {
     window.open('/eproc/consultar?' + qs.toString(), '_blank');
 }
 
+// Caixa "Consultar e-Sisrec" do cabeçalho: abre o processo de recurso
+// administrativo (protocolo / CPF / NB) numa aba da janela do e-Sisrec,
+// logando no GERID com as credenciais do SAT Central do cofre.
+async function consultarEsisrec(numero) {
+    const digitos = (numero || '').replace(/\D/g, '');
+    if (!digitos) { showToast('Informe o protocolo, CPF ou NB do recurso.', 'warning'); return; }
+    showToast('Abrindo o e-Sisrec…', 'info');
+    try {
+        const r = await fetch('/api/esisrec/abrir?numero=' + encodeURIComponent(digitos));
+        const d = await r.json();
+        if (d.ok) showToast('Processo aberto na janela do e-Sisrec.', 'success');
+        else showToast(d.erro || 'Falha ao abrir o e-Sisrec.', 'error');
+    } catch (e) {
+        showToast('Falha ao abrir o e-Sisrec: ' + e, 'error');
+    }
+}
+
 async function abrirProcessoNavegador(numero, link) {
     if (!numero) return;
     if (link) { link.style.opacity = '0.5'; link.style.pointerEvents = 'none'; }

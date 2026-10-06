@@ -41,6 +41,7 @@ from routes.movimentar_conjunto import router as movimentar_conjunto_router
 from routes.oficio_sei import router as oficio_sei_router
 from routes.paj import router as paj_router
 from routes.eproc_consulta import router as eproc_consulta_router
+from routes.esisrec import router as esisrec_router
 from routes.eproc_mcp import router as eproc_mcp_router
 from routes.pipeline_monitor import router as pipeline_monitor_router
 from routes.prazos import router as prazos_router
@@ -83,7 +84,7 @@ _configurar_logging()
 # Versao do painel — fonte unica. Usada pelo FastAPI (OpenAPI/docs) e tambem
 # exposta a todos os templates via Jinja globals (renderizada no rodape da
 # sidebar). Para incrementar: mude aqui e so aqui.
-APP_VERSION = "0.4.146"
+APP_VERSION = "0.4.150"
 
 app = FastAPI(title="oficio-geral-ui", version=APP_VERSION)
 app.state.jinja = jinja2.Environment(
@@ -287,6 +288,7 @@ app.include_router(busca_router)
 app.include_router(prazos_router)
 app.include_router(eproc_mcp_router)
 app.include_router(eproc_consulta_router)
+app.include_router(esisrec_router)
 app.include_router(watchlist_router)
 app.include_router(pipeline_monitor_router)
 app.include_router(seguranca_router)
@@ -382,6 +384,10 @@ async def _shutdown_fechar_sat() -> None:
         from ingestao import sd_client
 
         sd_client.fechar_navegador()
+    with contextlib.suppress(Exception):
+        from ingestao import esisrec_client
+
+        esisrec_client.fechar_navegador()
 
 
 def _cleanup_port(port: int) -> None:
@@ -455,3 +461,7 @@ if __name__ == "__main__":
             from ingestao import sd_client
 
             sd_client.fechar_navegador()
+        with contextlib.suppress(Exception):
+            from ingestao import esisrec_client
+
+            esisrec_client.fechar_navegador()
