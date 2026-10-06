@@ -1,4 +1,4 @@
-"""Padrão pessoal de redação do Defensor para peças/despachos gerados por IA.
+r"""Padrão pessoal de redação do Defensor para peças/despachos gerados por IA.
 
 Regras que NÃO estão em nenhum playbook público (ex.: `teses-dpu`) nem em
 `CLAUDE.md` do workspace Ofício Geral — que, neste painel (OFICIO_GERAL =
@@ -21,6 +21,22 @@ vivia só na memória privada da conversa interativa, inacessível ao
 subprocesso `claude -p` que o painel dispara. Corrigido primeiro só no
 "Analisar"; replicado aqui pro "Elaborar" pra não depender de qual botão o
 Defensor clicou.
+
+Itens j-o (30/09/2026, PAJ 2026/029-02667): o Defensor corrigiu manualmente
+uma petição gerada pela IA por estar "massante, cheia de detalhes
+irrelevantes, texto pesado, detalhista, sem dar enfoque principal no
+cumprimento dos requisitos legais" — comparação linha a linha entre o
+rascunho da IA e a versão corrigida (35 mil → 16 mil caracteres, mais de
+55% de corte) e com os modelos de referência do setor
+(`C:\Claude\DPU\Modelos\Benefício Assistencial\Modelo - BPC Idoso.doc` e
+`...\Modelo - BPC Deficiente.doc`) mostrou um padrão claro: a IA tende a
+narrar a cronologia administrativa despacho por despacho, multiplicar teses
+subsidiárias/preventivas para argumentos que a autarquia nem levantou, dar
+tópico de Direito fundamentado a preliminares processuais de rotina, e
+"fazer a conta" (per capita, dedução de gastos) com dados parciais em vez
+de deixar a quantificação para a perícia. Os modelos do setor fazem o
+oposto: tese abstrata pode ser longa e citar lei/jurisprudência na íntegra,
+mas a aplicação ao caso concreto é sempre curta.
 """
 
 from __future__ import annotations
@@ -117,5 +133,77 @@ INSTRUCAO_ESTILO_PECA_DPU = (
     "`{{VALOR_CAUSA}}` (ver `INSTRUCAO_VALOR_CAUSA`) por não ter o valor "
     "calculado nesta sessão, negrite o próprio marcador "
     "(`**{{VALOR_CAUSA}}**`) — o painel troca só o texto do trecho ao "
-    "injetar o valor real depois, preservando o negrito ao redor.\n\n"
+    "injetar o valor real depois, preservando o negrito ao redor.\n"
+    "  j. ENXUTEZ é regra geral, não só do tópico Fatos: parágrafos curtos, "
+    "sem redundância (a mesma informação não se repete em dois parágrafos "
+    "ou tópicos diferentes) e sem reforço retórico (adjetivação, ênfase "
+    "repetida, \"cabe registrar\"/\"cumpre destacar\"/\"é de se notar\" como "
+    "muletas). Compare sempre com o padrão real desta Defensoria em "
+    "`C:\\Claude\\DPU\\Modelos\\Benefício Assistencial\\` (Modelo - BPC "
+    "Idoso/Deficiente): são peças enxutas, onde a tese abstrata (lei/"
+    "doutrina/jurisprudência) pode ser longa e literal, mas a aplicação ao "
+    "caso concreto é sempre curta e direta — 1 a 3 parágrafos, não uma "
+    "reconstituição forense de cada documento.\n"
+    "  k. \"Dos Fatos\" tem de 3 a 6 frases, sem exceção (regra endurecida "
+    "após correção real do Defensor no PAJ 2026/029-02667, 30/09/2026, que "
+    "cortou uma narrativa de 8 parágrafos com despacho por despacho para "
+    "isto): (i) o benefício/direito que a parte tinha ou pleiteou; (ii) o "
+    "que o INSS/CRAS decidiu (indeferiu/cessou) e o fundamento em UMA frase "
+    "resumida, nunca a transcrição do despacho; (iii) a consequência lógica "
+    "(recurso administrativo pendente e/ou o ajuizamento). NÃO narre a "
+    "cronologia administrativa passo a passo (cada despacho com seu número "
+    "e data, cada intimação, cada comparecimento à agência) — cite datas "
+    "só quando tecnicamente indispensáveis (DER, DCB, DIB, NB) e NUNCA "
+    "reproduza blocos de citação literal do INSS nos Fatos (citação "
+    "literal de norma/jurisprudência é conteúdo do tópico de Direito, não "
+    "dos Fatos).\n"
+    "  l. UMA tese central por requisito controvertido — nada de blindagem "
+    "preventiva. Desenvolva, no corpo da petição, só a(s) tese(s) que "
+    "sustentam o requisito que EFETIVAMENTE fundamentou a decisão "
+    "administrativa impugnada. NÃO crie um tópico de Direito subsidiário "
+    "só para prevenir um argumento que a autarquia sequer levantou (ex.: um "
+    "tópico inteiro \"do não cômputo do Bolsa Família\" quando o próprio "
+    "despacho do INSS não computou Bolsa Família; um tópico \"da nulidade "
+    "por ausência de motivação\" paralelo à tese de mérito já suficiente; "
+    "um tópico só pra registrar o que a parte \"não\" está pedindo). Se, "
+    "ao escrever, você perceber que só está incluindo um tópico \"para "
+    "prevenir\" ou \"por cautela\", é sinal de cortá-lo, não de escrevê-lo "
+    "com a ressalva.\n"
+    "  m. Preliminares processuais NÃO viram tópico de Direito fundamentado "
+    "— só a gratuidade da justiça continua como preliminar (uma frase "
+    "curta: fundamento legal + \"por ser juridicamente necessitada/pessoa "
+    "hipossuficiente\"). Competência do juízo, tramitação prioritária, "
+    "prerrogativas da DPU (intimação pessoal, prazo em dobro, dispensa de "
+    "procuração) e interesse de agir/desnecessidade de exaurimento da via "
+    "administrativa vão DIRETO para \"Dos Pedidos\" (ver item h), sem tese "
+    "dedicada nem fundamentação própria — a menos que o caso concreto tenha "
+    "uma controvérsia REAL sobre um desses pontos (ex.: o INSS alega falta "
+    "de prévio requerimento administrativo), hipótese em que o ponto "
+    "controvertido específico pode, aí sim, merecer um parágrafo de Direito.\n"
+    "  n. Subsunção ao caso concreto = fatos essenciais, não perícia "
+    "documental. Ao aplicar a tese ao caso, cite só os fatos que sustentam "
+    "o requisito (idade, renda, doença + CID, o documento que comprova), "
+    "SEM: (i) identificar cada documento por número de protocolo/anexo/ID/"
+    "página; (ii) fazer do zero, na petição, o cálculo aritmético de renda "
+    "per capita ou de dedução de gastos com valores estimados ou parciais "
+    "— prefira o fato qualitativo (\"o núcleo familiar arca com gastos de "
+    "saúde não cobertos pelo SUS que comprometem a renda disponível\") e "
+    "deixe a quantificação exata para a perícia/avaliação social já "
+    "requerida, a menos que o dado seja seguro e o cálculo indispensável "
+    "à tese; (iii) listar item a item cada medicamento/insumo com marca, "
+    "posologia e valor quando um resumo qualitativo do quadro clínico "
+    "basta; (iv) repetir o mesmo fato em mais de um parágrafo ou tópico.\n"
+    "  o. NUNCA embuta dúvida ou ressalva de conferência no MEIO de um "
+    "parágrafo argumentativo (ex.: \"...conforme o Anexo I da Portaria X "
+    "[conferir: não consta no PAJ]...\"). Se o dado é verificável por você "
+    "mesmo (texto de lei, súmula, portaria, tema de repercussão geral), "
+    "PESQUISE e cite corretamente — não deixe placeholder para algo que "
+    "você tem como confirmar sozinho. Se o dado é específico deste caso e "
+    "você não tem certeza dele, e ele NÃO é indispensável à tese central, "
+    "é preferível OMITIR essa alegação específica a incluí-la com uma "
+    "ressalva que compromete a credibilidade da peça perante o juízo. "
+    "Reserve o colchete de conferência (item d) para dados pontuais e "
+    "isolados de preenchimento factual (nome, data, valor definitivo) — "
+    "nunca para uma frase inteira de dúvida jurídica ou factual dentro da "
+    "argumentação.\n\n"
 )

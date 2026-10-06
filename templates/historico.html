@@ -14,139 +14,61 @@
         </button>
     </div>
 
-    <!-- Tabs: Conclusões da Caixa de Entrada / Análises (IA) -->
-    <div role="tablist" class="tabs tabs-bordered mb-4">
-        <a role="tab" class="tab" :class="aba === 'conclusoes' ? 'tab-active' : ''" @click="aba = 'conclusoes'">
-            Conclusões da Caixa de Entrada
-            <span class="badge badge-ghost badge-xs ml-1" x-text="registros.length"></span>
-        </a>
-        <a role="tab" class="tab" :class="aba === 'analises' ? 'tab-active' : ''" @click="aba = 'analises'">
-            Análises (IA)
-            <span class="badge badge-ghost badge-xs ml-1" x-text="analises.length"></span>
-        </a>
+    <div class="text-sm text-base-content/60 mb-4">
+        PAJs concluídos da caixa de entrada dentro do painel
     </div>
 
-    <!-- Aba: Conclusões da Caixa de Entrada -->
-    <template x-if="aba === 'conclusoes'">
-        <div>
-            <div class="text-sm text-base-content/60 mb-4">
-                PAJs concluídos da caixa de entrada dentro do painel
-            </div>
-
-            <div class="card bg-base-200 shadow">
-                <div class="card-body p-0">
-                    <div class="overflow-x-auto">
-                        <table class="table table-sm">
-                            <thead>
-                                <tr>
-                                    <th class="w-40">Data/hora</th>
-                                    <th class="w-36">PAJ</th>
-                                    <th class="w-56">Assistido</th>
-                                    <th>Atividade</th>
-                                    <th class="w-48">Movimentação</th>
-                                    <th class="w-56">Tramitado para</th>
-                                    <th class="w-28 text-center">Conclusão</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <template x-for="r in registros" :key="r.id">
-                                    <tr class="hover align-top">
-                                        <td class="whitespace-nowrap text-xs" x-text="fmtDataHora(r.ts)"></td>
-                                        <td class="font-mono whitespace-nowrap">
-                                            <button class="link" style="color:var(--accent)"
-                                                    title="Escolher onde abrir o PAJ"
-                                                    @click.stop="abrirMenuPaj(r.paj_norm, r.paj, $el)"
-                                                    x-text="r.paj"></button>
-                                        </td>
-                                        <td class="text-sm" x-text="r.assistido || '—'"></td>
-                                        <td>
-                                            <span x-text="r.atividade || '—'"></span>
-                                            <span x-show="r.origem" class="badge badge-ghost badge-xs ml-1" x-text="r.origem"></span>
-                                        </td>
-                                        <td class="text-xs" x-text="r.movimentacao || '—'"></td>
-                                        <td class="text-xs" x-text="r.tramitado_para || '—'"></td>
-                                        <td class="text-center">
-                                            <span class="badge badge-sm" :class="r.concluido ? 'badge-success' : 'badge-ghost'"
-                                                  x-text="r.concluido ? 'Sim' : 'Não'"></span>
-                                        </td>
-                                    </tr>
-                                </template>
-                                <tr x-show="!carregando && registros.length === 0">
-                                    <td colspan="7" class="text-center text-base-content/40 py-6">
-                                        Nenhum PAJ concluído pelo painel ainda.
-                                    </td>
-                                </tr>
-                                <tr x-show="carregando">
-                                    <td colspan="7" class="text-center py-6"><span class="loading loading-spinner"></span> Carregando…</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
+    <div class="card bg-base-200 shadow">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th class="w-40">Data/hora</th>
+                            <th class="w-36">PAJ</th>
+                            <th class="w-56">Assistido</th>
+                            <th>Atividade</th>
+                            <th class="w-48">Movimentação</th>
+                            <th class="w-56">Tramitado para</th>
+                            <th class="w-28 text-center">Conclusão</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="r in registros" :key="r.id">
+                            <tr class="hover align-top">
+                                <td class="whitespace-nowrap text-xs" x-text="fmtDataHora(r.ts)"></td>
+                                <td class="font-mono whitespace-nowrap">
+                                    <button class="link" style="color:var(--accent)"
+                                            title="Escolher onde abrir o PAJ"
+                                            @click.stop="abrirMenuPaj(r.paj_norm, r.paj, $el)"
+                                            x-text="r.paj"></button>
+                                </td>
+                                <td class="text-sm" x-text="r.assistido || '—'"></td>
+                                <td>
+                                    <span x-text="r.atividade || '—'"></span>
+                                    <span x-show="r.origem" class="badge badge-ghost badge-xs ml-1" x-text="r.origem"></span>
+                                </td>
+                                <td class="text-xs" x-text="r.movimentacao || '—'"></td>
+                                <td class="text-xs" x-text="r.tramitado_para || '—'"></td>
+                                <td class="text-center">
+                                    <span class="badge badge-sm" :class="r.concluido ? 'badge-success' : 'badge-ghost'"
+                                          x-text="r.concluido ? 'Sim' : 'Não'"></span>
+                                </td>
+                            </tr>
+                        </template>
+                        <tr x-show="!carregando && registros.length === 0">
+                            <td colspan="7" class="text-center text-base-content/40 py-6">
+                                Nenhum PAJ concluído pelo painel ainda.
+                            </td>
+                        </tr>
+                        <tr x-show="carregando">
+                            <td colspan="7" class="text-center py-6"><span class="loading loading-spinner"></span> Carregando…</td>
+                        </tr>
+                    </tbody>
+                </table>
             </div>
         </div>
-    </template>
-
-    <!-- Aba: Análises (IA) -->
-    <template x-if="aba === 'analises'">
-        <div>
-            <div class="text-sm text-base-content/60 mb-4">
-                Registro de Análises feitas pela IA e de geração de Petições Iniciais dentro do Painel
-            </div>
-
-            <div class="card bg-base-200 shadow">
-                <div class="card-body p-0">
-                    <div class="overflow-x-auto">
-                        <table class="table table-sm">
-                            <thead>
-                                <tr>
-                                    <th class="w-40">Data/hora</th>
-                                    <th class="w-36">PAJ</th>
-                                    <th class="w-56">Assistido</th>
-                                    <th>Atividade</th>
-                                    <th class="w-28 text-center">Status</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                <template x-for="r in analises" :key="r.id">
-                                    <tr class="hover align-top">
-                                        <td class="whitespace-nowrap text-xs" x-text="fmtDataHora(r.ts)"></td>
-                                        <td class="font-mono whitespace-nowrap">
-                                            <button class="link" style="color:var(--accent)"
-                                                    title="Escolher onde abrir o PAJ"
-                                                    @click.stop="abrirMenuPaj(r.paj_norm, r.paj, $el)"
-                                                    x-text="r.paj"></button>
-                                        </td>
-                                        <td class="text-sm" x-text="r.assistido || '—'"></td>
-                                        <td>
-                                            <span class="badge badge-sm" :class="r.atividade.indexOf('Petição Inicial') !== -1 ? 'badge-warning' : 'badge-info'"
-                                                  :title="r.atividade.indexOf('retroativo') !== -1 ? 'Inferido pela existência atual do arquivo — este registro é de antes desta identificação existir' : ''"
-                                                  x-text="r.atividade || '—'"></span>
-                                            <span x-show="r.skill" class="badge badge-ghost badge-xs ml-1" x-text="r.skill"></span>
-                                            <div class="text-xs text-base-content/50 mt-0.5 truncate max-w-md" x-show="r.resumo" x-text="r.resumo"></div>
-                                        </td>
-                                        <td class="text-center">
-                                            <span class="badge badge-sm"
-                                                  :class="r.status === 'done' ? 'badge-success' : (r.status === 'error' ? 'badge-error' : 'badge-ghost')"
-                                                  x-text="r.status === 'done' ? 'Concluída' : (r.status === 'error' ? 'Erro' : (r.status || '—'))"></span>
-                                        </td>
-                                    </tr>
-                                </template>
-                                <tr x-show="!carregandoAnalises && analises.length === 0">
-                                    <td colspan="5" class="text-center text-base-content/40 py-6">
-                                        Nenhuma análise disparada pelo painel ainda.
-                                    </td>
-                                </tr>
-                                <tr x-show="carregandoAnalises">
-                                    <td colspan="5" class="text-center py-6"><span class="loading loading-spinner"></span> Carregando…</td>
-                                </tr>
-                            </tbody>
-                        </table>
-                    </div>
-                </div>
-            </div>
-        </div>
-    </template>
+    </div>
 
     <!-- Menu global único (PAJ): sempre o mesmo elemento, reposicionado por clique. -->
     <template x-teleport="body">
@@ -162,13 +84,11 @@
 <script>
 function historicoPage() {
     return {
-        aba: 'conclusoes',
         registros: [], carregando: false,
-        analises: [], carregandoAnalises: false,
         menuAbertoPaj: null,
         menuAbertoPajLabel: '',
         posMenu: { top: 0, left: 0 },
-        async init() { await Promise.all([this.carregar(), this.carregarAnalises()]); },
+        async init() { await this.carregar(); },
         async carregar() {
             this.carregando = true;
             try {
@@ -176,14 +96,6 @@ function historicoPage() {
                 this.registros = j.registros || [];
             } catch (e) { this.registros = []; }
             finally { this.carregando = false; }
-        },
-        async carregarAnalises() {
-            this.carregandoAnalises = true;
-            try {
-                const j = await (await fetch('/api/historico/analises')).json();
-                this.analises = j.registros || [];
-            } catch (e) { this.analises = []; }
-            finally { this.carregandoAnalises = false; }
         },
         abrirMenuPaj(pajNorm, pajLabel, el) {
             this.menuAbertoPaj = (this.menuAbertoPaj === pajNorm ? null : pajNorm);

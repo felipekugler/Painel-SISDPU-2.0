@@ -7,8 +7,8 @@ reaproveitam endpoints que já existem (não duplicados aqui):
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Request
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, File, Request, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 
 from services import config_painel_service, minuta_ia_service
 
@@ -17,8 +17,55 @@ router = APIRouter()
 
 @router.get("/api/minutas/tipos", response_class=JSONResponse)
 async def api_minutas_tipos():
-    """Catálogo de tipos de minuta pro dropdown "Gerar Minuta"."""
+    """Catálogo ENXUTO ({slug,label}) pro submenu "Petição com IA" da página
+    do PAJ. Ver /api/minutas/tipos-ia pro cadastro completo (Configurações)."""
     return JSONResponse({"ok": True, "tipos": minuta_ia_service.listar_tipos()})
+
+
+# --- Cadastro "Petição com IA" (Configurações › e-proc) -------------------
+
+@router.get("/api/minutas/tipos-ia", response_class=JSONResponse)
+async def api_minutas_tipos_ia_listar():
+    """Cadastro completo (inclui instrução e arquivos de referência) — CRUD
+    da tela de Configurações, diferente do enxuto /api/minutas/tipos."""
+    return JSONResponse({"ok": True, "tipos": minuta_ia_service.listar_tipos_completos()})
+
+
+@router.post("/api/minutas/tipos-ia", response_class=JSONResponse)
+async def api_minutas_tipos_ia_salvar(request: Request):
+    """Substitui a lista COMPLETA de tipos — mesmo padrão de "Petição Padrão"/
+    "Despachos padrão" (curadoria inteira no front, ver
+    config_painel_service.set_minutas_ia_tipos). Body: {tipos: [...]}."""
+    body = await request.json()
+    tipos = body.get("tipos") or []
+    salvos = config_painel_service.set_minutas_ia_tipos(tipos)
+    return JSONResponse({"ok": True, "tipos": salvos})
+
+
+@router.post("/api/minutas/tipos-ia/{tipo_id}/upload", response_class=JSONResponse)
+async def api_minutas_tipos_ia_upload(tipo_id: str, arquivo: UploadFile = File(...)):
+    """Anexa um arquivo de referência fixo ao tipo (ex.: um modelo-exemplo) —
+    `.md`/`.txt` entram como texto no prompt, outros formatos (`.pdf`/
+    `.docx`) a IA abre direto, mesmo mecanismo dos documentos do caso."""
+    conteudo = await arquivo.read()
+    res = config_painel_service.salvar_arquivo_referencia_minuta_ia(tipo_id, arquivo.filename or "arquivo", conteudo)
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
+
+
+@router.delete("/api/minutas/tipos-ia/{tipo_id}/arquivo/{nome_arquivo}", response_class=JSONResponse)
+async def api_minutas_tipos_ia_remover_arquivo(tipo_id: str, nome_arquivo: str):
+    ok = config_painel_service.remover_arquivo_referencia_minuta_ia(tipo_id, nome_arquivo)
+    return JSONResponse({"ok": ok}, status_code=200 if ok else 404)
+
+
+@router.get("/api/minutas/tipos-ia/{tipo_id}/arquivo/{nome_arquivo}")
+async def api_minutas_tipos_ia_baixar_arquivo(tipo_id: str, nome_arquivo: str):
+    """Serve um arquivo de referência já salvo — usado pelo link "Visualizar"
+    na lista de arquivos do tipo."""
+    caminho = config_painel_service.caminho_arquivo_referencia_minuta_ia(tipo_id, nome_arquivo)
+    if not caminho:
+        return JSONResponse({"ok": False, "erro": "Arquivo não encontrado."}, status_code=404)
+    return FileResponse(caminho)
 
 
 @router.get("/api/minutas/modelos-padrao", response_class=JSONResponse)

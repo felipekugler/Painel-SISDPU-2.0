@@ -146,33 +146,40 @@
                                                  :title="it.nota_previsao" x-text="'Previsão (ciência ficta): ' + it.previsao_ciencia_ficta"></div>
                                         </td>
                                         <td class="text-xs">
-                                            <template x-if="it.evento_referenciado && !it.evento_referenciado.fora_da_janela">
-                                                <div class="flex flex-col gap-1">
-                                                    <span x-text="'Evento ' + it.evento_referenciado.numero"></span>
-                                                    <template x-if="docsDisponiveis(idx, it).length">
-                                                        <div class="flex flex-wrap items-center gap-1">
-                                                            <template x-for="arq in docsDisponiveis(idx, it)" :key="arq.arquivo">
-                                                                <a :href="linkArquivo(idx, arq)" target="_blank"
-                                                                   class="badge badge-sm gap-1 border border-black/15"
-                                                                   :class="corBadgeDocumento(arq.nome_arquivo)"
-                                                                   :title="'Ler ' + arq.nome_arquivo">
-                                                                    <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                                                                    <span x-text="nomeDocumento(arq.nome_arquivo)"></span>
-                                                                </a>
+                                            <!-- Um bloco por EVENTO referenciado (pode ser mais de um — ver
+                                                 `eventosReferenciadosDe`, 2026-10-02, achado real do usuário:
+                                                 "Refer. ao Evento 21 e ao Evento 25" só mostrava o 21). -->
+                                            <template x-if="eventosReferenciadosDe(idx, it).length">
+                                                <div class="flex flex-col gap-2">
+                                                    <template x-for="numeroEvento in eventosReferenciadosDe(idx, it)" :key="numeroEvento">
+                                                        <div class="flex flex-col gap-1">
+                                                            <span x-text="'Evento ' + numeroEvento"></span>
+                                                            <template x-if="docsDisponiveis(idx, numeroEvento).length">
+                                                                <div class="flex flex-wrap items-center gap-1">
+                                                                    <template x-for="arq in docsDisponiveis(idx, numeroEvento)" :key="arq.arquivo">
+                                                                        <a :href="linkArquivo(idx, arq)" target="_blank"
+                                                                           class="badge badge-sm gap-1 border border-black/15"
+                                                                           :class="corBadgeDocumento(arq.nome_arquivo)"
+                                                                           :title="'Ler ' + arq.nome_arquivo">
+                                                                            <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                                                            <span x-text="nomeDocumento(arq.nome_arquivo)"></span>
+                                                                        </a>
+                                                                    </template>
+                                                                </div>
                                                             </template>
-                                                        </div>
-                                                    </template>
-                                                    <template x-if="temDocPendente(idx, it)">
-                                                        <div class="flex flex-wrap items-center gap-1">
-                                                            <template x-for="(d, di) in docsPendentes(idx, it)" :key="di">
-                                                                <button type="button" @click="baixarDocIntimacao(idx, it)"
-                                                                        :disabled="baixando[idx + ':' + it.evento_referenciado.numero]"
-                                                                        class="badge badge-sm gap-1 border border-black/15 bg-base-200 text-base-content/60"
-                                                                        :title="(d.sigla || d.nome || 'documento') + ' — clique p/ baixar'">
-                                                                    <span x-show="baixando[idx + ':' + it.evento_referenciado.numero]" class="loading loading-spinner loading-xs"></span>
-                                                                    <svg x-show="!baixando[idx + ':' + it.evento_referenciado.numero]" class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
-                                                                    <span x-text="d.sigla || d.nome || 'doc'"></span>
-                                                                </button>
+                                                            <template x-if="temDocPendente(idx, numeroEvento)">
+                                                                <div class="flex flex-wrap items-center gap-1">
+                                                                    <template x-for="(d, di) in docsPendentes(idx, numeroEvento)" :key="di">
+                                                                        <button type="button" @click="baixarDocEvento(idx, numeroEvento)"
+                                                                                :disabled="baixando[idx + ':' + numeroEvento]"
+                                                                                class="badge badge-sm gap-1 border border-black/15 bg-base-200 text-base-content/60"
+                                                                                :title="(d.sigla || d.nome || 'documento') + ' — clique p/ baixar'">
+                                                                            <span x-show="baixando[idx + ':' + numeroEvento]" class="loading loading-spinner loading-xs"></span>
+                                                                            <svg x-show="!baixando[idx + ':' + numeroEvento]" class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                                                            <span x-text="d.sigla || d.nome || 'doc'"></span>
+                                                                        </button>
+                                                                    </template>
+                                                                </div>
                                                             </template>
                                                         </div>
                                                     </template>

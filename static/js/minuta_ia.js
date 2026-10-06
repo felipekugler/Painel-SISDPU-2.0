@@ -24,6 +24,10 @@ function minutaIaApp(pajNorm, pajLabel) {
         pajLabel: pajLabel || '',
         tipos: [],
         tipoSlug: '',
+        // Submenu "Petição com IA" (pedido do usuário, 2026-10-02 — era 3
+        // botões fixos direto no menu; virou submenu dinâmico, mesmo padrão
+        // de `mostrarSubmenuPadrao` abaixo). Fechado por padrão.
+        mostrarSubmenuIa: false,
         // Rótulo mostrado no topo da caixa quando a origem NÃO é um dos
         // `tipos` da IA (ver "Petição padrão" abaixo) — os botões de tipo de
         // IA continuam usando o lookup em `tipos` (não mexi neles).

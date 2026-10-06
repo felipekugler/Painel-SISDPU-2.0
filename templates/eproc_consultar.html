@@ -233,18 +233,18 @@
                  tela (mesmo padrão do e-proc: um link por vez, sem árvore
                  visual — a navegação É a árvore). -->
             <template x-if="processosRelacionados().length">
-              <div class="capa-relacionados mt-3 pt-3 flex items-start gap-x-2 gap-y-1 flex-wrap">
-                <span class="capa-relacionados-label">
+              <div class="capa-relacionados mt-3 pt-3">
+                <div class="capa-relacionados-label mb-1">
                   <svg xmlns="http://www.w3.org/2000/svg" height="14px" viewBox="0 0 24 24" width="14px" fill="#e8e8e8"><path d="M0 0h24v24H0z" fill="none"/><path d="M22 11V3h-7v3H9V3H2v8h7V8h2v10h4v3h7v-8h-7v3h-2V8h2v3z"/></svg>
                   Processos relacionados:
-                </span>
+                </div>
                 <template x-for="(rel, i) in processosRelacionados()" :key="i">
-                  <span class="inline-flex items-center gap-1">
+                  <div class="flex items-center gap-1 flex-wrap pl-5">
                     <a href="#" @click.prevent="irParaRelacionado(rel)" class="capa-relacionados-link font-mono"
-                       :title="[rel.classe, rel.orgao].filter(Boolean).join(' — ')" x-text="rel.numero"></a>
+                       :title="rel.orgao" x-text="rel.numero"></a>
                     <span class="capa-relacionados-tipo" x-text="'(' + rel.relacao + ')'"></span>
-                    <span class="capa-relacionados-tipo" x-show="i < processosRelacionados().length - 1">|</span>
-                  </span>
+                    <span class="capa-relacionados-tipo" x-show="rel.classe" x-text="'— ' + rel.classe"></span>
+                  </div>
                 </template>
               </div>
             </template>
@@ -257,13 +257,12 @@
                de "outros" (PERITO/INTERESSADO/MPF/...) ganha seu próprio
                cabeçalho cinza full-width. `representantes`/`tipo_pessoa`/
                `justica_gratuita`/`sem_procurador` só vêm no cabeçalho completo
-               (scraper); enquanto ele carrega, mostra a lista enxuta. -->
+               (scraper); enquanto ele carrega, mostra a lista enxuta. Sem
+               texto de cabeçalho (pedido do Felipe 2026-09-30) — só o
+               spinner de carregamento fica, quando aplicável. -->
           <template x-if="partesParaExibir().length">
             <div class="px-4 pb-4 border-t border-base-300 pt-3">
-              <div class="text-xs text-base-content/50 mb-2 flex items-center gap-1">
-                Partes e Representantes
-                <span x-show="carregandoCabecalhoCompleto" class="loading loading-spinner loading-xs"></span>
-              </div>
+              <span x-show="carregandoCabecalhoCompleto" class="loading loading-spinner loading-xs"></span>
 
               <template x-if="polos().polo1.length || polos().polo2.length">
                 <table class="partes-eproc-table">
@@ -422,9 +421,10 @@
           </div>
         </div>
 
-        <!-- Intimações -->
+        <!-- Intimações (fechada por padrão nesta tela — pedido do Felipe
+             2026-09-30, diferente da aba Prazos onde fica aberta) -->
         <div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-lg" x-show="(resultado.intimacoes || []).length">
-          <input type="checkbox" checked aria-label="Expandir/recolher Intimações" />
+          <input type="checkbox" aria-label="Expandir/recolher Intimações" />
           <div class="collapse-title text-sm font-semibold flex items-center gap-2">
             Intimações
             <span class="badge badge-warning badge-sm" x-text="resultado.qtd_intimacoes_ativas + ' ativa(s)'" x-show="resultado.qtd_intimacoes_ativas"></span>

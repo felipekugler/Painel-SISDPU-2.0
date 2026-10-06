@@ -29,6 +29,7 @@ globais independente do cwd do subprocess.
 from __future__ import annotations
 
 import contextlib
+import datetime as _dt
 import json
 import threading
 import time
@@ -95,6 +96,10 @@ CONFIG_TIPOS: dict[str, dict] = {
 
 _STATE_FILE = "analise_pretensao.json"
 _sessions: dict[str, ChatSession] = {}
+# Timestamp de início de cada sessão EM MEMÓRIA — só pra exibir "iniciado em"
+# na tabela "Em processamento" de Análises e Iniciais (pedido do usuário,
+# 2026-09-30); não é persistido em disco, não precisa sobreviver a restart.
+_iniciados: dict[str, str] = {}
 
 
 def _sem_acento(s: str) -> str:
@@ -180,6 +185,29 @@ def _persistir(
             atividade=atividade,
         )
 
+    # Lembrete ao concluir com sucesso — mesmo padrao do "Organizar Documentos
+    # para Ajuizamento" (organizar_ajuizamento_service._persistir): a analise
+    # roda em background (pode levar minutos), e sem sinal nenhum na tela o
+    # Defensor só percebe que terminou se ficar olhando o polling em tempo
+    # real. O lembrete é lido do disco a cada carregamento da página (ver
+    # lembretes_service/lembretesApp), entao fica visivel mesmo que ninguem
+    # tenha acompanhado o polling — diferente do toast, que some se a pagina
+    # nao estiver aberta. Pedido do Felipe, 30/09/2026.
+    #
+    # Quando a sessão produziu a petição inicial (`gerou_peticao`, já
+    # calculado acima), o lembrete específico "Petição inicial gerada..."
+    # substitui o genérico "Análise IA concluída" — mais informativo, mesmo
+    # padrão de "Documentos organizados para ajuizamento" (pedido do Felipe,
+    # 2026-09-30).
+    if session.status == "done":
+        with contextlib.suppress(Exception):
+            from services import lembretes_service
+
+            if gerou_peticao:
+                lembretes_service.criar_lembrete(paj_norm, "Petição inicial gerada na pasta peças", "vermelho")
+            else:
+                lembretes_service.criar_lembrete(paj_norm, "Análise IA concluída", "verde")
+
 
 def get_status(paj_norm: str) -> dict:
     sess = _sessions.get(paj_norm)
@@ -220,10 +248,93 @@ def get_status(paj_norm: str) -> dict:
     return {"status": "idle", "last_action": "", "summary": "", "error": "", "tipo": ""}
 
 
+def reconciliar_sessoes_interrompidas() -> int:
+    """Corrige `analise_pretensao.json` que ficou gravado com status
+    "running" por uma sessão que o painel matou no meio (restart) — achado
+    ao vivo no PAJ 2026/029-02667, 2026-09-30 (Felipe perguntou por que a
+    coluna "Status" de "Análises e Iniciais" mostrava "running" sem nada
+    "em processamento"). Chamada UMA VEZ no startup do painel (ver
+    `app.py`) — nesse momento `_sessions` está SEMPRE vazio (processo
+    recém-subido), então qualquer "running" encontrado no disco é
+    necessariamente órfão, nunca uma sessão de verdade ainda rodando.
+
+    Critério de correção: se a petição inicial já existe em disco (o
+    trabalho de fato terminou — o subprocess só morre DEPOIS de escrever o
+    arquivo, a única etapa perdida foi a mensagem final de texto, que nunca
+    é salva em lugar nenhum mesmo em condições normais), corrige pra
+    "done"; senão, pra "error" (o trabalho não chegou a terminar).
+
+    `historico.jsonl` é append-only de propósito — em vez de reescrever a
+    linha "running" já gravada, acrescenta um evento NOVO com o status
+    corrigido; `listar_analises()` usa sempre o evento mais recente de cada
+    PAJ, então a tela já reflete a correção sem precisar tocar no arquivo
+    antigo. Retorna a quantidade de PAJs corrigidos (só para log)."""
+    if not PAJS_DIR.exists():
+        return 0
+
+    from services.organizar_ajuizamento_service import tem_peticao_inicial
+
+    corrigidos = 0
+    for pasta in PAJS_DIR.iterdir():
+        if not pasta.is_dir() or not pasta.name.startswith("PAJ-"):
+            continue
+        arquivo = _arquivo_estado(pasta.name)
+        if not arquivo.exists():
+            continue
+        paj_norm = pasta.name
+        try:
+            disco = json.loads(arquivo.read_text(encoding="utf-8"))
+        except Exception:  # noqa: BLE001
+            continue
+        if disco.get("status") != "running":
+            continue
+
+        skill = disco.get("skill", "")
+        peticao_existe = False
+        with contextlib.suppress(Exception):
+            peticao_existe = tem_peticao_inicial(paj_norm)
+
+        if peticao_existe:
+            novo_status = "done"
+            atividade = "Gerada Petição Inicial"
+            erro = ""
+            resumo = (
+                "(status corrigido no início do painel — a sessão foi interrompida "
+                "por um reinício antes de concluir, mas a petição inicial já tinha "
+                "sido gerada com sucesso)"
+            )
+        else:
+            novo_status = "error"
+            atividade = "Análise Prévia"
+            erro = "Sessão interrompida por reinício do painel antes da conclusão."
+            resumo = ""
+
+        disco["status"] = novo_status
+        if erro:
+            disco["error"] = erro
+        with contextlib.suppress(Exception):
+            arquivo.write_text(json.dumps(disco, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        with contextlib.suppress(Exception):
+            historico.registrar(
+                paj_norm,
+                "analise_pretensao",
+                skill=skill,
+                status=novo_status,
+                resumo=resumo,
+                atividade=atividade,
+                error=erro,
+            )
+        corrigidos += 1
+    return corrigidos
+
+
 def get_status_todos() -> dict[str, dict]:
     """Status de todas as analises por pretensao — usado pelo dashboard pra
     exibir um spinner na coluna 'Análise IA' enquanto o diagnostico roda em
-    background (mesmo padrao de `chat.py: /api/elaborar/status`).
+    background (mesmo padrao de `chat.py: /api/elaborar/status`), e por
+    `services.historico.listar_em_processamento()` (tabela "Em processamento"
+    da página "Análises e Iniciais", pedido do usuário 2026-09-30).
 
     So sessoes EM MEMORIA importam aqui: a coluna do dashboard ja mostra
     SIM/NAO com base no `analise_pretensao.json` do disco (via
@@ -236,6 +347,7 @@ def get_status_todos() -> dict[str, dict]:
                 "status": "running",
                 "last_action": sess.last_action,
                 "tipo": getattr(sess, "_tipo_analise", ""),
+                "iniciado_em": _iniciados.get(paj_norm, ""),
             }
     return result
 
@@ -464,6 +576,7 @@ def iniciar(paj_norm: str, tipo: str, orientacao: str = "") -> dict:
     session.status = "running"
     session.last_action = "preparando o contexto (lendo anexos, gerando PROMPT_MAX)…"
     _sessions[paj_norm] = session
+    _iniciados[paj_norm] = _dt.datetime.now().isoformat(timespec="seconds")
 
     def _run() -> None:
         pasta = PAJS_DIR / paj_norm
@@ -544,6 +657,7 @@ def reenviar(paj_norm: str, mensagem: str) -> dict:
     session.resume_session_id = session_id
     session._tipo_analise = tipo
     _sessions[paj_norm] = session
+    _iniciados[paj_norm] = _dt.datetime.now().isoformat(timespec="seconds")
 
     def _run() -> None:
         if not session._start_subprocess():

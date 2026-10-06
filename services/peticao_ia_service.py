@@ -815,7 +815,10 @@ def _gerar_docx_sem_viuva(peticao_html: str, docx_path: Path, termos: bool = Fal
     não pagina nada) — por isso mede reabrindo no Word/COM (mesmo mecanismo
     já usado por `_docx_para_pdf`), reaproveitando UMA ÚNICA instância do
     Word entre as tentativas (mais rápido que abrir o app de novo a cada
-    uma)."""
+    uma). `DispatchEx` (não `Dispatch`) pelo mesmo motivo documentado em
+    `_docx_para_pdf` — nunca reaproveitar uma instância do Word de uma
+    chamada ANTERIOR (que pode ainda estar terminando de fechar, com conteúdo
+    velho em cache)."""
     import pythoncom
     import win32com.client as win32
 
@@ -826,7 +829,7 @@ def _gerar_docx_sem_viuva(peticao_html: str, docx_path: Path, termos: bool = Fal
 
     pythoncom.CoInitialize()
     try:
-        word = win32.Dispatch("Word.Application")
+        word = win32.DispatchEx("Word.Application")
         word.Visible = False
         word.DisplayAlerts = False
         try:
@@ -878,13 +881,28 @@ def _extrair_runs(bloco, navigable_string_cls) -> list[tuple[str, bool, bool, bo
 def _docx_para_pdf(docx_path: Path, pdf_path: Path) -> None:
     """Converte via Word/COM (mesmo padrão de calc_valor_causa.py). Precisa
     rodar em thread com COM inicializado — `_gerar_worker` já roda numa
-    thread dedicada, então inicializamos aqui."""
+    thread dedicada, então inicializamos aqui.
+
+    `DispatchEx` (NÃO `Dispatch`) — bug real relatado pelo usuário 2026-10-02:
+    "Incluir petição nos anexos" às vezes gerava o PDF com o texto ORIGINAL da
+    IA, ignorando a edição manual feita na caixa — só funcionava certo "depois
+    de um tempo". Causa: `Dispatch` reaproveita uma instância do Word.Application
+    já em execução (via Running Object Table) em vez de abrir uma nova — e
+    "Gerar petição com IA" roda Word/COM logo antes (`_gerar_docx_sem_viuva`,
+    mesmo motivo), fechando com `word.Quit()`. Esse `Quit()` pede o
+    encerramento, mas o processo do Word leva um instante real pra morrer de
+    verdade; se a chamada seguinte (`_docx_para_pdf`, convertendo o .docx JÁ
+    reescrito com o texto editado) cair nessa janela, `Dispatch` reaproveita o
+    Word ainda-não-totalmente-fechado — que pode devolver o documento que já
+    tinha aberto antes (conteúdo velho) em vez de reler o arquivo do disco.
+    `DispatchEx` força uma instância NOVA e isolada sempre, eliminando essa
+    corrida (e a necessidade de "esperar um tempo")."""
     import pythoncom
     import win32com.client as win32
 
     pythoncom.CoInitialize()
     try:
-        word = win32.Dispatch("Word.Application")
+        word = win32.DispatchEx("Word.Application")
         word.Visible = False
         word.DisplayAlerts = False
         try:

@@ -849,10 +849,15 @@
     <!-- ===================== Aba: e-proc ===================== -->
     <div class="cfg-panel" data-panel="eproc" x-data="{ subaba: 'peticionamento' }">
 
-    <!-- Subabas do e-proc -->
+    <!-- Subabas do e-proc. "modelos" renomeada pra "Petição Padrão" (era
+         "Modelos de petição") e nova "Petição com IA" — pedido do usuário,
+         2026-10-02: separar petição de TEXTO padrão (sem IA) da que usa IA
+         (chave interna "modelos"/"minutas-ia" mantida igual ao resto do
+         código, só o RÓTULO visível mudou). -->
     <div class="cfg-subtabs">
+        <button type="button" :class="subaba==='modelos' && 'ativa'" @click="subaba='modelos'">Petição Padrão</button>
+        <button type="button" :class="subaba==='minutas-ia' && 'ativa'" @click="subaba='minutas-ia'">Petição com IA</button>
         <button type="button" :class="subaba==='peticionamento' && 'ativa'" @click="subaba='peticionamento'">Peticionamento</button>
-        <button type="button" :class="subaba==='modelos' && 'ativa'" @click="subaba='modelos'">Modelos de petição</button>
         <button type="button" :class="subaba==='gerenciamento' && 'ativa'" @click="subaba='gerenciamento'">Gerenciamento de Processo</button>
         <button type="button" :class="subaba==='documentos' && 'ativa'" @click="subaba='documentos'">Documentos</button>
     </div>
@@ -1096,7 +1101,7 @@
     <div class="card bg-base-200 shadow" x-data="eprocModelosPeticaoPrefs()" x-init="init()" x-show="subaba==='modelos'">
         <div class="card-body gap-5">
             <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
-                <h3 class="text-lg font-semibold text-base-content/80">Modelos de petição</h3>
+                <h3 class="text-lg font-semibold text-base-content/80">Petição Padrão</h3>
                 <button class="btn btn-sm btn-primary gap-1" @click="abrirNovo()">
                     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px">
                         <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
@@ -1196,6 +1201,135 @@
                     <button type="button" class="btn btn-sm btn-primary" :disabled="salvando" @click="salvarModelo()">
                         <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
                         Salvar modelo
+                    </button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- "Petição com IA" (menu "Minutar Petição" da página do PAJ) — tipos
+         cadastrados pelo usuário: rótulo + instrução livre pra IA + arquivo(s)
+         de referência fixos opcionais. Pedido do usuário, 2026-10-02: ANTES
+         cada tipo era um dict fixo no código, apontando pra arquivos .md em
+         teses-dpu — só o desenvolvedor conseguia criar um tipo novo; agora é
+         100% seu, sem precisar de código (ver minuta_ia_service.py). -->
+    <div class="card bg-base-200 shadow" x-data="minutasIaPrefs()" x-init="init()" x-show="subaba==='minutas-ia'">
+        <div class="card-body gap-5">
+            <div class="flex items-center justify-between flex-wrap gap-2 border-b border-base-300 pb-2">
+                <h3 class="text-lg font-semibold text-base-content/80">Petição com IA</h3>
+                <button class="btn btn-sm btn-primary gap-1" @click="abrirNovo()">
+                    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" style="width:14px;height:14px">
+                        <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                    </svg>
+                    Novo tipo
+                </button>
+            </div>
+            <p class="text-sm text-base-content/60">
+                Tipos de petição que a IA redige a partir de uma instrução sua (como cadastrar um "Project" do
+                Claude dentro do painel) — aparecem no submenu <strong>"Petição com IA"</strong> do menu "Minutar
+                Petição", na página do PAJ. A instrução é lida e embutida no prompt da IA, junto com os documentos
+                do caso que o Defensor selecionar na hora (laudo, inicial, recurso etc.) e, opcionalmente,
+                arquivo(s) de referência fixos anexados aqui (valem pra qualquer caso desse tipo).
+            </p>
+            <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
+
+            <div x-show="carregando" class="text-sm text-base-content/50">
+                <span class="loading loading-spinner loading-xs"></span> Carregando…
+            </div>
+            <div x-show="!carregando && !tipos.length" class="text-sm text-base-content/40">
+                Nenhum tipo cadastrado ainda.
+            </div>
+            <div class="overflow-x-auto" x-show="!carregando && tipos.length">
+                <table class="table table-sm">
+                    <thead>
+                        <tr class="text-xs font-bold">
+                            <th>Nome</th>
+                            <th>Instrução</th>
+                            <th>Documento</th>
+                            <th class="w-32 text-right"></th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="(t, i) in tipos" :key="t.id">
+                            <tr class="hover:bg-base-300/30">
+                                <td class="font-medium whitespace-nowrap" x-text="t.label"></td>
+                                <td class="text-xs text-base-content/60" x-text="previewInstrucao(t.instrucao)"></td>
+                                <td class="text-xs text-base-content/60" x-text="t.documentos_obrigatorios ? 'Obrigatório' : 'Opcional'"></td>
+                                <td class="text-right whitespace-nowrap">
+                                    <button type="button" class="btn btn-ghost btn-xs" @click="abrirEditar(i)">Editar</button>
+                                    <button type="button" class="btn btn-ghost btn-xs text-error" @click="excluir(i)">Excluir</button>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Modal: novo/editar tipo de petição com IA -->
+        <div class="modal" :class="{'modal-open': modalAberto}" @click.self="fecharModal()">
+            <div class="modal-box max-w-3xl">
+                <h3 class="font-bold text-lg mb-3" x-text="editandoIndex >= 0 ? 'Editar tipo de petição com IA' : 'Novo tipo de petição com IA'"></h3>
+                <div class="flex flex-col gap-3">
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">Nome (aparece no menu)</span></label>
+                        <input type="text" class="input input-bordered input-sm" placeholder="Ex.: Manifestação sobre laudo pericial (BI)"
+                               x-model="tipoEmEdicao.label">
+                    </div>
+                    <div class="form-control">
+                        <label class="label py-1">
+                            <span class="label-text text-xs">Instrução para a IA (critérios, estilo, o que a peça deve conter)</span>
+                        </label>
+                        <textarea class="textarea textarea-bordered w-full text-xs font-mono" rows="16"
+                                  x-model="tipoEmEdicao.instrucao"
+                                  placeholder="Critérios jurídicos, cenários, blocos reutilizáveis etc. — texto puro (sem formatação rica), como um arquivo .md."></textarea>
+                    </div>
+                    <div class="form-control">
+                        <label class="label py-1">
+                            <span class="label-text text-xs">Instrução de estilo/estrutura (opcional)</span>
+                        </label>
+                        <textarea class="textarea textarea-bordered w-full text-xs font-mono" rows="4"
+                                  x-model="tipoEmEdicao.instrucao_estilo"
+                                  placeholder="Deixe em branco pra usar o padrão (peça curta, 3-6 parágrafos, sem tópicos numerados). Só preencha se esta peça precisar de outra estrutura (ex.: mais substancial, com blocos próprios)."></textarea>
+                    </div>
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div class="form-control">
+                            <label class="label py-1"><span class="label-text text-xs">Documentos sugeridos (texto de apoio na tela de seleção)</span></label>
+                            <input type="text" class="input input-bordered input-sm" placeholder="Ex.: laudo pericial e petição inicial"
+                                   x-model="tipoEmEdicao.documentos_sugeridos">
+                        </div>
+                        <div class="form-control justify-end">
+                            <label class="label cursor-pointer justify-start gap-2 py-1">
+                                <input type="checkbox" class="checkbox checkbox-sm" x-model="tipoEmEdicao.documentos_obrigatorios">
+                                <span class="label-text text-xs">Exigir ao menos 1 documento selecionado pra gerar</span>
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="form-control">
+                        <label class="label py-1"><span class="label-text text-xs">Arquivos de referência fixos (opcional — valem pra qualquer caso deste tipo)</span></label>
+                        <div class="text-xs text-base-content/50 mb-1" x-show="!tipoEmEdicao.id">
+                            Salve o tipo (botão abaixo) antes de anexar um arquivo.
+                        </div>
+                        <div class="flex flex-wrap gap-1 mb-1" x-show="(tipoEmEdicao.arquivos_referencia || []).length">
+                            <template x-for="a in (tipoEmEdicao.arquivos_referencia || [])" :key="a.nome">
+                                <span class="badge badge-sm gap-1 border border-black/15">
+                                    <a :href="'/api/minutas/tipos-ia/' + encodeURIComponent(tipoEmEdicao.id) + '/arquivo/' + encodeURIComponent(a.nome)"
+                                       target="_blank" x-text="a.nome"></a>
+                                    <button type="button" class="opacity-60 hover:opacity-100" @click="removerArquivo(a.nome)">✕</button>
+                                </span>
+                            </template>
+                        </div>
+                        <input type="file" class="file-input file-input-bordered file-input-sm"
+                               :disabled="!tipoEmEdicao.id || enviandoArquivo" @change="enviarArquivo($event)">
+                    </div>
+                    <span class="text-error text-xs" x-show="msgErro" x-text="msg"></span>
+                </div>
+                <div class="modal-action">
+                    <button type="button" class="btn btn-sm" @click="fecharModal()">Fechar</button>
+                    <button type="button" class="btn btn-sm btn-primary" :disabled="salvando" @click="salvarTipo()">
+                        <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
+                        Salvar
                     </button>
                 </div>
             </div>
@@ -1910,6 +2044,132 @@ function eprocModelosPeticaoPrefs() {
             { token: '[CARGO]', legenda: 'Cargo do defensor (Configurações › Geral)' },
         ],
     });
+}
+
+// "Petição com IA" — cadastro editável dos tipos do submenu "Minutar
+// Petição" › "Petição com IA" (ver services/minuta_ia_service.py). NÃO
+// reaproveita modelosTextoPrefs() acima (pensado só pra texto simples
+// {id,nome,texto}) — cada tipo aqui tem mais campos (instrução de estilo,
+// documentos sugeridos/obrigatórios) e upload de arquivo de referência de
+// verdade, não só texto.
+function minutasIaPrefs() {
+    return {
+        tipos: [], carregando: false, salvando: false, enviandoArquivo: false,
+        msg: '', msgErro: false,
+        modalAberto: false,
+        tipoEmEdicao: {
+            id: '', label: '', instrucao: '', instrucao_estilo: '',
+            documentos_sugeridos: '', documentos_obrigatorios: true, arquivos_referencia: [],
+        },
+        editandoIndex: -1,
+        async init() { await this.carregar(); },
+        async carregar() {
+            this.carregando = true;
+            try {
+                const j = await (await fetch('/api/minutas/tipos-ia')).json();
+                this.tipos = j.tipos || [];
+            } catch (e) { this.tipos = []; }
+            finally { this.carregando = false; }
+        },
+        abrirNovo() {
+            this.tipoEmEdicao = {
+                id: '', label: '', instrucao: '', instrucao_estilo: '',
+                documentos_sugeridos: '', documentos_obrigatorios: true, arquivos_referencia: [],
+            };
+            this.editandoIndex = -1;
+            this.msgErro = false; this.msg = '';
+            this.modalAberto = true;
+        },
+        abrirEditar(i) {
+            this.tipoEmEdicao = JSON.parse(JSON.stringify(this.tipos[i]));
+            this.editandoIndex = i;
+            this.msgErro = false; this.msg = '';
+            this.modalAberto = true;
+        },
+        fecharModal() {
+            this.modalAberto = false;
+        },
+        // NÃO fecha o modal ao salvar (diferente de modelosTextoPrefs) — um
+        // tipo NOVO só ganha `id` de verdade depois do 1º save, e o upload de
+        // arquivo de referência precisa desse id; fechar aqui obrigaria
+        // reabrir o modal (editar) só pra conseguir anexar algo.
+        async salvarTipo() {
+            const label = (this.tipoEmEdicao.label || '').trim();
+            if (!label) { this.msgErro = true; this.msg = 'Informe um nome para o tipo de petição.'; return; }
+            const instrucao = (this.tipoEmEdicao.instrucao || '').trim();
+            if (!instrucao) { this.msgErro = true; this.msg = 'Informe a instrução para a IA.'; return; }
+            const item = { ...this.tipoEmEdicao, label, instrucao };
+            const novaLista = [...this.tipos];
+            const indice = this.editandoIndex >= 0 ? this.editandoIndex : novaLista.length;
+            if (this.editandoIndex >= 0) novaLista[this.editandoIndex] = item;
+            else novaLista.push(item);
+            const ok = await this._persistir(novaLista);
+            if (!ok) return;
+            this.editandoIndex = indice;
+            this.tipoEmEdicao = { ...this.tipos[indice] };
+        },
+        async excluir(i) {
+            if (!confirm('Excluir o tipo "' + this.tipos[i].label + '"? Não pode ser desfeito (remove também os arquivos de referência anexados).')) return;
+            await this._persistir(this.tipos.filter((_, idx) => idx !== i));
+        },
+        async _persistir(lista) {
+            this.salvando = true; this.msg = ''; this.msgErro = false;
+            try {
+                const resp = await fetch('/api/minutas/tipos-ia', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ tipos: lista }),
+                });
+                const j = await resp.json();
+                if (!j.ok) { this.msgErro = true; this.msg = 'Falha ao salvar.'; return false; }
+                this.tipos = j.tipos || lista;
+                this.msg = 'Salvo ✓'; setTimeout(() => this.msg = '', 2500);
+                return true;
+            } catch (e) {
+                this.msgErro = true; this.msg = 'Erro ao salvar: ' + e;
+                return false;
+            } finally {
+                this.salvando = false;
+            }
+        },
+        async enviarArquivo(event) {
+            const arquivo = event.target.files && event.target.files[0];
+            event.target.value = '';
+            if (!arquivo || !this.tipoEmEdicao.id) return;
+            this.enviandoArquivo = true;
+            this.msgErro = false; this.msg = '';
+            try {
+                const fd = new FormData();
+                fd.append('arquivo', arquivo);
+                const resp = await fetch('/api/minutas/tipos-ia/' + encodeURIComponent(this.tipoEmEdicao.id) + '/upload', {
+                    method: 'POST', body: fd,
+                });
+                const j = await resp.json();
+                if (!j.ok) { this.msgErro = true; this.msg = j.erro || 'Falha ao enviar o arquivo.'; return; }
+                this.tipoEmEdicao.arquivos_referencia = [...(this.tipoEmEdicao.arquivos_referencia || []), { nome: j.nome_arquivo }];
+                if (this.editandoIndex >= 0) this.tipos[this.editandoIndex] = { ...this.tipoEmEdicao };
+            } catch (e) {
+                this.msgErro = true; this.msg = 'Erro de rede: ' + e;
+            } finally {
+                this.enviandoArquivo = false;
+            }
+        },
+        async removerArquivo(nome) {
+            if (!this.tipoEmEdicao.id || !confirm('Remover o arquivo de referência "' + nome + '"?')) return;
+            try {
+                const resp = await fetch('/api/minutas/tipos-ia/' + encodeURIComponent(this.tipoEmEdicao.id) + '/arquivo/' + encodeURIComponent(nome), { method: 'DELETE' });
+                const j = await resp.json();
+                if (!j.ok) { this.msgErro = true; this.msg = 'Falha ao remover o arquivo.'; return; }
+                this.tipoEmEdicao.arquivos_referencia = (this.tipoEmEdicao.arquivos_referencia || []).filter(a => a.nome !== nome);
+                if (this.editandoIndex >= 0) this.tipos[this.editandoIndex] = { ...this.tipoEmEdicao };
+            } catch (e) {
+                this.msgErro = true; this.msg = 'Erro de rede: ' + e;
+            }
+        },
+        previewInstrucao(texto) {
+            const t = (texto || '').replace(/\s+/g, ' ').trim();
+            return t.length > 90 ? t.slice(0, 90) + '…' : (t || '(vazio)');
+        },
+    };
 }
 
 // Despachos padrão — CRUD simples, consumido pelo módulo "Ações no SISDPU"

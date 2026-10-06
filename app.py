@@ -30,6 +30,7 @@ from routes.configuracoes import router as configuracoes_router
 from routes.calcular_cnis import router as calcular_cnis_router
 from routes.calcular_qs import router as calcular_qs_router
 from routes.consulta_rpv import router as consulta_rpv_router
+from routes.dossie_sd import router as dossie_sd_router
 from routes.dashboard import router as dashboard_router
 from routes.docgen import router as docgen_router
 from routes.files import router as files_router
@@ -82,7 +83,7 @@ _configurar_logging()
 # Versao do painel — fonte unica. Usada pelo FastAPI (OpenAPI/docs) e tambem
 # exposta a todos os templates via Jinja globals (renderizada no rodape da
 # sidebar). Para incrementar: mude aqui e so aqui.
-APP_VERSION = "0.4.141"
+APP_VERSION = "0.4.146"
 
 app = FastAPI(title="oficio-geral-ui", version=APP_VERSION)
 app.state.jinja = jinja2.Environment(
@@ -271,6 +272,7 @@ app.include_router(analise_pretensao_router)
 app.include_router(calcular_cnis_router)
 app.include_router(calcular_qs_router)
 app.include_router(consulta_rpv_router)
+app.include_router(dossie_sd_router)
 app.include_router(dashboard_router)
 app.include_router(paj_router)
 app.include_router(files_router)
@@ -315,6 +317,33 @@ async def _startup_cota() -> None:
 
 
 @app.on_event("startup")
+async def _startup_reconciliar_sessoes_interrompidas() -> None:
+    """Corrige análises/organizações que ficaram com status "running" gravado
+    em disco por uma sessão que o painel matou no meio (restart) — achado ao
+    vivo no PAJ 2026/029-02667, 2026-09-30 (Felipe perguntou por que a coluna
+    "Status" de "Análises e Iniciais" mostrava "running" sem nada realmente
+    em processamento). `_sessions`/`_sessions` de cada serviço estão sempre
+    vazios neste ponto (processo recém-subido), então qualquer "running"
+    encontrado é necessariamente órfão. Ver
+    services.analise_pretensao_service/organizar_ajuizamento_service.
+    reconciliar_sessoes_interrompidas para o critério de correção
+    (done/error). Silenciosa em qualquer falha — nunca impede o painel de
+    subir."""
+    with contextlib.suppress(Exception):
+        from services import analise_pretensao_service
+
+        n = analise_pretensao_service.reconciliar_sessoes_interrompidas()
+        if n:
+            print(f"[reconciliacao] {n} análise(s) com status 'running' órfão corrigido(s)")
+    with contextlib.suppress(Exception):
+        from services import organizar_ajuizamento_service
+
+        n = organizar_ajuizamento_service.reconciliar_sessoes_interrompidas()
+        if n:
+            print(f"[reconciliacao] {n} organização(ões) com status 'running' órfão corrigida(s)")
+
+
+@app.on_event("startup")
 async def _startup_limpeza_docs_eproc() -> None:
     """Limpeza automática do cache de documentos baixados na página "Consultar
     processo" (dados/eproc_docs/) — mesmo espírito da rotação de logs
@@ -349,6 +378,10 @@ async def _shutdown_fechar_sat() -> None:
         from ingestao import rpv_precatorio_client
 
         rpv_precatorio_client.fechar_navegador()
+    with contextlib.suppress(Exception):
+        from ingestao import sd_client
+
+        sd_client.fechar_navegador()
 
 
 def _cleanup_port(port: int) -> None:
@@ -418,3 +451,7 @@ if __name__ == "__main__":
             from ingestao import rpv_precatorio_client
 
             rpv_precatorio_client.fechar_navegador()
+        with contextlib.suppress(Exception):
+            from ingestao import sd_client
+
+            sd_client.fechar_navegador()

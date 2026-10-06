@@ -1,0 +1,437 @@
+{% extends "base.html" %}
+{% from "partials/_macro_minimenu_paj.html" import itens_minimenu_paj %}
+
+{% block title %}Análises e Iniciais{% endblock %}
+
+{# Página "Análises e Iniciais" — subitem da Caixa de Entrada (pedido do
+   usuário, 2026-09-30). Três tabelas, NESSA ORDEM (pedido do usuário):
+     1. Em processamento — sessões de análise/petição rodando AGORA (em
+        memória, ver services.analise_pretensao_service.get_status_todos());
+        pura visibilidade, sem ação nenhuma. Some sozinha quando a sessão
+        termina.
+     2. Petições Iniciais — casos cujo evento mais recente é "Gerada Petição
+        Inicial" (peça já minutada pela IA, aguardando revisão/ajuizamento).
+     3. Análises — casos cujo evento mais recente é "Análise Prévia" (ainda
+        sem petição gerada).
+   (2) e (3) vêm da MESMA lista deduplicada por PAJ
+   (services.historico.listar_analises_iniciais_pendentes), só filtrada no
+   front pelo texto de `atividade` — computed getters, nada duplicado no
+   backend. Botão "Concluir" (em 2 e 3) marca o caso como tratado
+   (services.historico.concluir_analise_inicial) — some da lista até uma
+   nova análise rodar nesse PAJ.
+
+   Coluna "Documentos" (organizar para ajuizamento) só existe na tabela (2)
+   Petições Iniciais — pedido explícito do usuário, 2026-09-30: só faz
+   sentido organizar quando já há petição inicial minutada; um caso em (3)
+   Análises nunca tem `doc_status` diferente de "sem_peticao" mesmo, mas a
+   coluna nem aparece lá pra não sugerir uma ação que não existe.
+
+   Antes era a aba "Análises (IA)" do Histórico (removida — pedido do
+   usuário, "ficará melhor como subitem da caixa de entrada"); mesma origem
+   de dados, só reorganizada em 3 tabelas + a visão "em tempo real" de quem
+   está rodando agora. #}
+{% block content %}
+<div x-data="analisesIniciaisPage()" x-init="init()">
+
+    <div class="flex items-center justify-between mb-2 flex-wrap gap-2">
+        <h2 class="text-2xl font-bold">Análises e Iniciais</h2>
+        <button class="btn btn-sm btn-ghost" @click="carregar()" :disabled="carregando">
+            <span x-show="carregando" class="loading loading-spinner loading-xs"></span>
+            Atualizar
+        </button>
+    </div>
+
+    <!-- 1. Em processamento — atualiza sozinha a cada poucos segundos
+         (pollProcessamento()), pra mostrar o que o painel está fazendo agora
+         mesmo sem o usuário recarregar a página. -->
+    <div class="text-sm text-base-content/60 mb-2 mt-1">
+        Em processamento agora
+    </div>
+    <div class="card bg-base-200 shadow mb-6">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th class="w-40">Iniciado em</th>
+                            <th class="w-36">PAJ</th>
+                            <th class="w-56">Assistido</th>
+                            <th class="w-40">Assunto</th>
+                            <th>Atividade</th>
+                            <th class="w-32 text-center">Status</th>
+                            <th class="w-28 text-center">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="r in processando" :key="r.id">
+                            <tr class="hover align-top">
+                                <td class="whitespace-nowrap text-xs" x-text="fmtDataHora(r.iniciado_em)"></td>
+                                <td class="font-mono whitespace-nowrap">
+                                    <button class="link" style="color:var(--accent)"
+                                            title="Escolher onde abrir o PAJ"
+                                            @click.stop="abrirMenuPaj(r.paj_norm, r.paj, $el)"
+                                            x-text="r.paj"></button>
+                                </td>
+                                <td class="text-sm" x-text="r.assistido || '—'"></td>
+                                <td class="text-sm" x-text="r.assunto || '—'"></td>
+                                <td>
+                                    <span class="badge badge-ghost badge-sm" x-text="r.tipo_label || '—'"></span>
+                                    <div class="text-xs text-base-content/50 mt-0.5 truncate max-w-md" x-show="r.last_action" x-text="r.last_action"></div>
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge badge-sm badge-warning gap-1">
+                                        <span class="loading loading-spinner loading-xs"></span>
+                                        Em andamento
+                                    </span>
+                                </td>
+                                <td class="text-center">
+                                    <button type="button" class="btn btn-xs btn-outline gap-1"
+                                            @click="abrirPastaPaj(r.paj_norm, $el)"
+                                            title="Abre a pasta deste PAJ no Explorer (funciona só na máquina onde o painel está rodando)">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0v6a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-6m-19.5 0h19.5M5.25 9.75V6a2.25 2.25 0 0 1 2.25-2.25h4.5a2.25 2.25 0 0 1 1.591.659l1.409 1.409a2.25 2.25 0 0 0 1.591.659H18a2.25 2.25 0 0 1 2.25 2.25v3.75"></path>
+                                        </svg>
+                                        Pasta
+                                    </button>
+                                </td>
+                            </tr>
+                        </template>
+                        <tr x-show="processando.length === 0">
+                            <td colspan="7" class="text-center text-base-content/40 py-6">
+                                Nada em processamento no momento.
+                            </td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <div class="text-sm text-base-content/60 mb-4">
+        Casos com análise feita pela IA e/ou petição inicial minutada, aguardando revisão/correção e ajuizamento.
+        Clique em <strong>Concluir</strong> quando já tiver tratado o caso, pra tirá-lo da lista.
+    </div>
+
+    <!-- 2. Petições Iniciais -->
+    <div class="text-sm font-semibold mb-2">
+        Petições Iniciais
+        <span class="badge badge-ghost badge-xs ml-1" x-text="peticoes.length"></span>
+    </div>
+    <div class="card bg-base-200 shadow mb-6">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th class="w-40">Data/hora</th>
+                            <th class="w-36">PAJ</th>
+                            <th class="w-56">Assistido</th>
+                            <th class="w-40">Assunto</th>
+                            <th>Atividade</th>
+                            <th class="w-28 text-center">Status</th>
+                            <th class="w-36 text-center">Documentos</th>
+                            <th class="w-28 text-center">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="r in peticoes" :key="r.id">
+                            <tr class="hover align-top">
+                                <td class="whitespace-nowrap text-xs" x-text="fmtDataHora(r.ts)"></td>
+                                <td class="font-mono whitespace-nowrap">
+                                    <button class="link" style="color:var(--accent)"
+                                            title="Escolher onde abrir o PAJ"
+                                            @click.stop="abrirMenuPaj(r.paj_norm, r.paj, $el)"
+                                            x-text="r.paj"></button>
+                                </td>
+                                <td class="text-sm" x-text="r.assistido || '—'"></td>
+                                <td class="text-sm" x-text="r.assunto || '—'"></td>
+                                <td>
+                                    <span class="badge badge-sm badge-warning"
+                                          :title="r.atividade.indexOf('retroativo') !== -1 ? 'Inferido pela existência atual do arquivo — este registro é de antes desta identificação existir' : ''"
+                                          x-text="r.atividade || '—'"></span>
+                                    <span x-show="r.skill" class="badge badge-ghost badge-xs ml-1" x-text="r.skill"></span>
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge badge-sm"
+                                          :class="r.status === 'done' ? 'badge-success' : (r.status === 'error' ? 'badge-error' : 'badge-ghost')"
+                                          x-text="r.status === 'done' ? 'Concluída' : (r.status === 'error' ? 'Erro' : (r.status || '—'))"></span>
+                                </td>
+                                <td class="text-center">
+                                    <button x-show="r.doc_status === 'idle'" type="button" class="btn btn-xs btn-outline gap-1"
+                                            @click="organizarDocumentos(r)"
+                                            title="Organiza os documentos deste PAJ numa subpasta Ajuizamento, prontos para peticionamento">
+                                        Organizar
+                                    </button>
+                                    <span x-show="r.doc_status === 'running'" class="badge badge-sm badge-warning gap-1">
+                                        <span class="loading loading-spinner loading-xs"></span> Organizando
+                                    </span>
+                                    <span x-show="r.doc_status === 'done'" class="badge badge-sm badge-success">Organizado</span>
+                                    <button x-show="r.doc_status === 'error'" type="button" class="btn btn-xs btn-outline btn-error gap-1"
+                                            @click="organizarDocumentos(r)" title="Tentar organizar novamente">
+                                        Erro — tentar de novo
+                                    </button>
+                                    <span x-show="r.doc_status === 'sem_peticao'" class="text-base-content/30"
+                                          title="Ainda não há petição inicial gerada para este PAJ">—</span>
+                                </td>
+                                <td class="text-center">
+                                    <div class="flex flex-col items-center gap-1">
+                                        <button type="button" class="btn btn-xs btn-outline gap-1"
+                                                @click="abrirPastaPaj(r.paj_norm, $el)"
+                                                title="Abre a pasta deste PAJ no Explorer (funciona só na máquina onde o painel está rodando)">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0v6a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-6m-19.5 0h19.5M5.25 9.75V6a2.25 2.25 0 0 1 2.25-2.25h4.5a2.25 2.25 0 0 1 1.591.659l1.409 1.409a2.25 2.25 0 0 0 1.591.659H18a2.25 2.25 0 0 1 2.25 2.25v3.75"></path>
+                                            </svg>
+                                            Pasta
+                                        </button>
+                                        <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="r.concluindo"
+                                                @click="concluir(r)" title="Marca este caso como tratado e tira ele desta lista">
+                                            <span x-show="r.concluindo" class="loading loading-spinner loading-xs"></span>
+                                            <span x-show="!r.concluindo">Concluir</span>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
+                        <tr x-show="!carregando && peticoes.length === 0">
+                            <td colspan="8" class="text-center text-base-content/40 py-6">
+                                Nenhuma petição inicial pendente de revisão.
+                            </td>
+                        </tr>
+                        <tr x-show="carregando">
+                            <td colspan="8" class="text-center py-6"><span class="loading loading-spinner"></span> Carregando…</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- 3. Análises -->
+    <div class="text-sm font-semibold mb-2">
+        Análises
+        <span class="badge badge-ghost badge-xs ml-1" x-text="analises.length"></span>
+    </div>
+    <div class="card bg-base-200 shadow">
+        <div class="card-body p-0">
+            <div class="overflow-x-auto">
+                <table class="table table-sm">
+                    <thead>
+                        <tr>
+                            <th class="w-40">Data/hora</th>
+                            <th class="w-36">PAJ</th>
+                            <th class="w-56">Assistido</th>
+                            <th class="w-40">Assunto</th>
+                            <th>Atividade</th>
+                            <th class="w-28 text-center">Status</th>
+                            <th class="w-28 text-center">Ações</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        <template x-for="r in analises" :key="r.id">
+                            <tr class="hover align-top">
+                                <td class="whitespace-nowrap text-xs" x-text="fmtDataHora(r.ts)"></td>
+                                <td class="font-mono whitespace-nowrap">
+                                    <button class="link" style="color:var(--accent)"
+                                            title="Escolher onde abrir o PAJ"
+                                            @click.stop="abrirMenuPaj(r.paj_norm, r.paj, $el)"
+                                            x-text="r.paj"></button>
+                                </td>
+                                <td class="text-sm" x-text="r.assistido || '—'"></td>
+                                <td class="text-sm" x-text="r.assunto || '—'"></td>
+                                <td>
+                                    <span class="badge badge-sm badge-info" x-text="r.atividade || '—'"></span>
+                                    <span x-show="r.skill" class="badge badge-ghost badge-xs ml-1" x-text="r.skill"></span>
+                                </td>
+                                <td class="text-center">
+                                    <span class="badge badge-sm"
+                                          :class="r.status === 'done' ? 'badge-success' : (r.status === 'error' ? 'badge-error' : 'badge-ghost')"
+                                          x-text="r.status === 'done' ? 'Concluída' : (r.status === 'error' ? 'Erro' : (r.status || '—'))"></span>
+                                </td>
+                                <td class="text-center">
+                                    <div class="flex flex-col items-center gap-1">
+                                        <button type="button" class="btn btn-xs btn-outline gap-1"
+                                                @click="abrirPastaPaj(r.paj_norm, $el)"
+                                                title="Abre a pasta deste PAJ no Explorer (funciona só na máquina onde o painel está rodando)">
+                                            <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0v6a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-6m-19.5 0h19.5M5.25 9.75V6a2.25 2.25 0 0 1 2.25-2.25h4.5a2.25 2.25 0 0 1 1.591.659l1.409 1.409a2.25 2.25 0 0 0 1.591.659H18a2.25 2.25 0 0 1 2.25 2.25v3.75"></path>
+                                            </svg>
+                                            Pasta
+                                        </button>
+                                        <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="r.concluindo"
+                                                @click="concluir(r)" title="Marca este caso como tratado e tira ele desta lista">
+                                            <span x-show="r.concluindo" class="loading loading-spinner loading-xs"></span>
+                                            <span x-show="!r.concluindo">Concluir</span>
+                                        </button>
+                                    </div>
+                                </td>
+                            </tr>
+                        </template>
+                        <tr x-show="!carregando && analises.length === 0">
+                            <td colspan="7" class="text-center text-base-content/40 py-6">
+                                Nenhuma análise pendente de revisão.
+                            </td>
+                        </tr>
+                        <tr x-show="carregando">
+                            <td colspan="7" class="text-center py-6"><span class="loading loading-spinner"></span> Carregando…</td>
+                        </tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <!-- Menu global único (PAJ): sempre o mesmo elemento, reposicionado por clique. -->
+    <template x-teleport="body">
+        <ul x-show="menuAbertoPaj !== null" x-cloak
+            @click.outside="menuAbertoPaj = null"
+            :style="'position:fixed; top:' + posMenu.top + 'px; left:' + posMenu.left + 'px;'"
+            class="menu menu-xs bg-base-100 rounded-box z-[1000] w-48 p-1 shadow border border-base-300">
+            {{ itens_minimenu_paj('menuAbertoPaj', 'menuAbertoPajLabel', after='menuAbertoPaj = null') }}
+        </ul>
+    </template>
+</div>
+
+<script>
+function analisesIniciaisPage() {
+    return {
+        registros: [], carregando: false,
+        processando: [],
+        menuAbertoPaj: null,
+        menuAbertoPajLabel: '',
+        posMenu: { top: 0, left: 0 },
+        _pollTimer: null,
+
+        get peticoes() {
+            return this.registros.filter(r => (r.atividade || '').indexOf('Petição Inicial') !== -1);
+        },
+        get analises() {
+            return this.registros.filter(r => (r.atividade || '').indexOf('Petição Inicial') === -1);
+        },
+
+        async init() {
+            await Promise.all([this.carregar(), this.carregarProcessando()]);
+            this._pollTimer = setInterval(() => this.pollProcessamento(), 3000);
+        },
+
+        async carregar() {
+            this.carregando = true;
+            try {
+                const j = await (await fetch('/api/analises-iniciais/lista')).json();
+                this.registros = (j.registros || []).map(r => ({ ...r, concluindo: false }));
+                // Retoma o polling de quem já estava organizando (ex.: iniciado
+                // pelo botão da própria página do PAJ, ou nesta página antes de
+                // um F5) — sem isso, um reload no meio da tarefa perdia o
+                // acompanhamento até o próximo "Atualizar" manual.
+                this.registros.filter(r => r.doc_status === 'running').forEach(r => this._pollOrganizar(r));
+            } catch (e) { this.registros = []; }
+            finally { this.carregando = false; }
+        },
+
+        async carregarProcessando() {
+            try {
+                const j = await (await fetch('/api/analises-iniciais/em-processamento')).json();
+                this.processando = j.registros || [];
+            } catch (e) { this.processando = []; }
+        },
+
+        // Polling leve (só memória, sem varrer disco) a cada 3s — se algum
+        // PAJ que estava processando SUMIU da lista (sessão terminou),
+        // recarrega a lista principal também, pra ele aparecer em Petições
+        // Iniciais/Análises sem precisar de "Atualizar" manual. Pequeno
+        // atraso antes de recarregar: dá tempo da thread controladora
+        // persistir o evento no historico.jsonl (ver analise_pretensao_
+        // service._aguardar_conclusao/_persistir — não é instantâneo com a
+        // marcação de "done" em memória).
+        async pollProcessamento() {
+            const antes = new Set(this.processando.map(r => r.paj_norm));
+            await this.carregarProcessando();
+            const depois = new Set(this.processando.map(r => r.paj_norm));
+            const terminouAlgum = [...antes].some(p => !depois.has(p));
+            if (terminouAlgum) {
+                setTimeout(() => this.carregar(), 1500);
+            }
+        },
+
+        // Coluna "Documentos" — dispara/acompanha "Organizar Documentos para
+        // Ajuizamento" (pedido do usuário, 2026-09-30). Reusa EXATAMENTE os
+        // mesmos endpoints do botão homônimo em paj_detail.html
+        // (services.organizar_ajuizamento_service) — nenhuma rota nova.
+        async organizarDocumentos(r) {
+            if (r.doc_status === 'sem_peticao' || r.doc_status === 'running') return;
+            r.doc_status = 'running';
+            try {
+                const resp = await fetch('/api/organizar-ajuizamento/' + encodeURIComponent(r.paj_norm), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({}),
+                });
+                const j = await resp.json().catch(() => ({}));
+                if (!j.ok) {
+                    showToast(j.erro || 'Falha ao organizar.', 'error');
+                    // "precisa_confirmar" = já existe pasta Ajuizamento (já
+                    // organizado antes) — mostra como concluído em vez de erro.
+                    r.doc_status = j.precisa_confirmar ? 'done' : 'error';
+                    return;
+                }
+                this._pollOrganizar(r);
+            } catch (e) {
+                showToast('Falha de rede ao organizar: ' + e, 'error');
+                r.doc_status = 'error';
+            }
+        },
+        _pollOrganizar(r) {
+            const t = setInterval(async () => {
+                try {
+                    const j = await (await fetch('/api/organizar-ajuizamento/status/' + encodeURIComponent(r.paj_norm))).json();
+                    if (j.status !== 'running') {
+                        clearInterval(t);
+                        r.doc_status = j.status || 'idle';
+                        if (j.status === 'done') showToast('Documentos organizados: ' + (r.paj || r.paj_norm), 'success');
+                        else if (j.status === 'error') showToast('Falha ao organizar ' + (r.paj || r.paj_norm) + ': ' + (j.error || ''), 'error');
+                    }
+                } catch (e) { /* mantém tentando no próximo tick */ }
+            }, 3000);
+        },
+
+        async concluir(r) {
+            if (!confirm('Marcar "' + (r.paj || r.paj_norm) + '" como tratado? Ele sai desta lista até que uma nova análise seja feita.')) return;
+            r.concluindo = true;
+            try {
+                const resp = await fetch('/api/analises-iniciais/concluir/' + encodeURIComponent(r.paj_norm), {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ paj: r.paj, assistido: r.assistido, atividade: r.atividade }),
+                });
+                const j = await resp.json().catch(() => ({}));
+                if (!resp.ok || !j.ok) {
+                    showToast('Falha ao concluir.', 'error');
+                    r.concluindo = false;
+                    return;
+                }
+                this.registros = this.registros.filter(x => x.id !== r.id);
+                showToast('Caso marcado como tratado', 'success');
+            } catch (e) {
+                showToast('Falha de rede ao concluir: ' + e, 'error');
+                r.concluindo = false;
+            }
+        },
+        abrirMenuPaj(pajNorm, pajLabel, el) {
+            this.menuAbertoPaj = (this.menuAbertoPaj === pajNorm ? null : pajNorm);
+            this.menuAbertoPajLabel = pajLabel;
+            if (this.menuAbertoPaj === pajNorm) {
+                const rect = el.getBoundingClientRect();
+                this.posMenu = { top: rect.bottom, left: rect.left };
+            }
+        },
+        fmtDataHora(ts) {
+            if (!ts) return '—';
+            try {
+                const d = new Date(ts);
+                if (isNaN(d)) return ts;
+                return d.toLocaleString('pt-BR', { day:'2-digit', month:'2-digit', year:'numeric', hour:'2-digit', minute:'2-digit' });
+            } catch (e) { return ts; }
+        },
+    };
+}
+</script>
+{% endblock %}

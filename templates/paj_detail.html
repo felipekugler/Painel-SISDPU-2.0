@@ -1244,57 +1244,34 @@ document.addEventListener('alpine:init', () => {
             </button>
         </template>
 
-        <!-- Minutar Petição: "Gerar Minuta" (manifestação sobre documento(s)
-             já nos autos do processo — laudo pericial, avaliação social etc.
-             — OU já sincronizados do PAJ/SISDPU, via IA) tinha 1 botão
-             genérico + dropdown de tipo dentro do console; virou 2 itens
-             diretos no menu (pedido do usuário 2026-09-26) — clicar já abre
-             o modal de seleção de documentos, sem passo intermediário.
+        <!-- Minutar Petição: 2 itens, cada um com submenu próprio (pedido do
+             usuário, 2026-10-02 — reorganização anterior tinha os 3 tipos de
+             IA como botões diretos + "Petição padrão" como 4º item; agora
+             separa petição SEM IA (texto padrão) de petição COM IA):
+               - "Petição Padrão": insere direto um modelo já cadastrado em
+                 Configurações › e-proc › Petição Padrão (ex-"Modelos de
+                 petição") — sem IA, sem modal de documentos.
+               - "Petição com IA": abre o modal de seleção de documentos pro
+                 tipo escolhido, mesmo fluxo de sempre.
+             AMBOS os submenus são 100% DINÂMICOS agora (lista carregada do
+             back — modelosPadrao/tipos) — diferente da versão anterior,
+             nenhum tipo precisa mais de botão fixo aqui pra aparecer: criar/
+             editar/remover um tipo de "Petição com IA" é só em Configurações
+             › e-proc › Petição com IA, sem tocar em template nenhum.
              Disponível em TODOS os PAJs, com ou sem processo judicial
              vinculado — a aba "PAJ (SISDPU)" do modal funciona de qualquer
-             forma, só a aba "Processo Judicial" fica vazia sem processo.
-
-             Os 3 tipos de IA vêm de services/minuta_ia_service.TIPOS_MINUTA
-             (mesmo slug usado no back, ver static/js/minuta_ia.js); se um
-             novo tipo for adicionado lá, precisa de um botão aqui também —
-             não é lido dinamicamente do catálogo. Já o 4º item, "Petição
-             padrão", É dinâmico (lista modelosPadrao, carregada de
-             /api/minutas/modelos-padrao — mesmo cadastro de "Modelos de
-             petição" de Configurações › e-proc) e não usa IA nenhuma. -->
+             forma, só a aba "Processo Judicial" fica vazia sem processo. -->
         <div x-data="minutaIaApp('{{ paj_norm }}', '{{ meta.paj }}')" x-init="init(window._paj_processos_judiciais_completo)">
             <div x-show="$store.acoesIaMenu.aberto === 'minutar'" class="contents">
-                <!-- Primeira opção (pedido do usuário, 2026-09-26) — sem
-                     playbook de matéria fixo, guiada pela Orientação
-                     Diretiva + documentos selecionados (ver
-                     areas/peticao-generica/CLAUDE.md no teses-dpu). -->
-                <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
-                        @click="labelAtivo = ''; tipoSlug = 'peticao-generica'; $store.acoesIaMenu.mostrarMinuta = true; $store.acoesIaMenu.aberto = null; abrirModal()"
-                        title="Gera uma petição/manifestação a partir da Orientação Diretiva e dos documentos selecionados, via IA — sem playbook de matéria fixo">
-                    Petição genérica
-                </button>
-                <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
-                        @click="labelAtivo = ''; tipoSlug = 'bi-laudo-pericial'; $store.acoesIaMenu.mostrarMinuta = true; $store.acoesIaMenu.aberto = null; abrirModal()"
-                        title="Gera uma manifestação sobre o laudo médico pericial já nos autos, via IA">
-                    Manifestação sobre laudo pericial (BI)
-                </button>
-                <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
-                        @click="labelAtivo = ''; tipoSlug = 'contrarrazoes-recurso'; $store.acoesIaMenu.mostrarMinuta = true; $store.acoesIaMenu.aberto = null; abrirModal()"
-                        title="Gera contrarrazões de recurso a partir dos documentos selecionados, via IA">
-                    Contrarrazões de Recurso
-                </button>
-
-                <!-- "Petição padrão" (pedido do usuário, 2026-09-28) — SEM IA:
-                     insere direto na caixa um dos modelos já cadastrados em
-                     Configurações › e-proc › Modelos de petição (mesmo
-                     cadastro, sem duplicar nada — ver modelosPadrao/
-                     usarModeloPadrao em minuta_ia.js). Submenu próprio
-                     (mostrarSubmenuPadrao), não abre o modal de documentos —
-                     um modelo padrão não depende de seleção nenhuma. -->
+                <!-- "Petição Padrão" — SEM IA: insere direto na caixa um dos
+                     modelos já cadastrados em Configurações › e-proc ›
+                     Petição Padrão (mesmo cadastro, sem duplicar nada — ver
+                     modelosPadrao/usarModeloPadrao em minuta_ia.js). -->
                 <div class="w-full">
                     <button type="button" class="btn btn-ghost btn-sm justify-between w-full normal-case font-normal whitespace-nowrap text-left"
                             @click="mostrarSubmenuPadrao = !mostrarSubmenuPadrao"
                             title="Insere um modelo de petição já cadastrado, sem IA">
-                        <span>Petição padrão</span>
+                        <span>Petição Padrão</span>
                         <span class="text-[10px] opacity-60" x-text="mostrarSubmenuPadrao ? '▲' : '▼'"></span>
                     </button>
                     <div class="pl-3 flex flex-col" x-show="mostrarSubmenuPadrao" x-cloak>
@@ -1306,6 +1283,29 @@ document.addEventListener('alpine:init', () => {
                                     :disabled="usandoModeloPadrao"
                                     @click="$store.acoesIaMenu.mostrarMinuta = true; $store.acoesIaMenu.aberto = null; usarModeloPadrao(modelo.id)"
                                     x-text="modelo.nome"></button>
+                        </template>
+                    </div>
+                </div>
+
+                <!-- "Petição com IA" — abre o modal de seleção de documentos
+                     pro tipo escolhido (lista `tipos`, carregada de
+                     /api/minutas/tipos — cadastro editável em Configurações
+                     › e-proc › Petição com IA). -->
+                <div class="w-full">
+                    <button type="button" class="btn btn-ghost btn-sm justify-between w-full normal-case font-normal whitespace-nowrap text-left"
+                            @click="mostrarSubmenuIa = !mostrarSubmenuIa"
+                            title="Gera uma petição com IA a partir da Orientação Diretiva e/ou dos documentos selecionados">
+                        <span>Petição com IA</span>
+                        <span class="text-[10px] opacity-60" x-text="mostrarSubmenuIa ? '▲' : '▼'"></span>
+                    </button>
+                    <div class="pl-3 flex flex-col" x-show="mostrarSubmenuIa" x-cloak>
+                        <div class="text-xs text-base-content/50 px-2 py-1" x-show="!tipos.length">
+                            Nenhum tipo cadastrado — veja Configurações › e-proc.
+                        </div>
+                        <template x-for="tipo in tipos" :key="tipo.slug">
+                            <button type="button" class="btn btn-ghost btn-xs justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                                    @click="mostrarSubmenuIa = false; labelAtivo = ''; tipoSlug = tipo.slug; $store.acoesIaMenu.mostrarMinuta = true; $store.acoesIaMenu.aberto = null; abrirModal()"
+                                    x-text="tipo.label"></button>
                         </template>
                     </div>
                 </div>
@@ -1665,6 +1665,72 @@ document.addEventListener('alpine:init', () => {
             </button>
         </div>
         {% endif %}
+
+        <!-- Dossiê Seguro-Desemprego Web (skills /SD-Dossies, /SD-DossieVinculos,
+             /SD-DossieRequerimentos) — automação direta, sem IA (pedido do
+             usuário, 2026-10-02): loga no GERID do MTE com as credenciais/seed
+             do SAT, roda os coletores das skills e salva o(s) PDF(s) em
+             Arquivos/ do PAJ; fecha o navegador ao final. Ver
+             services/dossie_sd_service.py, ingestao/sd_client.py e
+             static/js/dossie_sd.js. Spinner fora do gate do menu (como em
+             Consulta RPV) — o job segue em background e sobrevive a F5. -->
+        <div class="contents" x-data="dossieSdApp('{{ paj_norm }}')" x-init="init()">
+            <div class="w-full" x-show="$store.acoesIaMenu.aberto === 'consultas' && status !== 'running' && juntada !== 'running'">
+                <button type="button" class="btn btn-ghost btn-sm justify-between w-full normal-case font-normal whitespace-nowrap text-left"
+                        @click="mostrarSubmenu = !mostrarSubmenu"
+                        title="Gera os dossiês do Seguro-Desemprego Web (MTE) do assistido e salva na pasta Arquivos do PAJ — login automático com as credenciais do SAT Central">
+                    <span>Dossiê Seguro-Desemprego Web</span>
+                    <span class="text-[10px] opacity-60" x-text="mostrarSubmenu ? '▲' : '▼'"></span>
+                </button>
+                <div class="pl-3 flex flex-col" x-show="mostrarSubmenu" x-cloak>
+                    <button type="button" class="btn btn-ghost btn-xs justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                            @click="mostrarSubmenu = false; $store.acoesIaMenu.aberto = null; iniciar('completo')"
+                            title="Dossiê de Vínculos + Dossiê de Requerimentos de Seguro-Desemprego, com um único login (skill /SD-Dossies)">
+                        Dossiê Completo
+                    </button>
+                    <button type="button" class="btn btn-ghost btn-xs justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                            @click="mostrarSubmenu = false; $store.acoesIaMenu.aberto = null; iniciar('vinculos')"
+                            title="Extrato CNIS, CBO, causa da rescisão, remunerações e benefícios (skill /SD-DossieVinculos)">
+                        Só Dossiê de Vínculos
+                    </button>
+                    <button type="button" class="btn btn-ghost btn-xs justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                            @click="mostrarSubmenu = false; $store.acoesIaMenu.aberto = null; iniciar('requerimentos')"
+                            title="Requerimentos de seguro-desemprego nas 4 modalidades, com o PDF oficial &quot;Imprimir Situação&quot; (skill /SD-DossieRequerimentos)">
+                        Só Dossiê de Seguro Desemprego
+                    </button>
+                </div>
+            </div>
+            <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="status === 'running'" disabled
+                    :title="ultimaMensagem()">
+                <span class="loading loading-spinner loading-xs"></span>
+                <span>Gerando <span x-text="rotulo || 'dossiê'"></span>…</span>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="juntada === 'running'" disabled>
+                <span class="loading loading-spinner loading-xs"></span>
+                <span>Juntando dossiê ao SISDPU…</span>
+            </button>
+
+            <!-- Pergunta pós-sucesso: juntar o(s) PDF(s) ao SISDPU (mesma
+                 movimentação da juntada do SAT Central, descrição "Dossiê do
+                 Seguro Desemprego Web"). Reaparece após F5 enquanto não for
+                 respondida (estado `juntada` null no back). -->
+            <dialog class="modal" :open="perguntaJuntada" @close="perguntaJuntada = false">
+                <div class="modal-box max-w-lg">
+                    <h3 class="font-bold text-lg mb-2"><span x-text="rotulo || 'Dossiê'"></span> gerado com sucesso</h3>
+                    <p class="text-sm mb-2">Deseja juntar ao SISDPU? Será registrada uma movimentação
+                        "Juntada de documento" com a descrição <b>"Dossiê do Seguro Desemprego Web"</b>
+                        e o(s) arquivo(s) abaixo como "Documentos do Assistido":</p>
+                    <ul class="text-xs list-disc pl-5 mb-2">
+                        <template x-for="a in arquivos" :key="a"><li x-text="a"></li></template>
+                    </ul>
+                    <div class="modal-action">
+                        <button type="button" class="btn btn-sm" @click="dispensarJuntada()">Não juntar</button>
+                        <button type="button" class="btn btn-sm btn-primary" @click="juntar()">Juntar ao SISDPU</button>
+                    </div>
+                </div>
+                <form method="dialog" class="modal-backdrop"><button type="button" @click="perguntaJuntada = false">fechar</button></form>
+            </dialog>
+        </div>
 
         <!-- Baixar Arquivos SAT: antes um botão solto no cabeçalho da página
              (coluna de ações rápidas) — migrou pra "Consultas" (pedido do

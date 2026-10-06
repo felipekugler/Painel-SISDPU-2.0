@@ -161,6 +161,16 @@ async def _ensure_chromium() -> None:
          f"--user-data-dir={_PROFILE}",
          "--no-first-run", "--no-default-browser-check",
          "--disable-features=PDFViewerUpdate,PdfUnseasoned",
+         # A extensão "Adobe Acrobat" (efaidnbmnnnibpcajpcglclefindmkaj) acaba
+         # parando em qualquer profile do Windows nesta máquina (não é política
+         # do Chrome/Chromium — checado no registro, não tem nada lá) e assume o
+         # lugar do visualizador nativo de PDF: é pesada, demora bastante pra
+         # abrir e mostra avisos/propaganda da Adobe — a demora foi confundida
+         # com bloqueio antirobô (2026-09-30). `--disable-extensions` desliga
+         # TODAS as extensões de terceiros neste Chromium (o visualizador nativo
+         # de PDF do Chrome é um componente interno, não uma extensão de
+         # usuário, e continua funcionando normalmente).
+         "--disable-extensions",
          SAT_CONSULTA],
         creationflags=flags, close_fds=True,
     )

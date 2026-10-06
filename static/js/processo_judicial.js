@@ -147,9 +147,8 @@ function processoJudicialBlock(cfg) {
             // primeira vez) e o Alpine não reage corretamente depois — o botão nasce
             // com `disabled=true` preso, mesmo com o documento disponível pra baixar.
             for (const it of this.intimacoesAtivas(idx)) {
-                const ref = it.evento_referenciado;
-                if (ref && !ref.fora_da_janela) {
-                    const chave = idx + ':' + ref.numero;
+                for (const numeroEvento of this.eventosReferenciadosDe(idx, it)) {
+                    const chave = idx + ':' + numeroEvento;
                     if (!(chave in this.baixando)) this.baixando[chave] = false;
                 }
             }
@@ -652,26 +651,44 @@ function processoJudicialBlock(cfg) {
             if (!r || !numeroEvento) return null;
             return (r.eventos || []).find((ev) => String(ev.numero) === String(numeroEvento)) || null;
         },
-        docsDisponiveis(idx, it) {
+        // TODOS os eventos referenciados por esta intimação — não só o 1º
+        // resolvido automaticamente pelo MCP em `evento_referenciado`: o
+        // e-proc admite MAIS DE UM ("Refer. ao Evento N e ao Evento M"), e os
+        // demais vêm soltos em `outros_eventos_referenciados` (só o número,
+        // sem descrição/documentos resolvidos pelo MCP — por isso cada um
+        // ainda precisa passar por `eventoDe`, que já busca na timeline
+        // completa já carregada). Mesma lógica que `services.
+        // intimacao_ia_service.obter_evento_referenciado_leve` já usa no
+        // backend (Triagem de Intimações) há meses — nunca tinha sido
+        // trazida pra este módulo da página do PAJ até agora. Achado real do
+        // usuário (2026-10-02, processo 5039332-75.2026.4.04.7000): a
+        // intimação referenciava os eventos 21 E 25, só o 21 aparecia aqui.
+        // Devolve `[]` se não houver nenhum (ou se o único estiver fora da
+        // janela de eventos carregada — mesmo critério de sempre).
+        eventosReferenciadosDe(idx, it) {
             const ref = it.evento_referenciado;
-            if (!ref) return [];
-            const ev = this.eventoDe(idx, ref.numero);
+            if (!ref || ref.fora_da_janela) return [];
+            const numeros = [String(ref.numero)];
+            for (const extra of it.outros_eventos_referenciados || []) {
+                const n = String(extra).trim();
+                if (n && !numeros.includes(n)) numeros.push(n);
+            }
+            return numeros;
+        },
+        docsDisponiveis(idx, numeroEvento) {
+            const ev = this.eventoDe(idx, numeroEvento);
             return (ev && ev.arquivos_baixados) || [];
         },
-        temDocPendente(idx, it) {
-            const ref = it.evento_referenciado;
-            if (!ref || ref.fora_da_janela) return false;
-            const ev = this.eventoDe(idx, ref.numero);
+        temDocPendente(idx, numeroEvento) {
+            const ev = this.eventoDe(idx, numeroEvento);
             return !!(ev && (ev.documentos || []).length && !(ev.arquivos_baixados || []).length);
         },
         // Documentos do evento referenciado AINDA NÃO baixados — um badge por
         // documento (mesmo padrão da coluna "Documentos" da página "Consultar
         // processo"), clicar em qualquer um baixa todos de uma vez (mesmo
-        // request de sempre — ver baixarDocIntimacao).
-        docsPendentes(idx, it) {
-            const ref = it.evento_referenciado;
-            if (!ref) return [];
-            const ev = this.eventoDe(idx, ref.numero);
+        // request de sempre — ver baixarDocEvento).
+        docsPendentes(idx, numeroEvento) {
+            const ev = this.eventoDe(idx, numeroEvento);
             return (ev && ev.documentos) || [];
         },
         linkArquivo(idx, arq) {
@@ -679,13 +696,15 @@ function processoJudicialBlock(cfg) {
             return '/api/eproc-mcp/arquivo?' + new URLSearchParams({ numero: numero, arquivo: arq.arquivo }).toString();
         },
 
-        // Baixa o(s) documento(s) do evento referenciado por UMA intimação — sob demanda,
-        // só quando o defensor clica no badge do documento pendente (não baixa tudo
-        // automaticamente). Clicar em qualquer badge do mesmo evento baixa todos de uma vez.
-        async baixarDocIntimacao(idx, it) {
-            const ref = it.evento_referenciado;
-            if (!ref) return;
-            const chave = idx + ':' + ref.numero;
+        // Baixa o(s) documento(s) de UM evento referenciado — sob demanda, só
+        // quando o defensor clica no badge do documento pendente (não baixa
+        // tudo automaticamente). Clicar em qualquer badge do mesmo evento
+        // baixa todos de uma vez. Recebe o NÚMERO do evento diretamente
+        // (antes recebia a intimação inteira e só sabia tratar o 1º evento
+        // referenciado — ver `eventosReferenciadosDe`), pra funcionar igual
+        // pro evento principal e pra cada "outro evento referenciado".
+        async baixarDocEvento(idx, numeroEvento) {
+            const chave = idx + ':' + numeroEvento;
             if (this.baixando[chave]) return;
             this.baixando[chave] = true;
             const numero = this.processos[idx].processo_judicial;
@@ -693,15 +712,15 @@ function processoJudicialBlock(cfg) {
                 const resp = await fetch('/api/eproc-mcp/baixar-documentos', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ numero: numero, instancia: 1, evento_ids: [String(ref.numero)] }),
+                    body: JSON.stringify({ numero: numero, instancia: 1, evento_ids: [String(numeroEvento)] }),
                 });
                 const r = await resp.json();
                 if (!resp.ok || r.erro) {
                     showToast(r.erro || 'Falha ao baixar o documento da intimação.', 'error');
                     return;
                 }
-                const arqs = (r.arquivos_por_evento || {})[String(ref.numero)];
-                const ev = this.eventoDe(idx, ref.numero);
+                const arqs = (r.arquivos_por_evento || {})[String(numeroEvento)];
+                const ev = this.eventoDe(idx, numeroEvento);
                 if (arqs && ev) ev.arquivos_baixados = arqs;
                 if (r.erros && r.erros.length) {
                     showToast('Documento não pôde ser baixado (acesso restrito ou indisponível).', 'warning');

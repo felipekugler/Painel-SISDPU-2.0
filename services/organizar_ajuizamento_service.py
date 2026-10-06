@@ -123,6 +123,63 @@ def get_status(paj_norm: str) -> dict:
     return {"status": "idle", "log": "", "error": ""}
 
 
+def reconciliar_sessoes_interrompidas() -> int:
+    """Mesmo princípio de
+    `analise_pretensao_service.reconciliar_sessoes_interrompidas` (ver lá a
+    motivação completa — achado ao vivo 2026-09-30) — corrige
+    `organizar_ajuizamento.json` que ficou com status "running" gravado por
+    uma sessão que o painel matou no meio (restart). Chamada uma vez no
+    startup (ver `app.py`); `_sessions` está sempre vazio nesse momento, então
+    qualquer "running" aqui é órfão.
+
+    Critério: pasta `Ajuizamento/` já existe e não está vazia (o trabalho
+    terminou) => "done"; senão => "error". Também acrescenta um evento NOVO
+    em historico.jsonl (append-only) com o status corrigido, mesmo padrão."""
+    if not PAJS_DIR.exists():
+        return 0
+
+    corrigidos = 0
+    for pasta in PAJS_DIR.iterdir():
+        if not pasta.is_dir() or not pasta.name.startswith("PAJ-"):
+            continue
+        paj_norm = pasta.name
+        disco = ler_disco(paj_norm)
+        if not disco or disco.get("status") != "running":
+            continue
+
+        pasta_ajuiz = pasta / "Ajuizamento"
+        terminou = pasta_ajuiz.exists() and any(pasta_ajuiz.iterdir())
+        if terminou:
+            novo_status = "done"
+            erro = ""
+        else:
+            novo_status = "error"
+            erro = "Sessão interrompida por reinício do painel antes da conclusão."
+
+        disco["status"] = novo_status
+        if erro:
+            disco["error"] = erro
+        with contextlib.suppress(Exception):
+            _arquivo_estado(paj_norm).write_text(
+                json.dumps(disco, ensure_ascii=False, indent=2), encoding="utf-8"
+            )
+        with contextlib.suppress(Exception):
+            historico.registrar(
+                paj_norm,
+                "organizar_ajuizamento",
+                status=novo_status,
+                resumo=(
+                    "(status corrigido no início do painel — sessão interrompida "
+                    "por reinício antes de concluir, mas a pasta Ajuizamento já "
+                    "tinha sido gerada com sucesso)"
+                    if terminou else ""
+                ),
+                error=erro,
+            )
+        corrigidos += 1
+    return corrigidos
+
+
 # Reforça idioma — mesma preocupação/redação de analise_pretensao_service:
 # sem instrução explícita, narração de passagem entre leitura de anexos tende
 # a sair em inglês mesmo com o restante em português.

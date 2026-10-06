@@ -29,6 +29,7 @@ nunca pede intervenção manual (diferente do navegador, que depende do 2FA
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 import re
@@ -283,9 +284,45 @@ async def cabecalho_completo(
     o MNI for ligado). Página "Consultar processo" do painel: chamada em
     paralelo à `triagem_processo` (que continua MNI-first, sem mudança) só
     pra enriquecer o cabeçalho — ver `templates/eproc_consultar.html`."""
-    return await _mcp_server().consultar_processo(
+    res = await _mcp_server().consultar_processo(
         numero, instancia=instancia, chave=chave, forcar_scraper=True
     )
+    await _completar_classe_relacionados(res)
+    return res
+
+
+async def _completar_classe_relacionados(res: dict[str, Any]) -> None:
+    """A `classe` de cada processo relacionado vem TRUNCADA na própria tabela
+    `#tableRelacionado` do e-proc (coluna estreita — confirmado ao vivo
+    2026-09-30 no processo 5050883-86.2025.4.04.7000: "ACORDO DE NÃO
+    PERSECUÇÃO ..."). O nome completo só existe no cabeçalho do processo
+    relacionado em si (`#txtClasse`), então busca ele separadamente, em
+    paralelo, só para os itens truncados. Falha (ou instância errada) por
+    item é engolida silenciosamente, mantendo a classe truncada como
+    fallback — não pode derrubar a consulta principal por causa disso."""
+    relacionados = res.get("processos_relacionados") or []
+    alvos = [
+        r for r in relacionados
+        if isinstance(r.get("classe"), str) and r["classe"].endswith("...") and r.get("numero_normalizado")
+    ]
+    if not alvos:
+        return
+
+    async def _buscar(rel: dict[str, Any]) -> None:
+        primeira = rel.get("instancia_provavel") or 1
+        for inst in (primeira, 3 - primeira):
+            try:
+                r = await _mcp_server().consultar_processo(
+                    rel["numero_normalizado"], instancia=inst, forcar_scraper=True
+                )
+            except Exception:
+                continue
+            classe = r.get("classe")
+            if classe and "erro" not in r:
+                rel["classe"] = classe
+                return
+
+    await asyncio.gather(*(_buscar(rel) for rel in alvos))
 
 
 async def triagem_processo(

@@ -8,6 +8,7 @@ import contextlib
 import json
 import os
 import re
+import shutil
 import unicodedata
 import uuid
 from pathlib import Path
@@ -554,6 +555,147 @@ def get_sisdpu_modelos_despacho() -> list[dict]:
 
 def set_sisdpu_modelos_despacho(modelos: list[dict]) -> list[dict]:
     return _set_modelos_texto("sisdpu_modelos_despacho", modelos)
+
+
+# --- "Petição com IA" (menu "Minutar Petição" da página do PAJ) — tipos
+# cadastrados pelo usuário, cada um com uma instrução livre pra IA (ANTES
+# disso, pedido do usuário 2026-10-02, cada tipo era um dict fixo no código
+# apontando pra uma pasta de arquivos .md em teses-dpu — só eu conseguia
+# criar um tipo novo). Dois jeitos de proposital diferentes de
+# "Petição Padrão"/"Despachos padrão" acima:
+#   1. Ordem de INSERÇÃO importa (é a ordem do menu) — não ordena por nome.
+#   2. Além do texto, cada tipo pode ter arquivo(s) de referência fixos
+#      (upload real, ver salvar_arquivo_referencia_minuta_ia abaixo) — por
+#      isso não reaproveita `_get_modelos_texto`/`_set_modelos_texto`
+#      (pensados só pra texto, {id,nome,texto}).
+_CHAVE_MINUTAS_IA = "minutas_ia_tipos"
+
+# Mesma convenção de `dados/` na raiz do PAINEL SISDPU (fora do workspace do
+# Ofício Geral) usada por `acoes_eproc_service.RASCUNHOS_DIR` — aqui pasta
+# por TIPO (não por PAJ), guardando os arquivos de referência fixos dele.
+MINUTAS_IA_ARQUIVOS_DIR = Path(__file__).resolve().parent.parent.parent / "dados" / "minutas_ia_arquivos"
+
+
+def minutas_ia_tipos_cadastrado() -> bool:
+    """True se o cadastro já foi inicializado alguma vez (mesmo que o usuário
+    tenha apagado todos os tipos depois) — distingue "nunca migrado" (deve
+    semear os 3 tipos que já existiam embutidos em código, ver
+    `minuta_ia_service._semear_tipos_padrao`) de "usuário esvaziou de
+    propósito" (não deve semear de novo)."""
+    return _CHAVE_MINUTAS_IA in _ler_raw()
+
+
+def get_minutas_ia_tipos() -> list[dict]:
+    """Ordem de INSERÇÃO (é a ordem do submenu "Petição com IA")."""
+    return _ler_raw().get(_CHAVE_MINUTAS_IA) or []
+
+
+def set_minutas_ia_tipos(tipos: list[dict]) -> list[dict]:
+    """Substitui a lista COMPLETA — gera `id` pros itens novos (vêm do front
+    sem id, ou com id vazio), descarta item sem `label`. Remove do disco a
+    pasta de arquivos de referência de qualquer tipo que tenha SAÍDO da
+    lista (evita lixo órfão)."""
+    raw = _ler_raw()
+    antigos_ids = {t.get("id") for t in (raw.get(_CHAVE_MINUTAS_IA) or [])}
+
+    limpos: list[dict] = []
+    for t in tipos or []:
+        if not isinstance(t, dict):
+            continue
+        label = str(t.get("label") or "").strip()
+        if not label:
+            continue
+        limpos.append({
+            "id": str(t.get("id") or "").strip() or uuid.uuid4().hex[:8],
+            "label": label,
+            "instrucao": str(t.get("instrucao") or ""),
+            # Vazio = usa o padrão do sistema ("peça curta, 3-6 parágrafos,
+            # sem tópicos numerados") — ver minuta_ia_service._montar_prompt.
+            # Só precisa preencher quando a peça exigir outra estrutura (ex.:
+            # Contrarrazões de Recurso, mais substancial).
+            "instrucao_estilo": str(t.get("instrucao_estilo") or ""),
+            "documentos_sugeridos": str(t.get("documentos_sugeridos") or ""),
+            "documentos_obrigatorios": bool(t.get("documentos_obrigatorios", True)),
+            "arquivos_referencia": [
+                {"nome": str(a.get("nome") or "")}
+                for a in (t.get("arquivos_referencia") or [])
+                if isinstance(a, dict) and a.get("nome")
+            ],
+        })
+
+    novos_ids = {t["id"] for t in limpos}
+    for removido in antigos_ids - novos_ids:
+        if removido:
+            with contextlib.suppress(Exception):
+                shutil.rmtree(_minutas_ia_arquivo_dir(removido), ignore_errors=True)
+
+    raw[_CHAVE_MINUTAS_IA] = limpos
+    _salvar_raw(raw)
+    return limpos
+
+
+def _minutas_ia_arquivo_dir(tipo_id: str) -> Path:
+    return MINUTAS_IA_ARQUIVOS_DIR / tipo_id
+
+
+def salvar_arquivo_referencia_minuta_ia(tipo_id: str, nome_original: str, conteudo: bytes) -> dict:
+    """Grava os BYTES de um arquivo de referência fixo do tipo, e já atualiza
+    o cadastro (`arquivos_referencia`) — mesmo padrão de
+    `acoes_eproc_service.salvar_arquivo_rascunho` (dedup por sufixo
+    numérico), só que por TIPO em vez de por PAJ."""
+    raw = _ler_raw()
+    tipos = raw.get(_CHAVE_MINUTAS_IA) or []
+    tipo = next((t for t in tipos if t.get("id") == tipo_id), None)
+    if tipo is None:
+        return {"ok": False, "erro": "Tipo de petição com IA não encontrado."}
+
+    pasta = _minutas_ia_arquivo_dir(tipo_id)
+    pasta.mkdir(parents=True, exist_ok=True)
+    nome = re.sub(r"[^\w\-. ]", "_", nome_original or "arquivo")
+    destino = pasta / nome
+    if destino.exists():
+        base, ext = destino.stem, destino.suffix
+        i = 2
+        while (pasta / f"{base}_{i}{ext}").exists():
+            i += 1
+        destino = pasta / f"{base}_{i}{ext}"
+    destino.write_bytes(conteudo)
+
+    tipo.setdefault("arquivos_referencia", []).append({"nome": destino.name})
+    _salvar_raw(raw)
+    return {"ok": True, "nome_arquivo": destino.name, "tamanho": len(conteudo)}
+
+
+def remover_arquivo_referencia_minuta_ia(tipo_id: str, nome_arquivo: str) -> bool:
+    raw = _ler_raw()
+    tipos = raw.get(_CHAVE_MINUTAS_IA) or []
+    tipo = next((t for t in tipos if t.get("id") == tipo_id), None)
+    if tipo is None:
+        return False
+
+    antes = tipo.get("arquivos_referencia") or []
+    depois = [a for a in antes if a.get("nome") != nome_arquivo]
+    if len(depois) == len(antes):
+        return False
+    tipo["arquivos_referencia"] = depois
+    _salvar_raw(raw)
+
+    caminho = caminho_arquivo_referencia_minuta_ia(tipo_id, nome_arquivo)
+    if caminho:
+        with contextlib.suppress(Exception):
+            caminho.unlink()
+    return True
+
+
+def caminho_arquivo_referencia_minuta_ia(tipo_id: str, nome_arquivo: str) -> Path | None:
+    """Resolve o caminho garantindo que fique DENTRO da pasta do tipo (mesmo
+    cuidado de `acoes_eproc_service.caminho_arquivo_rascunho` — nome vem de
+    path param da URL)."""
+    pasta = _minutas_ia_arquivo_dir(tipo_id).resolve()
+    p = (pasta / (nome_arquivo or "")).resolve()
+    if pasta not in p.parents and p != pasta:
+        return None
+    return p if p.exists() and p.is_file() else None
 
 
 # --- Identificação do Ofício/Defensor (aba Geral das Configurações) ---

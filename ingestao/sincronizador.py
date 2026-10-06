@@ -17,6 +17,8 @@ import asyncio
 import base64
 import json
 import re
+import subprocess
+import sys
 from pathlib import Path
 from collections.abc import Callable
 
@@ -29,6 +31,37 @@ from config import (
 )
 from ingestao import ocr, parser, sisdpu_client, sisdpu_movtram
 import contextlib
+
+# Worker de vida curta e SEM rede usado como 1ª tentativa de gravação abaixo —
+# mesmo workaround provisório do FortiClient (ver services.intimacao_service.
+# _gravar_via_subprocesso, 2026-08-28): o antivírus bloqueia o PROCESSO DO
+# SERVIDOR (app.py, porta 8001 aberta) de gravar/substituir arquivo, mas um
+# processo Python de vida curta sem socket de rede grava livremente na mesma
+# pasta. Confirmado ao vivo 2026-10-05: sync avulso de PAJ-2025-029-01045
+# (disparado por abrirPajPainel() ao clicar no número do PAJ na tabela de
+# Intimações de Prazos) estourou `PermissionError` gravando sisdpu.txt mesmo
+# com as retentativas abaixo já esgotadas — esse caminho nunca tinha sido
+# migrado pro worker (só intimacao_service/intimacao_ia_service tinham sido).
+_PROJETO_DIR = Path(__file__).resolve().parents[1]
+_ARQUIVO_WORKER = _PROJETO_DIR / "services" / "_arquivo_worker.py"
+
+
+def _gravar_via_subprocesso(destino: Path, texto: str) -> bool:
+    """Devolve True em sucesso; False em qualquer falha (worker ausente, erro
+    de execução, timeout) — o chamador cai pro método antigo (escrita direta
+    + retentativas), então uma falha aqui nunca impede a gravação, só a torna
+    mais lenta."""
+    if not _ARQUIVO_WORKER.exists():
+        return False
+    try:
+        r = subprocess.run(
+            [sys.executable, str(_ARQUIVO_WORKER), str(destino)],
+            input=texto.encode("utf-8"), capture_output=True,
+            cwd=str(_PROJETO_DIR), timeout=30,
+        )
+        return r.returncode == 0
+    except Exception:
+        return False
 
 # Formato canonico: AAAA/UUU-NNNNN (5 digitos no numero). Alinhado com
 # services.paj_service.PAJ_NORM_REGEX — toda a app trabalha com largura fixa,
@@ -150,9 +183,18 @@ async def _escrever_texto_com_retry(
     entre sincronizacoes — sinal de bloqueio externo passageiro, nao de uma
     segunda escrita simultanea.
 
+    1ª tentativa é sempre via `_gravar_via_subprocesso` (worker sem rede, ver
+    acima) — escapa do bloqueio PERSISTENTE do FortiClient no processo do
+    servidor, que as retentativas abaixo (pensadas pra bloqueio transitorio)
+    nunca resolviam sozinhas. Só cai pra escrita direta+retry se o worker
+    falhar por qualquer outro motivo.
+
     `await asyncio.sleep` (nao `time.sleep`) entre tentativas — isso roda
     dentro do event loop do FastAPI/uvicorn, um sleep sincrono travaria TODAS
     as requisicoes do painel durante a espera."""
+    if await asyncio.to_thread(_gravar_via_subprocesso, caminho, texto):
+        return
+
     espera = espera_inicial
     for tentativa in range(1, tentativas + 1):
         try:

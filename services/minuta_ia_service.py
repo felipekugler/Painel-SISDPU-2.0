@@ -9,11 +9,18 @@ o Defensor escolhe manualmente OS DOCUMENTOS-FONTE (modal com 2 abas: eventos
 do processo + anexos do PAJ) — não há heurística de "adivinhar qual é o
 laudo". Ver `routes/minutas.py`.
 
-Cada "tipo de minuta" do dropdown aponta pra uma ÁREA do monorepo `teses-dpu`
-(playbook + modelos + CLAUDE.md), migrada de um Claude Project do Defensor
-(ver TIPOS_MINUTA abaixo) — mas o CONTEÚDO desses arquivos é lido AQUI, em
-Python, e embutido no prompt como texto (ver `_ler_area_texto`); o Claude
-NÃO abre esses arquivos sozinho.
+Cada "tipo de minuta" do submenu "Petição com IA" é um registro cadastrado
+pelo usuário (Configurações › e-proc › Petição com IA — ver
+`config_painel_service.get_minutas_ia_tipos`/`set_minutas_ia_tipos`): rótulo +
+instrução livre pra IA + arquivo(s) de referência fixos opcionais. ATÉ
+2026-10-02 cada tipo era um dict fixo no código apontando pra uma ÁREA do
+monorepo `teses-dpu` (playbook + modelos + CLAUDE.md) — só eu conseguia criar
+um tipo novo (editando código). Migrado pra cadastro editável pelo próprio
+usuário, sem precisar de código: na 1ª leitura do cadastro vazio (nunca
+inicializado), `_semear_tipos_padrao()` pré-popula com os 3 tipos que já
+existiam, usando o conteúdo ATUAL dos arquivos teses-dpu como texto inicial
+(ver `_ler_area_texto_migracao`) — os arquivos em teses-dpu continuam no
+disco, só deixam de ser lidos por este fluxo a partir daí.
 
 Motivo de existir dessa decisão (bug real, PAJ 2026/029-01460, 18/08/2026):
 a primeira versão apontava `cwd` do subprocesso pra dentro de `teses-dpu` e
@@ -63,69 +70,111 @@ from datetime import datetime
 from pathlib import Path
 
 from config import PAJS_DIR
+from services import config_painel_service
 from services.chat_service import CLAUDE_CMD
 from services.peticao_ia_service import (
     MODELOS_DIR, _REGRAS_FORMATO, _docx_para_html, _docx_para_pdf, _gerar_docx_sem_viuva,
 )
 
+# Só usada por `_ler_area_texto_migracao` (migração ÚNICA do cadastro antigo,
+# ver `_semear_tipos_padrao`) — não faz mais parte do fluxo normal de
+# geração, que lê o cadastro em `config_painel_service` (editável pelo
+# usuário em Configurações › e-proc › Petição com IA).
 TESES_DPU_DIR = Path(r"C:\Claude\teses-dpu")
 
-# Catálogo de tipos de minuta do dropdown "Gerar Minuta". Cada entrada aponta
-# pra uma área do monorepo teses-dpu (só a origem do CONTEÚDO — ver
-# `_ler_area_texto`; o Claude não abre esses arquivos, o painel lê e embute
-# no prompt). Primeira migrada: BI - Laudo Médico Pericial (Project do
-# claude.ai) -> areas/beneficio-incapacidade/.
-#
-# `instrucao_estilo` (opcional): substitui `_INSTRUCAO_ESTILO_PADRAO` (peça
-# curta de 3-6 parágrafos, certa pra uma manifestação reativa simples) por
-# uma própria, quando a peça exigir outra extensão/estrutura — ver
-# "contrarrazoes-recurso" abaixo, adicionada 2026-09-25.
-TIPOS_MINUTA: dict[str, dict] = {
-    # Primeira opção do menu (ordem de inserção no dict = ordem no menu/
-    # dropdown) — pedido do usuário, 2026-09-26: opção "coringa" sem
-    # playbook de matéria fixo, guiada pela Orientação Diretiva + documentos
-    # selecionados (ver areas/peticao-generica/CLAUDE.md).
-    "peticao-generica": {
-        "label": "Petição genérica",
-        "area_dir": TESES_DPU_DIR / "areas" / "peticao-generica",
-        "documentos_sugeridos": "os documentos relevantes ao propósito descrito na "
-                                "Orientação Diretiva",
-        # Único tipo em que documento é OPCIONAL — a Orientação Diretiva
-        # sozinha pode bastar (ex.: o Defensor já dita o conteúdo todo na
-        # caixa, sem precisar reanexar nada que já conste dos autos). Os
-        # demais tipos continuam exigindo ao menos 1 documento (default
-        # True — ver `iniciar()`/`_gerar_worker`).
-        "documentos_obrigatorios": False,
-    },
-    "bi-laudo-pericial": {
-        "label": "Manifestação sobre laudo médico pericial (BI)",
-        "area_dir": TESES_DPU_DIR / "areas" / "beneficio-incapacidade",
-        "documentos_sugeridos": "laudo pericial e petição inicial",
-    },
-    "contrarrazoes-recurso": {
-        "label": "Contrarrazões de Recurso",
-        "area_dir": TESES_DPU_DIR / "areas" / "contrarrazoes-recurso",
-        "documentos_sugeridos": "recurso interposto, decisão/sentença recorrida, "
-                                "petição inicial e/ou contestação",
-        "instrucao_estilo": (
-            "## ATENÇÃO — estrutura desta peça\n"
-            "Contrarrazões de recurso são MAIS substanciais que uma manifestação simples — "
-            "NÃO se limite a 3-6 parágrafos. Siga os blocos descritos nos critérios acima "
-            "(seção 2 do playbook): abertura, síntese da decisão recorrida, síntese do "
-            "recurso, preliminar (só se cabível), rebate de CADA ponto do recurso "
-            "separadamente (um ou mais parágrafos por ponto, na mesma ordem do recurso), "
-            "pedido final. Mesmo assim, em texto corrido — SEM tópicos numerados formais "
-            "(nada de \"I – DOS FATOS\", \"II – DO DIREITO\" etc.), mantendo o estilo pessoal "
-            "de parágrafos bem delimitados por bloco/ponto rebatido, não títulos "
-            "romanos.\n\n"
-        ),
-    },
-}
+
+def _tipos_cadastrados() -> list[dict]:
+    """Cadastro de "Petição com IA" (ver config_painel_service), semeando os
+    3 tipos antigos na 1ª leitura (cadastro nunca inicializado)."""
+    if not config_painel_service.minutas_ia_tipos_cadastrado():
+        return _semear_tipos_padrao()
+    return config_painel_service.get_minutas_ia_tipos()
+
+
+def _tipo_por_id(tipo_id: str) -> dict | None:
+    return next((t for t in _tipos_cadastrados() if t.get("id") == tipo_id), None)
 
 
 def listar_tipos() -> list[dict]:
-    """Catálogo pro dropdown do front — só {slug, label}, na ordem declarada."""
-    return [{"slug": slug, "label": cfg["label"]} for slug, cfg in TIPOS_MINUTA.items()]
+    """Catálogo ENXUTO pro submenu "Petição com IA" da página do PAJ — só
+    {slug, label}, na ordem cadastrada. Ver `listar_tipos_completos()` pra
+    versão cheia (Configurações › e-proc › Petição com IA)."""
+    return [{"slug": t["id"], "label": t["label"]} for t in _tipos_cadastrados()]
+
+
+def listar_tipos_completos() -> list[dict]:
+    """Cadastro completo (id/label/instrucao/instrucao_estilo/
+    documentos_sugeridos/documentos_obrigatorios/arquivos_referencia) pra
+    tela de Configurações › e-proc › Petição com IA (CRUD)."""
+    return _tipos_cadastrados()
+
+
+def _ler_area_texto_migracao(area_dir: Path) -> str:
+    """SÓ usada por `_semear_tipos_padrao` (migração única do cadastro antigo)
+    — lê CLAUDE.md + playbook/*.md + modelos/*.md da área teses-dpu, mantendo
+    o NOME de cada arquivo como cabeçalho (pedido do usuário, 2026-10-02: numa
+    caixa de texto só — sem mais arquivos separados — os cabeçalhos
+    preservam alguma organização visual pra revisão manual depois)."""
+    partes: list[str] = []
+    claude_md = area_dir / "CLAUDE.md"
+    if claude_md.exists():
+        partes.append(f"## CLAUDE.md\n\n{claude_md.read_text(encoding='utf-8')}")
+    for sub, titulo in (("playbook", "Playbook"), ("modelos", "Modelos")):
+        pasta = area_dir / sub
+        if pasta.exists():
+            for f in sorted(pasta.glob("*.md")):
+                partes.append(f"## {titulo} — {f.name}\n\n{f.read_text(encoding='utf-8')}")
+    return "\n\n---\n\n".join(partes)
+
+
+# Mesma instrução de estilo que "Contrarrazões de Recurso" já usava fixa no
+# código — vira o valor inicial do campo `instrucao_estilo` desse tipo na
+# migração (ver `_semear_tipos_padrao`), editável dali em diante.
+_INSTRUCAO_ESTILO_CONTRARRAZOES_MIGRACAO = (
+    "## ATENÇÃO — estrutura desta peça\n"
+    "Contrarrazões de recurso são MAIS substanciais que uma manifestação simples — "
+    "NÃO se limite a 3-6 parágrafos. Siga os blocos descritos nos critérios acima "
+    "(seção 2 do playbook): abertura, síntese da decisão recorrida, síntese do "
+    "recurso, preliminar (só se cabível), rebate de CADA ponto do recurso "
+    "separadamente (um ou mais parágrafos por ponto, na mesma ordem do recurso), "
+    "pedido final. Mesmo assim, em texto corrido — SEM tópicos numerados formais "
+    "(nada de \"I – DOS FATOS\", \"II – DO DIREITO\" etc.), mantendo o estilo pessoal "
+    "de parágrafos bem delimitados por bloco/ponto rebatido, não títulos "
+    "romanos.\n\n"
+)
+
+
+def _semear_tipos_padrao() -> list[dict]:
+    """1ª inicialização do cadastro (nunca rodado antes) — pré-popula com os
+    3 tipos que até 2026-10-02 eram fixos em código/arquivos teses-dpu,
+    usando o texto de HOJE como ponto de partida editável (pedido do usuário:
+    "podemos já deixar pré-cadastradas... com as orientações que já estão
+    cadastradas")."""
+    tipos = [
+        {
+            "label": "Petição genérica",
+            "instrucao": _ler_area_texto_migracao(TESES_DPU_DIR / "areas" / "peticao-generica"),
+            "documentos_sugeridos": "os documentos relevantes ao propósito descrito na "
+                                    "Orientação Diretiva",
+            # Único tipo em que documento é OPCIONAL — a Orientação Diretiva
+            # sozinha pode bastar. Os demais exigem ao menos 1 documento
+            # (default True — ver `iniciar()`/`_gerar_worker`).
+            "documentos_obrigatorios": False,
+        },
+        {
+            "label": "Manifestação sobre laudo médico pericial (BI)",
+            "instrucao": _ler_area_texto_migracao(TESES_DPU_DIR / "areas" / "beneficio-incapacidade"),
+            "documentos_sugeridos": "laudo pericial e petição inicial",
+        },
+        {
+            "label": "Contrarrazões de Recurso",
+            "instrucao": _ler_area_texto_migracao(TESES_DPU_DIR / "areas" / "contrarrazoes-recurso"),
+            "instrucao_estilo": _INSTRUCAO_ESTILO_CONTRARRAZOES_MIGRACAO,
+            "documentos_sugeridos": "recurso interposto, decisão/sentença recorrida, "
+                                    "petição inicial e/ou contestação",
+        },
+    ]
+    return config_painel_service.set_minutas_ia_tipos(tipos)
 
 
 # paj_norm -> {status: idle|running|done|error, erro, arquivos, iniciado_em}
@@ -181,7 +230,7 @@ def iniciar(paj_norm: str, processo: str, tipo_slug: str, documentos: list[dict]
     "Calcular Qualidade de Segurado" — ver paj_detail.html), lida pelo front
     da mesma variável Alpine e enviada aqui (ver static/js/minuta_ia.js).
     Retorna {ok, status, erro?}."""
-    cfg = TIPOS_MINUTA.get(tipo_slug)
+    cfg = _tipo_por_id(tipo_slug)
     if not cfg:
         return {"ok": False, "erro": f"Tipo de minuta desconhecido: {tipo_slug!r}."}
     documentos = [d for d in (documentos or []) if d.get("origem")]
@@ -206,8 +255,10 @@ def iniciar(paj_norm: str, processo: str, tipo_slug: str, documentos: list[dict]
 
 def _gerar_worker(paj_norm: str, processo: str, tipo_slug: str, documentos: list[dict], orientacao: str = "") -> None:
     try:
-        cfg = TIPOS_MINUTA[tipo_slug]
-        area_dir: Path = cfg["area_dir"]
+        cfg = _tipo_por_id(tipo_slug)
+        if not cfg:
+            _falhar(paj_norm, f"Tipo de minuta desconhecido: {tipo_slug!r}.")
+            return
         pasta_paj = PAJS_DIR / paj_norm
         pasta_pecas_ia = pasta_paj / "Peças IA"
         pasta_pecas_ia.mkdir(parents=True, exist_ok=True)
@@ -217,17 +268,20 @@ def _gerar_worker(paj_norm: str, processo: str, tipo_slug: str, documentos: list
         # real — download/arquivo sumido). Sem seleção nenhuma (permitido só
         # pra tipos com documentos_obrigatorios=False, ex.: "peticao-generica")
         # segue em frente com `caminhos` vazio — a peça se apoia só na
-        # Orientação Diretiva/conhecimento geral.
+        # Orientação Diretiva/conhecimento geral. NÃO depende dos arquivos de
+        # referência do tipo (resolvidos à parte, abaixo) — esses são fixos
+        # do cadastro, nunca "selecionados" pelo Defensor nesta tela.
         if documentos and not caminhos:
             _falhar(paj_norm, "Não foi possível localizar nenhum dos documentos selecionados "
                                "(falha ao baixar do e-proc, ou arquivo do PAJ não existe mais em disco).")
             return
 
-        criterio_area = _ler_area_texto(area_dir)
+        texto_referencia, caminhos_referencia = _resolver_arquivos_referencia(cfg)
+        criterio_area = (cfg.get("instrucao") or "") + texto_referencia
         paj_exibicao = _paj_exibicao(paj_norm)
         antes = _listar_arquivos(pasta_pecas_ia)
         prompt = _montar_prompt(paj_exibicao, processo, criterio_area, caminhos, pasta_pecas_ia,
-                                 orientacao=orientacao, cfg=cfg)
+                                 orientacao=orientacao, cfg=cfg, caminhos_referencia=caminhos_referencia)
 
         # Prompt por STDIN (não argumento) — mesmo motivo de peticao_ia_service.py:
         # o texto dos documentos-fonte facilmente passa do limite de linha de
@@ -318,20 +372,31 @@ def _paj_exibicao(paj_norm: str) -> str:
     return paj_norm
 
 
-def _ler_area_texto(area_dir: Path) -> str:
-    """Lê CLAUDE.md + playbook/*.md + modelos/*.md da área e devolve como um
-    texto único, pra embutir DIRETO no prompt — o Claude não abre esses
-    arquivos sozinho (ver docstring do módulo pro motivo: evita cwd dentro
-    de teses-dpu, que carregaria o CLAUDE.md raiz daquele monorepo)."""
-    arquivos: list[Path] = []
-    claude_md = area_dir / "CLAUDE.md"
-    if claude_md.exists():
-        arquivos.append(claude_md)
-    for sub in ("playbook", "modelos"):
-        pasta = area_dir / sub
-        if pasta.exists():
-            arquivos.extend(sorted(pasta.glob("*.md")))
-    return "\n\n---\n\n".join(f.read_text(encoding="utf-8") for f in arquivos)
+def _resolver_arquivos_referencia(cfg: dict) -> tuple[str, list[Path]]:
+    """Arquivos de referência fixos cadastrados pro tipo (Configurações ›
+    e-proc › Petição com IA — ver config_painel_service.
+    salvar_arquivo_referencia_minuta_ia), à parte dos documentos do CASO
+    selecionados pelo Defensor na hora. `.md`/`.txt` são lidos e embutidos
+    como texto (mesmo tratamento que CLAUDE.md/playbook/modelos já tinham
+    antes de virarem campo editável); qualquer outra extensão (`.pdf`/
+    `.docx` etc.) vira um caminho a mais — a IA já sabe abrir esses formatos,
+    mesmo mecanismo dos documentos do caso."""
+    texto_extra = ""
+    caminhos_extra: list[Path] = []
+    tipo_id = cfg.get("id", "")
+    for arq in (cfg.get("arquivos_referencia") or []):
+        nome = arq.get("nome") or ""
+        if not nome:
+            continue
+        caminho = config_painel_service.caminho_arquivo_referencia_minuta_ia(tipo_id, nome)
+        if not caminho:
+            continue
+        if caminho.suffix.lower() in (".md", ".txt"):
+            with contextlib.suppress(Exception):
+                texto_extra += f"\n\n---\n\n## Referência — {nome}\n\n{caminho.read_text(encoding='utf-8')}"
+        else:
+            caminhos_extra.append(caminho)
+    return texto_extra, caminhos_extra
 
 
 def _resolver_documentos(paj_norm: str, processo: str, documentos: list[dict]) -> list[Path]:
@@ -443,12 +508,23 @@ _INSTRUCAO_ESTILO_PADRAO = (
 
 
 def _montar_prompt(paj_exibicao: str, processo: str, criterio_area: str, caminhos: list[Path], pasta_destino: Path,
-                    orientacao: str = "", cfg: dict | None = None) -> str:
+                    orientacao: str = "", cfg: dict | None = None, caminhos_referencia: list[Path] | None = None) -> str:
     # Sem documento nenhum (só permitido pra tipos com documentos_obrigatorios=
     # False, ex.: "peticao-generica") — a peça se apoia só na Orientação
     # Diretiva/conhecimento geral; deixa isso EXPLÍCITO pro modelo em vez de
     # uma seção "Documentos-fonte" vazia e muda esperando conteúdo ali.
-    lista_docs = ("\n".join(f"- `{c}`" for c in caminhos) if caminhos
+    # Material de referência do TIPO (fixo, cadastrado em Configurações) vai
+    # separado dos documentos do CASO (selecionados pelo Defensor agora) —
+    # ver `_resolver_arquivos_referencia`.
+    caminhos_referencia = caminhos_referencia or []
+    blocos_docs = []
+    if caminhos_referencia:
+        blocos_docs.append("### Material de referência desta área (cadastrado no tipo, vale pra qualquer caso)\n"
+                            + "\n".join(f"- `{c}`" for c in caminhos_referencia))
+    if caminhos:
+        blocos_docs.append("### Documentos do caso selecionados pelo Defensor\n"
+                            + "\n".join(f"- `{c}`" for c in caminhos))
+    lista_docs = ("\n\n".join(blocos_docs) if blocos_docs
                   else "(nenhum documento foi selecionado — baseie-se na Orientação Diretiva "
                        "abaixo e no que for de conhecimento geral pertinente)")
     nome_sugerido = pasta_destino / f"manifestacao-{datetime.now().strftime('%d-%m-%Y')}.docx"
@@ -471,11 +547,12 @@ def _montar_prompt(paj_exibicao: str, processo: str, criterio_area: str, caminho
             "texto da peça em vez de simplesmente ignorar ou seguir cegamente.\n\n"
         )
 
-    # Instrução de tamanho/estrutura da peça — cada tipo de minuta pode
-    # substituir a padrão (peça curta, sem tópicos — certa pra uma
-    # manifestação reativa simples) por uma própria, quando a peça exigir
-    # outra estrutura (ex.: Contrarrazões de Recurso, que rebate vários
-    # pontos e se beneficia de alguma estruturação — ver TIPOS_MINUTA).
+    # Instrução de tamanho/estrutura da peça — cada tipo pode substituir a
+    # padrão (peça curta, sem tópicos — certa pra uma manifestação reativa
+    # simples) por uma própria, via o campo "instrucao_estilo" do cadastro
+    # (Configurações › e-proc › Petição com IA), quando a peça exigir outra
+    # estrutura (ex.: Contrarrazões de Recurso, que rebate vários pontos e
+    # se beneficia de alguma estruturação).
     instrucao_estilo = cfg.get("instrucao_estilo") or _INSTRUCAO_ESTILO_PADRAO
 
     return (
