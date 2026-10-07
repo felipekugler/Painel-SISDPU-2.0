@@ -1,0 +1,198 @@
+{% extends "base.html" %}
+{% block title %}Consultar e-Sisrec{% endblock %}
+
+{% block content_class %}flex flex-col flex-1 p-0{% endblock %}
+
+{% block head %}
+<style>
+  .tnum { font-variant-numeric: tabular-nums; }
+  .ev-desc { white-space: pre-line; }
+  /* Zebra — :nth-of-type pelo mesmo motivo do eproc_consultar.html (o
+     <template x-for> do Alpine desloca a contagem de :nth-child). */
+  .esisrec-eventos tbody tr:nth-of-type(even) > td { background-color: var(--layer-alt); }
+  .table-scroll-fix { overflow-y: hidden; }
+</style>
+{% endblock %}
+
+{% block content %}
+<!-- Consulta de recurso administrativo no e-Sisrec, aberta pela caixa
+     "e-Sisrec" do cabeçalho. Leitura feita SEM janela (Chromium headless,
+     ver ingestao/esisrec_client.py) — só consulta, nada é movimentado. -->
+<div x-data="esisrecConsultarApp()" x-init="init()" x-cloak class="flex flex-col flex-1">
+
+  <div class="px-8 pt-6 pb-2">
+    <h1 class="text-3xl font-semibold tracking-tight">Consultar e-Sisrec</h1>
+    <div class="text-xs text-base-content/50 mt-1">Recurso administrativo (INSS / CRPS) — somente leitura</div>
+  </div>
+
+  <div class="px-8 py-3">
+    <div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3">
+      <form @submit.prevent="buscar()" class="flex items-center gap-3 flex-wrap">
+        <input type="text" x-model="numero" placeholder="Protocolo / CPF / NB"
+               class="input input-sm input-bordered w-96 font-mono" />
+        <button type="submit" class="btn btn-sm btn-primary" :disabled="carregando">
+          <span x-show="carregando" class="loading loading-spinner loading-xs"></span>
+          Consultar
+        </button>
+        <button type="button" class="btn btn-sm btn-primary" :disabled="!numero || abrindo" @click="abrirNoEsisrec()"
+                title="Abre este processo no próprio site do e-Sisrec, numa janela à parte">
+          <span x-show="abrindo" class="loading loading-spinner loading-xs"></span>
+          Abrir no e-Sisrec
+        </button>
+      </form>
+    </div>
+  </div>
+
+  <div class="px-8 pb-8 flex-1 flex flex-col gap-6">
+
+    <template x-if="erro && !carregando">
+      <div class="alert alert-error text-sm"><span x-text="erro"></span></div>
+    </template>
+
+    <template x-if="!resultado && !carregando && !erro">
+      <div class="bg-base-200 rounded-lg border border-base-300 p-10 text-center text-base-content/50">
+        Informe o protocolo, CPF ou NB e clique em <strong>Consultar</strong>.
+      </div>
+    </template>
+
+    <template x-if="carregando">
+      <div class="bg-base-200 rounded-lg border border-base-300 p-10 text-center text-base-content/50">
+        <span class="loading loading-spinner loading-sm mr-2"></span> Consultando o e-Sisrec…
+        <div class="text-xs mt-2">A primeira consulta faz o login no GERID e leva cerca de 15 segundos.</div>
+      </div>
+    </template>
+
+    <template x-if="resultado && !carregando">
+      <div class="flex flex-col gap-6">
+
+        <div class="bg-base-200 rounded-lg border border-base-300 px-4 py-4">
+          <div class="flex items-start gap-3">
+            <div class="flex-1">
+              <div class="text-xs text-base-content/50">Processo</div>
+              <div class="text-lg font-bold font-mono" x-text="resultado.numero || resultado.titulo"></div>
+            </div>
+            <!-- Extrato do processo no CRPS = "Gerar Relatório Andamento" do
+                 e-Sisrec, gerado sem janela e aberto numa nova aba. -->
+            <a class="btn btn-sm btn-primary gap-1" target="_blank" rel="noopener"
+               :href="'/api/esisrec/extrato?numero=' + encodeURIComponent(resultado.busca)"
+               title="Abre o relatório de andamento do processo (extrato do CRPS) numa nova aba">
+              <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5M16.5 12 12 16.5m0 0L7.5 12m4.5 4.5V3" /></svg>
+              Baixar Extrato do Processo
+            </a>
+          </div>
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-3 mt-3 text-sm">
+            <div><div class="text-xs text-base-content/50">Espécie</div><div x-text="resultado.especie || '—'"></div></div>
+            <div><div class="text-xs text-base-content/50">Órgão atual</div><div class="font-semibold" x-text="resultado.orgao || '—'"></div></div>
+            <div>
+              <div class="text-xs text-base-content/50">Motivo(s)</div>
+              <template x-for="(m, i) in (resultado.motivos || [])" :key="i"><div x-text="m"></div></template>
+              <div x-show="!(resultado.motivos || []).length">—</div>
+            </div>
+            <div><div class="text-xs text-base-content/50">APS responsável</div><div x-text="resultado.aps || '—'"></div></div>
+            <div class="md:col-span-2"><div class="text-xs text-base-content/50">Correspondência</div><div x-text="resultado.correspondencia || '—'"></div></div>
+          </div>
+        </div>
+
+        <div class="bg-base-200 rounded-lg border border-base-300 overflow-hidden" x-show="(resultado.partes || []).length">
+          <div class="px-4 py-2 border-b border-base-300 text-sm font-semibold">Partes do processo</div>
+          <div class="overflow-x-auto table-scroll-fix">
+            <table class="table table-sm">
+              <thead><tr class="text-xs font-bold"><th>Nome</th><th>CPF/CNPJ</th><th>Tipo</th><th>Principal</th><th>Representação</th></tr></thead>
+              <tbody>
+                <template x-for="(p, i) in resultado.partes" :key="i">
+                  <tr class="text-xs">
+                    <td class="font-semibold" x-text="p.nome"></td>
+                    <td class="font-mono tnum" x-text="p.documento"></td>
+                    <td x-text="p.tipo"></td>
+                    <td x-text="p.principal"></td>
+                    <td x-text="p.representacao || '—'"></td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div class="bg-base-200 rounded-lg border border-base-300 overflow-hidden">
+          <div class="px-4 py-2 border-b border-base-300 text-sm font-semibold flex items-center gap-2">
+            Histórico de eventos
+            <span class="badge badge-ghost badge-sm" x-text="(resultado.eventos || []).length"></span>
+          </div>
+          <div class="overflow-x-auto table-scroll-fix">
+            <table class="table table-sm esisrec-eventos">
+              <thead><tr class="text-xs font-bold"><th>Nº</th><th>Data/Hora</th><th>Descrição</th><th>Documentos</th></tr></thead>
+              <tbody>
+                <template x-for="(ev, i) in resultado.eventos" :key="i">
+                  <tr class="text-xs align-top">
+                    <td class="tnum font-semibold" x-text="ev.n"></td>
+                    <td class="tnum whitespace-nowrap" x-text="ev.data"></td>
+                    <td class="ev-desc" x-text="ev.descricao"></td>
+                    <td>
+                      <template x-for="(d, j) in ev.documentos" :key="j">
+                        <a class="link link-primary block whitespace-nowrap" target="_blank" rel="noopener"
+                           :href="urlDocumento(ev, j)" x-text="d.nome"
+                           title="Abrir o documento numa nova aba"></a>
+                      </template>
+                    </td>
+                  </tr>
+                </template>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+      </div>
+    </template>
+  </div>
+</div>
+
+<script>
+function esisrecConsultarApp() {
+  return {
+    numero: '', carregando: false, abrindo: false, erro: '', resultado: null,
+
+    async init() {
+      const num = new URLSearchParams(window.location.search).get('numero');
+      if (num) { this.numero = num; await this.buscar(); }
+    },
+
+    async buscar() {
+      const n = (this.numero || '').replace(/\D/g, '');
+      if (!n) { this.erro = 'Informe o protocolo, CPF ou NB.'; return; }
+      this.carregando = true; this.erro = ''; this.resultado = null;
+      history.replaceState(null, '', '?numero=' + n);
+      try {
+        const r = await fetch('/api/esisrec/consultar?numero=' + encodeURIComponent(n));
+        const d = await r.json();
+        if (d.ok) { this.resultado = d; document.title = 'e-Sisrec ' + (d.numero || n); }
+        else this.erro = d.erro || 'Falha na consulta ao e-Sisrec.';
+      } catch (e) {
+        this.erro = 'Falha na consulta ao e-Sisrec: ' + e;
+      } finally {
+        this.carregando = false;
+      }
+    },
+
+    urlDocumento(ev, j) {
+      const qs = new URLSearchParams({ numero: this.resultado.busca, evento: ev.n, idx: j, pagina: ev.pagina || '1' });
+      return '/api/esisrec/documento?' + qs.toString();
+    },
+
+    async abrirNoEsisrec() {
+      const n = (this.numero || '').replace(/\D/g, '');
+      if (!n) return;
+      this.abrindo = true;
+      try {
+        const d = await (await fetch('/api/esisrec/abrir?numero=' + encodeURIComponent(n))).json();
+        if (d.ok) showToast('Processo aberto na janela do e-Sisrec.', 'success');
+        else showToast(d.erro || 'Falha ao abrir o e-Sisrec.', 'error');
+      } catch (e) {
+        showToast('Falha ao abrir o e-Sisrec: ' + e, 'error');
+      } finally {
+        this.abrindo = false;
+      }
+    },
+  };
+}
+</script>
+{% endblock %}
