@@ -1,6 +1,6 @@
 # Painel SISDPU
 
-Interface web para o pipeline **dpuscript** — sistema de monitoramento para Defensores Públicos Federais.
+Painel web para Defensores/as Públicos/as Federais que usam o **SISDPU** — centraliza a gestão da caixa de entrada, automatiza rotinas repetitivas no SISDPU e no e-proc, e usa IA (Claude) para diagnóstico jurídico, cálculos previdenciários e minuta de peças.
 
 > Desenvolvido para uso interno na DPU. Projeto pessoal, sem vínculo institucional oficial.
 
@@ -8,37 +8,55 @@ Interface web para o pipeline **dpuscript** — sistema de monitoramento para De
 
 ## O que é
 
-O **Painel SISDPU** é um painel web para Defensores/as Públicos/as Federais que usam o **SISDPU**. Centraliza num só lugar: organização e acompanhamento da caixa de entrada, triagem, gestão de prazos processuais, controle de peças.
+Nasceu como um sincronizador da caixa de entrada do SISDPU e cresceu para um painel completo de apoio à atuação previdenciária: lê e organiza os PAJs, automatiza ações repetitivas (movimentar/tramitar/concluir, peticionar no e-proc, baixar documentos de sistemas do INSS) e aciona o Claude Code para diagnóstico jurídico, cálculos e redação — sempre com o Defensor revisando e confirmando antes de qualquer ato real.
 
-O sistema tem dois blocos:
+---
 
-### Pipeline de ingestão (botão "Sincronizar caixa")
+## Funcionalidades
 
-1. Autentica no SISDPU via Playwright headless usando credenciais do `.env`
-2. Identifica novos PAJs e novas movimentações na caixa do defensor
-3. Baixa peças em PDF e extrai texto — com **OCR automático** (Tesseract) em documentos escaneados
-4. **Detecta prazos processuais** aplicando regras de rito (cível, JEF, penal, administrativo), dobra DPU, dias úteis vs. corridos e recesso forense
+### Caixa de entrada e organização
 
-### Painel web (FastAPI + DaisyUI/Alpine)
+- **Dashboard** — lista de PAJs com filtros por coluna (ofício, pretensão, data, análise), sincronização em **3 níveis** (Levíssima/Leve/Completa, com download de anexos opcional) rodando em um widget flutuante que sobrevive a troca de página/fechar a aba.
+- **Watchlist** — PAJs marcados para acompanhamento prioritário, com motivo.
+- **Retornos** — PAJs com tramitação de "Atendimento de retorno", com resumo e sugestão de despacho por IA.
+- **Arquivos SAT** — PAJs com pendência de juntada de documentos do SAT Central (INSS/Dataprev).
+- **Movimentações pendentes** e **Petições pendentes** — rascunhos de ações no SISDPU/e-proc preparados offline (inclusive para PAJ/processo ainda não sincronizado) e executados quando os sistemas estiverem disponíveis; suportam **fila de movimentações sequenciais**.
+- **Análises e Iniciais** — PAJs com diagnóstico ou petição inicial da IA aguardando revisão/ajuizamento.
+- **Agenda** — calendário unificando audiências, prazos finais do e-proc e compromissos/afastamentos cadastrados manualmente.
+- **Histórico** — log de todas as ações reais executadas (movimentações, peticionamentos, conclusões).
 
-- **Dashboard** com lista de todos os PAJs e filtros por foro, classificação e ofício
-- **Detalhe do PAJ** — movimentações, peças baixadas (com texto extraído), notas pessoais
-- **Prazos** — aba dedicada aos prazos detectados, com integração opcional ao Google Calendar
-- **Watchlist** — PAJs marcados como acompanhamento prioritário, com motivo
-- **Pipeline monitor** — histórico e logs das sincronizações já realizadas
-- **Chat com Claude Code (via CLI, sem API paga)** — triagem assistida com skills dedicadas + chat livre persistente por PAJ
-- **Busca textual** em movimentações e peças
-- **Geração de DOCX/PDF** via scripts externos do workspace do defensor
+### Dentro do PAJ — Ações com IA
+
+- **Analisar PAJ** — diagnóstico jurídico estruturado, com um playbook de teses dedicado por tipo de benefício: BPC/LOAS, benefício por incapacidade, pensão por morte, auxílio-reclusão, salário-maternidade e as aposentadorias (idade, tempo de contribuição, especial, PCD, professor) — além de uma análise ampla/genérica. Também gera um **Relatório do PAJ** (síntese cronológica da tramitação).
+- **Minutar Petição** — insere um modelo padrão cadastrado (sem IA) ou gera uma petição com IA a partir de documentos selecionados do processo/PAJ, salva em "Peças IA".
+- **Minutar Ofício** — a IA redige um ofício e cria a minuta diretamente no processo de ofícios do setor via **MCP-SEI**.
+- **Cálculos** — Tempo de Contribuição (análise competência a competência do CNIS) e Qualidade de Segurado (período de graça a partir de poucos dados), cada um gerando um PDF em "Peças IA".
+- **Consultas** — Consulta de RPV/Precatório (verifica pagamento e já registra a movimentação no SISDPU), Dossiê do Seguro-Desemprego Web, Extrato de processo no e-Sisrec/CRPS, inclusão na fila de Arquivos SAT.
+- **Organizar Pasta para Ajuizamento** — reorganiza os documentos do PAJ numa subpasta pronta para peticionamento.
+- **Ações no SISDPU** — console de movimentar/tramitar/concluir (um item ou uma fila de vários, executados em sequência).
+- **Ações no e-proc** — peticionamento real no processo judicial (duas etapas: preparar → confirmar), com **Gerenciamento de Processo** (substabelecimento) automático quando configurado.
+- **Movimentar Eproc + SISDPU** — executa as duas ações acima juntas, numa única confirmação.
+- **Dar mera ciência** — resposta rápida a intimações que só exigem ciência, direto da caixa.
+
+### e-proc
+
+- **Consultar processo** — cabeçalho, linha do tempo de eventos e intimações, lidos direto do e-proc sem abrir navegador (via componente `eproc-trf4`).
+- **Prazos** — prazos judiciais detectados, com cálculo de dias úteis/ciência ficta.
+- **Triagem Inteligente de Intimações** — lê as intimações abertas, classifica por tipo de ato (sentença homologatória, sentença de mérito, RPV/precatório etc.) e já prepara a manifestação cabível para revisão — nunca protocola sozinha.
+
+### Segurança
+
+- **Cofre de credenciais** — uma senha-mestra (nunca salva em disco) protege as credenciais de SISDPU, e-proc e SAT Central, cifradas no próprio computador. A leitura direta do e-proc (consulta/triagem) usa um cadastro à parte com TOTP.
 
 ---
 
 ## Pré-requisitos
 
 - **Python 3.11+**
-- **Workspace Ofício Geral** — a pasta onde ficam `PAJs/`, `Peças Feitas/`, `gerar_docx.py`, `gerar_peticao.py` e o `CLAUDE.md` do Defensor
-- **Claude Code** com modelo Max (claude-opus ou claude-sonnet) — a elaboração das peças é feita pelo Claude via CLI, não por API paga
-- **Playwright + Chromium** — para sincronizar a caixa SISDPU automaticamente
-- **Tesseract OCR (idioma `por`)** — para extrair texto de PDFs escaneados das peças baixadas
+- **Tesseract OCR** (idioma `por`) — para extrair texto de PDFs escaneados.
+- **Microsoft Word** — gera/converte petições e minutas em PDF.
+- **Claude Code CLI**, com login ativo — motor de toda a análise, cálculo e elaboração de peças por IA.
+- **Playwright + Chromium** — instalado automaticamente pelo instalador.
 
 ---
 
@@ -72,11 +90,10 @@ tesseract --version
 # 6. Configure o .env
 copy .env.example .env       # Windows
 # cp .env.example .env       # macOS/Linux
-# Edite .env e preencha:
-#   OFICIO_GERAL    = caminho para o workspace do Defensor
-#   SISDPU_USERNAME = seu usuario do SISDPU
-#   SISDPU_PASSWORD = sua senha do SISDPU
+# Edite .env e preencha OFICIO_GERAL (pasta onde ficam os PAJs)
 ```
+
+> Em Windows, o pacote `Instalação.zip` (gerado à parte deste repositório) automatiza os passos acima via `INSTALAR.bat`, e inclui também o componente de leitura direta do e-proc.
 
 ---
 
@@ -88,11 +105,11 @@ Edite o arquivo `.env`:
 OFICIO_GERAL=C:\Users\<seu_usuario>\Desktop\Ofício Geral
 # macOS/Linux: OFICIO_GERAL=/Users/<seu_usuario>/Desktop/Ofício Geral
 OFICIO_DESCRICAO=2ª Categoria - DPU/UF
-SISDPU_USERNAME=seu.usuario
-SISDPU_PASSWORD=sua.senha
 ```
 
-`OFICIO_GERAL` aponta para a pasta do Defensor — é onde ficam `PAJs/`, `Peças Feitas/`, os scripts `gerar_docx.py` / `gerar_peticao.py` e o `CLAUDE.md`. `OFICIO_DESCRICAO` é apenas o texto exibido na sidebar (cosmético). As credenciais SISDPU são usadas pela funcionalidade "Sincronizar caixa" do dashboard.
+`OFICIO_GERAL` aponta para a pasta onde ficam `PAJs/` e as peças geradas. `OFICIO_DESCRICAO` é apenas o texto exibido na sidebar (cosmético).
+
+As credenciais do SISDPU, e-proc e SAT Central são cadastradas em **Configurações → Cofre de credenciais**, protegidas por uma senha-mestra escolhida por você (nunca salva em disco). O `.env` ainda aceita `SISDPU_USERNAME`/`SISDPU_PASSWORD` como alternativa legada, mas o cofre é o caminho recomendado.
 
 ---
 
@@ -107,14 +124,7 @@ SISDPU_PASSWORD=sua.senha
 # http://localhost:8001
 ```
 
-O painel mostra todos os PAJs detectados em `OFICIO_GERAL/PAJs/PAJ-*/`. Para cada PAJ você pode:
-- Ver os detalhes extraídos do SISDPU (cabeçalho + movimentações)
-- Ver peças baixadas em PDF (com texto extraído via OCR quando necessário)
-- Acessar `.txt` extraídos e o `PROMPT_MAX.md` gerado dinamicamente
-- Acionar a elaboração de peças pelo Claude via chat
-- Gerar DOCX/PDF a partir de um `.txt` usando `gerar_docx.py` / `gerar_peticao.py`
-
-**Sincronizar caixa:** o botão "Sincronizar caixa" no dashboard autentica no SISDPU via Playwright, lê a caixa de entrada, extrai movimentações, baixa peças em PDF e roda OCR. O progresso aparece em tempo real num modal com log de eventos (SSE).
+O painel mostra todos os PAJs detectados em `OFICIO_GERAL/PAJs/PAJ-*/`. Veja a seção **Funcionalidades** acima para o que cada parte faz.
 
 ---
 
@@ -124,13 +134,9 @@ O painel mostra todos os PAJs detectados em `OFICIO_GERAL/PAJs/PAJ-*/`. Para cad
 Painel-SISDPU/
 ├── app.py              # FastAPI + Uvicorn
 ├── config.py           # Configurações (lê .env)
-├── ingestao/           # Pipeline de sincronização da caixa SISDPU
-│   ├── sisdpu_client.py  # Playwright headless
-│   ├── ocr.py            # Fitz + Tesseract
-│   ├── parser.py         # sisdpu.txt → metadata.json
-│   └── sincronizador.py  # orquestrador
-├── routes/             # Endpoints (dashboard, PAJs, chat, docgen, sync)
-├── services/           # Lógica de negócio
+├── ingestao/           # Clientes externos: SISDPU/e-proc/SAT/SEI (Playwright/HTTP)
+├── routes/             # Endpoints (dashboard, PAJ, prazos, intimações, e-proc, SISDPU...)
+├── services/           # Lógica de negócio (IA, cálculos, cofre, histórico...)
 ├── templates/          # HTML (Jinja2 + DaisyUI + Alpine.js)
 ├── static/             # CSS e JS estáticos
 └── requirements.txt
@@ -140,20 +146,17 @@ Painel-SISDPU/
 
 ## Workspace Ofício Geral
 
-Este painel lê os dados da pasta apontada por `OFICIO_GERAL`, que contém:
-- `PAJs/PAJ-YYYY-NNN-XXXXX/` — uma subpasta por PAJ (NNN = código de 3 dígitos da unidade) com `sisdpu.txt`, `metadata.json`, `Arquivos/`, peças geradas
-- `Peças Feitas/` — peças anteriores do Defensor (usadas como contexto no PROMPT_MAX)
-- `CLAUDE.md` — instruções do Defensor para o Claude Code
-- `gerar_docx.py` e `gerar_peticao.py` — scripts que o botão "Gerar DOCX/PDF" invoca
+Este painel lê os dados da pasta apontada por `OFICIO_GERAL`, que contém `PAJs/PAJ-YYYY-NNN-XXXXX/` — uma subpasta por PAJ (NNN = código de 3 dígitos da unidade) com `sisdpu.txt`, `metadata.json`, `Arquivos/`, "Peças IA/" e demais arquivos gerados.
 
 ---
 
 ## Tecnologias
 
 - **Backend:** FastAPI + Uvicorn
-- **Frontend:** DaisyUI (Tailwind CSS) + Alpine.js + HTMX
-- **Ingestão:** Playwright (SISDPU), PyMuPDF, Tesseract OCR
-- **IA:** Claude Code (claude-opus/sonnet) via CLI — sem API paga
+- **Frontend:** DaisyUI (Tailwind CSS) + Alpine.js
+- **Automação:** Playwright (SISDPU/e-proc/SAT/SEI), PyMuPDF, Tesseract OCR
+- **IA:** Claude Code via CLI — sem API paga
+- **e-proc headless:** componente `eproc-trf4` (HTTP direto, sem navegador)
 
 ---
 
