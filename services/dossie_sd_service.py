@@ -1,8 +1,9 @@
 """Botão "Dossiê Seguro-Desemprego Web" (menu Consultas da página do PAJ) —
 gera, por automação direta (sem IA), os dossiês das skills
 /SD-DossieVinculos, /SD-DossieRequerimentos ou ambos (/SD-Dossies) e salva o(s)
-PDF(s) na subpasta `Arquivos SD Web/` da pasta do PAJ (pedido do usuário,
-2026-10-02 — separada da `Arquivos/` padrão, como a `Arquivos SAT/`).
+PDF(s) na subpasta `Seguro Desemprego Web/` da pasta do PAJ (pedido do usuário,
+2026-10-02 — separada da `Arquivos/` padrão, como a `Arquivos SAT/`; nome
+"Seguro Desemprego Web" pedido em 2026-10-06, antes "Arquivos SD Web").
 
 ONE-CLICK: CPF e nome vêm do `metadata.json`. Fluxo (ver `ingestao.sd_client`):
   1. Abre o Chromium próprio do SD e loga no GERID do MTE com as credenciais do
@@ -53,7 +54,7 @@ TIPOS = {
 _ROTULO_ETAPA = {"vinculos": "Dossiê de Vínculos", "requerimentos": "Dossiê de Requerimentos"}
 
 _WORKER = Path(__file__).resolve().parent / "_sd_dossie_worker.py"
-SUBPASTA_SD = "Arquivos SD Web"
+SUBPASTA_SD = "Seguro Desemprego Web"  # renomeada de "Arquivos SD Web" em 2026-10-06
 MOV_DESCRICAO = "Dossiê do Seguro Desemprego Web"
 
 # {paj_norm: {"status": "running"|"done"|"error", "tipo": ..., "log": [...], "arquivos": [...]}}

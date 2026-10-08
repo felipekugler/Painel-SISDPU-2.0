@@ -347,6 +347,24 @@ async def _baixar_texto_evento(numero: str, evento_numero: str) -> str:
     return "\n\n".join(partes)
 
 
+def _formatar_endereco(e: dict) -> str:
+    """Mesmo formato de `app.py:_formatar_endereco_contato` (tooltip/cópia do
+    módulo Contatos) — duplicado aqui de propósito: é pequeno e sem estado,
+    e importar de `app.py` dentro de `services/` arriscaria import circular
+    (app.py importa de routes/*, que importam de services/*)."""
+    if not e:
+        return ""
+    partes = [
+        f"{e.get('logradouro', '')}, {e.get('numero', '')}".strip(", "),
+        e.get("complemento") or "",
+        e.get("bairro") or "",
+        e.get("municipio") or "",
+        e.get("uf") or "",
+        e.get("cep") or "",
+    ]
+    return ", ".join(p for p in partes if p)
+
+
 def _contexto_paj(paj_norm: str) -> dict:
     """Lê metadata.json do PAJ: qualificação básica do assistido (nome + CPF)
     e as últimas 10 movimentações (SISDPU) em ordem cronológica — dá à IA o
@@ -370,6 +388,18 @@ def _contexto_paj(paj_norm: str) -> dict:
     # duplicava a palavra ("PAJ: PAJ-2026-029-00897") — bug real 2026-09-25.
     paj_label = meta.get("paj") or paj_norm
 
+    # Telefones/e-mails/endereços — mesmos campos (`metadata.telefones`/
+    # `.emails`/`.enderecos`) e MESMO formato de junção do módulo Contatos
+    # (ver static/js/app.js:contatosApp — copiarTelefones/copiarEmails/
+    # copiarEnderecos), sem NENHUMA tentativa de religar a um assistido
+    # específico — pedido explícito do usuário 2026-10-06: a sincronização
+    # não liga cada item a uma pessoa (ver nota do endereço mais abaixo), e
+    # ele prefere expor a lista inteira sincronizada ("[TELEFONES]"/
+    # "[ENDERECOS]", no plural) a arriscar escolher o item errado.
+    telefones = ", ".join(t.get("numero", "") for t in (meta.get("telefones") or []) if t.get("numero"))
+    emails = ", ".join(e for e in (meta.get("emails") or []) if e)
+    enderecos = " | ".join(f for f in (_formatar_endereco(e) for e in (meta.get("enderecos") or [])) if f)
+
     movs_raw = (meta.get("detalhes_sisdpu") or {}).get("movimentacoes") or sisdpu_raw.get("movimentacoes") or []
     movs_ordenadas = sorted(movs_raw, key=lambda m: m.get("seq", 0))
     ultimas = movs_ordenadas[-10:]
@@ -380,6 +410,7 @@ def _contexto_paj(paj_norm: str) -> dict:
     } for m in ultimas]
 
     return {"assistido": assistido, "cpf": cpf, "processo": processo,
+            "telefones": telefones, "emails": emails, "enderecos": enderecos,
             "movimentacoes": movimentacoes, "paj_label": paj_label}
 
 
@@ -434,12 +465,20 @@ def obter_qualificacao_principal(paj_norm: str) -> dict:
     isso o usuário pediu pra mantê-lo, ao contrário do [LOCAL] (que sempre
     vinha errado, nunca vazio).
 
-    Endereço NÃO é resolvido aqui — a sincronização baixa endereços por
-    assistido PF mas sem religar ao `idPessoa`/principal (ver
-    ingestao/sisdpu_client._extrair_contatos_pf), então não há hoje um
-    endereço confiável do principal pra expor como placeholder."""
+    [TELEFONES]/[EMAILS]/[ENDERECOS] (plural, pedido do usuário 2026-10-06):
+    TODOS os itens sincronizados do PAJ, juntos numa string só (mesmo formato
+    de `static/js/app.js:contatosApp` — copiarTelefones/copiarEmails/
+    copiarEnderecos) — DE PROPÓSITO sem tentar religar a um assistido
+    específico (a sincronização não faz essa ligação — ver
+    ingestao/sisdpu_client._extrair_contatos_pf; mesmo num PAJ com 1 só
+    assistido, a lista de telefones pode incluir números de parentes, ex.
+    "CELULAR DA FILHA" — por isso o nome do placeholder deixa claro que é a
+    lista inteira, não "o" telefone do assistido)."""
     ctx = _contexto_paj(paj_norm)
-    return {"nome": ctx["assistido"], "cpf": ctx["cpf"], "processo": ctx["processo"]}
+    return {
+        "nome": ctx["assistido"], "cpf": ctx["cpf"], "processo": ctx["processo"],
+        "telefones": ctx["telefones"], "emails": ctx["emails"], "enderecos": ctx["enderecos"],
+    }
 
 
 def _montar_prompt(paj_norm: str, atos: list[dict], docx_destino: Path) -> str:

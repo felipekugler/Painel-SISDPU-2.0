@@ -38,20 +38,22 @@ async def api_preferencias():
 
 @router.get("/api/acoes-eproc/qualificacao/{paj_norm}", response_class=JSONResponse)
 async def api_qualificacao_principal(paj_norm: str):
-    """Nome + CPF do assistido PRINCIPAL do PAJ + o número do processo
+    """Nome + CPF do assistido PRINCIPAL do PAJ, telefones/e-mails/endereços
+    SINCRONIZADOS (todos, sem religar a pessoa nenhuma — ver docstring de
+    peticao_ia_service.obter_qualificacao_principal) + o número do processo
     judicial (SE houver exatamente um vinculado) — resolve os placeholders
-    [NOME]/[CPF]/[PROCESSO] de um "Modelo de petição" (Configurações ›
-    e-proc) ou "Despacho padrão" (Configurações › SISDPU) na hora de usá-lo
-    ([DATA] resolve no próprio front, não depende do PAJ). paj_norm vazio
-    (avulso, sem PAJ) devolve tudo vazio — o front mantém o placeholder
-    literal nesse caso, sem quebrar. [PROCESSO] também some vazio (de
-    propósito) quando o PAJ tem 0 ou 2+ processos vinculados — nunca escolhe
-    um arbitrariamente entre vários.
+    [NOME]/[CPF]/[TELEFONES]/[EMAILS]/[ENDERECOS]/[PROCESSO] de um "Modelo de
+    petição" (Configurações › e-proc) ou "Despacho padrão" (Configurações ›
+    SISDPU) na hora de usá-lo ([DATA] resolve no próprio front, não depende
+    do PAJ). paj_norm vazio (avulso, sem PAJ) devolve tudo vazio — o front
+    mantém o placeholder literal nesse caso, sem quebrar. [PROCESSO] também
+    some vazio (de propósito) quando o PAJ tem 0 ou 2+ processos vinculados
+    — nunca escolhe um arbitrariamente entre vários.
 
     NÃO tem mais [LOCAL] (removido 2026-09-16) — ver docstring de
     peticao_ia_service.obter_qualificacao_principal."""
     if not paj_norm:
-        return JSONResponse({"nome": "", "cpf": "", "processo": ""})
+        return JSONResponse({"nome": "", "cpf": "", "telefones": "", "emails": "", "enderecos": "", "processo": ""})
     return JSONResponse(peticao_ia_service.obter_qualificacao_principal(paj_norm))
 
 

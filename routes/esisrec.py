@@ -69,3 +69,38 @@ async def esisrec_extrato(numero: str):
 async def esisrec_abrir(numero: str):
     usuario, senha = _credenciais_sat()
     return JSONResponse(await esisrec_client.abrir_processo(numero, usuario, senha))
+
+
+# --- "Baixar Extrato de Processo CRPS" (menu Consultas da página do PAJ) -----
+# Ver services/extrato_crps_service.py.
+from fastapi.responses import FileResponse  # noqa: E402
+
+from services import extrato_crps_service  # noqa: E402
+from services.paj_service import PajNorm  # noqa: E402
+
+
+@router.post("/api/extrato-crps/obter/{paj_norm}")
+async def extrato_crps_obter(paj_norm: PajNorm, numero: str):
+    result = await extrato_crps_service.obter(paj_norm, numero)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 400)
+
+
+@router.get("/api/extrato-crps/status/{paj_norm}")
+async def extrato_crps_status(paj_norm: PajNorm):
+    return extrato_crps_service.get_status(paj_norm)
+
+
+@router.post("/api/extrato-crps/juntar/{paj_norm}")
+async def extrato_crps_juntar(paj_norm: PajNorm):
+    """Rota async de propósito: a juntada roda no loop principal (sessão SISDPU)."""
+    result = extrato_crps_service.juntar(paj_norm)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 400)
+
+
+@router.get("/api/extrato-crps/arquivo/{paj_norm}")
+async def extrato_crps_arquivo(paj_norm: PajNorm, nome: str):
+    p = extrato_crps_service.caminho_arquivo(paj_norm, nome)
+    if not p:
+        return JSONResponse({"erro": "arquivo não encontrado"}, status_code=404)
+    return FileResponse(str(p), media_type="application/pdf", filename=p.name,
+                        content_disposition_type="inline")

@@ -498,23 +498,6 @@
           </div>
         </div>
 
-        <!-- Ações no Eproc (módulo reutilizável — static/js/acoes_eproc.js) — só
-             quando há PAJ associado a este processo: rascunho, anexos e a
-             sincronização com "Ações no SISDPU" são todos ligados ao paj_norm,
-             sem ele o módulo não tem onde persistir nada. `:key` no PAJ+processo
-             força remontar do zero se o usuário consultar outro processo sem
-             recarregar a página — sem isso, o console continuaria operando
-             sobre o PAJ/processo da consulta ANTERIOR. -->
-        <template x-if="resultado && pajAssociado">
-          <div :key="pajAssociado + '|' + resultado.numero" class="bg-base-200 rounded-lg border border-base-300 px-4 py-3"
-               x-data="acoesEprocBlock({
-                           processos: [{ numero: resultado.numero }],
-                           paj: pajAssociado, pajNorm: pajExibicaoParaNorm(pajAssociado) || '',
-                       })" x-init="init()">
-            {% include "partials/acoes_eproc.html" %}
-          </div>
-        </template>
-
         <!-- Timeline de eventos — partial compartilhado com o modal "Gerar
              Minuta" (ver templates/partials/eventos_processo_tabela.html).
              modoSelecao não é definido aqui (fica undefined/false) — mesmo

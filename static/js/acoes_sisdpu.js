@@ -412,6 +412,14 @@ function acoesSisdpuBlock(cfg) {
                         const j = await (await fetch('/api/acoes-eproc/qualificacao/' + encodeURIComponent(this.pajNorm))).json();
                         if (j.nome) subs['[NOME]'] = j.nome;
                         if (j.cpf) subs['[CPF]'] = j.cpf;
+                        // Plural de propósito — TODOS os itens sincronizados do
+                        // PAJ, sem religar a um assistido específico (pedido do
+                        // usuário 2026-10-06: a sincronização não faz essa
+                        // ligação, então expõe a lista inteira em vez de
+                        // arriscar escolher o item errado).
+                        if (j.telefones) subs['[TELEFONES]'] = j.telefones;
+                        if (j.emails) subs['[EMAILS]'] = j.emails;
+                        if (j.enderecos) subs['[ENDERECOS]'] = j.enderecos;
                         // Só resolve quando há EXATAMENTE 1 processo judicial
                         // vinculado ao PAJ — com 0 ou 2+, o backend já devolve
                         // vazio de propósito (nunca escolhe um arbitrariamente
@@ -702,8 +710,24 @@ function acoesSisdpuBlock(cfg) {
             if (!this.pajNorm) return;
             try {
                 const resp = await fetch('/api/paj/' + encodeURIComponent(this.pajNorm) + '/movimentacoes');
-                if (resp.ok) { const d = await resp.json(); this.docsPaj = d.anexos_sisdpu || []; }
+                // Mais recente primeiro (maior sequencial no início do nome, ex.:
+                // "seq072 - 42532229 - envio de wpp.pdf" — ver sisdpu_client.py) no
+                // modal "Adicionar do SISDPU" — mesmo pedido/motivo do módulo Ações
+                // no Eproc (2026-10-06): os anexos que interessam normalmente são os
+                // últimos juntados ao PAJ, e a ordem crua (alfabética por nome de
+                // arquivo) exigia rolar a lista toda pra achá-los.
+                if (resp.ok) {
+                    const d = await resp.json();
+                    this.docsPaj = (d.anexos_sisdpu || []).slice().sort((a, b) => this._seqDe(b) - this._seqDe(a));
+                }
             } catch (e) {}
+        },
+        // Extrai o nº de sequência do prefixo "seqNNN - ..." do nome do arquivo
+        // — -1 (sempre por último) se não achar, pra nunca quebrar a ordenação
+        // por causa de um arquivo fora do padrão.
+        _seqDe(d) {
+            const m = /^seq(\d+)/.exec((d && d.nome) || '');
+            return m ? parseInt(m[1], 10) : -1;
         },
         async carregarPecasIa() {
             this.pecasIaCarregadas = true;

@@ -56,7 +56,7 @@ from services.valor_causa_service import INSTRUCAO_VALOR_CAUSA
 CONFIG_TIPOS: dict[str, dict] = {
     "bpc": {
         "skill": "SISDPU-AnalisarPAJ-BPC",
-        "label": "BPC",
+        "label": "Benefício Assistencial (BPC/LOAS)",
         "palavras_pretensao": (
             "BPC",
             "LOAS",
@@ -66,7 +66,7 @@ CONFIG_TIPOS: dict[str, dict] = {
     },
     "bi": {
         "skill": "SISDPU-AnalisarPAJ-BI",
-        "label": "Benefício por Incapacidade",
+        "label": "Benefício por incapacidade",
         "palavras_pretensao": (
             "AUXILIO-DOENCA",
             "AUXILIO DOENCA",
@@ -81,15 +81,75 @@ CONFIG_TIPOS: dict[str, dict] = {
     },
     "pensao_morte": {
         "skill": "SISDPU-AnalisarPAJ-Pensao",
-        "label": "Pensão por Morte",
+        "label": "Pensão por morte",
         "palavras_pretensao": (
             "PENSAO POR MORTE",
             "PENSAO MORTE",
         ),
     },
+    "salario_maternidade": {
+        "skill": "SISDPU-AnalisarPAJ-SalarioMaternidade",
+        "label": "Salário Maternidade",
+        "palavras_pretensao": (
+            "SALARIO-MATERNIDADE",
+            "SALARIO MATERNIDADE",
+            "LICENCA-MATERNIDADE",
+            "LICENCA MATERNIDADE",
+        ),
+    },
+    "auxilio_reclusao": {
+        "skill": "SISDPU-AnalisarPAJ-AuxilioReclusao",
+        "label": "Auxílio-reclusão",
+        "palavras_pretensao": (
+            "AUXILIO-RECLUSAO",
+            "AUXILIO RECLUSAO",
+        ),
+    },
+    "aposentadoria_idade": {
+        "skill": "SISDPU-AnalisarPAJ-AposentadoriaIdade",
+        "label": "Aposentadoria por idade",
+        "palavras_pretensao": (
+            "APOSENTADORIA POR IDADE",
+            "APOSENTADORIA HIBRIDA",
+            "APOSENTADORIA RURAL",
+        ),
+    },
+    "aposentadoria_tempo_contribuicao": {
+        "skill": "SISDPU-AnalisarPAJ-AposentadoriaTempoContribuicao",
+        "label": "Aposentadoria por tempo de contribuição",
+        "palavras_pretensao": (
+            "APOSENTADORIA POR TEMPO DE CONTRIBUICAO",
+            "APOSENTADORIA POR TEMPO DE SERVICO",
+        ),
+    },
+    "aposentadoria_professor": {
+        "skill": "SISDPU-AnalisarPAJ-AposentadoriaProfessor",
+        "label": "Aposentadoria do professor",
+        "palavras_pretensao": (
+            "APOSENTADORIA DO PROFESSOR",
+            "APOSENTADORIA PROFESSOR",
+            "APOSENTADORIA MAGISTERIO",
+        ),
+    },
+    "aposentadoria_especial": {
+        "skill": "SISDPU-AnalisarPAJ-AposentadoriaEspecial",
+        "label": "Aposentadoria Especial",
+        "palavras_pretensao": (
+            "APOSENTADORIA ESPECIAL",
+        ),
+    },
+    "aposentadoria_pcd": {
+        "skill": "SISDPU-AnalisarPAJ-AposentadoriaPCD",
+        "label": "Aposentadoria da pessoa com deficiência",
+        "palavras_pretensao": (
+            "APOSENTADORIA DA PESSOA COM DEFICIENCIA",
+            "APOSENTADORIA PESSOA COM DEFICIENCIA",
+            "APOSENTADORIA PCD",
+        ),
+    },
     "generica": {
         "skill": "",
-        "label": "Análise ampla",
+        "label": "Análise ampla (geral)",
         "palavras_pretensao": (),
     },
 }
@@ -440,6 +500,15 @@ _INSTRUCAO_DIAGNOSTICO_GENERICO = (
     "- [ ] <documento> — <para qual tese serve>\n\n"
     "### Lacunas para fechar o diagnóstico\n"
     "[perguntas objetivas, se faltar dado para confirmar alguma tese]\n\n"
+    "Se a pretensão real for benefício previdenciário do RGPS, os requisitos gerais "
+    "(qualidade de segurado, carência, qualidade de dependente, tempo de contribuição) "
+    "NÃO devem ser calculados à mão: aplique o protocolo "
+    "`~/.claude/skills/_comum/ORQUESTRACAO-INSTITUTOS.md` (matriz do §4) e acione as "
+    "skills `AnáliseQS`, `AnáliseCarência`, `AnáliseQualDependente` e "
+    "`AnáliseTempoContribuição` que o caso exigir, em modo estruturado, incluindo uma "
+    "linha \"Institutos gerais:\" no diagnóstico. Se identificar que a pretensão tem "
+    "skill dedicada (BI, salário-maternidade, pensão, auxílio-reclusão, aposentadorias, "
+    "BPC), sinalize isso no início do diagnóstico.\n\n"
     "Termine no diagnóstico — só avance para redigir petição/despacho/recurso "
     "se eu pedir explicitamente numa mensagem seguinte.\n\n"
 )

@@ -1001,56 +1001,6 @@
     </div>
 </div>
 
-<!-- Movimentações (seção própria, retrátil, aberta por padrão) — destacada
-     de dentro da seção com abas em 2026-09-21, reposicionada em 2026-09-29
-     (pedido do usuário) pra ficar logo abaixo de "Movimentar Sistemas" (que
-     por sua vez também subiu, pra logo abaixo de Narrativa) e acima de
-     "Ações com IA" (antes ficava lá embaixo). Mesmo padrão de toggle local das demais
-     seções retráteis desta página (Lembretes, Narrativa acima) —
-     `mostrar_botao_atualizar_movs` (Jinja, escopado só a este include via
-     `with`) liga o botão "Atualizar movimentações" só aqui — o mesmo
-     partial é reaproveitado também dentro de "Gerar Minuta" (seletor de
-     documentos, ver partials/minuta_ia.html) e lá não faz sentido nenhum
-     esse botão. O partial tem seu PRÓPRIO x-data (tabelaMovimentacoes(),
-     self-contido) — sem dependência nenhuma de nenhuma outra seção, então
-     mover é seguro. -->
-<div class="bg-base-200 border border-base-300 rounded-lg mb-4" x-data="{ aberto: true }">
-    <div class="flex items-center gap-2 px-4 py-3">
-        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
-            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
-                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
-            </svg>
-            <span class="text-lg font-semibold">Movimentações</span>
-            <span class="badge badge-primary badge-sm">{{ dados.movimentacoes|length }}</span>
-        </button>
-    </div>
-    <div x-show="aberto" x-cloak class="px-4 pb-4">
-        {% with mostrar_botao_atualizar_movs = true %}
-        {% include "partials/movimentacoes_tabela.html" %}
-        {% endwith %}
-    </div>
-</div>
-
-<!-- Prazos abertos (se houver) -->
-{% if dados.prazos_abertos %}
-<div class="alert alert-error mb-6">
-    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
-    </svg>
-    <div>
-        <h3 class="font-bold">Prazos abertos</h3>
-        {% for p in dados.prazos_abertos %}
-        <p class="text-sm">
-            <strong>{{ p.data_final | data_br }}</strong>
-            {% if p.dias is not none %} ({{ p.dias }} dias){% endif %}
-            {% if p.descricao %} — {{ p.descricao }}{% endif %}
-        </p>
-        {% endfor %}
-    </div>
-</div>
-{% endif %}
-
 <!-- Ações com IA (estilo e-proc) — reorganizada em menu de categorias
      (pedido do usuário, 2026-09-26): antes era uma única fileira com todos
      os botões soltos e acumulados; agora é uma barra de 5 categorias
@@ -1141,15 +1091,14 @@ document.addEventListener('alpine:init', () => {
     <div class="flex mt-2"
          :class="$store.acoesIaMenu.aberto ? 'flex-col items-stretch gap-0.5 bg-base-100 border border-base-300 rounded-box p-1.5 w-full max-w-3xl mx-auto' : 'flex-wrap items-center justify-center gap-2'">
 
-        <!-- Analisar PAJ: 4 itens, 1 clique cada (antes era dropdown +
-             botão "Analisar" separados) — dispara o diagnóstico na seção
-             "Análise feita pela IA" mais abaixo. "BPC/LOAS", "Benefício por
-             Incapacidade" e "Pensão por Morte" rodam o playbook de teses
-             dedicado (skills /SISDPU-AnalisarPAJ-BPC, /SISDPU-AnalisarPAJ-BI
-             e /SISDPU-AnalisarPAJ-Pensao); "Análise ampla" é diagnóstico
-             direto via PROMPT_MAX, sem playbook de área — permite escolher
-             a rota certa mesmo quando o PAJ está cadastrado no SISDPU com a
-             pretensão errada.
+        <!-- Analisar PAJ: dropdown em 2 grupos (pedido do usuário,
+             2026-10-07) — "Análise geral" ("Relatório do PAJ" +
+             "Análise ampla (geral)") e "Análises específicas" (os 10 tipos
+             com playbook de teses dedicado, skills /SISDPU-AnalisarPAJ-*,
+             na ordem pedida pelo usuário). Cada item dispara o diagnóstico
+             na seção "Análise feita pela IA" mais abaixo (exceto "Relatório
+             do PAJ", que abre um modal próprio — não usa
+             analise_pretensao_service).
 
              "Orientação diretiva para análise da IA" (pedido do usuário
              2026-09-17): texto livre opcional pro Defensor já direcionar a
@@ -1163,9 +1112,12 @@ document.addEventListener('alpine:init', () => {
              Petição" — `orientacaoDiretiva` mora no x-data do container
              externo da seção pra todos conseguirem acessá-la. -->
 
-        <!-- Síntese do PAJ: PRIMEIRO item do grupo (pedido do usuário,
-             2026-09-28) — mesma função de "Gerar Síntese do PAJ" já existente
-             em "Ações no SISDPU" (ver partials/acoes_sisdpu.html e
+        <div class="px-2 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-base-content/40"
+             x-show="$store.acoesIaMenu.aberto === 'analisar'">Análise geral</div>
+
+        <!-- Relatório do PAJ (ex-"Síntese do PAJ", renomeado 2026-10-07) —
+             mesma função de "Gerar Síntese do PAJ" já existente em "Ações no
+             SISDPU" (ver partials/acoes_sisdpu.html e
              static/js/acoes_sisdpu.js: gerarSinteseIA()), reaproveitando
              ipsis litteris o mesmo endpoint (POST /api/acoes-sisdpu/sintese-paj/
              {paj_norm} — services/acoes_sisdpu_service.gerar_sintese_paj, que só
@@ -1200,20 +1152,20 @@ document.addEventListener('alpine:init', () => {
                     x-show="$store.acoesIaMenu.aberto === 'analisar' && !gerando"
                     @click="gerar()"
                     title="Gera por IA um texto corrido com a síntese cronológica da tramitação do PAJ">
-                Síntese do PAJ
+                Relatório do PAJ
             </button>
             <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal" x-show="gerando" disabled>
                 <span class="loading loading-spinner loading-xs"></span>
-                <span>Gerando síntese do PAJ…</span>
+                <span>Gerando relatório do PAJ…</span>
             </button>
 
             <dialog class="modal" :open="modalAberto" @close="modalAberto = false">
                 <div class="modal-box max-w-2xl">
-                    <h3 class="font-bold text-lg mb-3">Síntese do PAJ</h3>
+                    <h3 class="font-bold text-lg mb-3">Relatório do PAJ</h3>
                     <div x-show="erro" class="alert alert-error text-xs py-2 px-3 mb-3"><span x-text="erro"></span></div>
                     <textarea x-show="!erro" x-model="texto" rows="14"
                               class="textarea textarea-bordered w-full text-sm"
-                              placeholder="Síntese gerada pela IA"></textarea>
+                              placeholder="Relatório gerado pela IA"></textarea>
                     <div class="modal-action">
                         <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="!erro"
                                 @click="navigator.clipboard.writeText(texto); showToast('Copiado!', 'success')">
@@ -1226,11 +1178,37 @@ document.addEventListener('alpine:init', () => {
             </dialog>
         </div>
 
+        <!-- Análise ampla (geral) — diagnóstico direto via PROMPT_MAX, sem
+             playbook de área específica; permite escolher a rota certa
+             mesmo quando o PAJ está cadastrado no SISDPU com a pretensão
+             errada. -->
+        <div class="contents">
+            <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                    x-show="$store.acoesIaMenu.aberto === 'analisar'"
+                    title="Diagnóstico jurídico geral via PROMPT_MAX, sem playbook de área específica"
+                    @click="
+                        $store.acoesIaMenu.aberto = null;
+                        document.getElementById('secao-abas-paj').scrollIntoView({behavior:'smooth'});
+                        window.dispatchEvent(new CustomEvent('iniciar-analise-ia', {detail:{tipo: 'generica', orientacao: orientacaoDiretiva}}));
+                    ">
+                Análise ampla (geral)
+            </button>
+        </div>
+
+        <div class="px-2 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-base-content/40"
+             x-show="$store.acoesIaMenu.aberto === 'analisar'">Análises específicas</div>
+
         <template x-for="op in [
-            { tipo: 'bpc', label: 'BPC/LOAS', title: 'Aplica o playbook de teses BPC/LOAS (skill /SISDPU-AnalisarPAJ-BPC)' },
-            { tipo: 'bi', label: 'Benefício por Incapacidade', title: 'Aplica o parecer de viabilidade dedicado (skill /SISDPU-AnalisarPAJ-BI)' },
-            { tipo: 'pensao_morte', label: 'Pensão por Morte', title: 'Aplica o playbook de teses dedicado (skill /SISDPU-AnalisarPAJ-Pensao)' },
-            { tipo: 'generica', label: 'Análise ampla', title: 'Diagnóstico jurídico geral via PROMPT_MAX, sem playbook de área específica' },
+            { tipo: 'bpc', label: 'Benefício Assistencial (BPC/LOAS)', title: 'Aplica o playbook de teses BPC/LOAS (skill /SISDPU-AnalisarPAJ-BPC)' },
+            { tipo: 'bi', label: 'Benefício por incapacidade', title: 'Aplica o parecer de viabilidade dedicado (skill /SISDPU-AnalisarPAJ-BI)' },
+            { tipo: 'pensao_morte', label: 'Pensão por morte', title: 'Aplica o playbook de teses dedicado (skill /SISDPU-AnalisarPAJ-Pensao)' },
+            { tipo: 'auxilio_reclusao', label: 'Auxílio-reclusão', title: 'Aplica o playbook de teses dedicado (skill /SISDPU-AnalisarPAJ-AuxilioReclusao) — remete a Pensão por Morte para dependentes/duração/RMI compartilhados' },
+            { tipo: 'salario_maternidade', label: 'Salário Maternidade', title: 'Aplica o playbook de teses dedicado (skill /SISDPU-AnalisarPAJ-SalarioMaternidade)' },
+            { tipo: 'aposentadoria_idade', label: 'Aposentadoria por idade', title: 'Aplica o playbook de teses dedicado (skill /SISDPU-AnalisarPAJ-AposentadoriaIdade) — urbana, rural e híbrida' },
+            { tipo: 'aposentadoria_tempo_contribuicao', label: 'Aposentadoria por tempo de contribuição', title: 'Aplica o playbook de teses dedicado (skill /SISDPU-AnalisarPAJ-AposentadoriaTempoContribuicao) — simula as 4 regras de transição da EC 103/2019' },
+            { tipo: 'aposentadoria_especial', label: 'Aposentadoria Especial', title: 'Aplica o playbook de teses dedicado (skill /SISDPU-AnalisarPAJ-AposentadoriaEspecial) — PPP/LTCAT, EPI, conversão de tempo' },
+            { tipo: 'aposentadoria_pcd', label: 'Aposentadoria da pessoa com deficiência', title: 'Aplica o playbook de teses dedicado (skill /SISDPU-AnalisarPAJ-AposentadoriaPCD) — LC 142/2013' },
+            { tipo: 'aposentadoria_professor', label: 'Aposentadoria do professor', title: 'Aplica o playbook de teses dedicado (skill /SISDPU-AnalisarPAJ-AposentadoriaProfessor)' },
         ]" :key="op.tipo">
             <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
                     x-show="$store.acoesIaMenu.aberto === 'analisar'"
@@ -1717,11 +1695,19 @@ document.addEventListener('alpine:init', () => {
             <dialog class="modal" :open="perguntaJuntada" @close="perguntaJuntada = false">
                 <div class="modal-box max-w-lg">
                     <h3 class="font-bold text-lg mb-2"><span x-text="rotulo || 'Dossiê'"></span> gerado com sucesso</h3>
+                    <p class="text-sm mb-3">O dossiê foi salvo na pasta <b>Seguro Desemprego Web</b> dentro da pasta do PAJ.</p>
                     <p class="text-sm mb-2">Deseja juntar ao SISDPU? Será registrada uma movimentação
                         "Juntada de documento" com a descrição <b>"Dossiê do Seguro Desemprego Web"</b>
                         e o(s) arquivo(s) abaixo como "Documentos do Assistido":</p>
-                    <ul class="text-xs list-disc pl-5 mb-2">
-                        <template x-for="a in arquivos" :key="a"><li x-text="a"></li></template>
+                    <ul class="text-xs mb-2 flex flex-col gap-2">
+                        <template x-for="a in arquivos" :key="a">
+                            <li class="flex flex-col items-start gap-1 border border-base-300 rounded p-2">
+                                <span class="break-all" x-text="a"></span>
+                                <a class="btn btn-xs btn-outline" target="_blank" rel="noopener"
+                                   :href="'/api/dossie-sd/arquivo/' + pajNorm + '?nome=' + encodeURIComponent(a)"
+                                   title="Abre o PDF numa nova aba, para conferir antes de juntar">Visualizar o arquivo</a>
+                            </li>
+                        </template>
                     </ul>
                     <div class="modal-action">
                         <button type="button" class="btn btn-sm" @click="dispensarJuntada()">Não juntar</button>
@@ -1729,6 +1715,61 @@ document.addEventListener('alpine:init', () => {
                     </div>
                 </div>
                 <form method="dialog" class="modal-backdrop"><button type="button" @click="perguntaJuntada = false">fechar</button></form>
+            </dialog>
+        </div>
+
+        <!-- Baixar Extrato de Processo CRPS: Relatório de Andamento do e-Sisrec
+             (mesma automação do botão "Baixar Extrato do Processo" da página
+             Consultar e-Sisrec), salvo em E-sisrec/ do PAJ, com opção de
+             juntar ao SISDPU. Ver services/extrato_crps_service.py e
+             static/js/extrato_crps.js. -->
+        <div class="contents" x-data="extratoCrpsApp('{{ paj_norm }}')" x-init="init()">
+            <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                    x-show="$store.acoesIaMenu.aberto === 'consultas' && juntada !== 'running'"
+                    @click="$store.acoesIaMenu.aberto = null; abrir()"
+                    title="Gera o extrato do andamento do processo de recurso no CRPS (e-Sisrec) e salva na pasta E-sisrec do PAJ — login automático com as credenciais do SAT Central">
+                Baixar Extrato de Processo CRPS
+            </button>
+            <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="juntada === 'running'" disabled>
+                <span class="loading loading-spinner loading-xs"></span>
+                <span>Juntando extrato CRPS ao SISDPU…</span>
+            </button>
+
+            <dialog class="modal" :open="aberto" @close="aberto = false">
+                <div class="modal-box max-w-lg">
+                    <h3 class="font-bold text-lg mb-3">Baixar Extrato de Processo CRPS</h3>
+                    <form @submit.prevent="obter()" class="flex items-center gap-2">
+                        <input type="text" x-ref="numeroCrps" x-model="numero" placeholder="Nº do processo (protocolo e-Sisrec)"
+                               class="input input-sm input-bordered flex-1 font-mono" :disabled="obtendo" />
+                        <button type="submit" class="btn btn-sm btn-primary" :disabled="obtendo">
+                            <span x-show="obtendo" class="loading loading-spinner loading-xs"></span>
+                            Obter extrato
+                        </button>
+                    </form>
+                    <p class="text-xs text-base-content/50 mt-2" x-show="obtendo">Acessando o e-Sisrec… a primeira consulta faz o login no GERID e leva cerca de 15 segundos.</p>
+                    <p class="text-xs text-error mt-2" x-show="erro" x-text="erro"></p>
+
+                    <template x-if="arquivo && !obtendo">
+                        <div class="mt-4 border-t border-base-300 pt-3">
+                            <div class="text-sm">Extrato salvo na pasta <b>E-sisrec</b> dentro da pasta do PAJ:</div>
+                            <div class="text-xs font-mono truncate mt-1" x-text="arquivo" :title="arquivo"></div>
+                            <div class="flex gap-2 mt-3 justify-end">
+                                <a class="btn btn-sm btn-primary" target="_blank" rel="noopener" :href="urlArquivo()"
+                                   title="Abre o PDF numa nova aba">Ver o extrato</a>
+                                <button type="button" class="btn btn-sm btn-primary" @click="juntar()"
+                                        :disabled="juntada === 'running' || juntada === 'ok'">
+                                    <span x-show="juntada === 'running'" class="loading loading-spinner loading-xs"></span>
+                                    <span x-text="juntada === 'ok' ? 'Juntado ao SISDPU' : 'Juntar ao SISDPU'"></span>
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+
+                    <div class="modal-action">
+                        <button type="button" class="btn btn-sm" @click="aberto = false">Fechar</button>
+                    </div>
+                </div>
+                <form method="dialog" class="modal-backdrop"><button type="button" @click="aberto = false">fechar</button></form>
             </dialog>
         </div>
 
@@ -1794,6 +1835,110 @@ document.addEventListener('alpine:init', () => {
                   rows="3"
                   placeholder="Orientação diretiva para análise da IA (opcional)"
                   title="Direcione a análise se já tiver uma linha definida pro caso — ex.: 'foque em tutela de urgência, já descartei acordo'. A IA usa isso como orientação, não como substituto da análise."></textarea>
+    </div>
+
+    <!-- Peças / Discutir / Análise IA — agrupadas numa subseção retrátil,
+         fechada por padrão (pedido do usuário, 2026-10-06): esses 3 blocos
+         eram sempre visíveis, ocupando bastante espaço vertical; viraram uma
+         única seção que some até o Defensor clicar. Cada bloco por dentro
+         continua exatamente como antes (mesmo x-data/funções de cada um) —
+         só a CASCA ganhou um x-data próprio (abertoExtras) pra controlar a
+         visibilidade do conjunto; mesmo ícone/padrão de chevron das demais
+         seções retráteis da página (Movimentações, Narrativa etc.). -->
+    <div class="mt-3 pt-3 border-t border-base-300" x-data="{ abertoExtras: false }">
+        <button type="button" class="flex items-center gap-2 w-full text-left" @click="abertoExtras = !abertoExtras">
+            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="abertoExtras ? 'rotate-90' : ''"
+                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+            </svg>
+            <span class="text-sm font-semibold">Peças, Discutir e Análise IA</span>
+        </button>
+        <div x-show="abertoExtras" x-cloak class="mt-1">
+    <!-- Peças judiciais geradas — antes era uma aba de "Análise IA + Peças";
+         virou subseção própria, sempre visível, posicionada ACIMA de
+         "Discutir o caso" (pedido do usuário, 2026-10-06). Nunca dependeu de
+         nenhum estado do analiseIaApp — era só list Jinja + funções globais
+         (verTxt/runDocgen/excluirArquivoPaj/abrirPastaPaj) — então sai de
+         dentro do x-data daquele bloco sem perder nada. id="badge-pecas-count"
+         preservado (excluirArquivoPaj() atualiza esse badge ao apagar um
+         arquivo). -->
+    <div class="mt-3 pt-3 border-t border-base-300">
+        <div class="flex items-start justify-between gap-3 mb-3 flex-wrap">
+            <h3 class="text-sm font-semibold">
+                Peças jurídicas geradas com IA
+                <span id="badge-pecas-count" class="badge badge-ghost badge-xs ml-1">{{ dados.pecas_judiciais|length }}</span>
+            </h3>
+            <button type="button"
+                    class="btn btn-sm btn-outline gap-1.5"
+                    onclick="abrirPastaPaj('{{ paj_norm }}', this)"
+                    title="Abre a pasta deste PAJ no Explorer (funciona só na máquina onde o painel está rodando)">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0v6a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-6m-19.5 0h19.5M5.25 9.75V6a2.25 2.25 0 0 1 2.25-2.25h4.5a2.25 2.25 0 0 1 1.591.659l1.409 1.409a2.25 2.25 0 0 0 1.591.659H18a2.25 2.25 0 0 1 2.25 2.25v3.75"></path>
+                </svg>
+                Abrir pasta no Explorer
+            </button>
+        </div>
+        {% if dados.pecas_judiciais %}
+        <div class="overflow-x-auto rounded-lg border border-base-300">
+            <table class="table table-sm">
+                <thead>
+                    <tr class="bg-base-300/50">
+                        <th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>Atualizado em</th><th>Ações</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for p in dados.pecas_judiciais %}
+                    <tr class="hover:bg-base-300/30">
+                        <td class="font-mono text-sm">{{ p.nome }}</td>
+                        <td>
+                            <span class="badge badge-sm {% if p.tipo == 'pdf' %}badge-error{% elif p.tipo == 'docx' %}badge-info{% elif p.tipo == 'txt' %}badge-ghost{% else %}badge-ghost{% endif %}">
+                                {{ p.tipo|upper or 'FILE' }}
+                            </span>
+                        </td>
+                        <td class="text-sm">{{ (p.tamanho / 1024)|round(1) }} KB</td>
+                        <td class="text-xs text-base-content/60 whitespace-nowrap">{{ p.modificado | data_hora_arquivo }}</td>
+                        <td>
+                            <div class="flex flex-wrap gap-1">
+                                {% if p.tipo in ('pdf', 'docx', 'doc') %}
+                                <a href="/files/{{ paj_norm }}/{{ p.caminho }}" target="_blank"
+                                   class="btn btn-primary btn-xs">Abrir</a>
+                                {% elif p.tipo in ('txt', 'md') %}
+                                <button class="btn btn-ghost btn-xs"
+                                        @click="verTxt('{{ paj_norm }}', '{{ p.caminho }}', '{{ p.nome|e }}')">Ler</button>
+                                <button class="btn btn-info btn-xs btn-outline"
+                                        onclick="runDocgen('{{ paj_norm }}', '{{ p.caminho }}', 'docx', 'Gerar DOCX — {{ p.nome|e }}')">
+                                    DOCX
+                                </button>
+                                <button class="btn btn-error btn-xs btn-outline"
+                                        onclick="runDocgen('{{ paj_norm }}', '{{ p.caminho }}', 'pdf', 'Gerar PDF — {{ p.nome|e }}')">
+                                    PDF
+                                </button>
+                                {% else %}
+                                <a href="/files/{{ paj_norm }}/{{ p.caminho }}" target="_blank"
+                                   class="btn btn-ghost btn-xs">Baixar</a>
+                                {% endif %}
+                                <button type="button" class="btn btn-ghost btn-xs text-error"
+                                        onclick="excluirArquivoPaj('{{ paj_norm }}', '{{ p.caminho|e }}', '{{ p.nome|e }}', this, 'badge-pecas-count')"
+                                        title="Excluir arquivo">
+                                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"></path></svg>
+                                </button>
+                            </div>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+        {% else %}
+        <!-- Mesmo estilo do vazio de "Discutir o caso" (pedido do usuário,
+             2026-09-29): centralizado, com ícone, em vez do alert padrão. -->
+        <div class="text-center py-6 text-base-content/50">
+            <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-2 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l4.414 4.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2Z" />
+            </svg>
+            <p class="text-sm">Nenhuma peça judicial gerada ainda para este PAJ.</p>
+        </div>
+        {% endif %}
     </div>
 
     <!-- Discutir o caso: antes era uma aba escondida atrás de um botão em
@@ -1878,174 +2023,132 @@ document.addEventListener('alpine:init', () => {
         </template>
     </div>
 
-    <!-- Análise IA + Peças — antes aglutinadas com "Anexos SISDPU" numa seção
-         de abas própria posicionada depois de Movimentações; "Anexos SISDPU"
-         foi destacada como seção retrátil própria, sozinha, ao final da
-         página (pedido do usuário, 2026-09-29 — ver logo abaixo de
-         Movimentações). Este bloco (Análise IA + Peças) virou SUBSEÇÃO
-         dentro de "Ações com IA", logo abaixo de "Discutir o caso" (mesmo
-         pedido) — fica mais perto dos botões que disparam a análise/geram
-         peça. x-data ÚNICO: mescla analiseIaApp() (status/summary/iniciar/
-         etc., usados tanto pela aba Análise IA quanto pelo badge de status
-         no rótulo da aba) com `tab` (aba ativa). id="secao-abas-paj"
+    <!-- Análise IA (diagnóstico por pretensão + reenvio p/ ajuste ou pedido de
+         petição inicial) — antes dividia uma aba com "Peças" (ver acima,
+         agora subseção própria); virou subseção sempre visível também
+         (pedido do usuário, 2026-10-06: tab bar com 1 item só não fazia mais
+         sentido). Sempre presente (não só em PAJs de BPC/LOAS): a rota
+         "Análise ampla" do dropdown cobre qualquer pretensão. id="secao-abas-paj"
          preservado — é o alvo do scrollIntoView() disparado pelos itens de
-         "Analisar PAJ" mais acima nesta mesma seção. -->
+         "Analisar PAJ" mais acima nesta mesma seção (o nome ficou de quando
+         era uma seção com abas; manter o id evita quebrar essa referência). -->
     <div id="secao-abas-paj" class="mt-3 pt-3 border-t border-base-300"
-         x-data="{...analiseIaApp('{{ paj_norm }}', '{{ tipo_ia_padrao }}'), tab: 'analise_ia'}"
+         x-data="analiseIaApp('{{ paj_norm }}', '{{ tipo_ia_padrao }}')"
          x-init="init()"
-         @iniciar-analise-ia.window="tab = 'analise_ia'; iniciar($event.detail && $event.detail.tipo, $event.detail && $event.detail.orientacao)">
-        <div role="tablist" class="tabs tabs-bordered mb-4">
-            <a role="tab" class="tab" :class="tab === 'analise_ia' && 'tab-active'" @click="tab = 'analise_ia'">
-                Análise IA
-                <span class="loading loading-spinner loading-xs text-warning ml-1" x-show="status === 'running'"></span>
-                <span class="badge badge-sm ml-1"
-                      :class="{
-                          'badge-warning': status === 'running',
-                          'badge-success': status === 'done',
-                          'badge-error': status === 'error',
-                          'badge-ghost': status === 'idle',
-                      }"
-                      x-text="status === 'running' ? 'em andamento' : (status === 'done' ? 'concluída' : (status === 'error' ? 'erro' : 'não iniciada'))"></span>
-            </a>
-            <a role="tab" class="tab" :class="tab === 'pecas_jud' && 'tab-active'" @click="tab = 'pecas_jud'"
-               title="Peças judiciais geradas pelo Claude (recursos, agravos, embargos, memoriais, petições...)">
-                Peças <span id="badge-pecas-count" class="badge badge-ghost badge-xs ml-1">{{ dados.pecas_judiciais|length }}</span>
-            </a>
+         @iniciar-analise-ia.window="iniciar($event.detail && $event.detail.tipo, $event.detail && $event.detail.orientacao)">
+        <div class="flex items-center gap-2 mb-3">
+            <h3 class="text-sm font-semibold">Análise feita pela IA (Diagnóstico)</h3>
+            <span class="loading loading-spinner loading-xs text-warning" x-show="status === 'running'"></span>
+            <span class="badge badge-sm"
+                  :class="{
+                      'badge-warning': status === 'running',
+                      'badge-success': status === 'done',
+                      'badge-error': status === 'error',
+                      'badge-ghost': status === 'idle',
+                  }"
+                  x-text="status === 'running' ? 'em andamento' : (status === 'done' ? 'concluída' : (status === 'error' ? 'erro' : 'não iniciada'))"></span>
         </div>
 
-        <!-- Aba: Análise IA (diagnóstico por pretensão + reenvio p/ ajuste ou pedido
-             de petição inicial). Sempre presente (não só em PAJs de BPC/LOAS): a
-             rota "Análise ampla" do dropdown cobre qualquer pretensão. -->
-        <div x-show="tab === 'analise_ia'" x-cloak class="pb-1">
-            <template x-if="status === 'idle'">
-                <div class="alert text-sm">
-                    Nenhuma análise realizada ainda. Escolha o tipo de análise no
-                    dropdown ao lado do botão <strong>"Analisar"</strong> na barra de
-                    ações (BPC/LOAS ou Análise ampla) e clique nele para diagnosticar
-                    este caso.
-                </div>
-            </template>
-
-            <template x-if="status === 'running'">
-                <div class="flex items-center gap-2 text-sm text-base-content/70 py-4">
-                    <span class="loading loading-spinner loading-sm"></span>
-                    <span x-text="lastAction || 'processando…'"></span>
-                </div>
-            </template>
-
-            <template x-if="status === 'error' && error">
-                <div class="alert alert-error text-sm mb-3" x-text="error"></div>
-            </template>
-
-            <template x-if="(status === 'done' || status === 'error') && summary">
-                <div class="text-sm leading-relaxed break-words bg-base-100 p-4 rounded border border-base-300/50 prose prose-sm max-w-none" x-html="renderedSummary()"></div>
-            </template>
-
-            <template x-if="status === 'done' || status === 'error'">
-                <div class="mt-4 pt-4 border-t border-base-300">
-                    <label class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1 block">
-                        Reenviar para a IA
-                    </label>
-                    <p class="text-xs text-base-content/40 mb-2">
-                        Peça um ajuste no diagnóstico, ou peça a redação da petição inicial —
-                        a conversa continua com todo o contexto já analisado.
-                    </p>
-                    <textarea class="textarea textarea-bordered w-full text-sm" rows="3"
-                              x-model="mensagemReenvio"
-                              placeholder="Ex: reconsidere o cenário C1, o INSS negou por cadastro desatualizado, não por renda. / Redija a petição inicial."
-                              :disabled="enviando || status === 'running'"></textarea>
-                    <div class="flex justify-end mt-2">
-                        <button type="button" class="btn btn-sm btn-primary" @click="enviarReenvio()"
-                                :disabled="enviando || status === 'running'">
-                            <span x-show="enviando" class="loading loading-spinner loading-xs"></span>
-                            Enviar
-                        </button>
-                    </div>
-                </div>
-            </template>
-        </div>
-
-        <!-- Aba: Peças judiciais geradas (inclui os antigos "despachos" — a
-             classificação/aba separada foi removida em 2026-09-18, junto com o
-             resto da seção "Outros"; despacho*.txt/.docx/.pdf agora entram
-             nesta mesma lista, sem distinção). -->
-        <div x-show="tab === 'pecas_jud'" x-cloak class="pb-1">
-            <div class="flex items-start justify-between gap-3 mb-1 flex-wrap">
-                <h3 class="text-lg font-semibold">Peças judiciais geradas</h3>
-                <button type="button"
-                        class="btn btn-sm btn-outline gap-1.5"
-                        onclick="abrirPastaPaj('{{ paj_norm }}', this)"
-                        title="Abre a pasta deste PAJ no Explorer (funciona só na máquina onde o painel está rodando)">
-                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
-                        <path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-19.5 0v6a2.25 2.25 0 0 0 2.25 2.25h15a2.25 2.25 0 0 0 2.25-2.25v-6m-19.5 0h19.5M5.25 9.75V6a2.25 2.25 0 0 1 2.25-2.25h4.5a2.25 2.25 0 0 1 1.591.659l1.409 1.409a2.25 2.25 0 0 0 1.591.659H18a2.25 2.25 0 0 1 2.25 2.25v3.75"></path>
-                    </svg>
-                    Abrir pasta no Explorer
-                </button>
+        <template x-if="status === 'idle'">
+            <div class="alert text-sm">
+                Nenhuma análise realizada ainda. Escolha o tipo de análise no
+                dropdown ao lado do botão <strong>"Analisar"</strong> na barra de
+                ações (BPC/LOAS ou Análise ampla) e clique nele para diagnosticar
+                este caso.
             </div>
-            {% if dados.pecas_judiciais %}
-            <div class="overflow-x-auto rounded-lg border border-base-300">
-                <table class="table table-sm">
-                    <thead>
-                        <tr class="bg-base-300/50">
-                            <th>Arquivo</th><th>Tipo</th><th>Tamanho</th><th>Atualizado em</th><th>Ações</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for p in dados.pecas_judiciais %}
-                        <tr class="hover:bg-base-300/30">
-                            <td class="font-mono text-sm">{{ p.nome }}</td>
-                            <td>
-                                <span class="badge badge-sm {% if p.tipo == 'pdf' %}badge-error{% elif p.tipo == 'docx' %}badge-info{% elif p.tipo == 'txt' %}badge-ghost{% else %}badge-ghost{% endif %}">
-                                    {{ p.tipo|upper or 'FILE' }}
-                                </span>
-                            </td>
-                            <td class="text-sm">{{ (p.tamanho / 1024)|round(1) }} KB</td>
-                            <td class="text-xs text-base-content/60 whitespace-nowrap">{{ p.modificado | data_hora_arquivo }}</td>
-                            <td>
-                                <div class="flex flex-wrap gap-1">
-                                    {% if p.tipo in ('pdf', 'docx', 'doc') %}
-                                    <a href="/files/{{ paj_norm }}/{{ p.caminho }}" target="_blank"
-                                       class="btn btn-primary btn-xs">Abrir</a>
-                                    {% elif p.tipo in ('txt', 'md') %}
-                                    <button class="btn btn-ghost btn-xs"
-                                            @click="verTxt('{{ paj_norm }}', '{{ p.caminho }}', '{{ p.nome|e }}')">Ler</button>
-                                    <button class="btn btn-info btn-xs btn-outline"
-                                            onclick="runDocgen('{{ paj_norm }}', '{{ p.caminho }}', 'docx', 'Gerar DOCX — {{ p.nome|e }}')">
-                                        DOCX
-                                    </button>
-                                    <button class="btn btn-error btn-xs btn-outline"
-                                            onclick="runDocgen('{{ paj_norm }}', '{{ p.caminho }}', 'pdf', 'Gerar PDF — {{ p.nome|e }}')">
-                                        PDF
-                                    </button>
-                                    {% else %}
-                                    <a href="/files/{{ paj_norm }}/{{ p.caminho }}" target="_blank"
-                                       class="btn btn-ghost btn-xs">Baixar</a>
-                                    {% endif %}
-                                    <button type="button" class="btn btn-ghost btn-xs text-error"
-                                            onclick="excluirArquivoPaj('{{ paj_norm }}', '{{ p.caminho|e }}', '{{ p.nome|e }}', this, 'badge-pecas-count')"
-                                            title="Excluir arquivo">
-                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"></path></svg>
-                                    </button>
-                                </div>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
+        </template>
+
+        <template x-if="status === 'running'">
+            <div class="flex items-center gap-2 text-sm text-base-content/70 py-4">
+                <span class="loading loading-spinner loading-sm"></span>
+                <span x-text="lastAction || 'processando…'"></span>
             </div>
-            {% else %}
-            <!-- Mesmo estilo do vazio de "Discutir o caso" (pedido do usuário,
-                 2026-09-29): centralizado, com ícone, em vez do alert padrão. -->
-            <div class="text-center py-6 text-base-content/50">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-2 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M9 12h6m-6 4h6m2 5H7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5.586a1 1 0 0 1 .707.293l4.414 4.414a1 1 0 0 1 .293.707V19a2 2 0 0 1-2 2Z" />
-                </svg>
-                <p class="text-sm">Nenhuma peça judicial gerada ainda para este PAJ.</p>
+        </template>
+
+        <template x-if="status === 'error' && error">
+            <div class="alert alert-error text-sm mb-3" x-text="error"></div>
+        </template>
+
+        <template x-if="(status === 'done' || status === 'error') && summary">
+            <div class="text-sm leading-relaxed break-words bg-base-100 p-4 rounded border border-base-300/50 prose prose-sm max-w-none" x-html="renderedSummary()"></div>
+        </template>
+
+        <template x-if="status === 'done' || status === 'error'">
+            <div class="mt-4 pt-4 border-t border-base-300">
+                <label class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1 block">
+                    Reenviar para a IA
+                </label>
+                <p class="text-xs text-base-content/40 mb-2">
+                    Peça um ajuste no diagnóstico, ou peça a redação da petição inicial —
+                    a conversa continua com todo o contexto já analisado.
+                </p>
+                <textarea class="textarea textarea-bordered w-full text-sm" rows="3"
+                          x-model="mensagemReenvio"
+                          placeholder="Ex: reconsidere o cenário C1, o INSS negou por cadastro desatualizado, não por renda. / Redija a petição inicial."
+                          :disabled="enviando || status === 'running'"></textarea>
+                <div class="flex justify-end mt-2">
+                    <button type="button" class="btn btn-sm btn-primary" @click="enviarReenvio()"
+                            :disabled="enviando || status === 'running'">
+                        <span x-show="enviando" class="loading loading-spinner loading-xs"></span>
+                        Enviar
+                    </button>
+                </div>
             </div>
-            {% endif %}
+        </template>
+    </div>
         </div>
     </div>
 </div>
+
+<!-- Movimentações (seção própria, retrátil, aberta por padrão) — destacada
+     de dentro da seção com abas em 2026-09-21, reposicionada em 2026-09-29
+     (pedido do usuário) pra ficar logo abaixo de "Movimentar Sistemas" (que
+     por sua vez também subiu, pra logo abaixo de Narrativa) e acima de
+     "Ações com IA" (antes ficava lá embaixo). Mesmo padrão de toggle local das demais
+     seções retráteis desta página (Lembretes, Narrativa acima) —
+     `mostrar_botao_atualizar_movs` (Jinja, escopado só a este include via
+     `with`) liga o botão "Atualizar movimentações" só aqui — o mesmo
+     partial é reaproveitado também dentro de "Gerar Minuta" (seletor de
+     documentos, ver partials/minuta_ia.html) e lá não faz sentido nenhum
+     esse botão. O partial tem seu PRÓPRIO x-data (tabelaMovimentacoes(),
+     self-contido) — sem dependência nenhuma de nenhuma outra seção, então
+     mover é seguro. -->
+<div class="bg-base-200 border border-base-300 rounded-lg mb-4" x-data="{ aberto: true }">
+    <div class="flex items-center gap-2 px-4 py-3">
+        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
+            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
+                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+            </svg>
+            <span class="text-lg font-semibold">Movimentações</span>
+            <span class="badge badge-primary badge-sm">{{ dados.movimentacoes|length }}</span>
+        </button>
+    </div>
+    <div x-show="aberto" x-cloak class="px-4 pb-4">
+        {% with mostrar_botao_atualizar_movs = true %}
+        {% include "partials/movimentacoes_tabela.html" %}
+        {% endwith %}
+    </div>
+</div>
+
+<!-- Prazos abertos (se houver) -->
+{% if dados.prazos_abertos %}
+<div class="alert alert-error mb-6">
+    <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-2.5L13.732 4c-.77-.833-1.964-.833-2.732 0L4.082 16.5c-.77.833.192 2.5 1.732 2.5z" />
+    </svg>
+    <div>
+        <h3 class="font-bold">Prazos abertos</h3>
+        {% for p in dados.prazos_abertos %}
+        <p class="text-sm">
+            <strong>{{ p.data_final | data_br }}</strong>
+            {% if p.dias is not none %} ({{ p.dias }} dias){% endif %}
+            {% if p.descricao %} — {{ p.descricao }}{% endif %}
+        </p>
+        {% endfor %}
+    </div>
+</div>
+{% endif %}
 
 <!-- Anexos SISDPU (seção própria, retrátil, aberta por padrão) — antes era
      uma aba dentro da seção "Análise IA + Peças"; destacada sozinha, ao
