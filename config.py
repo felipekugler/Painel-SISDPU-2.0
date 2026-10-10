@@ -16,6 +16,13 @@ OFICIO_GERAL = Path(
 PAJS_DIR = OFICIO_GERAL / "PAJs"
 PECAS_FEITAS_DIR = OFICIO_GERAL / "Peças Feitas"
 
+# Porta do servidor do painel. 8001 e' a do Painel 1.0; o Painel SISDPU 2.0
+# roda em paralelo noutra porta (PAINEL_PORT=8002 no .env dele), para os dois
+# poderem ficar abertos lado a lado durante o desenvolvimento.
+PAINEL_PORT = int(os.getenv("PAINEL_PORT", "8001"))
+# Nome exibido no topo da sidebar — distingue visualmente as duas instancias.
+PAINEL_NOME = os.getenv("PAINEL_NOME") or "Painel SISDPU"
+
 # Texto exibido sob o titulo "Oficio Geral" na sidebar — identifica a unidade
 # do defensor (ex: "2ª Categoria - DPU/AP"). Default generico para nao expor
 # unidade especifica no codigo; cada usuario ajusta no .env.

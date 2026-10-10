@@ -39,12 +39,17 @@ from typing import Any, Optional
 
 import httpx
 
+from config import PAINEL_PORT
+
 MCP_BASE = "https://mcp-sei.dpu.def.br"
 MCP_URL = MCP_BASE + "/mcp"
-REDIRECT_URI = "http://127.0.0.1:8001/api/sei/oauth/callback"
+REDIRECT_URI = f"http://127.0.0.1:{PAINEL_PORT}/api/sei/oauth/callback"
 SEI_WEB = "https://sei.dpu.def.br/sei/controlador.php"
 
-_KEYRING_SERVICE = "painel-sisdpu-mcp-sei"
+# O client_id do DCR fica preso ao redirect_uri (e portanto a porta): uma
+# instancia em outra porta (Painel SISDPU 2.0) guarda o registro e o token em
+# entrada propria, sem reaproveitar nem sobrescrever os da porta 8001.
+_KEYRING_SERVICE = "painel-sisdpu-mcp-sei" + ("" if PAINEL_PORT == 8001 else f"-{PAINEL_PORT}")
 _CHUNK = 900  # caracteres por pedaço no Credential Manager (limite ~1280)
 
 # Tools de GRAVAÇÃO — nunca repetidas automaticamente em falha transitória.

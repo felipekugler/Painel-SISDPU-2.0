@@ -54,11 +54,12 @@ from routes.sync import router as sync_router
 from routes.valor_causa import router as valor_causa_router
 from routes.watchlist import router as watchlist_router
 from services.ambiente_service import verificar_ambiente
+from config import PAINEL_NOME, PAINEL_PORT
 
 BASE_DIR = Path(__file__).resolve().parent
 PID_FILE = BASE_DIR / ".server.pid"
 LOGS_DIR = BASE_DIR / "logs"
-PORT = 8001
+PORT = PAINEL_PORT
 
 
 def _configurar_logging() -> None:
@@ -124,6 +125,7 @@ def _oficio_descricao_atual() -> str:
 
 
 app.state.jinja.globals["oficio_descricao"] = _oficio_descricao_atual
+app.state.jinja.globals["painel_nome"] = PAINEL_NOME
 app.state.jinja.globals["identificacao_orgao"] = config_painel_service.get_identificacao_orgao
 
 # Mapeamento de exibicao para nomes de area (foro). Os valores armazenados em

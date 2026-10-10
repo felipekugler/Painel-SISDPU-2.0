@@ -12,7 +12,8 @@ import contextlib
 
 ROOT = Path(__file__).resolve().parent
 PID_FILE = ROOT / ".server.pid"
-PORT = 8001
+sys.path.insert(0, str(ROOT))
+from config import PAINEL_PORT as PORT  # noqa: E402  (le o .env deste projeto)
 
 
 def _killp_windows(pid: int) -> None:
