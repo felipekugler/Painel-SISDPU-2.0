@@ -40,6 +40,7 @@ from routes.intimacoes import router as intimacoes_router
 from routes.minutas import router as minutas_router
 from routes.movimentar_conjunto import router as movimentar_conjunto_router
 from routes.oficio_sei import router as oficio_sei_router
+from routes.sisdpu2_mcp import router as sisdpu2_mcp_router
 from routes.peticao_inicial import router as peticao_inicial_router
 from routes.paj import router as paj_router
 from routes.eproc_consulta import router as eproc_consulta_router
@@ -304,6 +305,7 @@ app.include_router(minutas_router)
 app.include_router(intimacoes_router)
 app.include_router(movimentar_conjunto_router)
 app.include_router(oficio_sei_router)
+app.include_router(sisdpu2_mcp_router)
 app.include_router(peticao_inicial_router)
 
 # Healthcheck de dependencias externas — expoe em app.state.ambiente pra

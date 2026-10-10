@@ -30,7 +30,14 @@ from config import (
     TIMEOUT_TOTAL,
 )
 from ingestao import ocr, parser, sisdpu_client, sisdpu_movtram
+from ingestao.sisdpu2_fonte import ProxyFonte
 import contextlib
+
+# Fonte de dados trocável (Configurações › Fonte de dados): com "mcp", as
+# leituras vêm do MCP do SIS-DPU 2.0 no MESMO formato da raspagem; downloads
+# de PDF e o resto continuam no legado. Ver ingestao/sisdpu2_fonte.py.
+sisdpu_client = ProxyFonte(sisdpu_client)
+sisdpu_movtram = ProxyFonte(sisdpu_movtram)
 
 # Worker de vida curta e SEM rede usado como 1ª tentativa de gravação abaixo —
 # mesmo workaround provisório do FortiClient (ver services.intimacao_service.
@@ -1659,6 +1666,13 @@ async def atualizar_caixa(log_callback: Callable[[str], None]) -> dict:
 
     log(f"[atualizar] caixa: {len(pajs_na_caixa)} PAJs")
 
+    if not pajs_na_caixa:
+        # Mesma salvaguarda de `rodar`: caixa vazia/ilegível NUNCA vira "todos
+        # concluídos" (isso apaga os anexos de todos os PAJs ativos).
+        log("[atualizar] caixa sem nenhum PAJ legível — reconciliação NÃO executada")
+        return {"ok": False, "total_caixa": 0, "removidos": 0,
+                "mensagem": "caixa vazia ou ilegível — nada foi marcado como concluído"}
+
     log("[atualizar] reconciliando PAJs que saíram da caixa...")
     removidos = _reconciliar_concluidos(pajs_na_caixa, log)
     if removidos:
@@ -1881,6 +1895,9 @@ async def rodar(
         except Exception as e:
             log(f"  [EXC] {type(e).__name__}: {e}")
             resumo["erros"].append(f"{item.get('paj', '?')}: {e}")
+            # Está NA CAIXA, só a leitura falhou: sem isto a reconciliação o daria
+            # por concluído e apagaria os anexos dele.
+            pajs_na_caixa.add(paj_norm_item)
         await asyncio.sleep(RATE_LIMIT_SISDPU)
 
     # Se foi cancelado, pula reconciliacao (dados incompletos — nao queremos

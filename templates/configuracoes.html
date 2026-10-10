@@ -622,6 +622,87 @@
         <button type="button" :class="subaba==='caixas' && 'ativa'" @click="subaba='caixas'">Caixas do SISDPU</button>
         <button type="button" :class="subaba==='oficios' && 'ativa'" @click="subaba='oficios'">Tabela de Ofícios</button>
         <button type="button" :class="subaba==='despachos' && 'ativa'" @click="subaba='despachos'">Despachos padrão</button>
+        <button type="button" :class="subaba==='mcp' && 'ativa'" @click="subaba='mcp'">Fonte de dados (SIS-DPU 2.0)</button>
+    </div>
+
+    <!-- Fonte de dados: raspagem do SISDPU legado x MCP do SIS-DPU 2.0 (mesmo banco) -->
+    <div class="card bg-base-200 shadow" x-show="subaba==='mcp'"
+         x-data="{
+            st: {conectado: false}, fonte: 'sisdpu', carregando: true, msg: '',
+            async init() {
+                await this.atualizar();
+                window.addEventListener('message', (e) => {
+                    if (typeof e.data === 'string' && e.data.startsWith('sisdpu2-login-')) this.atualizar();
+                });
+            },
+            async atualizar() {
+                this.carregando = true;
+                try {
+                    this.st = await (await fetch('/api/sisdpu2/status')).json();
+                    this.fonte = (await (await fetch('/api/sisdpu2/fonte')).json()).fonte;
+                } catch (e) { this.msg = 'Falha ao consultar o estado: ' + e; }
+                this.carregando = false;
+            },
+            async conectar() {
+                const r = await (await fetch('/api/sisdpu2/login')).json();
+                if (r.ok) window.open(r.url, 'sisdpu2-login', 'width=560,height=760');
+                else this.msg = r.erro;
+            },
+            async desconectar() {
+                await fetch('/api/sisdpu2/desconectar', {method: 'POST'});
+                await this.atualizar();
+            },
+            async escolher(f) {
+                const r = await (await fetch('/api/sisdpu2/fonte', {method: 'POST',
+                    headers: {'Content-Type': 'application/json'}, body: JSON.stringify({fonte: f})})).json();
+                if (r.ok) { this.fonte = r.fonte; this.msg = ''; } else this.msg = r.erro;
+            },
+         }" x-init="init()">
+        <div class="card-body gap-4">
+            <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
+                Fonte de dados do SISDPU
+            </h3>
+            <p class="text-sm text-base-content/70">
+                De onde a sincronização lê caixa, PAJs, movimentações e lista de anexos.
+                O MCP do SIS-DPU 2.0 usa o <strong>mesmo banco</strong> do SISDPU, sem abrir navegador.
+                O download dos PDFs (sincronização completa) continua pelo SISDPU.
+            </p>
+
+            <div class="flex flex-col gap-2">
+                <label class="flex items-center gap-3 cursor-pointer">
+                    <input type="radio" class="radio radio-sm" name="fonte_dados" value="sisdpu"
+                           :checked="fonte==='sisdpu'" @change="escolher('sisdpu')">
+                    <span><strong>SISDPU</strong> (atual) — leitura da tela, pelo navegador</span>
+                </label>
+                <label class="flex items-center gap-3 cursor-pointer">
+                    <input type="radio" class="radio radio-sm" name="fonte_dados" value="mcp"
+                           :checked="fonte==='mcp'" @change="escolher('mcp')" :disabled="!st.conectado && fonte!=='mcp'">
+                    <span><strong>SIS-DPU 2.0 (MCP)</strong> — leitura direta, mesmo banco</span>
+                </label>
+            </div>
+
+            <div class="rounded-lg border border-base-300 p-3 text-sm flex items-center justify-between flex-wrap gap-2">
+                <div>
+                    <template x-if="carregando"><span>Consultando…</span></template>
+                    <template x-if="!carregando && st.conectado">
+                        <span>✅ Conectado ao SIS-DPU 2.0
+                            <template x-if="st.sessao"><span class="text-base-content/70" x-text="' — ' + st.sessao"></span></template>
+                        </span>
+                    </template>
+                    <template x-if="!carregando && !st.conectado">
+                        <span>Não conectado. A sessão vale uma jornada (~8 h); vencida, conecte de novo.</span>
+                    </template>
+                </div>
+                <div class="flex gap-2">
+                    <button class="btn btn-sm btn-primary" x-show="!st.conectado" @click="conectar()">Conectar ao SIS-DPU 2.0</button>
+                    <button class="btn btn-sm" x-show="st.conectado" @click="desconectar()">Desconectar</button>
+                </div>
+            </div>
+            <p class="text-xs text-warning" x-show="fonte==='mcp' && !st.conectado && !carregando">
+                A fonte está em SIS-DPU 2.0, mas o painel não está conectado: a sincronização vai falhar até conectar.
+            </p>
+            <p class="text-sm text-error" x-show="msg" x-text="msg"></p>
+        </div>
     </div>
 
     <div class="card bg-base-200 shadow" x-data="sisdpuPrefs()" x-init="init()" x-show="subaba==='fases' || subaba==='caixas'">

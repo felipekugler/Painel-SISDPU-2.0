@@ -254,6 +254,26 @@ def _lst(raw: dict, k: str) -> list[str]:
     return [str(x) for x in v] if isinstance(v, list) else []
 
 
+FONTES_DADOS = ("sisdpu", "mcp")
+
+
+def get_fonte_dados() -> str:
+    """De onde a sincronização LÊ o SISDPU: "sisdpu" (raspagem da tela do
+    legado, padrão) ou "mcp" (MCP do SIS-DPU 2.0, mesmo banco). Ver
+    ingestao/sisdpu2_fonte.py."""
+    v = str(_ler_raw().get("fonte_dados") or "sisdpu")
+    return v if v in FONTES_DADOS else "sisdpu"
+
+
+def set_fonte_dados(valor: str) -> str:
+    if valor not in FONTES_DADOS:
+        raise ValueError(f"fonte de dados inválida: {valor!r}")
+    raw = _ler_raw()
+    raw["fonte_dados"] = valor
+    _salvar_raw(raw)
+    return valor
+
+
 def get_sisdpu_prefs() -> dict:
     """Todas as listas SISDPU (importadas + favoritas + frequentes)."""
     raw = _ler_raw()
