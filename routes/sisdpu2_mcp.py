@@ -9,17 +9,26 @@ from ingestao import sisdpu2_mcp_client as sis2
 router = APIRouter()
 
 
+_cache_sessao: dict = {"ts": 0.0, "texto": None}
+
+
 @router.get("/api/sisdpu2/status", response_class=JSONResponse)
 async def api_sisdpu2_status():
-    """Estado da conexão. Com token, confirma no servidor de quem é a sessão."""
+    """Estado da conexão. Com token, confirma no servidor de quem é a sessão —
+    no máximo a cada 5 min (cada consulta conta no teto diário do servidor)."""
+    import time
     if not sis2.conectado():
+        _cache_sessao.update(ts=0.0, texto=None)
         return {"conectado": False}
+    if _cache_sessao["texto"] and time.monotonic() - _cache_sessao["ts"] < 300:
+        return {"conectado": True, "sessao": _cache_sessao["texto"], "minutos": sis2.minutos_restantes()}
     try:
         quem = await run_in_threadpool(sis2.chamar, "auth_situacao")
     except sis2.Sisdpu2LoginNecessario:
         return {"conectado": False}
     except Exception as e:  # noqa: BLE001
         return {"conectado": True, "erro": str(e), "minutos": sis2.minutos_restantes()}
+    _cache_sessao.update(ts=time.monotonic(), texto=quem)
     return {"conectado": True, "sessao": quem, "minutos": sis2.minutos_restantes()}
 
 
@@ -37,6 +46,30 @@ async def api_sisdpu2_fonte_salvar(request: Request):
         return {"ok": True, "fonte": config_painel_service.set_fonte_dados(str(body.get("fonte") or ""))}
     except ValueError as e:
         return {"ok": False, "erro": str(e)}
+
+
+@router.get("/api/sisdpu2/consumo", response_class=JSONResponse)
+async def api_sisdpu2_consumo():
+    return {"hoje": sis2.consumo_hoje(), "historico": sis2.historico_consumo(30),
+            "teto": sis2.TETO_DIARIO}
+
+
+@router.get("/api/sisdpu2/ao-vivo/estado", response_class=JSONResponse)
+async def api_ao_vivo_estado():
+    from services import ao_vivo_service
+    return ao_vivo_service.estado()
+
+
+@router.post("/api/sisdpu2/ao-vivo/paj/{paj_norm}", response_class=JSONResponse)
+async def api_ao_vivo_paj(paj_norm: str):
+    from services import ao_vivo_service
+    return await ao_vivo_service.atualizar_paj(paj_norm)
+
+
+@router.post("/api/sisdpu2/ao-vivo/caixa", response_class=JSONResponse)
+async def api_ao_vivo_caixa(forcar: bool = False):
+    from services import ao_vivo_service
+    return await ao_vivo_service.atualizar_caixa(forcar=forcar)
 
 
 @router.get("/api/sisdpu2/login", response_class=JSONResponse)

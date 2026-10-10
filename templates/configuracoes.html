@@ -628,7 +628,7 @@
     <!-- Fonte de dados: raspagem do SISDPU legado x MCP do SIS-DPU 2.0 (mesmo banco) -->
     <div class="card bg-base-200 shadow" x-show="subaba==='mcp'"
          x-data="{
-            st: {conectado: false}, fonte: 'sisdpu', carregando: true, msg: '',
+            st: {conectado: false}, fonte: 'sisdpu', carregando: true, msg: '', consumo: null,
             async init() {
                 await this.atualizar();
                 window.addEventListener('message', (e) => {
@@ -640,6 +640,7 @@
                 try {
                     this.st = await (await fetch('/api/sisdpu2/status')).json();
                     this.fonte = (await (await fetch('/api/sisdpu2/fonte')).json()).fonte;
+                    this.consumo = await (await fetch('/api/sisdpu2/consumo')).json();
                 } catch (e) { this.msg = 'Falha ao consultar o estado: ' + e; }
                 this.carregando = false;
             },
@@ -698,6 +699,49 @@
                     <button class="btn btn-sm" x-show="st.conectado" @click="desconectar()">Desconectar</button>
                 </div>
             </div>
+            <!-- Consumo do teto diário do servidor (estatística + freio do automático) -->
+            <template x-if="consumo">
+                <div class="rounded-lg border border-base-300 p-3 text-sm flex flex-col gap-2">
+                    <div class="flex items-center justify-between flex-wrap gap-2">
+                        <strong>Leituras no SIS-DPU 2.0 hoje</strong>
+                        <span class="font-mono tnum"
+                              x-text="consumo.hoje.registros + ' de ' + consumo.hoje.teto + ' registros · ' + consumo.hoje.chamadas + ' chamadas'"></span>
+                    </div>
+                    <progress class="progress w-full"
+                              :class="consumo.hoje.teto_atingido || consumo.hoje.registros >= 0.7*consumo.hoje.teto ? 'progress-error' : 'progress-info'"
+                              :value="Math.min(consumo.hoje.registros, consumo.hoje.teto)" :max="consumo.hoje.teto"></progress>
+                    <p class="text-xs text-base-content/60">
+                        O servidor limita cada pessoa a <span x-text="consumo.teto"></span> registros lidos por dia,
+                        somando o painel e o uso do MCP pelo Claude. A conta acima é uma estimativa do painel
+                        (o uso pelo chat não aparece aqui). Acima de 70% a atualização automática da caixa pausa;
+                        acima de 95%, o painel para de ler.
+                    </p>
+                    <p class="text-xs text-error" x-show="consumo.hoje.teto_atingido"
+                       x-text="'O servidor recusou hoje: limite diário atingido' + (consumo.hoje.registros_servidor ? ' (' + consumo.hoje.registros_servidor + ' registros pela conta dele)' : '') + '. Volta amanhã, ou com liberação do Master.'"></p>
+                    <details class="text-xs">
+                        <summary class="cursor-pointer">Por ferramenta (hoje) e histórico</summary>
+                        <table class="table table-xs mt-2">
+                            <thead><tr><th>Ferramenta</th><th class="text-right">Chamadas</th><th class="text-right">Registros</th></tr></thead>
+                            <tbody>
+                                <template x-for="[nome, v] in Object.entries(consumo.hoje.por_ferramenta || {}).sort((a,b) => b[1].registros - a[1].registros)" :key="nome">
+                                    <tr><td x-text="nome"></td><td class="text-right tnum" x-text="v.chamadas"></td><td class="text-right tnum" x-text="v.registros"></td></tr>
+                                </template>
+                            </tbody>
+                        </table>
+                        <table class="table table-xs mt-2">
+                            <thead><tr><th>Dia</th><th class="text-right">Chamadas</th><th class="text-right">Registros</th><th></th></tr></thead>
+                            <tbody>
+                                <template x-for="d in consumo.historico" :key="d.data">
+                                    <tr><td x-text="d.data.split('-').reverse().join('/')"></td>
+                                        <td class="text-right tnum" x-text="d.chamadas"></td>
+                                        <td class="text-right tnum" x-text="d.registros"></td>
+                                        <td x-text="d.teto_atingido ? 'teto atingido' : ''" class="text-error"></td></tr>
+                                </template>
+                            </tbody>
+                        </table>
+                    </details>
+                </div>
+            </template>
             <p class="text-xs text-warning" x-show="fonte==='mcp' && !st.conectado && !carregando">
                 A fonte está em SIS-DPU 2.0, mas o painel não está conectado: a sincronização vai falhar até conectar.
             </p>

@@ -24,6 +24,8 @@ Fatos que sustentam o mapeamento (conferidos com dados reais em 10/10/2026):
 
 from __future__ import annotations
 
+import asyncio
+import contextvars
 import html
 import json
 import re
@@ -40,6 +42,13 @@ URL_DETALHE_LEGADO = ("https://sisdpu.dpu.def.br/sisdpu/pages/atendimento/"
 # do legado assume a página aberta pelo movimentacoes_paj anterior; aqui guardamos
 # o que aquela leitura trouxe.
 _ultimo: dict = {}
+
+# Quanto ler do PAJ (ver `_detalhe`). Quem define é o chamador (services/
+# ao_vivo_service.py); os botões de sincronização usam o padrão "completo".
+MODO: contextvars.ContextVar[str] = contextvars.ContextVar("sisdpu2_modo", default="completo")
+# Ao abrir um PAJ, os trâmites vêm da última leitura da caixa (mesmo antiga):
+# reler a caixa inteira a cada PAJ aberto custaria ~1 registro por PAJ da caixa.
+CAIXA_EM_CACHE_SERVE: contextvars.ContextVar[bool] = contextvars.ContextVar("sisdpu2_cache_caixa", default=False)
 
 
 # ---------------------------------------------------------------------------
@@ -110,10 +119,37 @@ def _metadata_atual(paj: str) -> dict:
 # Caixa de entrada
 # ---------------------------------------------------------------------------
 
+_CACHE_CAIXA_SEG = 180
+_cache_caixa: dict = {"ts": 0.0, "itens": None}
+
+
+def assinatura_caixa() -> tuple[int, str]:
+    """Conferência BARATA da caixa (1 registro): total de trâmites + o mais
+    recente. Mudou um dos dois → vale reler a lista inteira. Um trâmite que sai
+    muda o total; um que entra vira o mais recente."""
+    r = sis2.chamar("caixa_entrada", {"limite": 1, "pagina": 0, "ordenarPor": "DATA_ENVIO", "direcao": "DESC"})
+    if not isinstance(r, dict) or "total" not in r:
+        raise RuntimeError(f"Caixa do SIS-DPU 2.0 veio em formato inesperado: {str(r)[:200]}")
+    topo = (r.get("itens") or [{}])[0]
+    return int(r["total"]), str(topo.get("idTramite") or "")
+
+
+def invalidar_cache_caixa() -> None:
+    _cache_caixa.update(ts=0.0, itens=None)
+
+
 def _caixa_completa() -> list[dict]:
     """Todos os trâmites pendentes, paginando. Levanta erro se o MCP não
     responder com a estrutura esperada — NUNCA devolve [] por falha (o
-    sincronizador trataria caixa vazia como "tudo concluído")."""
+    sincronizador trataria caixa vazia como "tudo concluído").
+
+    Cache curto: a mesma rodada lê a caixa até 3 vezes (lista, lista
+    estruturada, trâmites do PAJ) — cada leitura custa ~1 registro por PAJ do
+    teto diário do servidor."""
+    import time as _t
+    if _cache_caixa["itens"] is not None and (
+            CAIXA_EM_CACHE_SERVE.get() or _t.monotonic() - _cache_caixa["ts"] < _CACHE_CAIXA_SEG):
+        return list(_cache_caixa["itens"])
     itens: list[dict] = []
     pagina = 0
     while True:
@@ -128,11 +164,12 @@ def _caixa_completa() -> list[dict]:
     total = int(r.get("total") or 0)
     if len(itens) < total:
         raise RuntimeError(f"Caixa do SIS-DPU 2.0 incompleta: {len(itens)} de {total} itens.")
+    _cache_caixa.update(ts=_t.monotonic(), itens=list(itens))
     return itens
 
 
 async def caixa_de_entrada() -> dict:
-    itens = _caixa_completa()
+    itens = await asyncio.to_thread(_caixa_completa)
     # O sincronizador passa cada string a parse_item_caixa — aqui elas são JSON.
     return {"url": "mcp-sisdpu2:caixa_entrada",
             "itens_tabela": [json.dumps(i, ensure_ascii=False) for i in itens],
@@ -160,7 +197,7 @@ def parse_item_caixa(item_raw: str) -> dict | None:
 
 async def listar_caixa_estruturada() -> dict:
     try:
-        itens = _caixa_completa()
+        itens = await asyncio.to_thread(_caixa_completa)
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "detalhe": str(e), "itens": []}
     out = []
@@ -187,33 +224,88 @@ async def listar_caixa_estruturada() -> dict:
 # Detalhe do PAJ
 # ---------------------------------------------------------------------------
 
+def _mov_raw(m: dict, seq: int) -> dict:
+    """Uma movimentação do MCP no formato da raspagem."""
+    return {
+        "seq": str(seq),
+        "id_movimentacao": m.get("id"),
+        "anexo": "",
+        "tem_anexo_icone": bool(m.get("possuiArquivo") or m.get("quantidadeArquivos")),
+        "data": _br(m.get("dataHora")),
+        "movimentacao": m.get("tipo") or "",
+        "fases": _fases(m.get("fases")),
+        # a tela do legado mostra "Não Possui" quando a movimentação não tem texto
+        "descricao": m.get("descricao") or "Não Possui",
+        "links_decisao": [],
+        "usuario": m.get("usuario") or "",
+        "descricao_retorno": _html_para_texto(m.get("textoRetorno")),
+    }
+
+
+def _ordem(m: dict) -> tuple:
+    return (m.get("dataHora") or "", int(m.get("id") or 0))
+
+
 def _movimentacoes(id_processo: int, capa: dict) -> list[dict]:
-    """Todas as movimentações, já no formato da raspagem e com o Seq do legado."""
+    """Histórico INTEIRO, no formato da raspagem e com o Seq do legado
+    (mais recente primeiro). Caro: cada movimentação conta no teto diário."""
     hist = capa.get("movimentacoes") or []  # paj_capa comHistorico=true (com possuiArquivo)
     total = int(capa.get("totalDeMovimentacoes") or 0)
     if not hist or (total and len(hist) < total):
-        # sem histórico completo na capa: lista paginada (sem o indicador de anexo)
         r = sis2.chamar("paj_movimentacoes", {"idProcesso": id_processo, "limite": 500})
         hist = r.get("itens", []) if isinstance(r, dict) else []
-    ordenadas = sorted(hist, key=lambda m: (m.get("dataHora") or "", int(m.get("id") or 0)))
-    movs = []
-    for seq, m in enumerate(ordenadas, start=1):
-        movs.append({
-            "seq": str(seq),
-            "id_movimentacao": m.get("id"),
-            "anexo": "",
-            "tem_anexo_icone": bool(m.get("possuiArquivo") or m.get("quantidadeArquivos")),
-            "data": _br(m.get("dataHora")),
-            "movimentacao": m.get("tipo") or "",
-            "fases": _fases(m.get("fases")),
-            # a tela do legado mostra "Não Possui" quando a movimentação não tem texto
-            "descricao": m.get("descricao") or "Não Possui",
-            "links_decisao": [],
-            "usuario": m.get("usuario") or "",
-            "descricao_retorno": _html_para_texto(m.get("textoRetorno")),
-        })
+    movs = [_mov_raw(m, seq) for seq, m in enumerate(sorted(hist, key=_ordem), start=1)]
     movs.reverse()  # o legado lista da mais recente para a mais antiga
     return movs
+
+
+def _locais_como_raw(paj: str) -> list[dict]:
+    """Movimentações já guardadas no metadata.json, de volta ao formato da
+    raspagem (mais recente primeiro) — para o sincronizador reescrever o
+    sisdpu.txt sem perder nada quando a leitura não traz o histórico."""
+    movs = ((_metadata_atual(paj).get("detalhes_sisdpu") or {}).get("movimentacoes") or [])
+    out = []
+    for m in sorted(movs, key=lambda x: int(x.get("seq") or 0), reverse=True):
+        r = {"seq": str(m.get("seq")), "anexo": "", "tem_anexo_icone": bool(m.get("tem_anexo_icone")),
+             "data": m.get("data_original") or "", "movimentacao": m.get("movimentacao") or "",
+             "fases": m.get("fases") or "", "descricao": m.get("descricao") or "",
+             "links_decisao": m.get("links_decisao") or [], "usuario": m.get("usuario") or "",
+             "descricao_retorno": m.get("descricao_retorno") or ""}
+        if m.get("id_movimentacao"):
+            r["id_movimentacao"] = m["id_movimentacao"]
+        out.append(r)
+    return out
+
+
+def _incremental(id_processo: int, capa: dict, locais: list[dict]) -> Optional[list[dict]]:
+    """Só as movimentações NOVAS desde a última leitura, somadas às locais.
+    None = não deu para encaixar com segurança (aí o chamador lê tudo).
+
+    Confere o encaixe pela data/hora da movimentação local mais recente: ela
+    tem de ser exatamente a que vem logo antes das novas no SIS 2."""
+    total = capa.get("totalDeMovimentacoes")
+    if total is None or not locais:
+        return None
+    total, n_local = int(total), len(locais)
+    if total < n_local:
+        return None
+    novos = total - n_local
+    ultimas = {m.get("id"): m for m in capa.get("ultimasMovimentacoes") or []}
+    if novos == 0:
+        topo = max(capa.get("ultimasMovimentacoes") or [{}], key=_ordem)
+        return locais if (not topo or _br(topo.get("dataHora")) == locais[0]["data"][:19]) else None
+    r = sis2.chamar("paj_movimentacoes", {"idProcesso": id_processo, "limite": min(novos + 1, 500), "pagina": 1})
+    itens = sorted((r or {}).get("itens") or [], key=_ordem) if isinstance(r, dict) else []
+    if len(itens) != novos + 1 or _br(itens[0].get("dataHora")) != locais[0]["data"][:19]:
+        return None
+    novas = []
+    for i, m in enumerate(itens[1:], start=1):
+        raw = _mov_raw(ultimas.get(m.get("id"), m), n_local + i)
+        if m.get("id") not in ultimas:
+            raw["tem_anexo_icone"] = True  # sem indicador nesta lista: confere os anexos dela
+        novas.append(raw)
+    novas.reverse()
+    return novas + locais
 
 
 def _contatos(capa: dict, paj: str) -> dict:
@@ -244,43 +336,71 @@ def _contatos(capa: dict, paj: str) -> dict:
     return {"telefones": tels, "emails": emails, "enderecos": ends}
 
 
+def _extras(id_processo: int, capa: dict, paj: str) -> dict:
+    """Processos judiciais, representantes, audiências e contatos (~4-6 registros).
+    Chave ausente = o sincronizador preserva o valor anterior."""
+    out: dict[str, Any] = {}
+    try:
+        pjs = [{"processo_judicial": p.get("numeroProcessoJudicial") or "",
+                "juizo": p.get("juizo"), "data_inclusao": _br(p.get("dtCadastro"), com_hora=False) or None,
+                "observacoes_processo": p.get("observacao"),
+                "validacao": {"sucesso": True, "motivo": "Vínculo declarado no SIS-DPU 2.0"}}
+               for p in sis2.chamar("paj_processos_judiciais", {"idProcesso": id_processo}) or []]
+        out["processos_judiciais"] = pjs
+        ult = pjs[-1] if pjs else {}
+        out.update(processo_judicial=ult.get("processo_judicial"), juizo=ult.get("juizo"),
+                   data_inclusao=ult.get("data_inclusao"), observacoes_processo=ult.get("observacoes_processo"),
+                   validacao_processo=ult.get("validacao"))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        out["representantes_legais"] = [
+            {"idPessoa": str(r.get("idPessoa") or ""), "nome": r.get("nome") or "",
+             "cpf": _cpf(r.get("cpf") or r.get("cpfCnpj"))}
+            for r in sis2.chamar("paj_representantes", {"idProcesso": id_processo}) or []]
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        auds = []
+        for a in sis2.chamar("audiencias_do_paj", {"idProcesso": id_processo}) or []:
+            quando = a.get("dataHora") or a.get("data")
+            auds.append({"data_hora": _br(quando)[:16] if quando else "",
+                         "local": a.get("local") or "", "observacao": a.get("observacao") or ""})
+        out["audiencias"] = auds
+    except Exception:  # noqa: BLE001
+        pass
+    out.update(_contatos(capa, paj))
+    return out
+
+
 def _detalhe(id_processo: int, paj_esperado: str = "") -> dict:
-    capa = sis2.chamar("paj_capa", {"idProcesso": id_processo, "comHistorico": True})
+    """Detalhe do PAJ conforme o MODO da leitura (ver `MODO`):
+      - "caixa": só a capa SEM histórico (pretensão, assistido etc.); as
+        movimentações são as já guardadas. ~1-4 registros.
+      - "paj": capa + só as movimentações novas (incremental) + extras; cai
+        para o histórico inteiro na 1ª leitura do PAJ ou se o encaixe falhar.
+      - "completo": histórico inteiro sempre (botões de sincronização)."""
+    modo = MODO.get()
+    locais = _locais_como_raw(paj_esperado) if paj_esperado and modo != "completo" else []
+    com_historico = modo == "completo" or (modo == "paj" and not locais)
+    capa = sis2.chamar("paj_capa", {"idProcesso": id_processo, "comHistorico": com_historico})
     if not isinstance(capa, dict) or not capa.get("numeroProcessoFormatado"):
         return {"erro": f"SIS-DPU 2.0 não devolveu a capa do PAJ {paj_esperado or id_processo}."}
     paj = capa["numeroProcessoFormatado"]
     num, ano, uni = _paj_partes(paj)
 
+    if com_historico:
+        movs, leitura = _movimentacoes(id_processo, capa), "completa"
+    elif modo == "caixa":
+        movs, leitura = locais, "cabecalho"
+    else:
+        movs, leitura = _incremental(id_processo, capa, locais), "incremental"
+        if movs is None:  # encaixe incerto: relê tudo
+            capa = sis2.chamar("paj_capa", {"idProcesso": id_processo, "comHistorico": True})
+            movs, leitura = _movimentacoes(id_processo, capa), "completa"
+
     assistidos = capa.get("assistidos") or []
     principal = next((a for a in assistidos if a.get("principal")), assistidos[0] if assistidos else {})
-
-    pjs = []
-    try:
-        for p in sis2.chamar("paj_processos_judiciais", {"idProcesso": id_processo}) or []:
-            pjs.append({"processo_judicial": p.get("numeroProcessoJudicial") or "",
-                        "juizo": p.get("juizo"), "data_inclusao": _br(p.get("dtCadastro"), com_hora=False) or None,
-                        "observacoes_processo": p.get("observacao"),
-                        "validacao": {"sucesso": True, "motivo": "Vínculo declarado no SIS-DPU 2.0"}})
-    except Exception:  # noqa: BLE001
-        pjs = None  # sem a chave: o sincronizador preserva os anteriores
-
-    reps = None
-    try:
-        reps = [{"idPessoa": str(r.get("idPessoa") or ""), "nome": r.get("nome") or "",
-                 "cpf": _cpf(r.get("cpf") or r.get("cpfCnpj"))}
-                for r in sis2.chamar("paj_representantes", {"idProcesso": id_processo}) or []]
-    except Exception:  # noqa: BLE001
-        pass
-
-    auds = []
-    try:
-        for a in sis2.chamar("audiencias_do_paj", {"idProcesso": id_processo}) or []:
-            quando = a.get("dataHora") or a.get("data")
-            auds.append({"data_hora": _br(quando)[:16] if quando else "",
-                         "local": a.get("local") or "", "observacao": a.get("observacao") or ""})
-    except Exception:  # noqa: BLE001
-        pass
-
     det: dict[str, Any] = {
         "assistido": capa.get("nomeAssistidos") or principal.get("nome", ""),
         "cpf_assistido": _cpf(principal.get("cpfCnpj")),
@@ -298,32 +418,26 @@ def _detalhe(id_processo: int, paj_esperado: str = "") -> dict:
         "decurso": (f"{_br(capa.get('dataDecursoPrazo'), com_hora=False)} ({capa.get('situacaoDecursoPrazo')})"
                     if capa.get("dataDecursoPrazo") else ""),
         "foro_detalhado": "",
-        "movimentacoes": _movimentacoes(id_processo, capa),
-        "audiencias": auds,
+        "movimentacoes": movs,
         "narrativa": capa.get("narrativa") or "",
         "paj_numero": num, "paj_ano": ano, "paj_unidade": uni,
         "url": URL_DETALHE_LEGADO.format(id=id_processo),
         "urls_decisoes": [],
         "fonte": "mcp-sisdpu2",
+        "leitura_mcp": leitura,
     }
-    if pjs is not None:
-        det["processos_judiciais"] = pjs
-        ult = pjs[-1] if pjs else {}
-        det["processo_judicial"] = ult.get("processo_judicial")
-        det["juizo"] = ult.get("juizo")
-        det["data_inclusao"] = ult.get("data_inclusao")
-        det["observacoes_processo"] = ult.get("observacoes_processo")
-        det["validacao_processo"] = ult.get("validacao")
-    if reps is not None:
-        det["representantes_legais"] = reps
-    det.update(_contatos(capa, paj))
+    if modo != "caixa":
+        det.update(_extras(id_processo, capa, paj))
     _ultimo.clear()
     _ultimo.update({"paj": paj, "id_processo": id_processo, "det": det})
     return det
 
 
 def _id_processo(paj: str) -> Optional[int]:
-    """Resolve o idProcesso: metadata.json (url legada) ou processo_resolver."""
+    """Resolve o idProcesso: caixa em cache, metadata.json (url legada) ou processo_resolver."""
+    for it in _cache_caixa["itens"] or []:
+        if _paj_fmt(it.get("processo", "")) == paj and it.get("idProcesso"):
+            return int(it["idProcesso"])
     url = ((_metadata_atual(paj).get("sisdpu_raw") or {}).get("url") or "")
     m = re.search(r"[?&]id=(\d+)", url)
     if m:
@@ -336,10 +450,10 @@ async def movimentacoes_paj(numero: str, ano: str, unidade: str, esperas_curtas:
                             **_kw) -> dict:
     paj = f"{ano}/{unidade}-{numero}"
     try:
-        idp = _id_processo(paj)
+        idp = await asyncio.to_thread(_id_processo, paj)
         if not idp:
             return {"erro": f"PAJ {paj} não encontrado no SIS-DPU 2.0"}
-        return _detalhe(idp, paj)
+        return await asyncio.to_thread(_detalhe, idp, paj)
     except Exception as e:  # noqa: BLE001
         # NUNCA levanta: exceção aqui faria o sincronizador deixar o PAJ fora de
         # `pajs_na_caixa` e a reconciliação o daria por concluído (apagando anexos).
@@ -378,7 +492,8 @@ async def extrair_documentos_por_seq(seqs_conhecidos=None, deve_cancelar=None, l
         if deve_cancelar and deve_cancelar():
             break
         try:
-            arqs = sis2.chamar("movimentacao_arquivos", {"idMovimentacao": int(mov["id_movimentacao"])}) or []
+            arqs = await asyncio.to_thread(
+                sis2.chamar, "movimentacao_arquivos", {"idMovimentacao": int(mov["id_movimentacao"])}) or []
         except Exception as e:  # noqa: BLE001
             return {"erro": str(e), "movimentacoes_com_documentos": com_docs,
                     "total_documentos": total, "falhou": True}

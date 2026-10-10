@@ -215,6 +215,8 @@ document.addEventListener('DOMContentLoaded', function() {
 function sincronizarCaixa(nivel) {
     if (typeof nivel === 'undefined' || nivel === true) nivel = 'completa';
     if (nivel === false) nivel = 'levissima';
+    // Fonte SIS-DPU 2.0: avisa o custo no teto diário antes (static/js/ao_vivo.js).
+    if (window.confirmarCustoMcp && !window.confirmarCustoMcp('caixa', nivel)) return;
 
     let anexos, documentos;
     if (nivel === 'levissima') { anexos = 0; documentos = 0; }
@@ -329,6 +331,7 @@ function sincronizarWatchlist(baixarAnexos) {
 function sincronizarPaj(pajNorm, nivel) {
     if (typeof nivel === 'undefined' || nivel === true) nivel = 'completa';
     if (nivel === false) nivel = 'levissima';
+    if (window.confirmarCustoMcp && !window.confirmarCustoMcp('paj', nivel)) return;
 
     let anexos, documentos;
     if (nivel === 'levissima') { anexos = 0; documentos = 0; }

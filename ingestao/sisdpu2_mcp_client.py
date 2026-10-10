@@ -31,6 +31,7 @@ import secrets
 import threading
 import time
 import urllib.parse
+from pathlib import Path
 from typing import Any, Optional
 
 import httpx
@@ -62,7 +63,14 @@ _TOOLS_LEITURA = {
     "tag_dos_pajs", "marcacao_do_paj", "ultimos_trabalhados", "pajs_parados",
 }
 
-_RE_TETO = re.compile(r"teto de (\d+) por minuto", re.IGNORECASE)
+_RE_TETO = re.compile(r"teto de (\d+) (?:leituras )?por minuto", re.IGNORECASE)
+# "esta pessoa ja leu 5033 registros hoje por este modulo, e o teto e 5000"
+_RE_TETO_DIA = re.compile(r"ja leu (\d+) registros hoje.*?teto e (\d+)", re.IGNORECASE | re.DOTALL)
+
+# Teto diário do servidor (achado em 10/10/2026): 5000 REGISTROS lidos por
+# pessoa por dia, somando o painel e o uso do MCP pelo Claude. Conta registros
+# (cada item de lista, cada movimentação do histórico), não chamadas.
+TETO_DIARIO = 5000
 
 
 class Sisdpu2LoginNecessario(RuntimeError):
@@ -71,6 +79,74 @@ class Sisdpu2LoginNecessario(RuntimeError):
 
 class Sisdpu2Erro(RuntimeError):
     """Erro devolvido pelo servidor MCP do SIS-DPU 2.0 (ou recusa dele)."""
+
+
+class Sisdpu2TetoDiario(Sisdpu2Erro):
+    """O servidor recusou: teto diário de registros desta pessoa atingido."""
+
+
+# ---------------------------------------------------------------------------
+# Medidor de consumo (estatística diária; também freia a leitura automática)
+# ---------------------------------------------------------------------------
+
+_ARQ_CONSUMO = Path(__file__).resolve().parents[1].parent / "dados" / "_mcp_sisdpu2_consumo.json"
+_lock_consumo = threading.Lock()
+
+
+def _hoje() -> str:
+    return time.strftime("%Y-%m-%d")
+
+
+def _ler_consumo() -> dict:
+    try:
+        return json.loads(_ARQ_CONSUMO.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def _contar_registros(obj: Any) -> int:
+    """ESTIMATIVA do que o servidor conta: lista = 1 por item; objeto = 1 mais
+    os itens das listas de objetos que ele traz (ex.: histórico da capa)."""
+    if isinstance(obj, list):
+        return len(obj)
+    if isinstance(obj, dict):
+        return 1 + sum(len(v) for v in obj.values()
+                       if isinstance(v, list) and v and isinstance(v[0], dict))
+    return 1
+
+
+def _registrar_consumo(nome: str, registros: int, teto_servidor: Optional[tuple[int, int]] = None) -> None:
+    with _lock_consumo:
+        dados = _ler_consumo()
+        dia = dados.setdefault(_hoje(), {"chamadas": 0, "registros": 0, "por_ferramenta": {}})
+        dia["chamadas"] += 1
+        dia["registros"] += registros
+        f = dia["por_ferramenta"].setdefault(nome, {"chamadas": 0, "registros": 0})
+        f["chamadas"] += 1
+        f["registros"] += registros
+        if teto_servidor:
+            dia["teto_atingido"] = True
+            dia["registros_servidor"], dia["teto_servidor"] = teto_servidor
+        for velho in sorted(dados)[:-90]:  # guarda ~3 meses
+            dados.pop(velho, None)
+        try:
+            _ARQ_CONSUMO.parent.mkdir(parents=True, exist_ok=True)
+            _ARQ_CONSUMO.write_text(json.dumps(dados, ensure_ascii=False, indent=1), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+
+
+def consumo_hoje() -> dict:
+    dia = _ler_consumo().get(_hoje(), {})
+    return {"data": _hoje(), "chamadas": dia.get("chamadas", 0), "registros": dia.get("registros", 0),
+            "teto": dia.get("teto_servidor", TETO_DIARIO), "teto_atingido": bool(dia.get("teto_atingido")),
+            "registros_servidor": dia.get("registros_servidor"), "por_ferramenta": dia.get("por_ferramenta", {})}
+
+
+def historico_consumo(dias: int = 30) -> list[dict]:
+    dados = _ler_consumo()
+    return [{"data": d, "chamadas": v.get("chamadas", 0), "registros": v.get("registros", 0),
+             "teto_atingido": bool(v.get("teto_atingido"))} for d, v in sorted(dados.items(), reverse=True)[:dias]]
 
 
 # ---------------------------------------------------------------------------
@@ -324,14 +400,21 @@ def chamar(nome: str, args: Optional[dict] = None, timeout: float = 90) -> Any:
         blocos = [c.get("text", "") for c in res.get("content", []) if c.get("type") == "text"]
         texto = blocos[0] if blocos else ""
         if res.get("isError"):
+            dia = _RE_TETO_DIA.search(texto)
+            if dia:
+                _registrar_consumo(nome, 0, (int(dia.group(1)), int(dia.group(2))))
+                raise Sisdpu2TetoDiario(texto[:800])
+            _registrar_consumo(nome, 0)
             if _RE_TETO.search(texto) and tentativa < 3:
                 time.sleep(20 * (tentativa + 1))
                 continue
             raise Sisdpu2Erro(texto[:800] or f"{nome}: erro sem mensagem")
         try:
-            return json.loads(texto)
+            valor = json.loads(texto)
         except ValueError:
-            return texto
+            valor = texto
+        _registrar_consumo(nome, _contar_registros(valor))
+        return valor
     raise Sisdpu2Erro(f"{nome}: teto de chamadas do servidor persistiu após novas tentativas.")
 
 

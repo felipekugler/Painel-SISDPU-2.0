@@ -327,6 +327,17 @@ async def _startup_cota() -> None:
 
 
 @app.on_event("startup")
+async def _startup_ao_vivo() -> None:
+    """Atualização periódica da caixa pelo MCP do SIS-DPU 2.0 — só age quando a
+    fonte de dados é "mcp" e o painel está conectado (services/ao_vivo_service)."""
+    import asyncio
+
+    from services import ao_vivo_service
+
+    asyncio.create_task(ao_vivo_service.laco_caixa())
+
+
+@app.on_event("startup")
 async def _startup_reconciliar_sessoes_interrompidas() -> None:
     """Corrige análises/organizações que ficaram com status "running" gravado
     em disco por uma sessão que o painel matou no meio (restart) — achado ao

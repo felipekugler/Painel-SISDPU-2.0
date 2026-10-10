@@ -200,6 +200,10 @@ def parsear_movimentacoes_estruturadas(movs_brutos: list[dict]) -> list[dict]:
                 "tem_anexo_icone": bool(mov_bruto.get("tem_anexo_icone", False)),
                 "descricao_retorno": mov_bruto.get("descricao_retorno", ""),
             }
+            # Id da movimentação no SIS 2 (só quando a fonte é o MCP do
+            # SIS-DPU 2.0) — base da leitura incremental (ingestao/sisdpu2_fonte.py).
+            if mov_bruto.get("id_movimentacao"):
+                mov["id_movimentacao"] = mov_bruto["id_movimentacao"]
             movs.append(mov)
         except Exception:
             continue
