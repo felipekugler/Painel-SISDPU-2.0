@@ -91,8 +91,9 @@ async def _get_page() -> Page:
     """Retorna a page Playwright, criando browser se necessario.
 
     O Chromium e' iniciado com flags que FORCAM download de PDFs em vez de
-    abrir o preview interno — importante pro `listar_arquivos_paj`, ja que
-    queremos capturar o arquivo bruto via evento `download`, nao previsualizar.
+    abrir o preview interno — importante pro `baixar_documento_via_commandlink`,
+    ja que queremos capturar o arquivo bruto via evento `download`, nao
+    previsualizar.
     """
     global _playwright, _browser, _page
     if _page is not None:
@@ -1625,9 +1626,10 @@ async def buscar_paj_global(
     page = page_detalhe
 
     # Caso o popup tenha sido capturado, promove ele a "page global" — assim
-    # operacoes posteriores que dependem de `_get_page()` (ex: listar_arquivos_paj
-    # → baixar anexos) atuam no detalhamento do PAJ, e nao na caixa de entrada
-    # antiga. Sem isso, sincronizar um PAJ da watchlist via busca global nao
+    # operacoes posteriores que dependem de `_get_page()` (ex: extrair
+    # documentos por seq → baixar anexos) atuam no detalhamento do PAJ, e nao
+    # na caixa de entrada antiga. Sem isso, sincronizar um PAJ da watchlist via
+    # busca global nao
     # conseguiria baixar anexos. Quando `page_detalhe` ja e' a propria `_page`
     # (busca navegou a janela atual em vez de abrir popup), a atribuicao e' no-op.
     global _page
@@ -2277,7 +2279,7 @@ async def extrair_documentos_por_seq(
     "Anexo" de cada linha) do PAJ atualmente aberto.
 
     PRE-CONDICAO: a page ja deve estar no detalhamento do PAJ (chamar
-    `movimentacoes_paj(...)` antes) — mesma pre-condicao de `listar_arquivos_paj`.
+    `movimentacoes_paj(...)` antes).
 
     `seqs_conhecidos`: seqs (str) que ja possuem `documentos` no metadata da
     sincronizacao anterior — sao excluidas da fila, entao so processamos seqs
@@ -2307,8 +2309,8 @@ async def extrair_documentos_por_seq(
 
     js_source = _EXTRACAO_DOCS_JS_PATH.read_text(encoding="utf-8")
     # Envolve o arquivo inteiro numa arrow function explicita — mesmo padrao
-    # usado em todo o resto deste modulo (ex: listar_arquivos_paj). Passar o
-    # conteudo bruto (que comeca com um comentario /** */) faz o Playwright
+    # usado em todo o resto deste modulo. Passar o conteudo bruto (que comeca
+    # com um comentario /** */) faz o Playwright
     # nao reconhecer a string como "function-like", o que pode fazer as
     # atribuicoes a `window.*` nao "pegarem" do jeito esperado entre chamadas
     # seguintes de evaluate().
@@ -2318,7 +2320,13 @@ async def extrair_documentos_por_seq(
         tem_estado = await page.evaluate("() => !!window.__extracaoEstado")
         if not tem_estado:
             _log("  [docs] estado da extracao perdido (dialogo/pagina mudou) — resultado descartado")
-            return {"movimentacoes_com_documentos": [], "total_documentos": 0}
+            # `falhou=True`: resultado vazio aqui NAO significa "sem documento
+            # novo" — o contexto da pagina foi perdido no meio da extracao
+            # (navegacao/erro do SISDPU). O chamador (sincronizador) usa este
+            # sinal pra NAO gravar a tramitacao como "conhecida" — sem isso, a
+            # proxima sync (mesmo Completa) pularia este PAJ pra sempre (visto
+            # em producao: PAJs 2026/029-00412 e 2023/029-01897, 2026-10-08).
+            return {"movimentacoes_com_documentos": [], "total_documentos": 0, "falhou": True}
         return await page.evaluate("window.__extracaoFinalizar()")
 
     init = await page.evaluate(
@@ -2327,7 +2335,10 @@ async def extrair_documentos_por_seq(
 
     if init.get("erro"):
         _log(f"  [docs] {init['erro']}")
-        return {"erro": init["erro"], "movimentacoes_com_documentos": [], "total_documentos": 0}
+        return {
+            "erro": init["erro"], "movimentacoes_com_documentos": [], "total_documentos": 0,
+            "falhou": True,
+        }
 
     total_fila = init.get("totalFila", 0)
     puladas = init.get("puladas", 0)
@@ -2356,8 +2367,7 @@ async def extrair_documentos_por_seq(
                 _log(f"    [docs] seq {r.get('seq')}: {n_docs} doc(s) ({progresso})")
     except Exception as e:
         _log(f"  [docs] erro durante extracao: {type(e).__name__}: {e}")
-        # Garante que nao fica popup aberto atrapalhando o proximo passo (ex:
-        # listar_arquivos_paj logo em seguida, no bloco de anexos).
+        # Garante que nao fica popup aberto atrapalhando o proximo passo.
         with contextlib.suppress(Exception):
             await page.evaluate(
                 "() => document.dispatchEvent(new KeyboardEvent('keydown', {key: 'Escape', bubbles: true}))"
@@ -2366,484 +2376,14 @@ async def extrair_documentos_por_seq(
     return await _finalizar_seguro()
 
 
-async def listar_arquivos_paj(debug: bool = False) -> dict:
-    """Clica no botao "Arquivos" do PAJ atualmente aberto e extrai a lista.
-
-    PRE-CONDICAO: a page ja deve estar no detalhamento do PAJ (chamar
-    `movimentacoes_paj(...)` antes). Nao navega — so interage com a pagina atual.
-
-    Retorna dict:
-        {
-            "ok": bool,
-            "itens": [{tipo, descricao, arquivo, href, sem_link_direto, row_index,
-                       todas_celulas}, ...],
-            "diag": {...}   # sempre presente; use pra debug quando itens == []
-        }
-    `diag` inclui: candidatos_botao_arquivos, clicou, dialogs_visiveis,
-    dialog_escolhido, total_linhas, linhas_filtradas_por_texto, html_snippet.
-
-    `sem_link_direto=True`: o link "Visualizar" dessa linha e' um `<p:commandLink>`
-    do PrimeFaces (href="#" cru, sem URL de download real) — tipicamente .doc/.docx
-    e imagens "Documentos do Assistido". `href` vem vazio nesse caso (nao mais
-    preenchido com uma URL fabricada que so' aponta pra propria pagina). Quem
-    consome esta lista (`baixar_todos_arquivos`) usa `row_index` + clique real
-    (`baixar_anexo_por_indice`) para esses, em vez de tentar um GET.
-    """
-    page = await _get_page()
-
-    # 1) Inventariar candidatos ao botao "Arquivos" ANTES de clicar
-    diag: dict = {}
-    diag["candidatos_botao_arquivos"] = await page.evaluate(
-        """
-        () => {
-            const out = [];
-            const els = Array.from(document.querySelectorAll('a, button, span[role="button"], .ui-button'));
-            for (const el of els) {
-                const txt = (el.textContent || '').trim();
-                if (txt && /arquivo/i.test(txt) && txt.length < 40) {
-                    out.push({
-                        tag: el.tagName,
-                        texto: txt,
-                        id: el.id || '',
-                        classes: el.className || '',
-                        onclick_has: !!el.getAttribute('onclick'),
-                    });
-                }
-            }
-            return out;
-        }
-        """
-    )
-
-    # 2) Clica no link "Arquivos" — agora mais tolerante
-    clicked = await page.evaluate(
-        """
-        () => {
-            const els = Array.from(document.querySelectorAll('a, button, span[role="button"], .ui-button'));
-            // Preferencia: match EXATO por "Arquivos" depois de trim
-            for (const el of els) {
-                const txt = (el.textContent || '').trim();
-                if (txt === 'Arquivos' || txt === 'Arquivo(s)') {
-                    el.click();
-                    return 'exato';
-                }
-            }
-            // Fallback: contem "Arquivos" (mas nao "Arquivo anexo" de movimentacao)
-            for (const el of els) {
-                const txt = (el.textContent || '').trim();
-                if (/^Arquivos?$/i.test(txt) || /^Arquivos\\s*\\(\\d+\\)$/.test(txt)) {
-                    el.click();
-                    return 'regex';
-                }
-            }
-            // Fallback extremo: qualquer elemento com "Arquivo" curto
-            for (const el of els) {
-                const txt = (el.textContent || '').trim();
-                if (/arquivo/i.test(txt) && txt.length < 15) {
-                    el.click();
-                    return 'fuzzy:' + txt;
-                }
-            }
-            return '';
-        }
-        """
-    )
-    diag["clicou"] = clicked or "NADA"
-    if not clicked:
-        return {"ok": False, "itens": [], "diag": diag}
-
-    # Aguarda AJAX + eventual navegacao (o link "Arquivos" navega para outra tela).
-    # Tenta networkidle primeiro; se falhar, cai pra wait_pf_ajax + sleep.
-    try:
-        await page.wait_for_load_state("networkidle", timeout=10000)
-    except Exception:
-        await _wait_pf_ajax(page, timeout=15000)
-    await page.wait_for_timeout(1500)
-
-    # 3) Inventariar dialogs REALMENTE visiveis (filtra aria-hidden=true)
-    diag["dialogs_visiveis"] = await page.evaluate(
-        """
-        () => {
-            const dialogs = document.querySelectorAll('.ui-dialog');
-            return Array.from(dialogs)
-                .filter(d => {
-                    if (d.getAttribute('aria-hidden') === 'true') return false;
-                    if (d.classList.contains('ui-overlay-hidden')) return false;
-                    const st = window.getComputedStyle(d);
-                    if (st.display === 'none' || st.visibility === 'hidden') return false;
-                    return true;
-                })
-                .map(d => ({
-                    id: d.id || '',
-                    titulo: (d.querySelector('.ui-dialog-title')?.textContent || '').trim(),
-                    linhas_tabela: d.querySelectorAll('table tbody tr').length,
-                }));
-        }
-        """
-    )
-
-    # Registra URL pra saber se navegou
-    with contextlib.suppress(Exception):
-        diag["url_apos_click"] = page.url
-
-    # 4) Extrai linhas — a pagina de Arquivos do SISDPU tem MULTIPLAS tabelas,
-    # uma por categoria ("Juntada de documento", "Concluso ao defensor",
-    # "Oficio/Carta/Comunicacao expedida", etc.). Iteramos TODAS as tabelas
-    # visiveis com botoes "Visualizar" em ordem do DOM e concatenamos as linhas
-    # com indice global. A funcao baixar_anexo_por_indice usa a MESMA estrategia
-    # de flatten para que `row_index` seja consistente.
-    extrato = await page.evaluate(
-        """
-        () => {
-            const diag = {estrategia: '', total_linhas: 0, linhas_filtradas: 0,
-                          tabelas_analisadas: 0, tabelas_com_visualizar: 0,
-                          categorias: []};
-
-            const isVisivel = (el) => {
-                let cur = el;
-                while (cur) {
-                    if (cur.nodeType === 1) {
-                        if (cur.getAttribute && cur.getAttribute('aria-hidden') === 'true') return false;
-                        if (cur.classList && (
-                            cur.classList.contains('ui-overlay-hidden') ||
-                            cur.classList.contains('ui-hidden-container')
-                        )) {
-                            if (cur.getAttribute('aria-hidden') === 'true') return false;
-                        }
-                    }
-                    cur = cur.parentElement;
-                }
-                try {
-                    const r = el.getBoundingClientRect();
-                    if (r.width === 0 && r.height === 0) return false;
-                } catch (e) {}
-                return true;
-            };
-
-            // Tenta extrair o rotulo da categoria de uma tabela: o texto curto
-            // mais proximo (header/legend/div) que aparece imediatamente antes.
-            const detectaCategoria = (tbl) => {
-                let prev = tbl.previousElementSibling;
-                let tentativas = 0;
-                while (prev && tentativas < 6) {
-                    const t = (prev.textContent || '').trim();
-                    if (t && t.length < 100 && t.length > 2 && !/^(Seq\\.|Nenhum registro)/i.test(t)) {
-                        return t.split('\\n')[0].trim().slice(0, 80);
-                    }
-                    prev = prev.previousElementSibling;
-                    tentativas++;
-                }
-                // Fallback: legend de fieldset ancestral
-                let p = tbl.parentElement;
-                while (p) {
-                    const lg = p.querySelector(':scope > legend, :scope > .ui-fieldset-legend');
-                    if (lg) {
-                        const t = (lg.textContent || '').trim();
-                        if (t) return t.slice(0, 80);
-                    }
-                    p = p.parentElement;
-                }
-                return '';
-            };
-
-            const tables = document.querySelectorAll('table');
-            diag.tabelas_analisadas = tables.length;
-
-            // Coleta tabelas visiveis com links "Visualizar"
-            const uteis = [];
-            for (const tbl of tables) {
-                const rows = tbl.querySelectorAll('tbody tr');
-                if (rows.length === 0) continue;
-                let comVis = 0;
-                for (const r of rows) {
-                    const alvos = r.querySelectorAll('a, button, span[role="button"]');
-                    for (const a of alvos) {
-                        if (/visualizar/i.test((a.textContent || '').trim())) { comVis++; break; }
-                    }
-                }
-                if (comVis === 0) continue;
-                if (!isVisivel(tbl)) continue;
-                uteis.push(tbl);
-            }
-            diag.tabelas_com_visualizar = uteis.length;
-
-            if (uteis.length === 0) {
-                // Fallback: tabelas visiveis cujos headers mencionem "arquivo"
-                for (const tbl of tables) {
-                    const ths = Array.from(tbl.querySelectorAll('th')).map(th => (th.textContent || '').toLowerCase());
-                    if (!/arquivo|documento/.test(ths.join('|'))) continue;
-                    if (!tbl.querySelector('tbody tr')) continue;
-                    if (!isVisivel(tbl)) continue;
-                    uteis.push(tbl);
-                }
-                if (uteis.length > 0) diag.estrategia = 'tabela_por_header';
-            } else {
-                diag.estrategia = uteis.length > 1
-                    ? `multi_tabela_visualizar (${uteis.length})`
-                    : 'tabela_com_visualizar';
-            }
-
-            if (uteis.length === 0) {
-                diag.erro = 'nenhuma_tabela_util_encontrada';
-                return {resultado: [], diag};
-            }
-
-            // Flatten: percorre todas as tabelas em ordem do DOM e concatena as
-            // linhas com indice global crescente. A categoria de cada tabela e'
-            // anexada a cada linha — util pra naming/diagnostico.
-            const resultado = [];
-            let idx = 0;
-            const snippets = [];
-            for (const tbl of uteis) {
-                const categoria = detectaCategoria(tbl);
-                diag.categorias.push({categoria: categoria, linhas: 0});
-                const catIdx = diag.categorias.length - 1;
-                const rows = tbl.querySelectorAll('tbody tr');
-                diag.total_linhas += rows.length;
-                for (const tr of rows) {
-                    if (tr.classList.contains('ui-widget-header')) continue;
-                    const cells = tr.querySelectorAll('td');
-                    if (cells.length < 5) continue;  // Precisa das 5 primeiras colunas no mínimo
-                    const textos = Array.from(cells).map(c => (c.textContent || '').trim());
-                    // Primeira coluna DEVE ser um número válido (Seq.)
-                    const seq = textos[0] || '';
-                    if (!seq || !/^\\d+$/.test(seq)) continue;
-                    const alvos = tr.querySelectorAll('a, button, span[role="button"]');
-                    let temVis = false;
-                    for (const a of alvos) {
-                        if (/visualizar/i.test((a.textContent || '').trim())) { temVis = true; break; }
-                    }
-                    if (!temVis) continue;
-                    // Extrai nome do arquivo DIRETAMENTE do link "Visualizar" (fonte de verdade)
-                    const linkVis = tr.querySelector('a, button, span[role="button"]');
-                    let nome_arquivo = '';
-                    let href = '';
-                    let semLinkDireto = false;
-                    if (linkVis) {
-                        // Tenta extrair em ordem de confiabilidade:
-                        // 1. Atributo download (HTML5)
-                        // 2. Atributo data-filename (customizado)
-                        // 3. Href com padrão comuns (ex: /download/123)
-                        const downloadAttr = linkVis.getAttribute('download');
-                        const dataNome = linkVis.getAttribute('data-filename');
-                        // getAttribute (RAW, nunca .href resolvido) — ver mesmo padrao e
-                        // mesmo motivo em extrair_documentos_movimentacoes.js: alguns
-                        // anexos (imagens "Documentos do Assistido", peticoes .doc/.docx)
-                        // sao <p:commandLink> do PrimeFaces SEM URL de download nenhuma —
-                        // href="#" cru, clique dispara um POST do formulario via JS. Se
-                        // resolvido por linkVis.href, "#" vira a URL da PROPRIA pagina
-                        // (nunca um erro de sintaxe), entao so' getAttribute cru pega isso.
-                        let hrefAttr = linkVis.getAttribute('href') || '';
-
-                        if (hrefAttr === '#') {
-                            // NAO sintetiza URL nenhuma pra esse caso — antes isso virava
-                            // `window.location.origin + '/sisdpu/#'`, uma URL "absoluta"
-                            // com cara de valida que na verdade so' aponta pra propria
-                            // pagina atual. Um GET nela sempre devolve HTML (a propria
-                            // tela), nunca o arquivo — silenciosamente tratado como link
-                            // "real" e falhando so' mais tarde, sem sinal nenhum de que
-                            // esse doc precisava de clique de verdade (nao GET).
-                            semLinkDireto = true;
-                        } else {
-                            // Torna href absoluto se for relativo
-                            if (hrefAttr && !hrefAttr.startsWith('http')) {
-                                hrefAttr = window.location.origin + (hrefAttr.startsWith('/') ? '' : '/sisdpu/') + hrefAttr;
-                            }
-                            href = hrefAttr;
-                        }
-
-                        if (downloadAttr) nome_arquivo = downloadAttr;
-                        else if (dataNome) nome_arquivo = dataNome;
-                        else if (href && /\\.(pdf|docx?|xlsx?|txt|zip|jpg|png|gif)$/i.test(href)) {
-                            // Se href tem extensão, usar último segmento como nome
-                            nome_arquivo = href.split('/').pop();
-                        }
-                    }
-                    // Fallback para coluna "Arquivo" se não conseguir extrair do link
-                    if (!nome_arquivo) nome_arquivo = textos[4] || '';
-
-                    resultado.push({
-                        row_index: idx++,
-                        seq: textos[0] || '',
-                        data: textos[1] || '',
-                        descricao: textos[2] || '',
-                        tipo_arquivo: textos[3] || '',
-                        arquivo: nome_arquivo,
-                        href: href,
-                        sem_link_direto: semLinkDireto,
-                        categoria: categoria,
-                        todas_celulas: textos,
-                    });
-                    diag.categorias[catIdx].linhas++;
-                }
-                try { snippets.push((tbl.outerHTML || '').slice(0, 800)); } catch (e) {}
-            }
-            // Remove duplicatas exatas (seq + arquivo idênticos)
-            const vistos = new Set();
-            const resultadoDeduplic = [];
-            for (const item of resultado) {
-                const chave = item.seq + '|' + item.arquivo;
-                if (!vistos.has(chave)) {
-                    vistos.add(chave);
-                    resultadoDeduplic.push(item);
-                }
-            }
-            const n_removidas = resultado.length - resultadoDeduplic.length;
-            if (n_removidas > 0) diag.linhas_removidas = n_removidas;
-
-            // Recalcula row_index sequencial (0, 1, 2, ...) após desduplicação
-            for (let i = 0; i < resultadoDeduplic.length; i++) {
-                resultadoDeduplic[i].row_index = i;
-            }
-
-            diag.linhas_filtradas = resultadoDeduplic.length;
-            diag.html_snippet = snippets.join('\\n---\\n').slice(0, 2000);
-            return {resultado: resultadoDeduplic, diag};
-        }
-        """
-    )
-
-    diag.update(extrato.get("diag", {}))
-    itens = extrato.get("resultado", []) or []
-    return {"ok": True, "itens": itens, "diag": diag}
-
-
-_JS_MARCAR_POR_INDICE = """
-(idx) => {
-    const isVisivel = (el) => {
-        let cur = el;
-        while (cur) {
-            if (cur.nodeType === 1) {
-                if (cur.getAttribute && cur.getAttribute('aria-hidden') === 'true') return false;
-            }
-            cur = cur.parentElement;
-        }
-        try {
-            const r = el.getBoundingClientRect();
-            if (r.width === 0 && r.height === 0) return false;
-        } catch (e) {}
-        return true;
-    };
-    const tables = document.querySelectorAll('table');
-    const uteis = [];
-    for (const tbl of tables) {
-        const rows = tbl.querySelectorAll('tbody tr');
-        if (rows.length === 0) continue;
-        // Filtra tabelas que sao placeholders "Nenhum registro"
-        let todosVazios = true;
-        for (const r of rows) {
-            const cells = r.querySelectorAll('td');
-            if (cells.length === 0) continue;
-            const textos = Array.from(cells).map(c => (c.textContent || '').trim());
-            if (!/nenhum\\s+registro/i.test(textos.join(' '))) {
-                todosVazios = false;
-                break;
-            }
-        }
-        if (todosVazios) continue;
-
-        let comVis = 0;
-        for (const r of rows) {
-            const alvos = r.querySelectorAll('a, button, span[role="button"]');
-            for (const a of alvos) {
-                if (/visualizar/i.test((a.textContent || '').trim())) { comVis++; break; }
-            }
-        }
-        if (comVis === 0) continue;
-        if (!isVisivel(tbl)) continue;
-        uteis.push(tbl);
-    }
-    if (uteis.length === 0) return false;
-    const linhas = [];
-    for (const tbl of uteis) {
-        const rows = Array.from(tbl.querySelectorAll('tbody tr'))
-            .filter(tr => {
-                if (tr.classList.contains('ui-widget-header')) return false;
-                if (tr.querySelectorAll('td').length === 0) return false;
-                const cells = tr.querySelectorAll('td');
-                const textos = Array.from(cells).map(c => (c.textContent || '').trim());
-                const seq = (textos[0] || '').trim();
-                if (!seq || /nenhum|cabeçalho|conclus[aã]o|juntada|oficio/i.test(seq)) return false;
-                const alvos = tr.querySelectorAll('a, button, span[role="button"]');
-                for (const a of alvos) {
-                    if (/visualizar/i.test((a.textContent || '').trim())) return true;
-                }
-                return false;
-            });
-        for (const r of rows) linhas.push(r);
-    }
-    if (idx >= linhas.length) return false;
-    const row = linhas[idx];
-    const alvos = row.querySelectorAll('a, button, span[role="button"]');
-    for (const el of alvos) {
-        if (/visualizar/i.test((el.textContent || '').trim())) {
-            el.setAttribute('data-dpu-pick', '1');
-            return true;
-        }
-    }
-    return false;
-}
-"""
-
-_JS_MARCAR_POR_SEQ = """
-(seq) => {
-    // Busca a linha pela coluna Seq. (primeira coluna) em TODAS as tabelas.
-    // Mais robusto que posicao quando a pagina e' atualizada entre downloads.
-    const tables = document.querySelectorAll('table');
-    for (const tbl of tables) {
-        for (const tr of tbl.querySelectorAll('tbody tr')) {
-            const cells = tr.querySelectorAll('td');
-            if (cells.length === 0) continue;
-            if ((cells[0].textContent || '').trim() !== seq) continue;
-            const alvos = tr.querySelectorAll('a, button, span[role="button"]');
-            for (const a of alvos) {
-                if (/visualizar/i.test((a.textContent || '').trim())) {
-                    a.setAttribute('data-dpu-pick', '1');
-                    return true;
-                }
-            }
-        }
-    }
-    return false;
-}
-"""
-
-_JS_CLICAR_ARQUIVOS = """
-() => {
-    const els = Array.from(document.querySelectorAll('a, button, span[role="button"], .ui-button'));
-    for (const el of els) {
-        const txt = (el.textContent || '').trim();
-        if (txt === 'Arquivos' || txt === 'Arquivo(s)') { el.click(); return 'exato'; }
-    }
-    for (const el of els) {
-        const txt = (el.textContent || '').trim();
-        if (/^Arquivos?$/i.test(txt) || /^Arquivos\\s*\\(\\d+\\)$/.test(txt)) { el.click(); return 'regex'; }
-    }
-    return '';
-}
-"""
-
-# Extensoes conhecidas para deteccao via nome de arquivo (ultima extensao valida).
-_EXTS_ARQUIVO = {
-    ".pdf", ".docx", ".doc", ".xlsx", ".xls", ".pptx", ".ppt",
-    ".jpg", ".jpeg", ".png", ".gif", ".bmp", ".tiff", ".tif", ".webp",
-    ".txt", ".zip", ".rar", ".7z", ".tar", ".gz",
-    ".mp3", ".mp4", ".avi", ".mov", ".wmv",
-    ".csv", ".xml", ".html", ".htm",
-    ".odt", ".ods", ".odp", ".rtf",
-}
-
-
 def extrair_id_arquivo(url: str) -> str:
     """Extrai o ID do documento a partir da URL/marcador de download do SISDPU.
 
     Ex: '.../rest/download/pdf/42296157/Nome.pdf' -> '42296157'.
-    Esse ID pertence ao ARQUIVO (nao a seq/listagem) e e' o mesmo em qualquer
-    mecanismo que o descubra (listar_arquivos_paj ou extracao por seq de
-    movimentacao) — usado como chave de juncao para nomear os arquivos
-    baixados de forma que o frontend consiga casar o link da coluna
-    "Documentos" com a copia local ja baixada, sem depender do nome do
-    arquivo (que pode se repetir, ex: "email.pdf").
+    Esse ID pertence ao ARQUIVO (nao a seq) e e' usado como chave de juncao
+    pra nomear os arquivos baixados de forma que o frontend consiga casar o
+    link da coluna "Documentos" com a copia local ja baixada, sem depender
+    do nome do arquivo (que pode se repetir, ex: "email.pdf").
 
     Documentos sem link de download direto (anexos tipo imagem servidos via
     <p:commandLink> do PrimeFaces — ver extrair_documentos_movimentacoes.js)
@@ -2856,116 +2396,6 @@ def extrair_id_arquivo(url: str) -> str:
         return re.sub(r"[^A-Za-z0-9_-]", "_", bruto) if bruto else ""
     m = re.search(r"/(\d+)/[^/]*$", url or "")
     return m.group(1) if m else ""
-
-
-def _ext_de_nome_arquivo(nome: str) -> str:
-    """Extrai extensao do FINAL do nome de arquivo validando contra lista conhecida.
-
-    Usa rfind('.') para pegar sempre o ULTIMO ponto — evita interpretar pontos
-    no meio do nome (ex: '1234-56.789.4.01.2345') como extensao.
-    Retorna '' se nao reconhecida.
-    """
-    if not nome:
-        return ""
-    lower = nome.lower().strip()
-    last = lower.rfind(".")
-    if last < 0 or last == len(lower) - 1:
-        return ""
-    ext = lower[last:]
-    return ext if ext in _EXTS_ARQUIVO else ""
-
-
-async def extrair_lista_arquivos_paj() -> list[dict]:
-    """Extrai a lista de arquivos do PAJ atualmente aberto via JavaScript.
-
-    Itera todas as tabelas visiveis e retorna uma lista de documentos com:
-    {seq, data, nomeArq, href}
-
-    Estrategia identica a SISDPU-AnalisarPAJ2Cat skill.
-    """
-    page = await _get_page()
-
-    resultado = await page.evaluate(
-        """
-        () => {
-            const docs = [];
-            const isVisivel = (el) => {
-                let cur = el;
-                while (cur) {
-                    if (cur.nodeType === 1) {
-                        if (cur.getAttribute && cur.getAttribute('aria-hidden') === 'true') return false;
-                    }
-                    cur = cur.parentElement;
-                }
-                try {
-                    const r = el.getBoundingClientRect();
-                    if (r.width === 0 && r.height === 0) return false;
-                } catch (e) {}
-                return true;
-            };
-
-            const tables = document.querySelectorAll('table');
-            const uteis = [];
-
-            // Coleta tabelas visiveis com links "Visualizar"
-            for (const tbl of tables) {
-                const rows = tbl.querySelectorAll('tbody tr');
-                if (rows.length === 0) continue;
-                let comVis = 0;
-                for (const r of rows) {
-                    const alvos = r.querySelectorAll('a, button, span[role="button"]');
-                    for (const a of alvos) {
-                        if (/visualizar/i.test((a.textContent || '').trim())) { comVis++; break; }
-                    }
-                }
-                if (comVis === 0) continue;
-                if (!isVisivel(tbl)) continue;
-                uteis.push(tbl);
-            }
-
-            // Itera todas as tabelas uteis e coleta arquivos
-            for (const tbl of uteis) {
-                const rows = tbl.querySelectorAll('tbody tr');
-                for (const tr of rows) {
-                    const cells = tr.querySelectorAll('td');
-                    if (cells.length < 5) continue;
-
-                    const seq = (cells[0]?.textContent || '').trim();
-                    if (!seq || !/^\\d+$/.test(seq)) continue;
-
-                    const data = (cells[1]?.textContent || '').trim();
-
-                    // Nome do arquivo vem da coluna cells[4] (coluna "Arquivo")
-                    const nomeArq = (cells[4]?.textContent || '').trim().split('\\n')[0].trim();
-
-                    // Link "Visualizar" — usar getAttribute('href') em vez de .href
-                    // para evitar parametros JSF que quebram downloads
-                    let href = '';
-                    const alvos = tr.querySelectorAll('a, button, span[role="button"]');
-                    for (const a of alvos) {
-                        if (/visualizar/i.test((a.textContent || '').trim())) {
-                            href = a.getAttribute('href') || '';
-                            break;
-                        }
-                    }
-
-                    if (nomeArq && href) {
-                        docs.push({
-                            seq: seq,
-                            data: data,
-                            nomeArq: nomeArq,
-                            href: href
-                        });
-                    }
-                }
-            }
-
-            return docs;
-        }
-        """
-    )
-
-    return resultado or []
 
 
 async def _abrir_popup_documentos_seq(page: Page, seq: str) -> bool:
@@ -3029,18 +2459,31 @@ async def _fechar_popup_documentos(page: Page) -> None:
 
 async def baixar_documento_via_commandlink(
     seq: str,
-    command_link_id: str,
+    nome_arquivo: str,
     destino: Path,
 ) -> Path | None:
     """Baixa UM documento que nao tem link de download direto — os anexos
-    tipo imagem (jpeg/png) "Documentos do Assistido" vem como <p:commandLink>
-    do PrimeFaces (href="#" + onclick que faz um POST do formulario inteiro),
-    entao um `httpx.get(href)` simples nao funciona (baixa a propria pagina,
-    nao o arquivo). Aqui clicamos DE VERDADE no elemento (via id, ver
-    extrair_documentos_movimentacoes.js) e capturamos o evento `download` do
-    Playwright — mesmo padrao ja usado por `baixar_anexo_por_indice`
-    (deprecado), so' que localizando o elemento pelo id em vez de por indice
-    de linha.
+    tipo imagem (jpeg/png) "Documentos do Assistido" e peticoes .doc/.docx
+    vem como <p:commandLink> do PrimeFaces (href="#" + onclick que faz um
+    POST do formulario inteiro), entao um `httpx.get(href)` simples nao
+    funciona (baixa a propria pagina, nao o arquivo). Aqui clicamos DE
+    VERDADE no elemento e capturamos o evento `download` do Playwright.
+
+    IMPORTANTE — localiza o link PELO NOME DO ARQUIVO (coluna "Arquivo" da
+    tabela do popup), NAO mais pelo id do elemento (`commandLinkId`
+    persistido no metadata por uma extracao anterior, via
+    extrair_documentos_movimentacoes.js). Confirmado ao vivo (PAJ
+    2026/029-02241, seq 20, "peticao_inicial_bpc.docx"): o JSF/PrimeFaces
+    REGENERA esses ids a cada reabertura do popup — ex. o mesmo documento
+    saiu como 'detalhamentoForm:j_idt921:0:j_idt933:0:j_idt942:j_idt952'
+    numa extracao e 'detalhamentoForm:j_idt923:0:j_idt935:0:j_idt944:
+    j_idt954' na seguinte (so' os sufixos numericos mudam, sempre o mesmo
+    padrao) — ou seja, qualquer id salvo de uma sincronizacao anterior
+    fica inutilizavel assim que este popup e' reaberto (mesmo dentro da
+    MESMA chamada, que reabre o popup do zero antes de clicar). Isso fazia
+    o download desse documento falhar sempre, em toda sincronizacao,
+    indefinidamente — nao era uma falha intermitente. O nome do arquivo e'
+    texto literal da celula (nao gerado), estavel entre reaberturas.
 
     PRE-CONDICAO: a page ja esta no detalhamento do PAJ (movimentacoes_paj
     ja rodou) — abre e fecha o popup da seq sozinho.
@@ -3054,7 +2497,62 @@ async def baixar_documento_via_commandlink(
 
     try:
         async with page.expect_event("download", timeout=30000) as dl_info:
-            await page.click(_sel(command_link_id))
+            clicou = await page.evaluate(
+                """
+                (nomeAlvo) => {
+                    // Normaliza (minusculo, sem acento, espacos colapsados) ANTES
+                    // de comparar — o nome salvo no metadata.json pode ter vindo
+                    // de uma extracao anterior com um encoding ligeiramente
+                    // diferente do que a tabela mostra agora (mesmo tipo de
+                    // mojibake ja visto nos campos de descricao do SISDPU), e
+                    // uma comparacao exata (===) falha nesse caso mesmo com o
+                    // popup certo aberto.
+                    const normalizar = (s) => (s || '')
+                        .normalize('NFD').replace(/[\\u0300-\\u036f]/g, '')
+                        .replace(/\\s+/g, ' ').trim().toLowerCase();
+                    const alvo = normalizar(nomeAlvo);
+
+                    const tables = document.querySelectorAll('table');
+                    for (const t of tables) {
+                        const headers = Array.from(t.querySelectorAll('thead th')).map(h => h.textContent.trim());
+                        const idxArquivo = headers.findIndex(h => h.toLowerCase() === 'arquivo');
+                        if (idxArquivo === -1) continue;
+                        const rows = Array.from(t.querySelectorAll('tbody tr'));
+
+                        // 1) match exato (normalizado) pelo nome — cobre o caso
+                        // comum e desambigua quando ha' mais de 1 documento sem
+                        // link direto no MESMO popup.
+                        for (const row of rows) {
+                            const cells = row.querySelectorAll('td');
+                            if (!cells.length || !cells[idxArquivo]) continue;
+                            if (normalizar(cells[idxArquivo].textContent) !== alvo) continue;
+                            const link = row.querySelector('a');
+                            if (link && link.getAttribute('href') === '#') {
+                                link.click();
+                                return true;
+                            }
+                        }
+
+                        // 2) Fallback: se so' existe UM candidato sem link direto
+                        // nesta tabela, clica nele mesmo sem bater o nome — ja'
+                        // estamos no popup da seq correta (_abrir_popup_
+                        // documentos_seq cuidou disso), entao nao ha' ambiguidade
+                        // de QUAL documento e', so' precisa do elemento certo.
+                        const semLinkDireto = rows
+                            .map((row) => row.querySelector('a[href="#"]'))
+                            .filter(Boolean);
+                        if (semLinkDireto.length === 1) {
+                            semLinkDireto[0].click();
+                            return true;
+                        }
+                    }
+                    return false;
+                }
+                """,
+                nome_arquivo,
+            )
+            if not clicou:
+                raise RuntimeError(f"link do documento '{nome_arquivo}' nao encontrado no popup")
         download = await dl_info.value
         await download.save_as(str(destino))
     except Exception:
@@ -3070,27 +2568,30 @@ async def baixar_documento_via_commandlink(
 
 async def baixar_todos_arquivos(
     pasta_destino: Path,
-    lista_arquivos: list[dict] | None = None,
+    lista_arquivos: list[dict],
     log: Callable[[str], None] | None = None,
     seq_por_file_id: dict[str, int] | None = None,
 ) -> dict:
-    """Baixa todos os arquivos do PAJ via JavaScript fetch + local server.
-
-    Se lista_arquivos não for fornecida, extrai via listar_arquivos_paj().
-    Caso contrário, usa a lista ja fornecida (cada item deve ter: arquivo, seq, data, href ou as keys esperadas).
+    """Baixa todos os arquivos de `lista_arquivos` via JavaScript fetch +
+    local server (cada item deve ter: seq, data, nomeArq, href, e
+    `commandLinkId` quando for um documento sem link de download direto —
+    ver `_baixar_anexos_sisdpu`/`rodar_baixar_documentos` em
+    sincronizador.py, as duas fontes desta lista hoje).
 
     `seq_por_file_id`: mapa {id_do_arquivo (str) -> seq_real (int)} vindo da
     extracao por seq de movimentacao (`extrair_documentos_por_seq`). Usado
-    pra nomear o arquivo com a seq REAL da movimentacao — se o id do arquivo
-    (extraido do href) nao estiver no mapa, cai no `seq` fornecido pela lista
-    de origem (listar_arquivos_paj, que e' so um indice de listagem).
+    pra nomear o arquivo com a seq REAL da movimentacao quando o id do
+    arquivo (extraido do href) estiver no mapa — documentos sem link direto
+    ('sisdpu-commandlink:') ignoram este mapa, ja' que seu `seq` de origem
+    ja' e' confiavel (ver comentario mais abaixo, onde isso e' decidido).
 
     Estrategia:
-    1. Extrai lista de arquivos (ou usa fornecida)
-    2. Inicia local server (download_server.py) na porta 8765
-    3. Para cada arquivo: fetch() + Base64 + POST ao servidor local
-    4. Servidor salva arquivo em disco
-    5. Mata o processo do servidor
+    1. Inicia local server (download_server.py) na porta 8765
+    2. Para cada arquivo: fetch() + Base64 + POST ao servidor local (ou,
+       pra documentos sem link direto, clique real + captura do evento
+       `download` via `baixar_documento_via_commandlink`)
+    3. Servidor salva arquivo em disco
+    4. Mata o processo do servidor
 
     Retorna {baixados: int, erros: list, total: int}
     """
@@ -3105,44 +2606,17 @@ async def baixar_todos_arquivos(
     pasta_destino = Path(pasta_destino)
     pasta_destino.mkdir(parents=True, exist_ok=True)
 
-    # 1) Extrai lista de arquivos
     _log("[fetch] preparando downloads...")
-    if lista_arquivos is None:
-        _log("[fetch] extraindo lista de arquivos...")
-        resultado = await listar_arquivos_paj()
-        docs = resultado.get("itens", []) if isinstance(resultado, dict) else (resultado or [])
-    else:
-        docs = lista_arquivos
-
-    # Normaliza para formato esperado pelo fetch (precisa de: seq, data, nomeArq, href)
-    # Converte da lista de listar_arquivos_paj que tem: seq, data, descricao, tipo_arquivo, arquivo
-    docs_normalizados = []
-    for doc in docs:
-        seq = doc.get("seq", "?")
-        data = doc.get("data", "")
-        # Nome do arquivo: tenta 'arquivo' primeiro (de listar_arquivos_paj), depois 'nomeArq' (de extrair_lista_arquivos_paj)
-        nome_arq = doc.get("arquivo") or doc.get("nomeArq", "arquivo")
-        # href: tenta 'href' direto ou reconstrói... deixa vazio se não houver
-        href = doc.get("href", "")
-
-        docs_normalizados.append({
-            "seq": seq,
-            "data": data,
-            "nomeArq": nome_arq,
-            "href": href,
-            # so' presente quando href e' o marcador sintetico 'sisdpu-commandlink:...'
-            # (ver extrair_documentos_movimentacoes.js) — usado pra clicar de
-            # verdade no elemento em vez de tentar um GET que nao existe.
+    docs = [
+        {
+            "seq": doc.get("seq", "?"),
+            "data": doc.get("data", ""),
+            "nomeArq": doc.get("nomeArq", "arquivo"),
+            "href": doc.get("href", ""),
             "commandLinkId": doc.get("commandLinkId"),
-            # Sinalizado por listar_arquivos_paj() quando o link "Visualizar" e'
-            # um <p:commandLink> do PrimeFaces (href="#" cru) — mesma situacao
-            # do commandLinkId acima, so' que vinda da tela "Arquivos" (que nao
-            # expoe um id de elemento estavel, so' a posicao na tabela).
-            "sem_link_direto": bool(doc.get("sem_link_direto")),
-            "row_index": doc.get("row_index"),
-        })
-
-    docs = docs_normalizados
+        }
+        for doc in (lista_arquivos or [])
+    ]
     _log(f"[fetch] {len(docs)} arquivo(s) encontrado(s)")
 
     if not docs:
@@ -3265,9 +2739,27 @@ async def baixar_todos_arquivos(
             # pra casar o link da coluna "Documentos" com este arquivo local
             # — nao depende do nome (que pode se repetir, ex: "email.pdf").
             # A seq usa a REAL (do mapa por id), com 3 digitos pra ordenar
-            # certo na pasta quando passar de 100 seqs.
+            # certo na pasta quando passar de 100 seqs — EXCETO pra
+            # documentos 'sisdpu-commandlink:' (ver abaixo), cujo `seq` ja'
+            # vem correto desde a origem.
             file_id = extrair_id_arquivo(href)
-            seq_real = (seq_por_file_id or {}).get(file_id, seq)
+            if href.startswith("sisdpu-commandlink:"):
+                # O id do elemento JSF usado como `file_id` nao e' unico
+                # globalmente — o PrimeFaces reaproveita os mesmos numeros
+                # relativos quando duas sequencias diferentes tem, cada
+                # uma, so' 1 documento sem link direto (confirmado ao vivo:
+                # PAJ-2026-029-02241, seq 20 e seq 27 geraram o MESMO
+                # commandLinkId). Como `seq_por_file_id` e' um dict GLOBAL
+                # (varre todas as seqs do PAJ), uma colisao desse tipo faz
+                # ele apontar pra seq ERRADA — e so' pra documentos deste
+                # tipo (que SEMPRE vem da extracao por seq, a unica fonte
+                # de `commandLinkId`) o `seq` do proprio item ja e'
+                # confiavel desde que foi montado (ver `rodar_baixar_
+                # documentos` em sincronizador.py) — nao precisa, e nao
+                # deve, consultar o mapa global aqui.
+                seq_real = seq
+            else:
+                seq_real = (seq_por_file_id or {}).get(file_id, seq)
             try:
                 seq_fmt = f"{int(seq_real):03d}"
             except (TypeError, ValueError):
@@ -3297,39 +2789,31 @@ async def baixar_todos_arquivos(
             # de um clique de verdade + captura do evento `download`, nao um
             # GET simples (que so' baixaria a propria pagina). Bifurca ANTES do
             # fluxo httpx+servidor local de baixo, que so' serve pra URLs reais.
-            command_link_id = doc.get("commandLinkId")
-            if href.startswith("sisdpu-commandlink:") and command_link_id:
+            # Localiza pelo NOME do arquivo, nao mais pelo `commandLinkId` —
+            # id gerado pelo JSF/PrimeFaces, confirmado INSTAVEL entre
+            # reaberturas do popup (ver docstring de
+            # `baixar_documento_via_commandlink`); o campo so' fica aqui por
+            # compatibilidade com metadata.json de sincronizacoes antigas.
+            if href.startswith("sisdpu-commandlink:"):
                 destino_path = pasta_destino / nome_para_post
-                resultado_click = await baixar_documento_via_commandlink(
-                    str(seq_real), command_link_id, destino_path
-                )
-                if resultado_click:
-                    tamanho = resultado_click.stat().st_size
-                    tam_str = (
-                        f"{tamanho / 1024:.1f} KB" if tamanho < 1024 * 1024
-                        else f"{tamanho / (1024 * 1024):.1f} MB"
+                try:
+                    resultado_click = await baixar_documento_via_commandlink(
+                        str(seq_real), nomeArq, destino_path
                     )
-                    _log(f"               ... Concluído    ✓ {tam_str} (clique)")
-                    baixados += 1
-                else:
-                    _log(f"               ... ERRO     ✗ falha ao clicar/capturar download")
-                    erros.append(f"{nomeArq}: falha no download via clique (sem link direto)")
-                continue
-
-            # Mesma situacao do commandLinkId acima (anexo sem URL de download
-            # real — tipicamente .doc/.docx e imagens "Documentos do
-            # Assistido"), so' que sinalizada por `listar_arquivos_paj()` (tela
-            # "Arquivos", que expoe `row_index` em vez de um id de elemento
-            # estavel). ANTES disso, o codigo tentava um GET na URL fabricada
-            # (window.location.origin + '/sisdpu/#'), que sempre volta HTML da
-            # propria pagina — 100% reproduzivel pra TODO .doc/.docx/imagem
-            # sem link direto, nao uma falha intermitente.
-            row_index = doc.get("row_index")
-            if doc.get("sem_link_direto") and row_index is not None:
-                destino_path = pasta_destino / nome_para_post
-                resultado_click = await baixar_anexo_por_indice(
-                    row_index, destino_path, seq=str(seq_real)
-                )
+                except Exception as e:
+                    # Backstop: `baixar_documento_via_commandlink` ja' tem seu
+                    # proprio try/except, mas so' a PARTIR de onde ele abre o
+                    # popup — uma excecao no PASSO ANTERIOR (localizar/clicar
+                    # no icone de anexo da seq, ex: "Execution context was
+                    # destroyed" por uma navegacao inesperada no meio) escapa
+                    # sem ser pega ali. Confirmado ao vivo: isso derrubava a
+                    # sincronizacao INTEIRA (todos os outros 33 documentos
+                    # desta mesma chamada, nao so' este) por causa de UM
+                    # documento instavel (seq 27 do PAJ 2026/029-02241) —
+                    # agora vira so' um erro deste item, sem afetar os demais.
+                    _log(f"               ... ERRO     ✗ {type(e).__name__} (clique)")
+                    erros.append(f"{nomeArq}: {type(e).__name__} durante clique (sem link direto)")
+                    continue
                 if resultado_click:
                     tamanho = resultado_click.stat().st_size
                     tam_str = (
@@ -3449,106 +2933,6 @@ async def baixar_todos_arquivos(
         "erros": erros,
         "total": len(docs),
     }
-
-
-async def baixar_anexo_por_indice(
-    row_index: int,
-    destino,
-    seq: str = "",
-    ext_hint: str = "",
-):
-    """Clica em "Visualizar" da linha `row_index` (na tela "Arquivos" ja aberta
-    por `listar_arquivos_paj()`) e captura o `download` do Playwright.
-
-    NAO esta mais deprecada: e' o fallback ATIVO usado por `baixar_todos_arquivos`
-    para os anexos sinalizados com `sem_link_direto=True` — tipicamente .doc/.docx
-    e imagens "Documentos do Assistido" que sao `<p:commandLink>` do PrimeFaces
-    (href="#", sem URL de download real). Um `httpx.get()` nesses nunca funciona
-    (so' baixa a propria pagina); so' o clique real + captura do evento `download`
-    consegue. Analogo a `baixar_documento_via_commandlink`, mas localizando o
-    elemento por posicao na tabela em vez de por id (a tela "Arquivos" nao
-    expoe um id de elemento estavel do jeito que o popup por-seq expoe).
-    """
-    from pathlib import Path as _Path
-
-    destino = _Path(destino)
-    destino.parent.mkdir(parents=True, exist_ok=True)
-
-    page = await _get_page()
-
-    found = await page.evaluate(_JS_MARCAR_POR_INDICE, row_index)
-    metodo = "indice"
-
-    if not found and seq:
-        metodo = "seq-fallback"
-        with contextlib.suppress(Exception):
-            await page.evaluate(_JS_CLICAR_ARQUIVOS)
-            try:
-                await page.wait_for_load_state("networkidle", timeout=8000)
-            except Exception:
-                await _wait_pf_ajax(page, timeout=10000)
-            await page.wait_for_timeout(1000)
-        found = await page.evaluate(_JS_MARCAR_POR_SEQ, seq)
-
-    if not found:
-        return None
-
-    def _limpar_marker():
-        with contextlib.suppress(Exception):
-            return page.evaluate(
-                "() => document.querySelectorAll('[data-dpu-pick]')"
-                ".forEach(el => el.removeAttribute('data-dpu-pick'))"
-            )
-
-    try:
-        async with page.expect_event("download", timeout=60000) as dl_info:
-            await page.click('[data-dpu-pick="1"]')
-        download = await dl_info.value
-
-        sugerido = (download.suggested_filename or "").strip()
-        ext_sugerida = _Path(sugerido).suffix.lower() if sugerido else ""
-        if not ext_sugerida or ext_sugerida not in _EXTS_ARQUIVO:
-            ext_sugerida = ext_hint if ext_hint else ".bin"
-
-        atual_suffix = destino.suffix.lower()
-        if atual_suffix and atual_suffix in _EXTS_ARQUIVO:
-            destino_final = destino
-        else:
-            destino_final = destino.with_suffix(ext_sugerida)
-
-        await download.save_as(str(destino_final))
-    except Exception as e:
-        await _limpar_marker()
-        return None
-
-    await _limpar_marker()
-
-    if destino_final.exists() and destino_final.stat().st_size > 0:
-        return destino_final
-    return None
-
-
-async def fechar_dialogo_arquivos() -> None:
-    """Fecha o dialogo 'Arquivos' se estiver aberto (para nao interferir em outro PAJ)."""
-    page = await _get_page()
-    try:
-        await page.evaluate(
-            """
-            () => {
-                const dialogs = document.querySelectorAll('.ui-dialog:not(.ui-overlay-hidden)');
-                for (const d of dialogs) {
-                    const titulo = d.querySelector('.ui-dialog-title');
-                    if (titulo && /arquivo/i.test(titulo.textContent || '')) {
-                        const btn = d.querySelector('.ui-dialog-titlebar-close');
-                        if (btn) btn.click();
-                    }
-                }
-            }
-            """
-        )
-        await page.wait_for_timeout(500)
-    except Exception:
-        pass
 
 
 async def fechar() -> None:

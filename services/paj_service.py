@@ -673,6 +673,16 @@ def ler_paj(paj_norm: str) -> dict | None:
         _tem_peticao = False
         _tem_ajuizamento = False
 
+    # Petição inicial já ajuizada? (esconde o botão "Preparar Petição Inicial
+    # no eproc"): movimentação "Petição inicial" sincronizada do SISDPU OU o
+    # marcador gravado pelo próprio botão ao distribuir (cobre o intervalo até
+    # a próxima sincronização) — ver services/peticao_inicial_service.py.
+    try:
+        from services.peticao_inicial_service import inicial_ajuizada
+        _inicial_ajuizada = inicial_ajuizada(paj_norm, movs_sorted)
+    except Exception:  # noqa: BLE001
+        _inicial_ajuizada = False
+
     return {
         "metadata": metadata,
         "narrativa": narrativa,
@@ -696,6 +706,7 @@ def ler_paj(paj_norm: str) -> dict | None:
         "processos_judiciais": processos_judiciais,
         "tem_peticao_inicial": _tem_peticao,
         "tem_pasta_ajuizamento": _tem_ajuizamento,
+        "inicial_ajuizada": _inicial_ajuizada,
         "lembretes": lembretes_service.ler_lembretes_pasta(pasta),
         "pasta": str(pasta),
     }

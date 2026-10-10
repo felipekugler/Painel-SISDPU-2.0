@@ -1,0 +1,259 @@
+{# Item "Preparar Petição Inicial no eproc" do menu "Ajuizamento" (seção
+   Ações com IA) + modal — fluxo de benefício por incapacidade; ver
+   static/js/peticao_inicial.js e routes/peticao_inicial.py. Sempre disponível
+   (um caso pode exigir novo ajuizamento, ex. extinção sem mérito); se a
+   inicial já foi ajuizada, o modal avisa e pede confirmação explícita. #}
+<div class="contents" x-data="peticaoInicialApp('{{ paj_norm }}', '{{ meta.paj }}')" x-init="init()">
+    <button type="button"
+            x-show="$store.acoesIaMenu.aberto === 'ajuizamento'"
+            @click="abrir(); $store.acoesIaMenu.aberto = null"
+            class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+            {% if not dados.tem_pasta_ajuizamento %}disabled{% endif %}
+            title="{% if dados.tem_pasta_ajuizamento %}Envia os documentos da pasta Ajuizamento e preenche a petição inicial no e-proc (benefício por incapacidade), parando antes da distribuição para conferência{% else %}Disponível depois de organizar a pasta Ajuizamento{% endif %}">
+        Preparar Petição Inicial no eproc{% if dados.inicial_ajuizada %} <span class="badge badge-error badge-sm ml-1.5">Já há inicial ajuizada</span>{% endif %}
+    </button>
+
+    <div class="modal" :class="{'modal-open': aberto}">
+        <div class="modal-box max-w-5xl">
+            <div class="flex items-start justify-between gap-2 mb-2">
+                <div>
+                    <h3 class="font-bold text-lg">Preparar Petição Inicial no eproc</h3>
+                    <p class="text-xs text-base-content/60">Benefício por incapacidade · PAJ {{ meta.paj }}</p>
+                </div>
+                <button type="button" class="btn btn-sm btn-ghost" @click="fechar()"
+                        :disabled="fase === 'preparando' || fase === 'pos'">✕</button>
+            </div>
+
+            <div x-show="erro" class="alert alert-error text-sm mb-3"><span x-text="erro"></span></div>
+
+            <!-- PLANO -->
+            <template x-if="fase === 'plano'">
+                <div>
+                    <div x-show="carregando" class="flex items-center gap-2 text-sm py-6 justify-center">
+                        <span class="loading loading-spinner loading-sm"></span> Lendo a pasta Ajuizamento e a petição inicial…
+                    </div>
+                    <template x-if="!carregando && dados">
+                        <div class="flex flex-col gap-4">
+                            <template x-if="jaAjuizada">
+                                <div class="rounded-lg border border-error/50 bg-error/10 text-sm px-3 py-2 flex flex-col items-center text-center gap-1">
+                                    <span class="font-semibold text-error">Este PAJ já tem petição inicial ajuizada</span>
+                                    <template x-if="(jaAjuizada.processos || []).length">
+                                        <div class="text-xs flex flex-wrap justify-center gap-x-2">
+                                            <span>Processo:</span>
+                                            <template x-for="n in jaAjuizada.processos" :key="n">
+                                                <a class="link link-hover font-mono font-semibold" @click.prevent="consultarProcessoMcp(n)"
+                                                   href="#" title="Abrir na consulta do processo (MCP), em nova aba" x-text="n"></a>
+                                            </template>
+                                        </div>
+                                    </template>
+                                    <label class="flex items-center gap-2 text-xs cursor-pointer">
+                                        <input type="checkbox" class="checkbox checkbox-xs" x-model="novoAjuizamento">
+                                        Trata-se de novo ajuizamento
+                                    </label>
+                                </div>
+                            </template>
+                            <template x-for="av in dados.avisos" :key="av">
+                                <div class="alert alert-warning text-xs py-2"><span x-text="av"></span></div>
+                            </template>
+
+                            <!-- Documentos -->
+                            <div>
+                                <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1">
+                                    Documentos (pasta Ajuizamento) — tipo no e-proc sugerido pelo nome; ajuste o que precisar
+                                </div>
+                                <div class="overflow-x-auto border border-base-300 rounded">
+                                    <table class="table table-xs">
+                                        <thead><tr><th></th><th>Arquivo</th><th>Tipo no e-proc</th><th class="text-right">Tam.</th></tr></thead>
+                                        <tbody>
+                                            <template x-for="a in arquivos" :key="a.caminho">
+                                                <tr :class="{'opacity-40': !a.incluir}">
+                                                    <td><input type="checkbox" class="checkbox checkbox-xs" x-model="a.incluir"></td>
+                                                    <td><a :href="linkArquivo(a)" target="_blank" class="link link-hover font-mono text-[11px]" x-text="a.nome"></a></td>
+                                                    <td>
+                                                        <select class="select select-bordered select-xs w-full max-w-sm" x-model="a.tipo"
+                                                                x-init="$nextTick(() => { $el.value = a.tipo })">
+                                                            <template x-for="t in opcoesTipo(a.tipo)" :key="t">
+                                                                <option :value="t" x-text="t"></option>
+                                                            </template>
+                                                        </select>
+                                                    </td>
+                                                    <td class="text-right text-[11px]" x-text="Math.round(a.tamanho / 1024) + ' KB'"></td>
+                                                </tr>
+                                            </template>
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+
+                            <!-- Processo -->
+                            <div>
+                                <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1">
+                                    Processo <span class="normal-case font-normal" x-text="'(fonte: ' + (dados.fonte_peticao || '—') + ')'"></span>
+                                </div>
+                                <div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
+                                    <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Ajuizar em</span>
+                                        <select class="select select-bordered select-sm" x-model="dados.localidade">
+                                            <template x-for="l in localidades" :key="l"><option :value="l" x-text="l" :selected="l === dados.localidade"></option></template>
+                                        </select></label>
+                                    <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Rito (teto JEF: R$ <span x-text="dados.teto_jef"></span>)</span>
+                                        <select class="select select-bordered select-sm" x-model="dados.rito" @change="trocarRito()">
+                                            <option value="JUIZADO ESPECIAL FEDERAL">JUIZADO ESPECIAL FEDERAL</option>
+                                            <option value="RITO ORDINÁRIO (COMUM)">RITO ORDINÁRIO (COMUM)</option>
+                                        </select></label>
+                                    <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Classe</span>
+                                        <input class="input input-bordered input-sm" x-model="dados.classe" readonly></label>
+                                    <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Valor da causa (R$, da inicial)</span>
+                                        <input class="input input-bordered input-sm" x-model="dados.valor_causa"></label>
+                                    <label class="flex flex-col gap-0.5 md:col-span-2"><span class="text-[11px] text-base-content/60">Assunto principal (deve estar entre as sugestões da IA do e-proc)</span>
+                                        <input class="input input-bordered input-sm" x-model="dados.assunto"></label>
+                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" x-model="dados.renuncia_60sm">
+                                        <span class="text-xs">Renúncia ao excedente de 60 SM</span></label>
+                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" x-model="dados.tutela">
+                                        <span class="text-xs">Requer Liminar/Antecipação de Tutela</span></label>
+                                    <span class="text-[11px] text-base-content/50 self-center">Área Previdenciária · Sem sigilo · art. 129-A mantido</span>
+                                </div>
+                            </div>
+
+                            <!-- Autor -->
+                            <div>
+                                <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1">
+                                    Autor(a): <span class="normal-case" x-text="dados.autor.nome"></span> · réu INSS
+                                </div>
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                                    <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">CPF</span>
+                                        <input class="input input-bordered input-sm" x-model="dados.autor.cpf"></label>
+                                    <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">CEP</span>
+                                        <input class="input input-bordered input-sm" x-model="dados.autor.cep"></label>
+                                    <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Telefone</span>
+                                        <input class="input input-bordered input-sm" x-model="dados.autor.telefone"></label>
+                                    <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">E-mail</span>
+                                        <input class="input input-bordered input-sm" x-model="dados.autor.email"></label>
+                                </div>
+                                <div class="text-[11px] text-base-content/50 mt-2 mb-1">Só usados se o CPF não estiver cadastrado no e-proc (cadastro de pessoa física):</div>
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                                    <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Nº (endereço)</span>
+                                        <input class="input input-bordered input-sm" x-model="dados.autor.numero"></label>
+                                    <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Complemento</span>
+                                        <input class="input input-bordered input-sm" x-model="dados.autor.complemento"></label>
+                                    <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Estado civil</span>
+                                        <select class="select select-bordered select-sm" x-model="dados.autor.estado_civil">
+                                            <template x-for="e in estadosCivis" :key="e"><option :value="e" x-text="e" :selected="e === dados.autor.estado_civil"></option></template>
+                                        </select></label>
+                                    <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Sexo</span>
+                                        <select class="select select-bordered select-sm" x-model="dados.autor.sexo">
+                                            <option value="">(o da Receita)</option><option value="Feminino">Feminino</option><option value="Masculino">Masculino</option>
+                                        </select></label>
+                                </div>
+                            </div>
+
+                            <!-- Benefício -->
+                            <div>
+                                <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1">Benefício e perícia</div>
+                                <div class="grid grid-cols-1 md:grid-cols-4 gap-2 text-sm items-start">
+                                    <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">NB do pedido principal</span>
+                                        <input class="input input-bordered input-sm" x-model="dados.nb"></label>
+                                    <div class="md:col-span-3">
+                                        <span class="text-[11px] text-base-content/60">Especialidade (da inicial; se mais de uma, vai a de perícia mais próxima)</span>
+                                        <div class="flex flex-wrap gap-1 mt-1">
+                                            <template x-for="e in especialidadesConhecidas" :key="e">
+                                                <button type="button" class="badge badge-sm cursor-pointer"
+                                                        :class="dados.especialidades.includes(e) ? 'badge-primary' : 'badge-ghost'"
+                                                        @click="toggleEspecialidade(e)" x-text="e"></button>
+                                            </template>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Pós-ajuizamento -->
+                            <div>
+                                <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1">
+                                    Após o ajuizamento — movimentação "Petição inicial" no SISDPU (tramita para AJUIZADOS)
+                                </div>
+                                <textarea class="textarea textarea-bordered text-sm w-full" rows="4" x-model="dados.descricao_sisdpu"></textarea>
+                                <div class="text-[11px] text-base-content/50">
+                                    [PROCESSO] e [CHAVE] são preenchidos com os dados da distribuição. Anexo:
+                                    <span class="font-mono" x-text="dados.docx_peticao || '(docx não encontrado em Peças IA)'"></span>.
+                                    O processo também é gerenciado para o procurador padrão (Configurações › e-proc).
+                                </div>
+                            </div>
+
+                            <div class="modal-action mt-0">
+                                <button type="button" class="btn btn-sm" @click="fechar()">Cancelar</button>
+                                <button type="button" class="btn btn-sm btn-primary" @click="preparar()" :disabled="!selecionados().length || (jaAjuizada && !novoAjuizamento)">
+                                    Preparar no e-proc (<span x-text="selecionados().length"></span> documentos)
+                                </button>
+                            </div>
+                        </div>
+                    </template>
+                </div>
+            </template>
+
+            <!-- PREPARANDO -->
+            <template x-if="fase === 'preparando'">
+                <div class="flex flex-col items-center gap-3 py-8 text-sm">
+                    <span class="loading loading-spinner loading-md"></span>
+                    <div>Preenchendo a petição inicial na janela do e-proc… costuma levar de 1 a 3 minutos.</div>
+                    <div class="text-xs text-base-content/60">Não mexa na janela do e-proc enquanto isso. Nada será distribuído nesta etapa.</div>
+                </div>
+            </template>
+
+            <!-- PREPARADO / PÓS -->
+            <template x-if="fase === 'preparado' || fase === 'pos' || fase === 'fim'">
+                <div class="flex flex-col gap-3">
+                    <template x-if="fase === 'preparado'">
+                        <div class="alert alert-success text-sm">
+                            <div>
+                                <div class="font-semibold">Petição preparada para conferência</div>
+                                <div class="text-xs">A aba do e-proc está parada em "Informações Adicionais", antes de "Finalizar". Confira lá e, se estiver tudo certo, prossiga.</div>
+                            </div>
+                        </div>
+                    </template>
+                    <div x-show="posErro" class="alert alert-error text-sm"><span x-text="posErro"></span></div>
+
+                    <template x-if="resultado">
+                        <div class="border border-success/40 rounded p-3 text-sm">
+                            <div class="font-semibold mb-1">Processo distribuído</div>
+                            <div>Nº <span class="font-mono font-semibold" x-text="resultado.numero"></span>
+                                 · Chave <span class="font-mono font-semibold" x-text="resultado.chave"></span></div>
+                            <div class="text-xs text-base-content/60" x-text="(resultado.classe || '') + (resultado.magistrado ? ' · ' + resultado.magistrado : '')"></div>
+                        </div>
+                    </template>
+
+                    <template x-if="posLog.length">
+                        <ul class="text-xs flex flex-col gap-1">
+                            <template x-for="(l, i) in posLog" :key="i">
+                                <li class="flex gap-1.5 items-start">
+                                    <span x-show="l.ok === null" class="loading loading-spinner loading-xs"></span>
+                                    <span x-show="l.ok === true" class="text-success">✓</span>
+                                    <span x-show="l.ok === false" class="text-warning">⚠</span>
+                                    <span x-text="l.msg"></span>
+                                </li>
+                            </template>
+                        </ul>
+                    </template>
+
+                    <details class="text-xs" :open="fase === 'preparado'">
+                        <summary class="cursor-pointer text-base-content/60">O que foi preenchido no e-proc</summary>
+                        <ul class="mt-1 flex flex-col gap-0.5">
+                            <template x-for="(p, i) in passos" :key="i">
+                                <li><span class="text-base-content/40 font-mono" x-text="p.hora"></span> <span x-text="p.msg"></span></li>
+                            </template>
+                        </ul>
+                    </details>
+
+                    <div class="modal-action mt-0">
+                        <button type="button" class="btn btn-sm" @click="fechar()" :disabled="fase === 'pos'">Fechar</button>
+                        <template x-if="fase === 'preparado'">
+                            <button type="button" class="btn btn-sm btn-error" @click="prosseguir()">Prosseguir com ajuizamento</button>
+                        </template>
+                        <template x-if="fase === 'pos'">
+                            <span class="flex items-center gap-1 text-xs"><span class="loading loading-spinner loading-xs"></span> Executando…</span>
+                        </template>
+                    </div>
+                </div>
+            </template>
+        </div>
+        <div class="modal-backdrop" @click="fechar()"></div>
+    </div>
+</div>

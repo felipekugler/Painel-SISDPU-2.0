@@ -31,6 +31,7 @@ from routes.calcular_cnis import router as calcular_cnis_router
 from routes.calcular_qs import router as calcular_qs_router
 from routes.consulta_rpv import router as consulta_rpv_router
 from routes.dossie_sd import router as dossie_sd_router
+from routes.dossie_cadunico import router as dossie_cadunico_router
 from routes.dashboard import router as dashboard_router
 from routes.docgen import router as docgen_router
 from routes.files import router as files_router
@@ -39,6 +40,7 @@ from routes.intimacoes import router as intimacoes_router
 from routes.minutas import router as minutas_router
 from routes.movimentar_conjunto import router as movimentar_conjunto_router
 from routes.oficio_sei import router as oficio_sei_router
+from routes.peticao_inicial import router as peticao_inicial_router
 from routes.paj import router as paj_router
 from routes.eproc_consulta import router as eproc_consulta_router
 from routes.esisrec import router as esisrec_router
@@ -84,7 +86,7 @@ _configurar_logging()
 # Versao do painel — fonte unica. Usada pelo FastAPI (OpenAPI/docs) e tambem
 # exposta a todos os templates via Jinja globals (renderizada no rodape da
 # sidebar). Para incrementar: mude aqui e so aqui.
-APP_VERSION = "0.4.152"
+APP_VERSION = "0.4.159"
 
 app = FastAPI(title="oficio-geral-ui", version=APP_VERSION)
 app.state.jinja = jinja2.Environment(
@@ -274,6 +276,7 @@ app.include_router(calcular_cnis_router)
 app.include_router(calcular_qs_router)
 app.include_router(consulta_rpv_router)
 app.include_router(dossie_sd_router)
+app.include_router(dossie_cadunico_router)
 app.include_router(dashboard_router)
 app.include_router(paj_router)
 app.include_router(files_router)
@@ -299,6 +302,7 @@ app.include_router(minutas_router)
 app.include_router(intimacoes_router)
 app.include_router(movimentar_conjunto_router)
 app.include_router(oficio_sei_router)
+app.include_router(peticao_inicial_router)
 
 # Healthcheck de dependencias externas — expoe em app.state.ambiente pra
 # o dashboard renderizar banner quando algo falta.
@@ -385,6 +389,10 @@ async def _shutdown_fechar_sat() -> None:
 
         sd_client.fechar_navegador()
     with contextlib.suppress(Exception):
+        from ingestao import cadunico_client
+
+        cadunico_client.fechar_navegador()
+    with contextlib.suppress(Exception):
         from ingestao import esisrec_client
 
         esisrec_client.fechar_navegador()
@@ -461,6 +469,10 @@ if __name__ == "__main__":
             from ingestao import sd_client
 
             sd_client.fechar_navegador()
+        with contextlib.suppress(Exception):
+            from ingestao import cadunico_client
+
+            cadunico_client.fechar_navegador()
         with contextlib.suppress(Exception):
             from ingestao import esisrec_client
 

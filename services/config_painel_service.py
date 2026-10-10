@@ -608,6 +608,13 @@ def set_minutas_ia_tipos(tipos: list[dict]) -> list[dict]:
         limpos.append({
             "id": str(t.get("id") or "").strip() or uuid.uuid4().hex[:8],
             "label": label,
+            # Texto livre (ex.: "Gerais", "BI", "BPC", "Recursos") — só pra
+            # AGRUPAR visualmente no submenu "Petição com IA" e na tela de
+            # Configurações; vazio = sem categoria (pedido do usuário,
+            # 2026-10-08). A ORDEM de exibição (categorias e itens dentro
+            # delas) continua sendo a ordem de INSERÇÃO nesta lista — mover
+            # um item sobe/desce ele na lista (ver front, botões ▲/▼).
+            "categoria": str(t.get("categoria") or "").strip(),
             "instrucao": str(t.get("instrucao") or ""),
             # Vazio = usa o padrão do sistema ("peça curta, 3-6 parágrafos,
             # sem tópicos numerados") — ver minuta_ia_service._montar_prompt.

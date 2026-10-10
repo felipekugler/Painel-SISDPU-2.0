@@ -919,7 +919,7 @@
              exige o container de verdade VISÍVEL pra medir certo (ver
              cabeçalho de rich_editor.js). `display:contents` tira este <div>
              do layout — os filhos entram direto como itens do grid do pai. -->
-        <div style="display: contents;"
+        <div style="display: contents;" id="acoesSisdpuPaj"
              x-data="acoesSisdpuBlock({
                          idProcesso: '{{ dados.id_processo }}', paj: '{{ meta.paj }}', pajNorm: '{{ paj_norm }}',
                          idTramite: '{{ dados.id_tramite }}', tramitacoesCaixa: window._paj_tramitacoes_caixa,
@@ -1067,7 +1067,7 @@ document.addEventListener('alpine:init', () => {
             { key: 'oficio', label: 'Minutar Ofício', icone: '✉️' },
             { key: 'calculos', label: 'Cálculos', icone: '🧮' },
             { key: 'consultas', label: 'Consultas', icone: '🏦' },
-            { key: 'outros', label: 'Outros', icone: '🗂️' },
+            { key: 'ajuizamento', label: 'Ajuizamento', icone: '⚖️' },
         ]" :key="cat.key">
             <button type="button" class="btn btn-sm gap-1.5"
                     :class="$store.acoesIaMenu.aberto === cat.key ? 'btn-active' : 'btn-outline'"
@@ -1268,7 +1268,12 @@ document.addEventListener('alpine:init', () => {
                 <!-- "Petição com IA" — abre o modal de seleção de documentos
                      pro tipo escolhido (lista `tipos`, carregada de
                      /api/minutas/tipos — cadastro editável em Configurações
-                     › e-proc › Petição com IA). -->
+                     › e-proc › Petição com IA). Agrupada por categoria
+                     (pedido do usuário, 2026-10-08 — "para organizar e
+                     permitir reordenar"), via tiposAgrupados() em
+                     minuta_ia.js — preserva a ordem CADASTRADA (categorias e
+                     itens dentro delas), não ordena por nome. Grupo "" (tipo
+                     sem categoria) não mostra cabeçalho, só os itens. -->
                 <div class="w-full">
                     <button type="button" class="btn btn-ghost btn-sm justify-between w-full normal-case font-normal whitespace-nowrap text-left"
                             @click="mostrarSubmenuIa = !mostrarSubmenuIa"
@@ -1280,10 +1285,16 @@ document.addEventListener('alpine:init', () => {
                         <div class="text-xs text-base-content/50 px-2 py-1" x-show="!tipos.length">
                             Nenhum tipo cadastrado — veja Configurações › e-proc.
                         </div>
-                        <template x-for="tipo in tipos" :key="tipo.slug">
-                            <button type="button" class="btn btn-ghost btn-xs justify-start w-full normal-case font-normal whitespace-nowrap text-left"
-                                    @click="mostrarSubmenuIa = false; labelAtivo = ''; tipoSlug = tipo.slug; $store.acoesIaMenu.mostrarMinuta = true; $store.acoesIaMenu.aberto = null; abrirModal()"
-                                    x-text="tipo.label"></button>
+                        <template x-for="grupo in tiposAgrupados()" :key="grupo.categoria || '_sem_categoria'">
+                            <div class="w-full">
+                                <div class="text-[10px] font-semibold uppercase tracking-wide text-base-content/40 px-2 pt-1"
+                                     x-show="grupo.categoria" x-text="grupo.categoria"></div>
+                                <template x-for="tipo in grupo.itens" :key="tipo.slug">
+                                    <button type="button" class="btn btn-ghost btn-xs justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                                            @click="mostrarSubmenuIa = false; labelAtivo = ''; tipoSlug = tipo.slug; $store.acoesIaMenu.mostrarMinuta = true; $store.acoesIaMenu.aberto = null; abrirModal()"
+                                            x-text="tipo.label"></button>
+                                </template>
+                            </div>
                         </template>
                     </div>
                 </div>
@@ -1718,6 +1729,84 @@ document.addEventListener('alpine:init', () => {
             </dialog>
         </div>
 
+        <!-- Dossiê CadÚnico — automação direta, sem IA (pedido do usuário,
+             2026-10-09): busca o CPF do assistido no Cadastro Único (CAIXA) e,
+             para CADA família encontrada, junta num PDF os documentos oficiais
+             (Folha Resumo, Formulário Principal, Histórico da Família, motivos
+             de exclusão) em CadÚnico/ do PAJ. Login MANUAL (usuário, senha,
+             código do e-mail e 2FA) na janela que abre; o navegador fica aberto
+             para o próximo. Ver services/dossie_cadunico_service.py,
+             ingestao/cadunico_client.py e static/js/dossie_cadunico.js. -->
+        <div class="contents" x-data="dossieCadunicoApp('{{ paj_norm }}')" x-init="init()">
+            <div class="w-full" x-show="$store.acoesIaMenu.aberto === 'consultas' && status !== 'running' && juntada !== 'running'">
+                <button type="button" class="btn btn-ghost btn-sm justify-between w-full normal-case font-normal whitespace-nowrap text-left"
+                        @click="mostrarSubmenu = !mostrarSubmenu"
+                        title="Gera documentos do Cadastro Único (um PDF por família do CPF do assistido) e salva na pasta CadÚnico do PAJ — o login no CadÚnico é feito por você na janela que abrir">
+                    <span>Dossiê CadÚnico</span>
+                    <span class="text-[10px] opacity-60" x-text="mostrarSubmenu ? '▲' : '▼'"></span>
+                </button>
+                <div class="pl-3 flex flex-col" x-show="mostrarSubmenu" x-cloak>
+                    <button type="button" class="btn btn-ghost btn-xs justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                            @click="mostrarSubmenu = false; $store.acoesIaMenu.aberto = null; iniciar('completo')"
+                            title="Folha Resumo + Formulário Principal + Histórico da Família + motivos de exclusão">
+                        Dossiê Completo
+                    </button>
+                    <button type="button" class="btn btn-ghost btn-xs justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                            @click="mostrarSubmenu = false; $store.acoesIaMenu.aberto = null; iniciar('folha')"
+                            title="Só a Folha Resumo (com a página de dados da família e dos integrantes)">
+                        Só Folha Resumo
+                    </button>
+                    <button type="button" class="btn btn-ghost btn-xs justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                            @click="mostrarSubmenu = false; $store.acoesIaMenu.aberto = null; iniciar('historico')"
+                            title="Só o Histórico da Família desde 01/01/1950 (com a página de dados da família e dos integrantes)">
+                        Só Histórico da Família
+                    </button>
+                </div>
+            </div>
+            <button type="button" class="btn btn-sm gap-1.5" x-show="status === 'running'" disabled
+                    :class="aguardandoLogin ? 'btn-warning' : 'btn-outline'"
+                    :title="ultimaMensagem()">
+                <span class="loading loading-spinner loading-xs"></span>
+                <span x-show="!aguardandoLogin">Gerando <span x-text="rotulo || 'Dossiê CadÚnico'"></span>…</span>
+                <span x-show="aguardandoLogin">CadÚnico: faça o login na janela do CadÚnico</span>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="juntada === 'running'" disabled>
+                <span class="loading loading-spinner loading-xs"></span>
+                <span>Juntando dossiê CadÚnico ao SISDPU…</span>
+            </button>
+
+            <dialog class="modal" :open="perguntaJuntada" @close="perguntaJuntada = false">
+                <div class="modal-box max-w-lg">
+                    <h3 class="font-bold text-lg mb-2"><span x-text="rotulo || 'Dossiê CadÚnico'"></span> gerado com sucesso</h3>
+                    <p class="text-sm mb-3">O dossiê foi salvo na pasta <b>CadÚnico</b> dentro da pasta do PAJ
+                        (um arquivo por família encontrada).</p>
+                    <ul class="text-xs mb-3 flex flex-col gap-1" x-show="log.some(l => l.level === 'aviso' && !/login/i.test(l.msg))">
+                        <template x-for="(l, i) in log.filter(l => l.level === 'aviso' && !/login/i.test(l.msg))" :key="i">
+                            <li class="text-warning" x-text="'⚠ ' + l.msg"></li>
+                        </template>
+                    </ul>
+                    <p class="text-sm mb-2">Deseja juntar ao SISDPU? Será registrada uma movimentação
+                        "Juntada de documento" com a descrição <b>"<span x-text="movDescricao || 'Dossiê do CadÚnico'"></span>"</b>
+                        e o(s) arquivo(s) abaixo como "Documentos do Assistido":</p>
+                    <ul class="text-xs mb-2 flex flex-col gap-2">
+                        <template x-for="a in arquivos" :key="a">
+                            <li class="flex flex-col items-start gap-1 border border-base-300 rounded p-2">
+                                <span class="break-all" x-text="a"></span>
+                                <a class="btn btn-xs btn-outline" target="_blank" rel="noopener"
+                                   :href="'/api/dossie-cadunico/arquivo/' + pajNorm + '?nome=' + encodeURIComponent(a)"
+                                   title="Abre o PDF numa nova aba, para conferir antes de juntar">Visualizar o arquivo</a>
+                            </li>
+                        </template>
+                    </ul>
+                    <div class="modal-action">
+                        <button type="button" class="btn btn-sm" @click="dispensarJuntada()">Não juntar</button>
+                        <button type="button" class="btn btn-sm btn-primary" @click="juntar()">Juntar ao SISDPU</button>
+                    </div>
+                </div>
+                <form method="dialog" class="modal-backdrop"><button type="button" @click="perguntaJuntada = false">fechar</button></form>
+            </dialog>
+        </div>
+
         <!-- Baixar Extrato de Processo CRPS: Relatório de Andamento do e-Sisrec
              (mesma automação do botão "Baixar Extrato do Processo" da página
              Consultar e-Sisrec), salvo em E-sisrec/ do PAJ, com opção de
@@ -1802,7 +1891,7 @@ document.addEventListener('alpine:init', () => {
              x-data="organizarAjuizamentoApp('{{ paj_norm }}')" x-init="init()">
             <template x-if="status !== 'running'">
                 <button type="button"
-                        x-show="$store.acoesIaMenu.aberto === 'outros'"
+                        x-show="$store.acoesIaMenu.aberto === 'ajuizamento'"
                         @click="organizar(); $store.acoesIaMenu.aberto = null"
                         class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
                         {% if not dados.tem_peticao_inicial %}disabled{% endif %}
@@ -1820,6 +1909,10 @@ document.addEventListener('alpine:init', () => {
                 <span x-text="error"></span>
             </div>
         </div>
+
+        <!-- "Preparar Petição Inicial no eproc" (fluxo BI, 2026-10-08) — item do menu
+             "Ajuizamento" + modal; ver partials/peticao_inicial_modal.html. -->
+        {% include "partials/peticao_inicial_modal.html" %}
     </div>
 
     <!-- Orientação diretiva para análise da IA — linha própria abaixo da

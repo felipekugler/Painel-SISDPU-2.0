@@ -10,9 +10,20 @@ navegacao rapida no PDF final.
 
 Cada sequencia e' colorida (fundo da separadora + tarja das paginas dela)
 conforme a MESMA classificacao usada na aba Movimentacoes do painel
-(`corLinhaMov()` em templates/paj_detail.html): "Atendimento de retorno" fica
-verde, movimentacao de Defensor fica vermelha, o resto fica amarelo (tom
-padrao).
+(`corLinhaMov()` em static/js/movimentacoes.js): "Atendimento de retorno" fica
+verde, "Peticao inicial" fica azul escuro, demais Fases "Peticao ..." ficam
+azul (mais claro que o de inicial), movimentacao de Defensor fica vermelha, o
+resto fica amarelo (tom padrao).
+
+IMPORTANTE — padrao de formatacao UNIFORME do painel (pedido do usuario,
+2026-10-09): esta classificacao e' INTENCIONALMENTE um espelho de
+`corLinhaMov()` em static/js/movimentacoes.js. Qualquer alteracao numa DEVE
+ser replicada na outra (ordem de prioridade das categorias, e quais Fases
+disparam cada uma) — as cores em si nao precisam ser identicas pixel a pixel
+(aqui sao tons PDF-apropriados, la' sao variaveis CSS com variante clara/
+escura de tema), mas a CLASSIFICACAO (quais fases/usuario caem em qual
+categoria, e em que ordem de prioridade) tem que ser a mesma nos dois
+lugares.
 
 A lista de documentos de cada sequencia vem do proprio campo `documentos` da
 movimentacao (mais confiavel que adivinhar pelo nome do arquivo baixado), e e'
@@ -49,22 +60,32 @@ MARGEM = 40
 FONTE = "helv"
 FONTE_NEGRITO = "hebo"
 
-# Colorizacao das sequencias — MESMA logica de `corLinhaMov()` em
-# templates/paj_detail.html (aba Movimentacoes do painel): prioriza
-# "Atendimento de retorno" (verde), depois movimentacao de Defensor
-# (aqui vermelho, ao inves do laranja usado na tela), e o restante fica no
-# tom padrao (amarelo). Cada categoria tem um tom claro (fundo da pagina
-# separadora) e um tom escuro (tarja de identificacao no topo das paginas
-# daquela sequencia).
+# Colorizacao das sequencias — MESMA logica (e MESMA ordem de prioridade) de
+# `corLinhaMov()` em static/js/movimentacoes.js: "Atendimento de retorno"
+# (verde) > "Peticao inicial" (azul escuro) > demais Fases "Peticao ..."
+# (azul claro) > movimentacao de Defensor (aqui vermelho, ao inves do laranja
+# usado na tela) > tom padrao (amarelo). Cada categoria tem um tom claro
+# (fundo da pagina separadora) e um tom escuro (tarja de identificacao no
+# topo das paginas daquela sequencia).
+#
+# SINCRONIA OBRIGATORIA: ver aviso no topo do arquivo — qualquer mudanca na
+# CLASSIFICACAO (fases/ordem de prioridade) aqui ou em corLinhaMov() precisa
+# ser replicada no outro lugar.
 COR_PADRAO_CLARA = (0.99, 0.93, 0.68)
 COR_PADRAO_ESCURA = (0.80, 0.63, 0.10)
 COR_RETORNO_CLARA = (0.85, 0.95, 0.85)
 COR_RETORNO_ESCURA = (0.40, 0.68, 0.36)
 COR_DEFENSOR_CLARA = (0.97, 0.82, 0.80)
 COR_DEFENSOR_ESCURA = (0.76, 0.28, 0.24)
+COR_PETICIONAMENTO_CLARA = (0.80, 0.88, 0.97)
+COR_PETICIONAMENTO_ESCURA = (0.25, 0.50, 0.75)
+COR_PETICAO_INICIAL_CLARA = (0.72, 0.80, 0.93)
+COR_PETICAO_INICIAL_ESCURA = (0.12, 0.30, 0.55)
 
 CORES_CATEGORIA = {
     "retorno": (COR_RETORNO_CLARA, COR_RETORNO_ESCURA),
+    "peticao_inicial": (COR_PETICAO_INICIAL_CLARA, COR_PETICAO_INICIAL_ESCURA),
+    "peticionamento": (COR_PETICIONAMENTO_CLARA, COR_PETICIONAMENTO_ESCURA),
     "defensor": (COR_DEFENSOR_CLARA, COR_DEFENSOR_ESCURA),
     "padrao": (COR_PADRAO_CLARA, COR_PADRAO_ESCURA),
 }
@@ -72,14 +93,19 @@ CORES_CATEGORIA = {
 
 def _categoria_mov(mov: dict | None) -> str:
     """Classifica a movimentacao pra colorir a pagina separadora e a tarja
-    das paginas da sua sequencia — mesma prioridade do painel: retorno antes
-    de defensor."""
+    das paginas da sua sequencia — mesma prioridade do painel (ver
+    corLinhaMov() em static/js/movimentacoes.js): retorno > peticao inicial >
+    peticao (demais) > defensor > padrao."""
     if not mov:
         return "padrao"
-    fases = mov.get("fases") or ""
+    fases = (mov.get("fases") or "").strip().lower()
     usuario = mov.get("usuario") or ""
-    if "atendimento de retorno" in fases.strip().lower():
+    if "atendimento de retorno" in fases:
         return "retorno"
+    if "petição inicial" in fases:
+        return "peticao_inicial"
+    if "petição" in fases:
+        return "peticionamento"
     if fases and usuario and ("DEFENSOR" in usuario or "(d)" in usuario):
         return "defensor"
     return "padrao"
@@ -309,16 +335,21 @@ def _escrever_resumo(page: fitz.Page, stats: dict) -> None:
 # (titulo, largura) — largura em pontos, soma ~514pt pra caber numa A4 retrato
 # (595pt) com a MARGEM padrao (40pt) de cada lado.
 COLUNAS_MOV = [
-    ("Seq.", 26),
-    ("Anexo", 42),
-    ("Data/Hora", 76),
-    ("Fases", 100),
-    ("Descrição", 180),
-    ("Usuário", 90),
+    ("Seq.", 30),
+    ("Anexo", 50),
+    ("Data/Hora", 85),
+    ("Fases", 140),
+    ("Descrição", 340),
+    ("Usuário", 115),
 ]
 ALTURA_LINHA_MOV = 62
 ALTURA_CABECALHO_MOV = 22
-LINHAS_MOV_POR_PAGINA = 11
+# Pagina em PAISAGEM (a pedido do usuario — a tabela e' larga demais pra
+# caber confortavelmente em retrato) — a largura util disponivel e' bem
+# maior (A4.height em vez de A4.width), mas a altura util e' bem MENOR
+# (A4.width em vez de A4.height), entao cabem menos linhas por pagina do
+# que cabiam em retrato, apesar das colunas mais largas.
+LINHAS_MOV_POR_PAGINA = 7
 
 
 def _truncar(texto: str, limite: int) -> str:
@@ -356,16 +387,50 @@ def _linha_tabela_mov(page: fitz.Page, x0: float, y: float, valores: list[str], 
         x += largura
 
 
+def _pagina_fim_movimentacoes(doc: fitz.Document, paj_norm: str) -> None:
+    """Pagina separadora marcando o fim do bloco de sequencias/documentos —
+    o historico de movimentacoes (tabela cronologica) vem logo depois dela,
+    ja' no FINAL do arquivo (ver `gerar_pdf_consolidado`: antes ficava logo
+    apos a capa, movido pra ca' a pedido do usuario em 2026-10-09).
+
+    Visual DELIBERADAMENTE forte (fundo escuro + faixa amarela) — pedido
+    explicito do usuario pra nunca ser confundida com um ato do processo
+    (nenhum documento real do PAJ teria essa aparencia)."""
+    page = _nova_pagina(doc)
+    page.draw_rect(page.rect, color=None, fill=(0.08, 0.08, 0.08))
+
+    faixa_altura = 130
+    faixa_y0 = A4.height / 2 - faixa_altura / 2
+    faixa = fitz.Rect(0, faixa_y0, A4.width, faixa_y0 + faixa_altura)
+    page.draw_rect(faixa, color=(0, 0, 0), fill=(1.0, 0.76, 0.03), width=1.5)
+
+    page.insert_textbox(
+        fitz.Rect(MARGEM, faixa_y0 + 18, A4.width - MARGEM, faixa_y0 + 70),
+        "FIM DAS MOVIMENTAÇÕES DO PAJ",
+        fontsize=22, fontname=FONTE_NEGRITO, color=(0, 0, 0),
+        align=fitz.TEXT_ALIGN_CENTER,
+    )
+    page.insert_textbox(
+        fitz.Rect(MARGEM, faixa_y0 + 74, A4.width - MARGEM, faixa_y0 + 112),
+        "As páginas a seguir não são atos do processo: apenas uma tabela de\n"
+        "referência com o histórico de movimentações deste PAJ.",
+        fontsize=10, fontname=FONTE, color=(0, 0, 0),
+        align=fitz.TEXT_ALIGN_CENTER,
+    )
+    _tarja(page, f"{paj_norm}  |  Fim das movimentações do PAJ")
+
+
 def _escrever_movimentacoes(doc: fitz.Document, paj_norm: str, movs: list[dict]) -> None:
     if not movs:
         return
+    largura_pag, altura_pag = A4.height, A4.width  # paisagem — ver COLUNAS_MOV
     titulos_cabecalho = [t for t, _l in COLUNAS_MOV]
     for inicio in range(0, len(movs), LINHAS_MOV_POR_PAGINA):
-        page = _nova_pagina(doc)
+        page = doc.new_page(width=largura_pag, height=altura_pag)
         y = MARGEM
         if inicio == 0:
             _texto(
-                page, MARGEM, y, A4.width - MARGEM, 20,
+                page, MARGEM, y, largura_pag - MARGEM, 20,
                 "Histórico de movimentações (ordem cronológica)",
                 fontsize=12, fontname=FONTE_NEGRITO,
             )
@@ -378,9 +443,9 @@ def _escrever_movimentacoes(doc: fitz.Document, paj_norm: str, movs: list[dict])
                 str(mov.get("seq", "")),
                 f"Sim ({len(documentos)})" if documentos else "-",
                 mov.get("data_original") or mov.get("data") or "-",
-                _truncar(_limpar_fase(mov.get("fases", "")), 75),
-                _truncar(_texto_simples(mov.get("descricao")), 195),
-                _truncar(mov.get("usuario", ""), 60),
+                _truncar(_limpar_fase(mov.get("fases", "")), 100),
+                _truncar(_texto_simples(mov.get("descricao")), 350),
+                _truncar(mov.get("usuario", ""), 75),
             ]
             _linha_tabela_mov(page, MARGEM, y, valores)
             y += ALTURA_LINHA_MOV
@@ -959,7 +1024,6 @@ def gerar_pdf_consolidado(paj_norm: str) -> bytes | None:
 
     doc = fitz.open()
     _escrever_capa(doc, paj_norm, meta)  # pagina 0 — o resumo e' escrito nela no final
-    _escrever_movimentacoes(doc, paj_norm, movs)
     _escrever_narrativa(doc, paj_norm, narrativa)  # logo antes da Sequencia 1
 
     contagem = {
@@ -982,6 +1046,13 @@ def gerar_pdf_consolidado(paj_norm: str) -> bytes | None:
         for item in itens:
             status = _anexar_item(doc, paj_norm, rotulo_seq, pasta, item, cor_tarja)
             contagem[status] += 1
+
+    # Historico de movimentacoes (tabela cronologica) fica no FINAL do
+    # arquivo, precedido por uma pagina separadora — a pedido do usuario,
+    # pra quem abre o PDF ir direto aos documentos sem precisar passar pela
+    # tabela primeiro.
+    _pagina_fim_movimentacoes(doc, paj_norm)
+    _escrever_movimentacoes(doc, paj_norm, movs)
 
     fim = datetime.now()
     formato_data = "%d/%m/%Y %H:%M:%S"

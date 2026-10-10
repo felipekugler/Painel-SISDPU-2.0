@@ -92,6 +92,10 @@
             --cor-retorno-bg: rgba(29, 158, 117, 0.15);
             --cor-defensor: rgb(216, 90, 48);
             --cor-defensor-bg: rgba(216, 90, 48, 0.15);
+            --cor-peticionamento: rgb(41, 121, 196);
+            --cor-peticionamento-bg: rgba(41, 121, 196, 0.15);
+            --cor-peticao-inicial: rgb(21, 67, 130);
+            --cor-peticao-inicial-bg: rgba(21, 67, 130, 0.18);
 
             /* Cores de status de intimação (e-proc): mesmo padrão usado na
                tabela de Citações/Intimações (Prazos) e na página Consultar
@@ -154,6 +158,10 @@
             --cor-retorno-bg: rgba(79, 229, 157, 0.18);
             --cor-defensor: rgb(255, 153, 102);
             --cor-defensor-bg: rgba(255, 153, 102, 0.18);
+            --cor-peticionamento: rgb(125, 190, 255);
+            --cor-peticionamento-bg: rgba(125, 190, 255, 0.18);
+            --cor-peticao-inicial: rgb(70, 130, 230);
+            --cor-peticao-inicial-bg: rgba(70, 130, 230, 0.22);
 
             /* Cores de status de intimação (mesmos tons, sobre fundo escuro
                ficam como um "tingimento" translúcido em vez de pastel sólido). */
@@ -216,6 +224,10 @@
                 --cor-retorno-bg: rgba(79, 229, 157, 0.18);
                 --cor-defensor: rgb(255, 153, 102);
                 --cor-defensor-bg: rgba(255, 153, 102, 0.18);
+                --cor-peticionamento: rgb(125, 190, 255);
+                --cor-peticionamento-bg: rgba(125, 190, 255, 0.18);
+                --cor-peticao-inicial: rgb(70, 130, 230);
+                --cor-peticao-inicial-bg: rgba(70, 130, 230, 0.22);
 
                 /* Cores de status de intimação */
                 --cor-intim-aberta: rgba(255, 214, 51, 0.28);
@@ -1398,6 +1410,8 @@
     <script src="/static/js/calcular_qs.js?v={{ app_version }}"></script>
     <script src="/static/js/consulta_rpv.js?v={{ app_version }}"></script>
     <script src="/static/js/dossie_sd.js?v={{ app_version }}"></script>
+    <script src="/static/js/dossie_cadunico.js?v={{ app_version }}"></script>
+    <script src="/static/js/peticao_inicial.js?v={{ app_version }}"></script>
     <script src="/static/js/extrato_crps.js?v={{ app_version }}"></script>
     <script src="/static/js/lembretes.js?v={{ app_version }}"></script>
     {% block scripts %}{% endblock %}

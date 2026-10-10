@@ -534,31 +534,54 @@ async def _baixar_anexos_sisdpu(
     pasta_pecas: Path,
     log: Callable[[str], None],
     limite: int,
+    movs: list[dict],
     deve_cancelar: Callable[[], bool] | None = None,
     filtro_data_min=None,
     seq_por_file_id: dict[str, int] | None = None,
     rodar_ocr: bool = False,
 ) -> dict:
-    """Abre o dialogo 'Arquivos' do PAJ atual e baixa os anexos listados.
+    """Baixa os anexos do PAJ atual, a partir da relacao de documentos JA
+    extraida por sequencial de movimentacao (`movs`, cada um com um campo
+    `documentos`: [{nomeArquivo, urlDownload, commandLinkId, ...}]).
 
-    PRE-CONDICAO: a page do Playwright ja deve estar no detalhamento do PAJ
-    (chamar `movimentacoes_paj(...)` antes).
+    ATE' 2026-10-09 esta funcao reabria o dialogo "Arquivos" do PAJ (uma
+    LISTAGEM AGREGADA separada, via `sisdpu_client.listar_arquivos_paj()`)
+    como segunda fonte dos documentos a baixar — uma segunda passagem pela
+    MESMA informacao que a extracao por sequencial (`movs`, parametro desta
+    funcao) ja fornece. Essa segunda passagem foi REMOVIDA (confirmado:
+    a aba "Arquivos" e' so' uma compilacao do PAJ inteiro numa pagina so,
+    nao ha' divergencia de cobertura possivel em relacao a extracao por
+    sequencial) — alem de redundante, ela usava um "sequencial" MENOS
+    confiavel pra documentos sem link de download direto (imagens/.docx via
+    `<p:commandLink>` do PrimeFaces), e um ID derivado do HREF (sempre
+    vazio pra esse tipo de documento) como chave de um mapa GLOBAL — dois
+    bugs de colisao de ID ja confirmados ao vivo nessa segunda passagem
+    (um documento de uma seq podia ser baixado usando o popup de OUTRA
+    seq, por aquele mapa global colidir). A extracao por sequencial nao
+    tem esse problema: o `seq` de cada documento vem direto da
+    movimentacao dona dele.
+
+    PRE-CONDICAO: nenhuma mais — nao abre pagina/dialogo nenhum (so' usa os
+    dados ja' extraidos). O antigo requisito ("page no detalhamento do
+    PAJ") so' se aplica indiretamente, atraves de quem populou `movs`.
 
     `seq_por_file_id`: repassado a `sisdpu_client.baixar_todos_arquivos` pra
-    nomear os arquivos com a seq REAL da movimentacao (vinda da extracao por
-    seq), nao o indice desta listagem.
+    nomear o arquivo local com a seq REAL da movimentacao — so' usado hoje
+    pros documentos com link de download direto. Documentos sem link direto
+    ja' vem com o `seq` certo desde a origem (ver `baixar_todos_arquivos`) e
+    ignoram este mapa.
 
     Comportamento:
-      - Lista TODAS as tabelas de anexos da pagina (multi-categoria).
-      - Ordena os itens por DATA decrescente (mais recentes primeiro).
+      - Achata `movs` numa lista de 1 item por documento anexado.
+      - Ordena os itens por DATA (da movimentacao-dona) decrescente.
       - Se `filtro_data_min` (date) for informado, baixa SO os com data >= filtro
         — sem aplicar `limite` (modo "completar a partir de uma data").
       - Caso contrario, aplica `limite`: baixa os `limite` mais recentes; se
-        houver mais que isso no SISDPU, registra overflow no resultado.
+        houver mais que isso, registra overflow no resultado.
 
     Retorna dict:
       {
-        "total_no_sisdpu": int,         # anexos visiveis na pagina
+        "total_no_sisdpu": int,         # total de documentos indexados
         "baixados": int,
         "ocr_ok": int,
         "overflow": dict | None         # presente se total > limite (e nao houve filtro)
@@ -583,44 +606,33 @@ async def _baixar_anexos_sisdpu(
     except Exception as e:
         log(f"    [bin] erro ao rebatizar legados: {type(e).__name__}: {e}")
 
-    try:
-        resultado = await sisdpu_client.listar_arquivos_paj()
-    except Exception as e:
-        log(f"  [anexos] erro ao listar: {type(e).__name__}: {e}")
-        return {"total_no_sisdpu": 0, "baixados": 0, "ocr_ok": 0, "overflow": None}
-
-    # Nova assinatura: {"ok": bool, "itens": [...], "diag": {...}}
-    lista = resultado.get("itens", []) if isinstance(resultado, dict) else (resultado or [])
-    diag = resultado.get("diag", {}) if isinstance(resultado, dict) else {}
+    # Achata `movs` numa lista de 1 item por documento — formato que
+    # `sisdpu_client.baixar_todos_arquivos` ja espera (seq/data/nomeArq/
+    # href/commandLinkId). A "data" de cada documento e' a da propria
+    # movimentacao-dona (os documentos nao tem data individual) — usada so'
+    # pra ordenacao/overflow/filtro-por-data, nao pra exibicao.
+    lista: list[dict] = []
+    for mov in movs:
+        seq = mov.get("seq")
+        data_mov = (mov.get("data_original") or "").split(" ")[0]
+        for doc in mov.get("documentos") or []:
+            nome_arq = (doc.get("nomeArquivo") or "").strip()
+            if not nome_arq or nome_arq == "Nenhum arquivo encontrado.":
+                continue
+            lista.append({
+                "seq": seq,
+                "data": data_mov,
+                "nomeArq": nome_arq,
+                "href": doc.get("urlDownload", ""),
+                "commandLinkId": doc.get("commandLinkId"),
+            })
 
     total = len(lista)
     if total == 0:
-        log("  [anexos] nenhum anexo na tela 'Arquivos'")
-        # Diagnostico detalhado — imprime o que o scraper viu
-        if diag:
-            candidatos = diag.get("candidatos_botao_arquivos", []) or []
-            log(f"    [diag] candidatos ao botão Arquivos: {len(candidatos)}")
-            for c in candidatos[:5]:
-                log(
-                    f"      - <{c.get('tag')}> '{c.get('texto')}' id={c.get('id')} cls={c.get('classes', '')[:60]}"
-                )
-            log(f"    [diag] clique: {diag.get('clicou', 'N/A')}")
-            dlgs = diag.get("dialogs_visiveis", []) or []
-            log(f"    [diag] dialogs visíveis: {len(dlgs)}")
-            for d in dlgs[:5]:
-                log(
-                    f"      - id={d.get('id')} título='{d.get('titulo')}' linhas={d.get('linhas_tabela')}"
-                )
-            log(f"    [diag] estrategia_localizacao: {diag.get('estrategia', 'N/A')}")
-            log(
-                f"    [diag] total_linhas_vistas: {diag.get('total_linhas', 0)} filtradas: {diag.get('linhas_filtradas', 0)}"
-            )
-            snippet = (diag.get("html_snippet") or "").replace("\n", " ")[:400]
-            if snippet:
-                log(f"    [diag] html[:400]: {snippet}")
-        return {"total_no_sisdpu": 0, "baixados": 0, "ocr_ok": 0, "overflow": None}
+        log("  [anexos] nenhum documento indexado pela extração por sequencial")
+        return {"total_no_sisdpu": 0, "baixados": 0, "ocr_ok": 0, "overflow": None, "falhou": False}
 
-    log(f"  [anexos] {total} anexos listados no SISDPU")
+    log(f"  [anexos] {total} documento(s) indexado(s) pela extração por sequencial")
 
     # Ordena por data DESC (mais recentes primeiro). Anexos sem data parseavel
     # vao pro fim — sao os menos prioritarios.
@@ -673,18 +685,6 @@ async def _baixar_anexos_sisdpu(
     lista = lista_para_baixar
     baixados = 0
     ocr_ok = 0
-
-    import re as _re
-
-    def _stem_sem_prefixo_idx(stem: str) -> str:
-        """Remove prefixo numerico inicial 'NN_' (ex: '01_', '23_') do stem.
-
-        Permite comparar arquivos baixados em runs diferentes — se o numero de
-        anexos crescer (nova categoria aparecer no SISDPU), o `idx` pode mudar
-        sem que o conteudo do arquivo tenha mudado. Comparamos o restante.
-        """
-        return _re.sub(r"^\d{2,4}_", "", stem)
-
     interrompido = False
 
     # Usa nova estrategia: fetch() + servidor local (mais robusto que Playwright clicks)
@@ -767,10 +767,6 @@ async def _baixar_anexos_sisdpu(
         if pdfs_pasta:
             log("")
             log(f"✓ {ocr_ok}/{len(pdfs_pasta)} PDF(s) processado(s) com sucesso   /   {len(pdfs_pasta) - ocr_ok} erros")
-
-    # Fecha o dialogo pra nao atrapalhar proximo PAJ (quando usado no loop)
-    with contextlib.suppress(Exception):
-        await sisdpu_client.fechar_dialogo_arquivos()
 
     # Limpeza automatica: remove .txt OCR vazios/placeholder (evita poluicao).
     # Camada 1 de gestao de disco — rebatizar_bins_existentes ja rodou no inicio.
@@ -1074,10 +1070,21 @@ async def _processar_paj_pos_detalhamento(
                 )
             except Exception as e:
                 log(f"  [docs] erro ao extrair documentos por seq: {type(e).__name__}: {e}")
-                resultado_docs = {}
+                resultado_docs = {"falhou": True}
         else:
             log("  [docs] extracao por seq PULADA (sync rapida — documentos conhecidos preservados)")
             resultado_docs = {}
+
+        # Sinaliza falha (contexto da pagina perdido/tabela nao encontrada —
+        # ver extrair_documentos_por_seq) pra `_atualizar_tramitacoes_caixa`
+        # NAO gravar este PAJ como "em dia": sem isso, a proxima sync completa
+        # pularia pra sempre um PAJ cuja extracao de documentos falhou so'
+        # porque a tramitacao da caixa nao mudou (visto em producao,
+        # 2026-10-08 — PAJs 2026/029-00412 e 2023/029-01897).
+        if resultado_docs.get("falhou"):
+            metadata["docs_sync_falhou"] = True
+        else:
+            metadata.pop("docs_sync_falhou", None)
 
         docs_novos_por_seq = {
             str(mov_doc.get("seq")): mov_doc.get("documentos", [])
@@ -1192,9 +1199,9 @@ async def _processar_paj_pos_detalhamento(
         encoding="utf-8",
     )
 
-    # Anexos SISDPU: usa o botao "Arquivos" do PAJ (lista consolidada de todos
-    # os anexos, tipo/descricao/arquivo). Pre-condicao: movimentacoes_paj foi
-    # chamado acima e a page do Playwright esta no detalhamento deste PAJ.
+    # Anexos SISDPU: usa a relacao de documentos JA extraida por sequencial de
+    # movimentacao acima (nao reabre mais a aba "Arquivos" — ver docstring de
+    # `_baixar_anexos_sisdpu`).
     if baixar_anexos:
         # Checkpoint de cancelamento ANTES de comecar o download de anexos.
         # Se o usuario ja sinalizou cancel apos movimentacoes_paj() retornar,
@@ -1214,10 +1221,18 @@ async def _processar_paj_pos_detalhamento(
             log(f"  [ok] {paj_norm} {'(novo)' if not ja_existia else '(atualizado parcialmente)'}")
             return (paj_norm, True)
 
+        # A mesma lista que acabou de ser gravada em metadata.json acima
+        # (`mov_estruturadas` no caminho normal, `movs_antigas` preservada
+        # quando o SISDPU nao devolveu movimentacoes nesta rodada) — le de
+        # volta do proprio `metadata` em vez de repetir a bifurcacao,
+        # garantindo que os dois caminhos fiquem sempre em sincronia.
+        movs_para_anexos = (metadata.get("detalhes_sisdpu", {}) or {}).get("movimentacoes", []) or []
+
         resultado_anexos = await _baixar_anexos_sisdpu(
             pasta / "Arquivos",
             log,
             limite=MAX_ANEXOS_POR_PAJ,
+            movs=movs_para_anexos,
             deve_cancelar=deve_cancelar,
             seq_por_file_id=seq_por_file_id,
             rodar_ocr=rodar_ocr,
@@ -1233,6 +1248,15 @@ async def _processar_paj_pos_detalhamento(
         else:
             # Tudo baixado nesta rodada — limpa flag antigo se existia
             metadata.pop("anexos_extras", None)
+
+        # Mesma logica do `docs_sync_falhou` acima: "0 anexos" por falha do
+        # clique no botao "Arquivos" (ver _baixar_anexos_sisdpu) nao pode ser
+        # confundido com "0 anexos confirmado" — senao a proxima sync completa
+        # pula este PAJ pra sempre (tramitacao da caixa sem mudanca).
+        if resultado_anexos.get("falhou"):
+            metadata["anexos_sync_falhou"] = True
+        else:
+            metadata.pop("anexos_sync_falhou", None)
 
         # Flag de sincronizacao incompleta: setada quando o usuario cancela
         # NO MEIO do download de anexos. Bloqueia "Elaborar" na UI ate ser
@@ -1432,6 +1456,7 @@ async def _atualizar_tramitacoes_caixa(
 
     # PAJs a atualizar: todo PAJ ainda na caixa.
     atualizados = 0
+    pulados_por_falha = 0
     for paj_norm in pajs_na_caixa:
         meta_path = PAJS_DIR / paj_norm / "metadata.json"
         if not meta_path.exists():
@@ -1439,6 +1464,17 @@ async def _atualizar_tramitacoes_caixa(
         try:
             meta = json.loads(meta_path.read_text(encoding="utf-8"))
         except Exception:
+            continue
+        # Falha de extracao de documentos/anexos NESTA rodada (ver
+        # `anexos_sync_falhou`/`docs_sync_falhou` em `_processar_paj_pos_
+        # detalhamento`) — NAO atualiza `tramitacoes_caixa` deste PAJ: se
+        # atualizasse, a proxima sync (mesmo Completa) veria a tramitacao
+        # "ja conhecida" e pularia o PAJ inteiro pra sempre, perpetuando a
+        # falha pontual (bug real, visto em producao 2026-10-08 — PAJs
+        # 2026/029-00412 e 2023/029-01897). Deixando o valor antigo, o
+        # proximo sync da caixa volta a tentar processar este PAJ do zero.
+        if meta.get("anexos_sync_falhou") or meta.get("docs_sync_falhou"):
+            pulados_por_falha += 1
             continue
         novas = por_paj.get(paj_norm, [])
         if meta.get("tramitacoes_caixa") == novas:
@@ -1455,6 +1491,12 @@ async def _atualizar_tramitacoes_caixa(
             log(f"  [tramitacoes] falha ao gravar {paj_norm}: {type(e).__name__}: {e}")
     if atualizados:
         log(f"  [tramitacoes] {atualizados} PAJ(s) com tramitacoes_caixa atualizado")
+    if pulados_por_falha:
+        log(
+            f"  [tramitacoes] {pulados_por_falha} PAJ(s) com falha de extração de "
+            "documentos/anexos nesta rodada — NÃO marcados como em dia, serão "
+            "reprocessados na próxima sincronização"
+        )
     return atualizados
 
 
@@ -2025,6 +2067,7 @@ async def rodar_anexos_desde_data(
     # anterior — e' assim que o overflow foi detectado em primeiro lugar).
     # Evita reprocessar a extracao por seq so pra completar anexos antigos.
     seq_por_file_id: dict[str, int] = {}
+    movs_existentes: list[dict] = []
     meta_path_existente = pasta / "metadata.json"
     if meta_path_existente.exists():
         try:
@@ -2038,12 +2081,15 @@ async def rodar_anexos_desde_data(
         except Exception as e:
             log(f"  [anexos-desde] aviso: nao foi possivel ler seqs do metadata existente: {e}")
 
-    # 3) Baixa anexos com filtro por data (ignora limite)
+    # 3) Baixa anexos com filtro por data (ignora limite) — mesma relacao de
+    # documentos por sequencial ja' lida acima (`movs_existentes`), sem
+    # reabrir a aba "Arquivos" (ver docstring de `_baixar_anexos_sisdpu`).
     pasta.mkdir(parents=True, exist_ok=True)
     resultado_anexos = await _baixar_anexos_sisdpu(
         pasta / "Arquivos",
         log,
         limite=MAX_ANEXOS_POR_PAJ,  # ignorado quando filtro_data_min e' usado
+        movs=movs_existentes,
         deve_cancelar=deve_cancelar,
         filtro_data_min=data_inicio,
         seq_por_file_id=seq_por_file_id,
@@ -2490,9 +2536,22 @@ async def rodar_paj_unico(
         log("[sync-paj] abrindo caixa de entrada...")
         data = await sisdpu_client.caixa_de_entrada()
     except Exception as e:
-        log(f"[FATAL] falha ao abrir caixa: {type(e).__name__}: {e}")
-        resumo["erros"].append(f"caixa: {e}")
-        return resumo
+        # Mesmo soluço transitório de rede/navegação do SISDPU tratado em
+        # `rodar()` (ver `_processar_item_caixa` acima) — aqui a chamada e'
+        # avulsa (um unico PAJ, sem o loop que a' fazia tentar o proximo item),
+        # entao sem retry um net::ERR_ABORTED pontual matava a sincronizacao
+        # inteira na certa (confirmado em producao, 2026-10-08: PAJ 2023/029-
+        # 01897 e 2026/029-03247). Forca reconexao e tenta mais UMA vez antes
+        # de desistir.
+        log(f"[ERRO] falha ao abrir caixa: {type(e).__name__}: {e} — reconectando e tentando novamente...")
+        with contextlib.suppress(Exception):
+            await sisdpu_client.reconectar()
+        try:
+            data = await sisdpu_client.caixa_de_entrada()
+        except Exception as e2:
+            log(f"[FATAL] falha ao abrir caixa (persistiu após reconexão): {type(e2).__name__}: {e2}")
+            resumo["erros"].append(f"caixa: {e2}")
+            return resumo
 
     itens_raw = data.get("itens_tabela", []) or []
     item_alvo = None

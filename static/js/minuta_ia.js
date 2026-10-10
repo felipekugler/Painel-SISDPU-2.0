@@ -96,6 +96,27 @@ function minutaIaApp(pajNorm, pajLabel) {
             }
         },
 
+        // Agrupa `tipos` por categoria (cadastrada em Configurações › e-proc
+        // › Petição com IA), PRESERVANDO a ordem cadastrada — tanto a ordem
+        // das categorias (1ª aparição) quanto dos itens dentro delas; não
+        // reordena por nome nem nada — a ordem de verdade é a da lista (ver
+        // botões ▲/▼ na tela de Configurações). Tipo sem categoria cai num
+        // grupo "" (sem cabeçalho visível, ver partials/minuta_ia.html —
+        // não, é no paj_detail.html mesmo).
+        tiposAgrupados() {
+            const grupos = [];
+            const indice = {};
+            for (const t of this.tipos) {
+                const cat = t.categoria || '';
+                if (!(cat in indice)) {
+                    indice[cat] = grupos.length;
+                    grupos.push({ categoria: cat, itens: [] });
+                }
+                grupos[indice[cat]].itens.push(t);
+            }
+            return grupos;
+        },
+
         async carregarModelosPadrao() {
             try {
                 const resp = await fetch('/api/minutas/modelos-padrao');

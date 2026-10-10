@@ -1243,16 +1243,27 @@
                 <table class="table table-sm">
                     <thead>
                         <tr class="text-xs font-bold">
+                            <th class="w-16"></th>
                             <th>Nome</th>
+                            <th>Categoria</th>
                             <th>Instrução</th>
                             <th>Documento</th>
                             <th class="w-32 text-right"></th>
                         </tr>
                     </thead>
                     <tbody>
+                        <!-- Ordem da tabela = ordem de verdade (armazenada/do
+                             menu) — ▲/▼ troca a posição com o vizinho e
+                             salva na hora (mesmo gesto de reordenar listas
+                             simples, sem precisar de drag-and-drop). -->
                         <template x-for="(t, i) in tipos" :key="t.id">
                             <tr class="hover:bg-base-300/30">
+                                <td class="whitespace-nowrap">
+                                    <button type="button" class="btn btn-ghost btn-xs px-1" :disabled="i === 0" @click="mover(i, -1)" title="Mover pra cima">▲</button>
+                                    <button type="button" class="btn btn-ghost btn-xs px-1" :disabled="i === tipos.length - 1" @click="mover(i, 1)" title="Mover pra baixo">▼</button>
+                                </td>
                                 <td class="font-medium whitespace-nowrap" x-text="t.label"></td>
+                                <td class="text-xs text-base-content/60 whitespace-nowrap" x-text="t.categoria || '—'"></td>
                                 <td class="text-xs text-base-content/60" x-text="previewInstrucao(t.instrucao)"></td>
                                 <td class="text-xs text-base-content/60" x-text="t.documentos_obrigatorios ? 'Obrigatório' : 'Opcional'"></td>
                                 <td class="text-right whitespace-nowrap">
@@ -1271,10 +1282,22 @@
             <div class="modal-box max-w-3xl">
                 <h3 class="font-bold text-lg mb-3" x-text="editandoIndex >= 0 ? 'Editar tipo de petição com IA' : 'Novo tipo de petição com IA'"></h3>
                 <div class="flex flex-col gap-3">
-                    <div class="form-control">
-                        <label class="label py-1"><span class="label-text text-xs">Nome (aparece no menu)</span></label>
-                        <input type="text" class="input input-bordered input-sm" placeholder="Ex.: Manifestação sobre laudo pericial (BI)"
-                               x-model="tipoEmEdicao.label">
+                    <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                        <div class="form-control">
+                            <label class="label py-1"><span class="label-text text-xs">Nome (aparece no menu)</span></label>
+                            <input type="text" class="input input-bordered input-sm" placeholder="Ex.: Manifestação sobre laudo pericial (BI)"
+                                   x-model="tipoEmEdicao.label">
+                        </div>
+                        <div class="form-control">
+                            <label class="label py-1"><span class="label-text text-xs">Categoria (agrupa no menu — ex.: Gerais, BI, BPC, Recursos)</span></label>
+                            <input type="text" class="input input-bordered input-sm" list="minutas-ia-categorias" placeholder="Ex.: BI"
+                                   x-model="tipoEmEdicao.categoria">
+                            <datalist id="minutas-ia-categorias">
+                                <template x-for="c in categoriasExistentes()" :key="c">
+                                    <option :value="c"></option>
+                                </template>
+                            </datalist>
+                        </div>
                     </div>
                     <div class="form-control">
                         <label class="label py-1">
@@ -2061,7 +2084,7 @@ function minutasIaPrefs() {
         msg: '', msgErro: false,
         modalAberto: false,
         tipoEmEdicao: {
-            id: '', label: '', instrucao: '', instrucao_estilo: '',
+            id: '', label: '', categoria: '', instrucao: '', instrucao_estilo: '',
             documentos_sugeridos: '', documentos_obrigatorios: true, arquivos_referencia: [],
         },
         editandoIndex: -1,
@@ -2076,12 +2099,28 @@ function minutasIaPrefs() {
         },
         abrirNovo() {
             this.tipoEmEdicao = {
-                id: '', label: '', instrucao: '', instrucao_estilo: '',
+                id: '', label: '', categoria: '', instrucao: '', instrucao_estilo: '',
                 documentos_sugeridos: '', documentos_obrigatorios: true, arquivos_referencia: [],
             };
             this.editandoIndex = -1;
             this.msgErro = false; this.msg = '';
             this.modalAberto = true;
+        },
+        // Categorias já usadas por outros tipos — alimenta o <datalist> do
+        // campo Categoria (autocompletar, evita grafias diferentes pra
+        // mesma categoria, ex.: "BI" vs "bi").
+        categoriasExistentes() {
+            return [...new Set(this.tipos.map(t => t.categoria).filter(Boolean))].sort();
+        },
+        // Troca de posição com o vizinho (i+delta) e salva na hora — a ORDEM
+        // da lista é a mesma ordem exibida no submenu "Petição com IA" (ver
+        // tiposAgrupados() em minuta_ia.js).
+        async mover(i, delta) {
+            const j = i + delta;
+            if (j < 0 || j >= this.tipos.length) return;
+            const nova = [...this.tipos];
+            [nova[i], nova[j]] = [nova[j], nova[i]];
+            await this._persistir(nova);
         },
         abrirEditar(i) {
             this.tipoEmEdicao = JSON.parse(JSON.stringify(this.tipos[i]));

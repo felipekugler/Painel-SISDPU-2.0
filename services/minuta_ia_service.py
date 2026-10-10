@@ -97,9 +97,11 @@ def _tipo_por_id(tipo_id: str) -> dict | None:
 
 def listar_tipos() -> list[dict]:
     """Catálogo ENXUTO pro submenu "Petição com IA" da página do PAJ — só
-    {slug, label}, na ordem cadastrada. Ver `listar_tipos_completos()` pra
-    versão cheia (Configurações › e-proc › Petição com IA)."""
-    return [{"slug": t["id"], "label": t["label"]} for t in _tipos_cadastrados()]
+    {slug, label, categoria}, na ordem cadastrada (o front agrupa por
+    categoria preservando essa ordem — ver tiposAgrupados() em
+    static/js/minuta_ia.js). Ver `listar_tipos_completos()` pra versão cheia
+    (Configurações › e-proc › Petição com IA)."""
+    return [{"slug": t["id"], "label": t["label"], "categoria": t.get("categoria", "")} for t in _tipos_cadastrados()]
 
 
 def listar_tipos_completos() -> list[dict]:
@@ -153,6 +155,7 @@ def _semear_tipos_padrao() -> list[dict]:
     tipos = [
         {
             "label": "Petição genérica",
+            "categoria": "Gerais",
             "instrucao": _ler_area_texto_migracao(TESES_DPU_DIR / "areas" / "peticao-generica"),
             "documentos_sugeridos": "os documentos relevantes ao propósito descrito na "
                                     "Orientação Diretiva",
@@ -163,11 +166,13 @@ def _semear_tipos_padrao() -> list[dict]:
         },
         {
             "label": "Manifestação sobre laudo médico pericial (BI)",
+            "categoria": "BI",
             "instrucao": _ler_area_texto_migracao(TESES_DPU_DIR / "areas" / "beneficio-incapacidade"),
             "documentos_sugeridos": "laudo pericial e petição inicial",
         },
         {
             "label": "Contrarrazões de Recurso",
+            "categoria": "Recursos",
             "instrucao": _ler_area_texto_migracao(TESES_DPU_DIR / "areas" / "contrarrazoes-recurso"),
             "instrucao_estilo": _INSTRUCAO_ESTILO_CONTRARRAZOES_MIGRACAO,
             "documentos_sugeridos": "recurso interposto, decisão/sentença recorrida, "

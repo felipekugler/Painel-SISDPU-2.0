@@ -38,6 +38,7 @@ function tabelaMovimentacoes() {
         filtroUsuarioDefensor: false,
         filtroUsuarioSistema: false,
         filtroSoComDocumentos: false,
+        filtroApenasPeticoes: false,
         colunhaOrdenacao: 'seq',
         direcaoOrdenacao: 'desc',
 
@@ -110,13 +111,37 @@ function tabelaMovimentacoes() {
 
         get movimentacoes() { return this.movs || []; },
 
-        // Cor de fundo da linha: verde p/ Atendimento de retorno, laranja p/
-        // Defensor; nas demais, listra alternada. Usa variáveis CSS (claro/escuro).
+        // Cor de fundo da linha: verde p/ Atendimento de retorno, azul escuro p/
+        // Petição inicial, azul claro p/ demais Fases "Petição ..." (ambas
+        // prevalecem sobre o laranja de Defensor — pedido do usuário,
+        // 2026-10-09: checadas ANTES dele), laranja p/ Defensor; nas demais,
+        // listra alternada. Usa variáveis CSS (claro/escuro).
+        //
+        // SINCRONIA OBRIGATORIA (padrão de formatação uniforme do painel,
+        // pedido do usuário 2026-10-09): esta classificação é espelhada em
+        // `_categoria_mov()` de services/download_completo_service.py (usada
+        // pra colorir as páginas separadoras do PDF "baixar tudo" do PAJ).
+        // Qualquer mudança na CLASSIFICAÇÃO aqui (quais Fases/usuário caem em
+        // qual categoria, e a ordem de prioridade) precisa ser replicada lá
+        // também — as cores em si não precisam ser idênticas (lá são tons
+        // PDF-apropriados fixos, aqui são variáveis CSS com variante de
+        // tema), só a classificação.
         corLinhaMov(mov, idx) {
             const style = getComputedStyle(document.documentElement);
-            if (mov.fases && mov.fases.trim().toLowerCase().includes('atendimento de retorno')) {
+            const fases = (mov.fases || '').trim().toLowerCase();
+            if (fases.includes('atendimento de retorno')) {
                 const cor = style.getPropertyValue('--cor-retorno').trim();
                 const bg = style.getPropertyValue('--cor-retorno-bg').trim();
+                return `background-color: ${bg}; border-left: 4px solid ${cor};`;
+            }
+            if (fases.includes('petição inicial')) {
+                const cor = style.getPropertyValue('--cor-peticao-inicial').trim();
+                const bg = style.getPropertyValue('--cor-peticao-inicial-bg').trim();
+                return `background-color: ${bg}; border-left: 4px solid ${cor};`;
+            }
+            if (fases.includes('petição')) {
+                const cor = style.getPropertyValue('--cor-peticionamento').trim();
+                const bg = style.getPropertyValue('--cor-peticionamento-bg').trim();
                 return `background-color: ${bg}; border-left: 4px solid ${cor};`;
             }
             if (mov.fases && mov.usuario && (mov.usuario.includes('DEFENSOR') || mov.usuario.includes('(d)'))) {
@@ -358,6 +383,12 @@ function tabelaMovimentacoes() {
             }
             if (this.filtroSoComDocumentos) {
                 resultado = resultado.filter(mov => mov.documentos && mov.documentos.length > 0);
+            }
+            if (this.filtroApenasPeticoes) {
+                // Mesmo critério de "Petição ..." usado em corLinhaMov() (ver
+                // nota de sincronia ali) — cobre Petição inicial e as demais
+                // Fases de petição num filtro só.
+                resultado = resultado.filter(mov => mov.fases && mov.fases.trim().toLowerCase().includes('petição'));
             }
             if (!this.filtroUsuarioTodos) {
                 resultado = resultado.filter(mov => {
