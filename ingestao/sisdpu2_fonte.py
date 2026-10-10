@@ -189,8 +189,7 @@ async def listar_caixa_estruturada() -> dict:
 
 def _movimentacoes(id_processo: int, capa: dict) -> list[dict]:
     """Todas as movimentações, já no formato da raspagem e com o Seq do legado."""
-    hist = (capa.get("historico") or capa.get("movimentacoes")
-            or capa.get("historicoMovimentacoes") or [])
+    hist = capa.get("movimentacoes") or []  # paj_capa comHistorico=true (com possuiArquivo)
     total = int(capa.get("totalDeMovimentacoes") or 0)
     if not hist or (total and len(hist) < total):
         # sem histórico completo na capa: lista paginada (sem o indicador de anexo)
@@ -207,7 +206,8 @@ def _movimentacoes(id_processo: int, capa: dict) -> list[dict]:
             "data": _br(m.get("dataHora")),
             "movimentacao": m.get("tipo") or "",
             "fases": _fases(m.get("fases")),
-            "descricao": m.get("descricao") or "",
+            # a tela do legado mostra "Não Possui" quando a movimentação não tem texto
+            "descricao": m.get("descricao") or "Não Possui",
             "links_decisao": [],
             "usuario": m.get("usuario") or "",
             "descricao_retorno": _html_para_texto(m.get("textoRetorno")),
