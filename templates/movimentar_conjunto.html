@@ -357,7 +357,7 @@
             <template x-for="(f, fi) in fichasMcp" :key="fi">
               <div class="mb-2">
                 <div class="text-xs font-semibold" x-text="(fi + 1) + '. ' + (f.tipo === 'tramitacao' ? 'Tramitação' : 'Movimentação') + ' — PAJ ' + f.paj"></div>
-                <div class="text-sm mt-1" x-html="window.fichaMcp ? window.fichaMcp.htmlFicha(f.ficha, f.paj) : ''"></div>
+                <div class="text-sm mt-1" x-html="window.fichaMcp ? window.fichaMcp.htmlFicha(f.ficha, f.paj, f.contexto) : ''"></div>
               </div>
             </template>
             <template x-for="(e, ei) in fichasMcpErros" :key="'e' + ei">

@@ -115,7 +115,8 @@ def _enviar_anexo(caminho: Path, descricao: str) -> list[int]:
 async def _aprovar(tipo: str, paj_num: str, ficha: str, contexto: dict) -> Optional[str]:
     coleta = COLETA_FICHAS.get()
     if coleta is not None:
-        coleta.append({"tipo": tipo, "paj": paj_num, "ficha": aprov.ficha_para_exibir(ficha)})
+        coleta.append({"tipo": tipo, "paj": paj_num, "ficha": aprov.ficha_para_exibir(ficha),
+                       "contexto": contexto})
         return None
     return await aprov.solicitar(tipo, paj_num, ficha, contexto)
 
@@ -155,13 +156,16 @@ async def movimentar_paj(pajs: list[dict], descricao: str, fase: str, anexos: Op
             nomes = [f.get("descricao") for f in op.get("todasFases") or []]
             return {"fonte": "mcp-sisdpu2", "ok": False, "status": "falha", "pajs": numeros,
                     "detalhe": f"Fase '{fase}' não encontrada no SIS-DPU 2.0 (opções={nomes})"}
-        ids_arquivos, nomes_anexos = [], []
+        ids_arquivos, nomes_anexos, anexos_ficha = [], [], []
         for a in anexos or []:
             caminho = Path(a.get("caminho") or "")
             if not caminho.is_file():
                 continue
             ids_arquivos += await asyncio.to_thread(_enviar_anexo, caminho, a.get("descricao") or "")
             nomes_anexos.append(a.get("nome") or caminho.name)
+            # para a tabela de anexos do modal (descrição dada pelo Defensor a cada um)
+            anexos_ficha.append({"nome": caminho.name, "descricao": a.get("descricao") or "",
+                                 "bytes": caminho.stat().st_size})
         args = {"idProcesso": idp, "idTipoMovimentacao": int(tipo["id"]), "idsFases": [int(fase_o["id"])],
                 "descricao": _html_da_descricao(descricao, descricao_html, fase)}
         if ids_arquivos:
@@ -177,7 +181,7 @@ async def movimentar_paj(pajs: list[dict], descricao: str, fase: str, anexos: Op
                     "detalhe": "Ficha conferida pelo SIS-DPU 2.0 (nada gravado).",
                     "ficha": aprov.ficha_para_exibir(ficha_txt)}
         resposta = await _aprovar("movimentacao", paj.get("numero") or "", ficha_txt,
-                                  {"fase": fase, "anexos": nomes_anexos})
+                                  {"fase": fase, "anexos": anexos_ficha})
         if COLETA_FICHAS.get() is not None:
             return {"fonte": "mcp-sisdpu2", "ok": True, "status": "dry_run", "pajs": numeros, "anexos": nomes_anexos,
                     "detalhe": "Ficha preparada para o resumo (nada gravado)."}

@@ -30,9 +30,7 @@
             + '  <div class="px-6 pt-5 pb-3 border-b border-base-300 shrink-0">'
             + '    <h3 id="ficha-mcp-titulo" class="font-bold text-lg"></h3>'
             + '  </div>'
-            + '  <div class="px-6 py-4 overflow-y-auto flex-1 text-sm">'
-            + '    <table class="table table-sm w-full"><tbody id="ficha-mcp-campos"></tbody></table>'
-            + '  </div>'
+            + '  <div id="ficha-mcp-campos" class="px-6 py-4 overflow-y-auto flex-1 text-sm"></div>'
             + '  <div class="px-6 pt-3 pb-5 border-t border-base-300 flex items-center justify-end gap-3 shrink-0">'
             + '    <button type="button" id="ficha-mcp-nao" class="btn btn-sm btn-ghost">Não gravar</button>'
             + '    <button type="button" id="ficha-mcp-sim" class="btn btn-sm btn-success">Confirmar gravação</button>'
@@ -51,7 +49,7 @@
         montar();
         aberta = p.id;
         document.getElementById('ficha-mcp-titulo').textContent = 'Confirmar ' + rotulo(p.tipo) + ' no SISDPU';
-        preencherCampos(p.ficha, p.paj);
+        document.getElementById('ficha-mcp-campos').innerHTML = htmlFicha(p.ficha, p.paj, p.contexto);
         // A ficha vence no servidor (~10 min): o modal fecha sozinho junto, sem gravar.
         clearInterval(relogio);
         relogio = setTimeout(fechar, Math.max(1, p.restam_seg) * 1000);
@@ -89,55 +87,84 @@
     // ajustes de leitura pedidos pelo Defensor (11/10/2026): o PAJ pelo NÚMERO
     // (AAAA/UUU-NNNNN), não pelo id interno; "Acompanhamento público: Sim/Não".
     function camposDaFicha(ficha, pajNumero) {
-        const campos = [];
+        const campos = [], anexos = [];
+        let faseAnexos = '', emAnexos = false;
         (ficha || '').split('\n').forEach(function (linha) {
+            // itens de lista sob "Anexos a juntar:" ("    - nome, tipo, tamanho")
+            const item = linha.match(/^\s{3,}[-•*]\s*(.+)$/);
+            if (item && emAnexos) { anexos.push(item[1].trim()); return; }
             const m = linha.match(/^\s{2,}([^:]{2,60}):\s?(.*)$/);
             if (!m) return;
             let rotuloCampo = m[1].replace(/\?$/, '').trim(), valor = m[2];
+            emAnexos = false;
+            // Anexos: SEPARADOS, no fim, uma linha por anexo (pedido do Defensor, 11/10/2026)
+            if (/^anexos? na fase/i.test(rotuloCampo)) { faseAnexos = valor; return; }
+            if (/^anexos? a juntar/i.test(rotuloCampo)) {
+                emAnexos = true;
+                valor.split(/\s*;\s*/).forEach(function (v) { if (v.trim()) anexos.push(v.trim()); });
+                return;
+            }
             if (/^PAJ$/i.test(rotuloCampo) && pajNumero) valor = pajNumero;
             if (/acompanhamento p[úu]blico/i.test(rotuloCampo)) rotuloCampo = 'Acompanhamento público';
             if (/sai da caixa de origem/i.test(rotuloCampo)) rotuloCampo = 'Sai da caixa de origem';
             if (/^descri[çc][ãa]o,/i.test(rotuloCampo)) rotuloCampo = 'Descrição';
             // Respostas "NÃO. <explicação do servidor>" / "SIM. ..." viram só Não / Sim.
-            if (/^\s*N[ÃA]O\b[.:]?/i.test(valor) && !/^descri/i.test(rotuloCampo)) valor = 'Não';
-            else if (/^\s*SIM\b[.:]?/i.test(valor) && !/^descri/i.test(rotuloCampo)) valor = 'Sim';
+            // Só o padrão do servidor ("NÃO." / "SIM." + explicação) — "Não informado" fica como está.
+            if (/^\s*N[ÃA]O\s*(\.|$)/.test(valor) && !/^descri/i.test(rotuloCampo)) valor = 'Não';
+            else if (/^\s*SIM\s*(\.|$)/.test(valor) && !/^descri/i.test(rotuloCampo)) valor = 'Sim';
             campos.push([rotuloCampo, valor, /descri/i.test(rotuloCampo) && /<\w/.test(valor)]);
         });
-        return campos;
+        return { campos: campos, anexos: anexos, faseAnexos: faseAnexos };
     }
 
-    function preencherCampos(ficha, pajNumero) {
-        const tb = document.getElementById('ficha-mcp-campos');
-        tb.innerHTML = '';
-        camposDaFicha(ficha, pajNumero).forEach(function (c) {
-            const tr = document.createElement('tr');
-            const th = document.createElement('th');
-            th.className = 'align-top whitespace-nowrap text-base-content/70 font-medium w-1/4';
-            th.textContent = c[0];
-            const td = document.createElement('td');
-            td.className = 'align-top break-words';
-            if (c[2]) {
-                const box = document.createElement('div');
-                box.className = 'bg-base-200 rounded p-2';
-                box.innerHTML = htmlSeguro(c[1]);
-                td.appendChild(box);
-            } else {
-                td.textContent = c[1];
-            }
-            tr.append(th, td);
-            tb.appendChild(tr);
-        });
+    function tamanhoLegivel(b) {
+        if (!b && b !== 0) return '';
+        if (b < 1024) return b + ' B';
+        if (b < 1048576) return (b / 1024).toFixed(1).replace('.', ',') + ' KB';
+        return (b / 1048576).toFixed(1).replace('.', ',') + ' MB';
     }
 
-    // A mesma tabela em HTML (texto escapado), para o resumo da movimentação conjunta.
-    function htmlFicha(ficha, pajNumero) {
-        const esc = function (s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
-        return '<table class="table table-sm w-full"><tbody>' + camposDaFicha(ficha, pajNumero).map(function (c) {
+    // A ficha em HTML (texto escapado): dados da gravação e, por último, a tabela
+    // de anexos. Usada no modal e no resumo da movimentação conjunta.
+    // `contexto.anexos` (do painel): [{nome, descricao, bytes}] — a descrição que o
+    // Defensor deu a cada anexo, que a ficha do servidor não repete.
+    function htmlFicha(ficha, pajNumero, contexto) {
+        const esc = function (s) { const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; };
+        const f = camposDaFicha(ficha, pajNumero);
+        let html = '<table class="table table-sm w-full"><tbody>' + f.campos.map(function (c) {
             return '<tr><th class="align-top whitespace-nowrap text-base-content/70 font-medium w-1/4">' + esc(c[0])
                 + '</th><td class="align-top break-words">'
                 + (c[2] ? '<div class="bg-base-200 rounded p-2">' + htmlSeguro(c[1]) + '</div>' : esc(c[1]))
                 + '</td></tr>';
         }).join('') + '</tbody></table>';
+
+        const doPainel = ((contexto || {}).anexos || []).filter(function (a) { return a && typeof a === 'object'; });
+        let linhas = f.anexos.map(function (txt) {
+            // "nome.pdf, application/pdf[, 1,5 KB]" — o nome pode ter vírgula: o tipo é o trecho com "/"
+            const partes = txt.split(/,\s*/);
+            const iTipo = partes.findIndex(function (x) { return /^[\w.+-]+\/[\w.+-]+$/.test(x); });
+            const nome = iTipo > 0 ? partes.slice(0, iTipo).join(', ') : txt;
+            const tipo = iTipo > 0 ? partes[iTipo] : '';
+            const tam = iTipo > 0 ? partes.slice(iTipo + 1).join(', ') : '';
+            const meu = doPainel.find(function (a) { return a.nome === nome; }) || {};
+            return [nome, meu.descricao || '', tipo, tam || tamanhoLegivel(meu.bytes)];
+        });
+        if (!linhas.length && doPainel.length) {
+            linhas = doPainel.map(function (a) { return [a.nome, a.descricao || '', '', tamanhoLegivel(a.bytes)]; });
+        }
+        if (linhas.length) {
+            html += '<div class="font-semibold mt-4 mb-1">Anexos (' + linhas.length + ')'
+                + (f.faseAnexos ? ' <span class="font-normal text-base-content/70">— fase: ' + esc(f.faseAnexos) + '</span>' : '')
+                + '</div>'
+                + '<table class="table table-sm table-zebra w-full"><thead><tr>'
+                + '<th>Arquivo</th><th>Descrição</th><th>Tipo</th><th class="text-right">Tamanho</th></tr></thead><tbody>'
+                + linhas.map(function (l) {
+                    return '<tr><td class="break-words">' + esc(l[0]) + '</td><td class="break-words">' + esc(l[1])
+                        + '</td><td class="whitespace-nowrap">' + esc(l[2]) + '</td><td class="text-right whitespace-nowrap">'
+                        + esc(l[3]) + '</td></tr>';
+                }).join('') + '</tbody></table>';
+        }
+        return html;
     }
 
     async function responder(aprovado) {
