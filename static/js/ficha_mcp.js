@@ -25,21 +25,15 @@
         fundo.className = 'modal';
         fundo.addEventListener('cancel', function (e) { e.preventDefault(); });  // Esc não responde por você
         fundo.innerHTML =
+            // Só os dados que serão gravados (pedido do Defensor, 11/10/2026).
             '<div class="modal-box max-w-3xl max-h-[88vh] flex flex-col p-0">'
             + '  <div class="px-6 pt-5 pb-3 border-b border-base-300 shrink-0">'
-            + '    <h3 class="font-bold text-lg">Confirmar gravação no SISDPU</h3>'
-            + '    <div id="ficha-mcp-sub" class="text-sm text-base-content/70 mt-1"></div>'
+            + '    <h3 id="ficha-mcp-titulo" class="font-bold text-lg"></h3>'
             + '  </div>'
             + '  <div class="px-6 py-4 overflow-y-auto flex-1 text-sm">'
-            + '    <p class="mb-3">Será gravado no SISDPU <strong>exatamente</strong> isto:</p>'
             + '    <table class="table table-sm w-full"><tbody id="ficha-mcp-campos"></tbody></table>'
-            + '    <details class="mt-3">'
-            + '      <summary class="cursor-pointer text-xs text-base-content/60">Ver a ficha como o SIS-DPU 2.0 a devolveu (texto integral)</summary>'
-            + '      <pre id="ficha-mcp-corpo" class="bg-base-200 rounded-lg p-3 mt-2 text-xs whitespace-pre-wrap break-words"></pre>'
-            + '    </details>'
             + '  </div>'
-            + '  <div class="px-6 pt-3 pb-5 border-t border-base-300 flex items-center gap-3 flex-wrap shrink-0">'
-            + '    <div id="ficha-mcp-aviso" class="text-xs text-base-content/70 flex-1 min-w-[220px]"></div>'
+            + '  <div class="px-6 pt-3 pb-5 border-t border-base-300 flex items-center justify-end gap-3 shrink-0">'
             + '    <button type="button" id="ficha-mcp-nao" class="btn btn-sm btn-ghost">Não gravar</button>'
             + '    <button type="button" id="ficha-mcp-sim" class="btn btn-sm btn-success">Confirmar gravação</button>'
             + '  </div>'
@@ -56,26 +50,17 @@
     function abrir(p) {
         montar();
         aberta = p.id;
-        document.getElementById('ficha-mcp-sub').textContent =
-            rotulo(p.tipo) + ' — PAJ ' + p.paj + ' · SIS-DPU 2.0 (MCP)';
-        document.getElementById('ficha-mcp-corpo').textContent = p.ficha;
+        document.getElementById('ficha-mcp-titulo').textContent = 'Confirmar ' + rotulo(p.tipo) + ' no SISDPU';
         preencherCampos(p.ficha, p.paj);
-        let resta = p.restam_seg;
-        const aviso = document.getElementById('ficha-mcp-aviso');
-        const pintar = function () {
-            const m = Math.floor(Math.max(0, resta) / 60), s = Math.max(0, resta) % 60;
-            aviso.textContent = 'Leia a ficha: é exatamente o que vai ao prontuário. Ela vence em '
-                + m + ':' + String(s).padStart(2, '0') + ' — sem resposta, nada é gravado.';
-        };
-        pintar();
+        // A ficha vence no servidor (~10 min): o modal fecha sozinho junto, sem gravar.
         clearInterval(relogio);
-        relogio = setInterval(function () { resta -= 1; pintar(); if (resta <= 0) fechar(); }, 1000);
+        relogio = setTimeout(fechar, Math.max(1, p.restam_seg) * 1000);
         const dlg = document.getElementById('ficha-mcp-fundo');
         if (!dlg.open) dlg.showModal();
     }
 
     function fechar() {
-        clearInterval(relogio);
+        clearTimeout(relogio);
         aberta = null;
         const f = document.getElementById('ficha-mcp-fundo');
         if (f && f.open) f.close();
@@ -110,10 +95,12 @@
             if (!m) return;
             let rotuloCampo = m[1].replace(/\?$/, '').trim(), valor = m[2];
             if (/^PAJ$/i.test(rotuloCampo) && pajNumero) valor = pajNumero;
-            if (/acompanhamento p[úu]blico/i.test(rotuloCampo)) {
-                rotuloCampo = 'Acompanhamento público';
-                valor = /^\s*N[ÃA]O\b/i.test(valor) ? 'Não' : (/^\s*SIM\b/i.test(valor) ? 'Sim' : valor);
-            }
+            if (/acompanhamento p[úu]blico/i.test(rotuloCampo)) rotuloCampo = 'Acompanhamento público';
+            if (/sai da caixa de origem/i.test(rotuloCampo)) rotuloCampo = 'Sai da caixa de origem';
+            if (/^descri[çc][ãa]o,/i.test(rotuloCampo)) rotuloCampo = 'Descrição';
+            // Respostas "NÃO. <explicação do servidor>" / "SIM. ..." viram só Não / Sim.
+            if (/^\s*N[ÃA]O\b[.:]?/i.test(valor) && !/^descri/i.test(rotuloCampo)) valor = 'Não';
+            else if (/^\s*SIM\b[.:]?/i.test(valor) && !/^descri/i.test(rotuloCampo)) valor = 'Sim';
             campos.push([rotuloCampo, valor, /descri/i.test(rotuloCampo) && /<\w/.test(valor)]);
         });
         return campos;
