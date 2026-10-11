@@ -681,7 +681,10 @@ function baixarAnexosDesde(pajNorm) {
  * página recarregava mostrando as movimentações ainda desatualizadas — foi
  * exatamente o bug relatado em 2026-08-13 com o disparo por evento antigo. */
 async function posExecucaoPaj(pajNorm, resultado, progresso) {
-    if (resultado && resultado.mov_seq && resultado.status !== 'falha') {
+    // PAJ arquivado: a pasta já foi para a Lixeira — reler/baixar recriaria a pasta.
+    if (resultado && resultado.paj_na_lixeira) {
+        if (progresso) progresso('PAJ arquivado — pasta enviada para a Lixeira do Windows.');
+    } else if (resultado && resultado.mov_seq && resultado.status !== 'falha') {
         if (window.PAINEL_FONTE_SISDPU_MCP) {
             try { await releituraPosGravacaoMcp(pajNorm, progresso); } catch (e) {}
         } else {

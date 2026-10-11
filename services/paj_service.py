@@ -810,7 +810,9 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
         from services import historico_painel
 
         historico_painel.registrar({
-            "paj": metadata.get("paj", ""), "paj_norm": paj_norm,
+            # PAJ arquivado já foi para a Lixeira (sem metadata): número pelo paj_norm
+            "paj": metadata.get("paj", "") or re.sub(r"^PAJ-(\d{4})-(\d{3})-(\d+)$", r"\1/\2-\3", paj_norm),
+            "paj_norm": paj_norm,
             "assistido": metadata.get("assistido_caixa", ""),
             "origem": "paj", "atividade": atividade,
             "movimentacao": fase or "—", "tramitado_para": tram_caixa,

@@ -962,7 +962,7 @@ function acoesSisdpuBlock(cfg) {
                 // SEM esperar onExecutado, o reload derrubava a sincronização de
                 // movimentações no meio do caminho e a tabela continuava desatualizada.
                 await this.onExecutado(resultadoEnriquecido, this._progressoPos());
-                if (res.ok) { if (this.aposExecutarIrPara) window.location.href = this.aposExecutarIrPara; else window.location.reload(); }
+                if (res.ok) { if (res.paj_na_lixeira) window.location.href = '/'; else if (this.aposExecutarIrPara) window.location.href = this.aposExecutarIrPara; else window.location.reload(); }
             });
             es.onerror = () => {
                 this.exec = false; es.close();
@@ -1056,7 +1056,7 @@ function acoesSisdpuBlock(cfg) {
                     if (!window.PAINEL_FONTE_SISDPU_MCP) this.sseAberto = false;
                 }
                 await this.onExecutado({ ...res, fila: true }, this._progressoPos());
-                if (res.ok) { if (this.aposExecutarIrPara) window.location.href = this.aposExecutarIrPara; else window.location.reload(); }
+                if (res.ok) { if (res.paj_na_lixeira) window.location.href = '/'; else if (this.aposExecutarIrPara) window.location.href = this.aposExecutarIrPara; else window.location.reload(); }
             });
             es.onerror = () => {
                 this.exec = false; es.close();

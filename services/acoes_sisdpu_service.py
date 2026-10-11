@@ -416,7 +416,25 @@ async def executar_stream(
         id_resolvido, paj, paj_norm, fase, descricao_mov, descricao_mov_html,
         grupo, descricao_tram, prazo_dias, prazo_data, ids_concluir, dry_run, anexos,
     ):
+        if ev.get("done") and (ev.get("resultado") or {}).get("ok") and not dry_run:
+            async for e2 in _pasta_para_lixeira_se_arquivado(paj_norm, [fase], ev["resultado"]):
+                yield e2
         yield ev
+
+
+async def _pasta_para_lixeira_se_arquivado(paj_norm: str, fases: list, resultado: dict) -> AsyncIterator[dict]:
+    """Arquivamento gravado (fase "Arquivado…") → pasta do PAJ para a Lixeira do
+    Windows, por ÚLTIMO (depois de movimentar/tramitar/concluir) — decisão do
+    Defensor 11/10/2026, ver services/paj_lixeira_service. Marca o resultado com
+    `paj_na_lixeira` para a tela não reler nem reabrir o PAJ (iria recriar a pasta)."""
+    from services import paj_lixeira_service
+
+    if not paj_norm or not any(paj_lixeira_service.fase_de_arquivamento(f) for f in fases):
+        return
+    r = await asyncio.to_thread(paj_lixeira_service.enviar_paj_para_lixeira, paj_norm)
+    yield _ev("ok" if r.get("ok") else "erro", f"PAJ arquivado: {r.get('detalhe', '')}")
+    if r.get("ok"):
+        resultado["paj_na_lixeira"] = True
 
 
 async def _executar_um_item_stream(
@@ -680,7 +698,12 @@ async def executar_fila_stream(
         concluidos.append(i)
 
     yield _ev("ok", f"Fila concluída — {total}/{total} movimentação(ões) executada(s) com sucesso.")
-    yield {"done": True, "resultado": {"ok": True, "itens_concluidos": concluidos, "mov_seq": mov_seq_fila}}
+    resultado_fila = {"ok": True, "itens_concluidos": concluidos, "mov_seq": mov_seq_fila}
+    if not dry_run:
+        async for e2 in _pasta_para_lixeira_se_arquivado(
+                paj_norm, [(it or {}).get("fase", "") for it in itens], resultado_fila):
+            yield e2
+    yield {"done": True, "resultado": resultado_fila}
 
 
 # ---------------------------------------------------------------------------
