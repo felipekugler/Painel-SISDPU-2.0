@@ -179,57 +179,94 @@
         <div class="flex flex-col gap-4">
           <div class="border border-info/30 bg-info/10 rounded p-3">
             <div class="text-sm font-semibold mb-1">No e-proc</div>
-            <div class="text-sm">Processo: <span class="font-mono" x-text="resumoEproc.processo"></span></div>
-            <div class="text-sm">Evento: <span x-text="resumoEproc.evento"></span></div>
-            <div class="text-xs text-warning" x-show="resumoEproc.evento_sem_anexo">Este evento não aceita anexos.</div>
-            <div class="text-sm mt-1">
-              Prazo(s) a fechar:
-              <template x-if="(resumoEproc.prazos || []).length">
-                <ul class="list-disc ml-8 mt-1">
-                  <template x-for="p in resumoEproc.prazos" :key="p"><li class="text-xs" x-text="p"></li></template>
-                </ul>
-              </template>
-              <div class="text-xs text-base-content/40 ml-8 mt-1" x-show="!(resumoEproc.prazos || []).length">Nenhum</div>
-              <!-- Defesa contra o mesmo formato de bug já visto no módulo "Ações no
-                   Eproc" isolado (que já mostra isto): um prazo pode estar
-                   SELECIONADO no rascunho e mesmo assim não aparecer na lista acima
-                   se o casamento ao vivo (label oficial + nº do evento, necessário
-                   pra marcar o checkbox certo no e-proc — ver
-                   eproc_client._marcar_prazos_fechar) falhar por algum motivo (ex.
-                   parte intimada não reconhecida como "minha" — bug real
-                   2026-09-25, PAJ 2018/029-01953, processo
-                   5048558-22.2017.4.04.7000, corrigido em
-                   eproc_procurador_service.parte_intimada_e_minha, mas mantém-se
-                   este aviso pra qualquer caso futuro não previsto). Sem isto, o
-                   prazo desaparecia SILENCIOSAMENTE tanto da tela quanto do que de
-                   fato é marcado pra fechar no e-proc — nunca pode passar
-                   despercebido. -->
-              <div class="text-xs text-error ml-8 mt-1" x-show="(resumoEproc.prazos_nao_resolvidos || []).length">
-                ⚠ <span x-text="resumoEproc.prazos_nao_resolvidos.length"></span> prazo(s) selecionado(s) no rascunho não puderam ser identificados agora —
-                NÃO serão fechados nesta execução. Confira em "Ações no Eproc" antes de prosseguir.
-              </div>
-            </div>
-            <div class="text-sm mt-1">
-              Anexos:
-              <template x-if="!resumoEproc.evento_sem_anexo && (resumoEproc.documentos || []).length">
-                <ul class="list-disc ml-8 mt-1">
-                  <template x-for="(d, di) in resumoEproc.documentos" :key="di"><li class="text-xs" x-text="d.nome"></li></template>
-                </ul>
-              </template>
-              <div class="text-xs text-base-content/40 ml-8 mt-1" x-show="resumoEproc.evento_sem_anexo || !(resumoEproc.documentos || []).length">Nenhum</div>
-            </div>
-            <div class="text-sm mt-1">
-              Gerenciamento de processo:
-              <template x-if="resumoEproc.gerenciamento && resumoEproc.gerenciamento.ativo">
-                <ul class="list-disc ml-8 mt-1">
-                  <li class="text-xs" x-text="resumoEproc.gerenciamento.tipo_label + ' - ' + (resumoEproc.gerenciamento.procurador_rotulo || 'Não informado')"></li>
-                </ul>
-              </template>
-              <div class="text-xs text-base-content/40 ml-8 mt-1" x-show="!(resumoEproc.gerenciamento && resumoEproc.gerenciamento.ativo)">Não configurado</div>
-            </div>
+            <!-- Mesmo formato de tabela da ficha do SISDPU (static/js/ficha_mcp.js:htmlFicha) -->
+            <table class="table table-sm w-full">
+              <tbody>
+                <tr>
+                  <th class="align-top whitespace-nowrap text-base-content/70 font-medium w-1/4">Processo</th>
+                  <td class="align-top break-words"><span class="font-mono" x-text="fmtProcesso(resumoEproc.processo)"></span></td>
+                </tr>
+                <tr>
+                  <th class="align-top whitespace-nowrap text-base-content/70 font-medium w-1/4">Evento</th>
+                  <td class="align-top break-words" x-text="resumoEproc.evento"></td>
+                </tr>
+                <tr>
+                  <th class="align-top whitespace-nowrap text-base-content/70 font-medium w-1/4">Prazo(s) a fechar</th>
+                  <td class="align-top break-words">
+                    <template x-for="p in (resumoEproc.prazos || [])" :key="p"><div x-text="p"></div></template>
+                    <span class="text-base-content/40" x-show="!(resumoEproc.prazos || []).length">Nenhum</span>
+                      <!-- Defesa contra o mesmo formato de bug já visto no módulo "Ações no
+                           Eproc" isolado (que já mostra isto): um prazo pode estar
+                           SELECIONADO no rascunho e mesmo assim não aparecer na lista acima
+                           se o casamento ao vivo (label oficial + nº do evento, necessário
+                           pra marcar o checkbox certo no e-proc — ver
+                           eproc_client._marcar_prazos_fechar) falhar por algum motivo (ex.
+                           parte intimada não reconhecida como "minha" — bug real
+                           2026-09-25, PAJ 2018/029-01953, processo
+                           5048558-22.2017.4.04.7000, corrigido em
+                           eproc_procurador_service.parte_intimada_e_minha, mas mantém-se
+                           este aviso pra qualquer caso futuro não previsto). Sem isto, o
+                           prazo desaparecia SILENCIOSAMENTE tanto da tela quanto do que de
+                           fato é marcado pra fechar no e-proc — nunca pode passar
+                           despercebido. -->
+                      <div class="text-xs text-error mt-1" x-show="(resumoEproc.prazos_nao_resolvidos || []).length">
+                        ⚠ <span x-text="resumoEproc.prazos_nao_resolvidos.length"></span> prazo(s) selecionado(s) no rascunho não puderam ser identificados agora —
+                        NÃO serão fechados nesta execução. Confira em "Ações no Eproc" antes de prosseguir.
+                      </div>
+                  </td>
+                </tr>
+                <tr>
+                  <th class="align-top whitespace-nowrap text-base-content/70 font-medium w-1/4">Anexos</th>
+                  <td class="align-top break-words">
+                    <template x-if="!resumoEproc.evento_sem_anexo">
+                      <div>
+                        <template x-for="(d, di) in (resumoEproc.documentos || [])" :key="di"><div x-text="d.nome"></div></template>
+                      </div>
+                    </template>
+                    <span class="text-base-content/40" x-show="resumoEproc.evento_sem_anexo || !(resumoEproc.documentos || []).length">Nenhum</span>
+                    <span class="text-xs text-base-content/50" x-show="resumoEproc.evento_sem_anexo"> (este evento não aceita anexos)</span>
+                  </td>
+                </tr>
+                <tr>
+                  <th class="align-top whitespace-nowrap text-base-content/70 font-medium w-1/4">Gerenciamento de processo</th>
+                  <td class="align-top break-words">
+                    <span x-show="resumoEproc.gerenciamento && resumoEproc.gerenciamento.ativo"
+                          x-text="resumoEproc.gerenciamento ? (resumoEproc.gerenciamento.tipo_label + ' - ' + (resumoEproc.gerenciamento.procurador_rotulo || 'Não informado')) : ''"></span>
+                    <span class="text-base-content/40" x-show="!(resumoEproc.gerenciamento && resumoEproc.gerenciamento.ativo)">Não configurado</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
           </div>
           <div class="border border-success/30 bg-success/10 rounded p-3" x-show="resumoSisdpu">
             <div class="text-sm font-semibold mb-1">No SISDPU</div>
+            <!-- Fonte SIS-DPU 2.0 (MCP): o card mostra a FICHA devolvida pelo SIS-DPU 2.0
+                 (exatamente o que vai ao PAJ), no mesmo padrão do modal de confirmação. -->
+            <template x-if="resumoFonteMcp">
+              <div>
+                <div x-show="fichasMcpCarregando" class="text-sm text-base-content/60">
+                  <span class="loading loading-spinner loading-xs"></span> Conferindo com o SIS-DPU 2.0…
+                </div>
+                <!-- Uma ficha por card (movimentação, tramitação), lado a lado para conferência -->
+                <div class="grid gap-3 items-start" :class="fichasMcp.length > 1 ? 'md:grid-cols-2' : ''">
+                  <template x-for="(f, fi) in fichasMcp" :key="fi">
+                    <div class="border border-success/30 bg-base-100 rounded p-3 min-w-0">
+                      <div class="text-sm font-semibold mb-1"
+                           x-text="f.tipo === 'tramitacao' ? 'Tramitação' : 'Movimentação'"></div>
+                      <div class="text-sm" x-html="window.fichaMcp ? window.fichaMcp.htmlFicha(f.ficha, f.paj, f.contexto) : ''"></div>
+                    </div>
+                  </template>
+                </div>
+                <template x-for="(e, ei) in fichasMcpErros" :key="'e' + ei">
+                  <div class="text-error text-sm font-medium mt-1" x-text="'⚠ ' + e"></div>
+                </template>
+                <div class="text-sm text-base-content/50" x-show="!fichasMcpCarregando && !fichasMcp.length && !fichasMcpErros.length">
+                  Nenhuma movimentação ou tramitação a gravar.
+                </div>
+              </div>
+            </template>
+            <template x-if="!resumoFonteMcp">
+              <div>
             <div class="text-sm">PAJ: <span x-text="pajLabel || 'Não informado'"></span></div>
             <!-- Fila (2+ movimentações em sequência) — "Adicionar à fila" no card à
                  direita; ver static/js/acoes_sisdpu.js:executarFila. Cada
@@ -346,26 +383,24 @@
               ⚠ Há um formulário preenchido no card do SISDPU que ainda não foi adicionado à fila —
               ele NÃO entra na execução, só o que está na lista acima. Volte lá e clique em "Adicionar à fila" se quiser incluí-lo também.
             </div>
-          </div>
-          <!-- Fonte SIS-DPU 2.0 (MCP): a ficha INTEGRAL de cada gravação no SISDPU -->
-          <div class="border border-info/30 bg-info/5 rounded p-3 text-sm"
-               x-show="fichasMcpCarregando || fichasMcp.length || fichasMcpErros.length">
-            <div class="font-semibold mb-2">Fichas do SIS-DPU 2.0 — exatamente o que vai ao prontuário do PAJ</div>
-            <div x-show="fichasMcpCarregando" class="text-base-content/60">
-              <span class="loading loading-spinner loading-xs"></span> Conferindo com o SIS-DPU 2.0…
-            </div>
-            <template x-for="(f, fi) in fichasMcp" :key="fi">
-              <div class="mb-2">
-                <div class="text-xs font-semibold" x-text="(fi + 1) + '. ' + (f.tipo === 'tramitacao' ? 'Tramitação' : 'Movimentação') + ' — PAJ ' + f.paj"></div>
-                <div class="text-sm mt-1" x-html="window.fichaMcp ? window.fichaMcp.htmlFicha(f.ficha, f.paj, f.contexto) : ''"></div>
               </div>
             </template>
-            <template x-for="(e, ei) in fichasMcpErros" :key="'e' + ei">
-              <div class="text-error text-xs" x-text="'⚠ ' + e"></div>
-            </template>
-            <div class="text-[11px] text-base-content/60 mt-1" x-show="fichasMcp.length">
-              "Confirmar e executar tudo" vale como sua aprovação destas fichas. Se a execução demorar e alguma vencer,
-              ela é mostrada de novo para confirmar.
+          </div>
+          <!-- Conclusão de trâmite (fonte SIS-DPU 2.0): vedada no MCP — roda POR ÚLTIMO,
+               depois da movimentação/tramitação, pelo SISDPU antigo (navegador). -->
+          <div class="border border-success/30 bg-success/10 rounded p-3" x-show="resumoFonteMcp && conclusoesResumo().length">
+            <div class="text-sm font-semibold mb-1">Conclusão de trâmite no SISDPU</div>
+            <ul class="list-disc ml-6 text-sm">
+              <template x-for="(t, ti) in conclusoesResumo()" :key="ti">
+                <li>
+                  <span x-text="t.descricao"></span>
+                  <span class="block text-xs text-base-content/50" x-show="t.remetente || t.data_envio"
+                        x-text="(t.remetente || '') + (t.remetente && t.data_envio ? ' · ' : '') + (t.data_envio || '')"></span>
+                </li>
+              </template>
+            </ul>
+            <div class="text-xs text-base-content/60 mt-2">
+              Feita por último, depois da gravação acima, pelo SISDPU antigo (navegador) — o cofre é pedido antes do e-proc.
             </div>
           </div>
           <div class="text-[11px] text-warning font-medium border border-warning/40 rounded p-2">
@@ -427,7 +462,23 @@ function movimentarConjuntoApp() {
     resumoEproc: null, resumoSisdpu: null,
     // Fonte SIS-DPU 2.0 (MCP): fichas integrais do SISDPU mostradas no resumo,
     // ANTES do e-proc — aprovadas junto com "Confirmar e executar tudo".
-    fichasMcp: [], fichasMcpErros: [], fichasMcpCarregando: false,
+    fichasMcp: [], fichasMcpErros: [], fichasMcpCarregando: false, resumoFonteMcp: false,
+    // Número CNJ com pontos e hífen: 5055128-09.2026.4.04.7000
+    fmtProcesso(n) {
+      const d = String(n || '').replace(/\D/g, '');
+      if (d.length !== 20) return n || '';
+      return d.slice(0, 7) + '-' + d.slice(7, 9) + '.' + d.slice(9, 13) + '.' + d.slice(13, 14)
+        + '.' + d.slice(14, 16) + '.' + d.slice(16);
+    },
+    // Trâmites marcados para concluir (formulário atual ou itens da fila) — card próprio no resumo.
+    conclusoesResumo() {
+      const r = this.resumoSisdpu;
+      if (!r) return [];
+      const doForm = (r.formularioAtual && r.formularioAtual.concluir && !r.fila.length)
+        ? ((r.formularioAtual.concluir_detalhes || []).length ? r.formularioAtual.concluir_detalhes
+           : [{ descricao: 'Concluir o trâmite da caixa de entrada', remetente: '', data_envio: '' }]) : [];
+      return doForm.concat(...r.fila.map((it) => it.concluir_detalhes || []));
+    },
     resultadoEproc: null, resultadoGerenciamento: null, erroExecucao: '',
 
     async init() {
@@ -568,7 +619,7 @@ function movimentarConjuntoApp() {
           } : null,
         } : null;
         this.resultadoEproc = null; this.resultadoGerenciamento = null; this.erroExecucao = '';
-        this.fichasMcp = []; this.fichasMcpErros = [];
+        this.fichasMcp = []; this.fichasMcpErros = []; this.resumoFonteMcp = false;
         this.etapaConjunta = 'resumo';
         this.modalResumoAberto = true;
         // Fonte SIS-DPU 2.0: pede ao servidor as fichas do que o card do SISDPU vai
@@ -577,6 +628,7 @@ function movimentarConjuntoApp() {
           let fonte = 'sisdpu';
           try { fonte = (await (await fetch('/api/sisdpu2/fonte')).json()).fonte; } catch (e) {}
           if (fonte === 'mcp') {
+            this.resumoFonteMcp = true;
             this.fichasMcpCarregando = true;
             try {
               const rf = await (await fetch('/api/sisdpu2/escrita/fichas-resumo', {
@@ -609,6 +661,13 @@ function movimentarConjuntoApp() {
         // O SIS-DPU 2.0 recusou montar a ficha: não protocolar no e-proc (irreversível)
         // sabendo que o SISDPU não vai gravar.
         this.erroExecucao = 'O SIS-DPU 2.0 recusou a gravação no SISDPU — corrija antes de executar: ' + this.fichasMcpErros[0];
+        this.etapaConjunta = 'resumo'; return;
+      }
+      // Conclusão de trâmite vai pelo SISDPU antigo (navegador), por último: o cofre é
+      // destrancado AGORA, antes do protocolo irreversível no e-proc — não no meio.
+      if (this.resumoFonteMcp && this.conclusoesResumo().length
+          && typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) {
+        this.erroExecucao = 'A conclusão do trâmite precisa do cofre destrancado — nada foi executado.';
         this.etapaConjunta = 'resumo'; return;
       }
       try {

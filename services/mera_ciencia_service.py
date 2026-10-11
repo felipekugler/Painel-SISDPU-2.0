@@ -119,6 +119,15 @@ async def dar_mera_ciencia(processo: str, ato: str, descricao_mov: str, log_cb,
         log_cb("erro", msg)
         return {"ok": False, "erro": msg}
 
+    # Fonte SIS-DPU 2.0: descrição curta seria recusada no SISDPU — barra ANTES do
+    # e-proc (irreversível), nunca depois.
+    from ingestao import sisdpu2_movtram
+    if sisdpu2_movtram.ativo():
+        aviso = sisdpu2_movtram.aviso_descricao_curta(descricao_mov, False)
+        if aviso:
+            log_cb("erro", aviso)
+            return {"ok": False, "erro": aviso}
+
     caso = intimacao_service.obter_caso(processo, ato)
     if not caso:
         msg = "Ato não encontrado em Intimações (pode já ter saído da caixa de Prazos e-proc)."

@@ -91,12 +91,14 @@ def _paj_de(paj_norm: str) -> str:
     return f"{a}/{u}-{n}"
 
 
-async def atualizar_paj(paj_norm: str) -> dict:
+async def atualizar_paj(paj_norm: str, forcar: bool = False) -> dict:
+    """`forcar`: releitura pedida logo depois de uma gravação (ou pelo ícone da
+    tabela) — ignora o intervalo mínimo entre leituras do mesmo PAJ."""
     if not ativo():
         return {"ok": False, "motivo": "inativo"}
     if _fracao_consumida() >= LIMITE_ABERTURA:
         return {"ok": False, "motivo": "teto_diario_quase_atingido"}
-    if time.monotonic() - _ultimo_paj.get(paj_norm, 0) < MIN_INTERVALO_PAJ_SEG:
+    if not forcar and time.monotonic() - _ultimo_paj.get(paj_norm, 0) < MIN_INTERVALO_PAJ_SEG:
         return {"ok": True, "mudou": False, "motivo": "recente"}
     antes = _assinatura_paj(paj_norm)
     reg_antes = sis2.consumo_hoje()["registros"]

@@ -77,9 +77,9 @@ async def api_ao_vivo_estado():
 
 
 @router.post("/api/sisdpu2/ao-vivo/paj/{paj_norm}", response_class=JSONResponse)
-async def api_ao_vivo_paj(paj_norm: str):
+async def api_ao_vivo_paj(paj_norm: str, forcar: bool = False):
     from services import ao_vivo_service
-    return await ao_vivo_service.atualizar_paj(paj_norm)
+    return await ao_vivo_service.atualizar_paj(paj_norm, forcar=forcar)
 
 
 @router.post("/api/sisdpu2/ao-vivo/paj/{paj_norm}/anexos", response_class=JSONResponse)
@@ -155,8 +155,10 @@ async def api_fichas_resumo(request: Request):
                 erros.append(ev.get("msg", ""))
             if ev.get("done"):
                 res = ev.get("resultado") or {}
-                if not res.get("ok") and res.get("detalhe"):
-                    erros.append(res["detalhe"])
+                detalhe = res.get("detalhe") or ""
+                if not res.get("ok") and detalhe:
+                    # o log já trouxe a mesma mensagem com prefixo ("Movimentação: …") — fica só uma
+                    erros = [e for e in erros if detalhe not in e] + [detalhe]
     finally:
         sisdpu2_movtram.COLETA_FICHAS.reset(t)
     return {"ok": not erros, "fichas": coleta, "erros": erros[:5]}

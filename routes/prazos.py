@@ -39,10 +39,7 @@ async def api_prazos_abrir():
     """Abre a janela do e-proc e tenta entrar sozinho. Usa as credenciais do cofre
     (se destrancado) para preencher o login; senão, o usuário loga na janela."""
     from ingestao import eproc_client
-    usuario, senha = "", ""
-    creds = cofre_service.get_credenciais("eproc")
-    if creds:
-        usuario, senha = creds
+    usuario, senha = eproc_client.credenciais_login()  # MCP do e-proc primeiro; cofre de reserva
     return JSONResponse(await eproc_client.abrir(usuario=usuario, senha=senha))
 
 

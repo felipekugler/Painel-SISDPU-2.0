@@ -109,9 +109,18 @@ def _ler_consumo() -> dict:
         return {}
 
 
-def _contar_registros(obj: Any) -> int:
+# Catálogos (fases da movimentação, caixas de destino): o servidor não os
+# trata como registros do PAJ — gravações seguiram aceitas com a estimativa
+# antiga (que contava cada fase) acima do teto em 11/10/2026. 1 por chamada.
+_CATALOGOS = {"movimentacao_opcoes", "tramite_destinos"}
+
+
+def _contar_registros(obj: Any, nome: str = "") -> int:
     """ESTIMATIVA do que o servidor conta: lista = 1 por item; objeto = 1 mais
-    os itens das listas de objetos que ele traz (ex.: histórico da capa)."""
+    os itens das listas de objetos que ele traz (ex.: histórico da capa);
+    catálogo de opções = 1."""
+    if nome in _CATALOGOS:
+        return 1
     if isinstance(obj, list):
         return len(obj)
     if isinstance(obj, dict):
@@ -439,7 +448,7 @@ def _chamar(nome: str, args: Optional[dict], timeout: float, repetir: bool) -> A
             valor = json.loads(texto)
         except ValueError:
             valor = texto
-        _registrar_consumo(nome, _contar_registros(valor))
+        _registrar_consumo(nome, _contar_registros(valor, nome))
         return valor
     raise Sisdpu2Erro(f"{nome}: teto de chamadas do servidor persistiu após novas tentativas.")
 

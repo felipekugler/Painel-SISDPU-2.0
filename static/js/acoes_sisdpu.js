@@ -173,7 +173,7 @@ function acoesSisdpuBlock(cfg) {
         // AUTOMATICAMENTE por "Ações no Eproc" depois de um "Peticionar" real
         // confirmado (ver _receberPeticaoEproc) — o usuário não precisa estar
         // com este console aberto no momento pra não perder o registro.
-        rascunhoCarregado: false, rascunhoSalvoEm: '', gravando: false,
+        rascunhoCarregado: false, rascunhoSalvoEm: '', gravando: false, avisoGravacao: '',
         _rascunhoPromise: null,
         _descMovHtmlRascunho: '',
 
@@ -309,7 +309,8 @@ function acoesSisdpuBlock(cfg) {
         // "Gravar" — persiste o estado atual do console pra executar mais tarde
         // (ver botão ao lado de "Executar no SISDPU"). Mesmo padrão de "Ações no
         // Eproc": o HTML da movimentação (Quill) é salvo como está, sem reformatar.
-        async gravarRascunho() {
+        async gravarRascunho(validarDescricao) {
+            if (validarDescricao && this._bloqueiaDescricaoCurta()) return;
             this.gravando = true;
             try {
                 const resp = await fetch('/api/acoes-sisdpu/rascunho/' + encodeURIComponent(this.pajNorm), {
@@ -503,6 +504,22 @@ function acoesSisdpuBlock(cfg) {
         // backend usa isso pra decidir se escreve raw no CKEditor da movimentação ou
         // escapa como texto puro (getDescricaoMov externo, ex.: Sugestão IA da Retornos).
         descMovEhHtml() { return !this.getDescricaoMov && !!this._editorMov; },
+        // O SIS-DPU 2.0 recusa descrição de movimentação com menos de 10 caracteres —
+        // o painel não grava nem executa nesse caso (mesma conta do servidor:
+        // ingestao/sisdpu2_movtram.aviso_descricao_curta). Sem fase, não há movimentação.
+        avisoDescricaoCurta(fase, descricao, ehHtml) {
+            if (!fase) return '';
+            let texto = descricao || '';
+            if (ehHtml) { const d = document.createElement('div'); d.innerHTML = texto; texto = d.textContent || ''; }
+            const n = texto.replace(/ /g, ' ').trim().length;
+            return n >= 10 ? '' : 'Gravação vedada: Descrição precisa do mínimo de 10 caracteres';
+        },
+        // O aviso aparece na própria linha dos botões (onde fica "Rascunho gravado"),
+        // sem janela do navegador; some na próxima ação que passar na checagem.
+        _bloqueiaDescricaoCurta() {
+            this.avisoGravacao = this.avisoDescricaoCurta(this.fase, this.descMovEfetiva(), this.descMovEhHtml());
+            return !!this.avisoGravacao;
+        },
         descTramEfetiva() { return this.getDescricaoTram ? (this.getDescricaoTram() || '') : this.descTram; },
         // A tramitação é texto puro no SISDPU — desformata o HTML da movimentação antes
         // de copiar (senão apareceriam tags "<b>" literais no campo de destino).
@@ -603,6 +620,7 @@ function acoesSisdpuBlock(cfg) {
                 alert('Preencha ao menos uma ação (movimentar, tramitar ou concluir) antes de adicionar à fila.');
                 return;
             }
+            if (this._bloqueiaDescricaoCurta()) return;
             if (this.editandoFilaIndice !== null) {
                 this.fila.splice(this.editandoFilaIndice, 1, item);
                 this.editandoFilaIndice = null;
@@ -835,7 +853,7 @@ function acoesSisdpuBlock(cfg) {
                     fase: it.fase, descricao_mov: it.descricao_mov,
                     descricao_mov_html: it.descricao_mov_html ? '1' : '0',
                     grupo: it.grupo, descricao_tram: it.descricao_tram,
-                    prazo: it.prazo, prazo_data: it.prazo_data, id_tramites: it.id_tramites,
+                    prazo: it.prazo, prazo_data: it.prazo_data, id_tramites: [],  // conclusão: legado, fora da ficha
                     anexos: it.anexos.map((a) => ({ origem: a.origem, ref: a.ref,
                         descricao: a.descricao || a.nome, tipo_arquivo: a.tipoArquivo || 'Não informado' })),
                 })) };
@@ -855,6 +873,7 @@ function acoesSisdpuBlock(cfg) {
             const concluirEfetivo = this.concluirEfetivo();
             const idsSelecionados = this.idsTramiteSelecionadosArr();
             if (this.exec || (!this.fase && !this.grupo && !concluirEfetivo)) return;
+            if (this._bloqueiaDescricaoCurta()) return;
             const prazoTxt = this.grupo
                 ? (this.urgenteSelecionado() ? ' (URGENTE — mesmo dia da movimentação)'
                    : this.prazoData ? ' (prazo ' + this.prazoData + ')'
@@ -962,6 +981,13 @@ function acoesSisdpuBlock(cfg) {
         // ainda falta executar.
         async executarFila(pularConfirmacao) {
             if (this.exec) return;
+            const curto = this.fila.findIndex((it) => this.avisoDescricaoCurta(it.fase, it.descricao_mov, !!it.descricao_mov_html));
+            if (curto >= 0) {
+                this.avisoGravacao = 'Gravação vedada: Descrição da movimentação ' + (curto + 1)
+                    + ' da fila precisa do mínimo de 10 caracteres';
+                return;
+            }
+            this.avisoGravacao = '';
             const lote = this.fila.slice();  // snapshot — mesmas referências de objeto,
             // usado pra mapear o índice ESTÁVEL que o backend reporta (posição no
             // lote enviado, que não muda durante a execução) de volta pro item real

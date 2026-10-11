@@ -466,8 +466,31 @@ function baixarDocumentosSeqPaj(pajNorm, seq) {
  * baixa PDF, nao recarrega a pagina. Mesmo padrao de baixarDocumentosPaj:
  * reusa o widget flutuante de sync e devolve os dados frescos pro componente
  * Alpine trocar so' o conteudo da tabela. Resolve {movimentacoes, anexos_sisdpu,
- * max_seq} ou null se deu erro/cancelou. */
+ * max_seq} ou null se deu erro/cancelou.
+ *
+ * Fonte SIS-DPU 2.0 (MCP): sem modal de sincronização — releitura incremental
+ * silenciosa pelo MCP (a mesma da abertura da página do PAJ). Vale para todos os
+ * chamadores: pós-gravação, mera ciência, queda de conexão e o ícone da tabela. */
+async function atualizarMovimentacoesPajMcp(pajNorm) {
+    try {
+        const r = await fetch('/api/sisdpu2/ao-vivo/paj/' + encodeURIComponent(pajNorm) + '?forcar=true', { method: 'POST' });
+        const d = await r.json().catch(() => ({}));
+        if (!d.ok) {
+            showToast('Não foi possível atualizar as movimentações: ' + (d.motivo || 'erro'), 'error');
+            return null;
+        }
+        // A página do PAJ já está em dia — o recarregamento seguinte não precisa reler.
+        try { sessionStorage.setItem('ao-vivo-recarregado-' + pajNorm, String(Date.now())); } catch (e) {}
+        const data = await (await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes')).json();
+        return data.ok === false ? null : data;
+    } catch (e) {
+        showToast('Falha de rede ao atualizar as movimentações', 'error');
+        return null;
+    }
+}
+
 function atualizarMovimentacoesPaj(pajNorm) {
+    if (window.PAINEL_FONTE_SISDPU_MCP) return atualizarMovimentacoesPajMcp(pajNorm);
     return new Promise(function(resolve) {
         let url = '/api/sync/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes';
 

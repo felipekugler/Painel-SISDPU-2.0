@@ -38,6 +38,22 @@ _PEDACO_BYTES = 3 * 1024 * 1024  # ~4 MB em base64 por chamada
 # sem gravar e recolhe aqui as fichas, para mostrá-las ANTES do e-proc.
 COLETA_FICHAS: contextvars.ContextVar[Optional[list]] = contextvars.ContextVar("coleta_fichas", default=None)
 
+_catalogos: dict[tuple, tuple[float, object]] = {}  # (ferramenta, idProcesso) -> (quando, resposta)
+_CATALOGO_VALIDADE_SEG = 4 * 3600
+
+
+def _catalogo(nome: str, args: dict):
+    """movimentacao_opcoes / tramite_destinos: listas de opções que mudam
+    raramente — reaproveitadas por 4 h em vez de pedidas a cada gravação/resumo."""
+    chave = (nome, args.get("idProcesso"))
+    feito = _catalogos.get(chave)
+    if feito and time.time() - feito[0] < _CATALOGO_VALIDADE_SEG:
+        return feito[1]
+    r = sis2.chamar(nome, args)
+    _catalogos[chave] = (time.time(), r)
+    return r
+
+
 _envios: dict[tuple, tuple[float, list[int]]] = {}  # (caminho, tamanho, mtime) -> (quando, ids)
 
 
@@ -69,16 +85,30 @@ async def _id_processo(paj: dict) -> int:
     return int(r["idProcesso"])
 
 
-def _html_da_descricao(descricao: str, descricao_html: bool, fase: str = "") -> str:
-    """O SIS-DPU 2.0 recusa descrição com menos de 10 caracteres (o legado
-    aceitava em branco). Sem texto, usa o nome da fase — que aparece na ficha,
-    então o Defensor vê antes de aprovar."""
-    texto = re.sub(r"<[^>]+>", "", descricao or "").strip() if descricao_html else (descricao or "").strip()
-    if len(texto) < 10:
-        return "<p>" + html.escape((fase or "Movimentação").strip().rstrip(".") + ".") + "</p>"
+MIN_DESCRICAO = 10  # o SIS-DPU 2.0 recusa descrição de movimentação mais curta
+
+
+def _texto_da_descricao(descricao: str, descricao_html: bool) -> str:
+    if not descricao_html:
+        return (descricao or "").strip()
+    return html.unescape(re.sub(r"<[^>]+>", "", descricao or "")).replace("\xa0", " ").strip()
+
+
+def aviso_descricao_curta(descricao: str, descricao_html: bool) -> str:
+    """Mensagem para o Defensor quando a descrição não chega ao mínimo do SIS-DPU
+    2.0 — o painel nunca completa nem troca o texto digitado."""
+    n = len(_texto_da_descricao(descricao, descricao_html))
+    if n >= MIN_DESCRICAO:
+        return ""
+    return (f"A descrição da movimentação tem {n} caractere(s); o SIS-DPU 2.0 exige no mínimo "
+            f"{MIN_DESCRICAO}. Complete o texto da descrição.")
+
+
+def _html_da_descricao(descricao: str, descricao_html: bool) -> str:
+    """Vai ao SIS-DPU 2.0 exatamente o texto do Defensor (HTML do editor como está)."""
     if descricao_html:
         return descricao
-    return "<p>" + html.escape(descricao).replace("\n", "<br>") + "</p>"
+    return "<p>" + html.escape(descricao.strip()).replace("\n", "<br>") + "</p>"
 
 
 def _enviar_anexo(caminho: Path, descricao: str) -> list[int]:
@@ -143,10 +173,13 @@ async def movimentar_paj(pajs: list[dict], descricao: str, fase: str, anexos: Op
     if len(pajs) != 1:
         return {"fonte": "mcp-sisdpu2", "ok": False, "status": "falha", "pajs": numeros,
                 "detalhe": "O SIS-DPU 2.0 grava UM PAJ por vez (uma ficha e uma aprovação por PAJ)."}
+    aviso = aviso_descricao_curta(descricao, descricao_html)
+    if aviso:
+        return {"fonte": "mcp-sisdpu2", "ok": False, "status": "falha", "pajs": numeros, "detalhe": aviso}
     paj = pajs[0]
     try:
         idp = await _id_processo(paj)
-        op = await asyncio.to_thread(sis2.chamar, "movimentacao_opcoes", {"idProcesso": idp})
+        op = await asyncio.to_thread(_catalogo, "movimentacao_opcoes", {"idProcesso": idp})
         tipo = _casar(TIPO_MOV_PADRAO, op.get("tiposMovimentacao") or [])
         fase_o = _casar(fase, (op.get("todasFases") or []) + (op.get("fasesMaisUtilizadas") or []))
         if not tipo:
@@ -167,7 +200,7 @@ async def movimentar_paj(pajs: list[dict], descricao: str, fase: str, anexos: Op
             anexos_ficha.append({"nome": caminho.name, "descricao": a.get("descricao") or "",
                                  "bytes": caminho.stat().st_size})
         args = {"idProcesso": idp, "idTipoMovimentacao": int(tipo["id"]), "idsFases": [int(fase_o["id"])],
-                "descricao": _html_da_descricao(descricao, descricao_html, fase)}
+                "descricao": _html_da_descricao(descricao, descricao_html)}
         if ids_arquivos:
             args["idsArquivos"] = ids_arquivos
         ficha = await asyncio.to_thread(sis2.chamar_escrita, "movimentacao_preparar", args)
@@ -223,7 +256,7 @@ async def tramitar_paj(pajs: list[dict], grupo: Optional[str] = None, usuarios: 
     paj = pajs[0]
     try:
         idp = await _id_processo(paj)
-        destinos = await asyncio.to_thread(sis2.chamar, "tramite_destinos", {})
+        destinos = await asyncio.to_thread(_catalogo, "tramite_destinos", {})
         lista = destinos if isinstance(destinos, list) else (destinos or {}).get("itens") or (destinos or {}).get("grupos") or []
         campo = "descricao" if lista and "descricao" in lista[0] else "nome"
         g = _casar(grupo or "", lista, campo)

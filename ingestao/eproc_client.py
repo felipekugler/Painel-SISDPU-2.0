@@ -435,9 +435,10 @@ async def _preencher_login(page, usuario: str, senha: str) -> bool:
     return True
 
 
-# --- 2FA (TOTP) — campo txtAcessoCodigo, ver auth.py do MCP pros nomes reais -
-_JS_TEM_2FA = ("()=>!!document.querySelector("
-               "'#txtAcessoCodigo, input[name=txtAcessoCodigo]')")
+# --- 2FA (TOTP) — campo txtAcessoCodigo (tela nativa) ou otp (SSO Keycloak,
+# mesmo campo que o auth.py do MCP envia) ------------------------------------
+_SEL_2FA = "#txtAcessoCodigo, input[name=txtAcessoCodigo], #otp, input[name=otp]"
+_JS_TEM_2FA = "()=>!!document.querySelector('" + _SEL_2FA + "')"
 
 _JS_FILL_2FA = r"""(codigo)=>{
   const setV=(el,v)=>{ if(!el) return false; try{el.focus();}catch(e){}
@@ -445,19 +446,21 @@ _JS_FILL_2FA = r"""(codigo)=>{
     el.dispatchEvent(new Event('input',{bubbles:true}));
     el.dispatchEvent(new Event('change',{bubbles:true}));
     el.dispatchEvent(new KeyboardEvent('keyup',{bubbles:true})); return true; };
-  const campo=document.querySelector('#txtAcessoCodigo, input[name=txtAcessoCodigo]');
+  const campo=document.querySelector('#txtAcessoCodigo, input[name=txtAcessoCodigo], #otp, input[name=otp]');
   const ok=setV(campo, codigo);
   // marca "confiar neste dispositivo" — reduz a chance de pedir 2FA de novo
-  const chk=document.querySelector('#chkLiberarDispositivo, input[name=chkLiberarDispositivo]');
+  const chk=document.querySelector('#chkLiberarDispositivo, input[name=chkLiberarDispositivo], #saveDevice, input[name=saveDevice]');
   if(chk && !chk.checked){ chk.checked=true; chk.dispatchEvent(new Event('change',{bubbles:true})); }
   return ok;
 }"""
 
-_JS_LER_2FA = ("()=>{const el=document.querySelector("
-               "'#txtAcessoCodigo, input[name=txtAcessoCodigo]');"
-               "return el ? el.value : null;}")
+_JS_LER_2FA = "()=>{const el=document.querySelector('" + _SEL_2FA + "');return el ? el.value : null;}"
 
 _JS_SUBMIT_2FA = r"""()=>{
+  // SSO Keycloak: botão "Entrar" é um <input type=submit id=kc-login> — e a página
+  // tem outros forms (busca do menu lateral), então nunca o 1º form às cegas.
+  const kc=document.querySelector('#kc-login');
+  if(kc){ kc.click(); return true; }
   const b=[...document.querySelectorAll('button')]
     .find(el=>/confirmar|validar|entrar/i.test((el.innerText||'').trim()));
   if(b){ b.click(); return true; }
@@ -574,29 +577,7 @@ async def _abrir_impl(url: str, usuario: str, senha: str) -> dict:
             await page.goto(url, wait_until="domcontentloaded", timeout=60000)
             await page.wait_for_timeout(1500)
 
-        # 1) login Keycloak (se a sessão SSO expirou) — só com credenciais do cofre
-        if usuario and senha:
-            for _ in range(16):  # ~8s aguardando o form de login aparecer/estabilizar
-                if _status_dict(page.url)["logado"]:
-                    break
-                u = (page.url or "").lower()
-                if ("externo_controlador" in u) or ("entrar_sso" in u):
-                    break  # já passou o login → é seleção de perfil
-                tem_login = False
-                with contextlib.suppress(Exception):
-                    tem_login = await page.evaluate(_JS_TEM_LOGIN)
-                if tem_login:
-                    await _preencher_login(page, usuario, senha)
-                    break
-                await page.wait_for_timeout(500)
-
-        # 2) 2FA — resolve sozinho se a tela aparecer e a seed estiver cadastrada
-        with contextlib.suppress(Exception):
-            await _preencher_2fa(page)
-
-        # 3) seleção de perfil → PROCURADOR (no-op se já dentro ou na tela de senha)
-        with contextlib.suppress(Exception):
-            await _selecionar_perfil(page)
+        await _entrar(page, usuario, senha)
         status_final = _status_dict(page.url)
         # Fecha qualquer aba extra (ex.: popup de SSO/2FA que ficou aberto) —
         # o usuário só quer ver a aba principal, já autenticada, na janela.
@@ -606,6 +587,88 @@ async def _abrir_impl(url: str, usuario: str, senha: str) -> dict:
     finally:
         with contextlib.suppress(Exception):
             await browser.close()
+
+
+def credenciais_login() -> tuple[str, str]:
+    """Usuário/senha do e-proc para o login no navegador: primeiro os do MCP
+    eproc-trf4 (Gerenciador de Credenciais do Windows, chave do config.json
+    dele); o cofre do painel só como reserva."""
+    with contextlib.suppress(Exception):
+        import json as _json
+
+        import keyring
+
+        from ingestao.eproc_mcp_client import MCP_DIR
+        chave = "mcp-eproc"
+        with contextlib.suppress(Exception):
+            chave = _json.loads((MCP_DIR / "config.json").read_text(encoding="utf-8")).get("credential_key") or chave
+        usuario = (keyring.get_password(chave, "usuario") or "").strip()
+        senha = keyring.get_password(chave, "senha") or ""
+        if usuario and senha:
+            return usuario, senha
+    with contextlib.suppress(Exception):
+        from services import cofre_service
+        creds = cofre_service.get_credenciais("eproc")
+        if creds:
+            return creds[0], creds[1]
+    return "", ""
+
+
+async def _entrar(page, usuario: str, senha: str) -> None:
+    """Passos do login na página dada: (1) formulário de login, (2) 2FA,
+    (3) seleção de perfil PROCURADOR."""
+    # 1) login Keycloak (se a sessão SSO expirou) — credenciais do MCP do e-proc (ou do cofre)
+    if usuario and senha:
+        for _ in range(16):  # ~8s aguardando o form de login aparecer/estabilizar
+            if _status_dict(page.url)["logado"]:
+                break
+            u = (page.url or "").lower()
+            if ("externo_controlador" in u) or ("entrar_sso" in u):
+                break  # já passou o login → é seleção de perfil
+            tem_login = False
+            with contextlib.suppress(Exception):
+                tem_login = await page.evaluate(_JS_TEM_LOGIN)
+            if tem_login:
+                await _preencher_login(page, usuario, senha)
+                break
+            await page.wait_for_timeout(500)
+
+    # 2) 2FA — resolve sozinho se a tela aparecer e a seed estiver cadastrada.
+    # Espera a tela do código carregar depois do envio da senha (~8s); sem isso a
+    # checagem rodava cedo demais e o login parava no 2FA.
+    for _ in range(16):
+        u = (page.url or "").lower()
+        if _status_dict(page.url)["logado"] or "externo_controlador" in u or "entrar_sso" in u:
+            break
+        tem_2fa = False
+        with contextlib.suppress(Exception):
+            tem_2fa = await page.evaluate(_JS_TEM_2FA)
+        if tem_2fa:
+            break
+        await page.wait_for_timeout(500)
+    with contextlib.suppress(Exception):
+        await _preencher_2fa(page)
+
+    # 3) seleção de perfil → PROCURADOR (no-op se já dentro ou na tela de senha)
+    with contextlib.suppress(Exception):
+        await _selecionar_perfil(page)
+
+
+async def _garantir_login(page) -> bool:
+    """Sessão caída no meio de uma ação (peticionar, gerenciar): entra sozinho na
+    PRÓPRIA aba da ação, sob demanda, e volta à página inicial. False se não
+    houver credenciais ou o login não se completar (aí o Defensor entra na janela)."""
+    if _status_dict(page.url)["logado"]:
+        return True
+    usuario, senha = credenciais_login()
+    if not (usuario and senha):
+        return False
+    with contextlib.suppress(Exception):
+        await _entrar(page, usuario, senha)
+    with contextlib.suppress(Exception):
+        await page.goto(EPROC_HOME, wait_until="domcontentloaded", timeout=30000)
+        await page.wait_for_timeout(800)
+    return _status_dict(page.url)["logado"]
 
 
 async def status(url: str = EPROC_HOME) -> dict:
@@ -678,7 +741,7 @@ async def _abrir_tela_peticionamento(page, numero: str) -> str:
     real "Movimentar/Peticionar". Devolve "" em sucesso, ou uma mensagem de erro."""
     await page.goto(EPROC_HOME, wait_until="domcontentloaded", timeout=30000)
     await page.wait_for_timeout(800)
-    if not _status_dict(page.url)["logado"]:
+    if not _status_dict(page.url)["logado"] and not await _garantir_login(page):
         return ("Sessão do e-proc não está logada — faça login na janela do e-proc "
                 "e tente de novo.")
 
@@ -1269,7 +1332,7 @@ async def abrir_processo_por_numero(numero: str) -> dict:
         page = await ctx.new_page()
         await page.goto(EPROC_HOME, wait_until="domcontentloaded", timeout=30000)
         await page.wait_for_timeout(800)
-        if not _status_dict(page.url)["logado"]:
+        if not _status_dict(page.url)["logado"] and not await _garantir_login(page):
             return {
                 "ok": False,
                 "erro": "Sessão do e-proc não está logada — faça login na janela do e-proc e tente de novo.",
@@ -1312,7 +1375,7 @@ async def _abrir_tela_gerenciamento(page, numero: str) -> str | None:
     ou None em caso de sucesso (a `page` fica na tela de Gerenciamento)."""
     await page.goto(EPROC_HOME, wait_until="domcontentloaded", timeout=30000)
     await page.wait_for_timeout(600)
-    if not _status_dict(page.url)["logado"]:
+    if not _status_dict(page.url)["logado"] and not await _garantir_login(page):
         return "Sessão do e-proc não está logada — faça login na janela do e-proc e tente de novo."
 
     campo = page.locator("#txtNumProcessoPesquisaRapida:visible")
