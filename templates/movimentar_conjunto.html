@@ -696,6 +696,12 @@ function movimentarConjuntoApp() {
         this.erroExecucao = 'O SIS-DPU 2.0 recusou a gravação no SISDPU — corrija antes de executar: ' + this.fichasMcpErros[0];
         this.etapaConjunta = 'resumo'; return;
       }
+      // Sessão do SIS-DPU 2.0 com pouco tempo: reconectar ANTES do e-proc (irreversível),
+      // para o SISDPU não ficar sem gravar depois (static/js/sessao_mcp.js).
+      if (this.resumoFonteMcp && typeof window.garantirSessaoMcp === 'function' && !(await window.garantirSessaoMcp())) {
+        this.erroExecucao = 'Sessão do SIS-DPU 2.0 não renovada — nada foi executado.';
+        this.etapaConjunta = 'resumo'; return;
+      }
       // Conclusão de trâmite vai pelo SISDPU antigo (navegador), por último: o cofre é
       // destrancado AGORA, antes do protocolo irreversível no e-proc — não no meio.
       if (this.resumoFonteMcp && this.conclusoesResumo().length

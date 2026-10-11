@@ -479,6 +479,8 @@ function processoJudicialBlock(cfg) {
         },
         async _confirmarMeraCiencia() {
             if (!this._podeConfirmarMc()) return;
+            // Pouca sessão no SIS-DPU 2.0: reconecta ANTES do e-proc (static/js/sessao_mcp.js).
+            if (typeof window.garantirSessaoMcp === 'function' && !(await window.garantirSessaoMcp())) return;
             if (window.PAINEL_FONTE_SISDPU_MCP) {
                 try {
                     await fetch('/api/sisdpu2/aprovacoes-antecipadas', {

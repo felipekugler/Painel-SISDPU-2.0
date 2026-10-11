@@ -28,6 +28,7 @@ import contextlib
 import json
 import logging
 import time
+from pathlib import Path
 from datetime import datetime
 
 from config import PAJS_DIR
@@ -48,11 +49,47 @@ LIMITE_ABERTURA = 0.95           # acima disso, nada (reserva para o uso pelo ch
 _ultimo_paj: dict[str, float] = {}
 _caixa: dict = {"ts": 0.0, "assinatura": None, "quando": None, "resultado": None}
 
+# A assinatura da caixa sobrevive ao reinício do painel: sem isso, cada reinício
+# relia a caixa INTEIRA na 1ª conferência (11/10/2026: ~2.700 registros do dia
+# só em caixa_entrada, boa parte por reinícios).
+_ARQ_ASSINATURA = Path(__file__).resolve().parents[1].parent / "dados" / "_mcp_sisdpu2_caixa.json"
+
+
+def _carregar_assinatura() -> None:
+    try:
+        d = json.loads(_ARQ_ASSINATURA.read_text(encoding="utf-8"))
+        a = d.get("assinatura")
+        _caixa["assinatura"] = (int(a[0]), str(a[1])) if a else None
+        _caixa["quando"] = d.get("quando")
+    except Exception:  # noqa: BLE001 — sem arquivo: 1ª conferência relê, como antes
+        pass
+
+
+def _salvar_assinatura() -> None:
+    try:
+        _ARQ_ASSINATURA.parent.mkdir(parents=True, exist_ok=True)
+        _ARQ_ASSINATURA.write_text(json.dumps({"assinatura": list(_caixa["assinatura"] or []) or None,
+                                               "quando": _caixa["quando"]}), encoding="utf-8")
+    except Exception as e:  # noqa: BLE001
+        log.warning("não gravou a assinatura da caixa: %s", e)
+
+
+_carregar_assinatura()
+
+
+# Decisão do Defensor (11/10/2026): o SERVIDOR decide quando parar — o painel
+# não freia pela própria estimativa (que ainda está sendo calibrada contra a
+# recusa real). Só a recusa do servidor (teto_atingido) suspende as leituras.
+# True volta a frear pela estimativa (LIMITE_AUTOMATICO / LIMITE_ABERTURA).
+FREIO_PELA_ESTIMATIVA = False
+
 
 def _fracao_consumida() -> float:
     c = sis2.consumo_hoje()
     if c["teto_atingido"]:
         return 1.0
+    if not FREIO_PELA_ESTIMATIVA:
+        return 0.0
     return c["registros"] / max(1, c["teto"])
 
 
@@ -261,6 +298,8 @@ async def atualizar_caixa(forcar: bool = False, automatico: bool = False) -> dic
     if not erros:
         _caixa["assinatura"] = assinatura  # com erro, a próxima conferência tenta de novo
     _caixa["quando"] = datetime.now().isoformat(timespec="seconds")
+    if not erros:
+        _salvar_assinatura()
     _caixa["resultado"] = {k: res.get(k) for k in ("total_caixa", "processados", "pulados", "concluidos")}
     return {"ok": not erros, "mudou": True, "quando": _caixa["quando"], "resultado": _caixa["resultado"],
             "erros": erros[:5], "registros_gastos": sis2.consumo_hoje()["registros"] - reg_antes}
