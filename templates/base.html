@@ -1738,14 +1738,22 @@
             if (st.configurado && !st.destrancado) {
                 var ok = await window.abrirModalCofre();
                 if (ok) {
-                    showToast('Cofre desbloqueado — reconectando SISDPU e e-proc...', 'info');
+                    // Com os MCPs (Painel SISDPU 2.0) a leitura não usa navegador:
+                    // não loga no SISDPU legado (derrubaria a sessão do Painel 1.0)
+                    // nem abre a janela do e-proc só para as intimações.
+                    var usaNavSisdpu = !{{ 'true' if fonte_mcp_sisdpu() else 'false' }};
+                    var usaNavEproc = !{{ 'true' if eproc_intimacoes_mcp else 'false' }};
+                    if (usaNavSisdpu || usaNavEproc) {
+                        showToast('Cofre desbloqueado — reconectando ' +
+                            [usaNavSisdpu ? 'SISDPU' : '', usaNavEproc ? 'e-proc' : ''].filter(Boolean).join(' e ') + '...', 'info');
+                    }
                     // Em SEQUÊNCIA, não em paralelo: os dois sobem um navegador
                     // Playwright (SISDPU headless + e-proc com janela visível) e,
                     // disparados ao mesmo tempo, disputam CPU/IO o bastante pra
                     // estourar o timeout de 15s do login do SISDPU (que então só
                     // conecta no reconectar manual seguinte, com a máquina livre).
-                    await window.reconectarSistema('sisdpu');
-                    await window.reconectarSistema('eproc');
+                    if (usaNavSisdpu) await window.reconectarSistema('sisdpu');
+                    if (usaNavEproc) await window.reconectarSistema('eproc');
                 }
             }
             window.atualizarSelos();

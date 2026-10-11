@@ -846,6 +846,18 @@ async def _sincronizar_impl() -> dict:
     from ingestao import eproc_client as ec
     from services import cofre_service
 
+    # Fonte "mcp" (EPROC_INTIMACOES_FONTE no .env — Painel SISDPU 2.0): lê pelo
+    # MCP do e-proc, SEM navegador (ingestao/eproc_intimacoes_mcp.py). Mesmo
+    # formato; só se falhar cai na leitura pelo navegador abaixo, como reserva.
+    aviso_mcp = ""
+    if _fonte_mcp():
+        from ingestao import eproc_intimacoes_mcp
+        res = await eproc_intimacoes_mcp.ler_todos()
+        if res.get("ok"):
+            salvar(res)
+            return {"ok": True, **carregar_visivel(), **({"aviso": res["aviso"]} if res.get("aviso") else {})}
+        aviso_mcp = f"Leitura pelo MCP do e-proc falhou ({res.get('erro')}); tentando pelo navegador."
+
     async with ec._browser_lock:
         res = await ler_todos()
         if not res.get("ok"):
@@ -871,8 +883,15 @@ async def _sincronizar_impl() -> dict:
         # com o que `/api/prazos/intimacoes` devolveria logo em seguida (ex.:
         # um F5) — ainda que, recém-sincronizado, não sobre baixa local pra
         # nenhum processo tocado (ver `salvar()`, que já a limpa).
-        return {"ok": True, **carregar_visivel()}
+        return {"ok": True, **carregar_visivel(), **({"aviso": aviso_mcp} if aviso_mcp else {})}
+    if aviso_mcp:
+        res["erro"] = aviso_mcp + " " + (res.get("erro") or "")
     return res
+
+
+def _fonte_mcp() -> bool:
+    import os
+    return (os.getenv("EPROC_INTIMACOES_FONTE") or "").strip().lower() == "mcp"
 
 
 async def sincronizar() -> dict:

@@ -127,6 +127,10 @@ def _oficio_descricao_atual() -> str:
 
 app.state.jinja.globals["oficio_descricao"] = _oficio_descricao_atual
 app.state.jinja.globals["painel_nome"] = PAINEL_NOME
+# Leitura sem navegador (Painel SISDPU 2.0): fonte SISDPU = MCP do SIS-DPU 2.0;
+# intimações do e-proc = MCP do e-proc (EPROC_INTIMACOES_FONTE=mcp).
+app.state.jinja.globals["fonte_mcp_sisdpu"] = lambda: config_painel_service.get_fonte_dados() == "mcp"
+app.state.jinja.globals["eproc_intimacoes_mcp"] = (os.getenv("EPROC_INTIMACOES_FONTE") or "").strip().lower() == "mcp"
 app.state.jinja.globals["identificacao_orgao"] = config_painel_service.get_identificacao_orgao
 
 # Mapeamento de exibicao para nomes de area (foro). Os valores armazenados em
