@@ -31,7 +31,10 @@ from typing import Optional
 VALIDADE_PADRAO_SEG = 540          # o token do servidor vale ~10 min
 VALIDADE_ANTECIPADA_SEG = 1800     # aprovação dada no resumo da conjunta
 
-RESPOSTA_CLIQUE = "sim — confirmo (Defensor clicou em 'Confirmar gravação' no Painel SISDPU 2.0 após ler a ficha integral)"
+# O que o clique em "Confirmar gravação" significa — e só isso. O portão do
+# servidor confere a resposta e recusou a versão longa com explicação entre
+# parênteses (11/10/2026); aceita "sim", "pode", "confirmo"...
+RESPOSTA_CLIQUE = "confirmo"
 
 _pendentes: dict[str, dict] = {}
 _antecipadas: list[dict] = []

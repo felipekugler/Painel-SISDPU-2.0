@@ -59,7 +59,7 @@
         document.getElementById('ficha-mcp-sub').textContent =
             rotulo(p.tipo) + ' — PAJ ' + p.paj + ' · SIS-DPU 2.0 (MCP)';
         document.getElementById('ficha-mcp-corpo').textContent = p.ficha;
-        preencherCampos(p.ficha);
+        preencherCampos(p.ficha, p.paj);
         let resta = p.restam_seg;
         const aviso = document.getElementById('ficha-mcp-aviso');
         const pintar = function () {
@@ -100,30 +100,57 @@
         return raiz.innerHTML;
     }
 
-    // "  Rótulo: valor" de cada linha da ficha -> linha da tabela.
-    function preencherCampos(ficha) {
-        const tb = document.getElementById('ficha-mcp-campos');
-        tb.innerHTML = '';
+    // "  Rótulo: valor" de cada linha da ficha -> [rótulo, valor, ehHtml], com os
+    // ajustes de leitura pedidos pelo Defensor (11/10/2026): o PAJ pelo NÚMERO
+    // (AAAA/UUU-NNNNN), não pelo id interno; "Acompanhamento público: Sim/Não".
+    function camposDaFicha(ficha, pajNumero) {
+        const campos = [];
         (ficha || '').split('\n').forEach(function (linha) {
             const m = linha.match(/^\s{2,}([^:]{2,60}):\s?(.*)$/);
             if (!m) return;
+            let rotuloCampo = m[1].replace(/\?$/, '').trim(), valor = m[2];
+            if (/^PAJ$/i.test(rotuloCampo) && pajNumero) valor = pajNumero;
+            if (/acompanhamento p[úu]blico/i.test(rotuloCampo)) {
+                rotuloCampo = 'Acompanhamento público';
+                valor = /^\s*N[ÃA]O\b/i.test(valor) ? 'Não' : (/^\s*SIM\b/i.test(valor) ? 'Sim' : valor);
+            }
+            campos.push([rotuloCampo, valor, /descri/i.test(rotuloCampo) && /<\w/.test(valor)]);
+        });
+        return campos;
+    }
+
+    function preencherCampos(ficha, pajNumero) {
+        const tb = document.getElementById('ficha-mcp-campos');
+        tb.innerHTML = '';
+        camposDaFicha(ficha, pajNumero).forEach(function (c) {
             const tr = document.createElement('tr');
             const th = document.createElement('th');
             th.className = 'align-top whitespace-nowrap text-base-content/70 font-medium w-1/4';
-            th.textContent = m[1].replace(/\?$/, '');
+            th.textContent = c[0];
             const td = document.createElement('td');
             td.className = 'align-top break-words';
-            if (/descri/i.test(m[1]) && /<\w/.test(m[2])) {
+            if (c[2]) {
                 const box = document.createElement('div');
                 box.className = 'bg-base-200 rounded p-2';
-                box.innerHTML = htmlSeguro(m[2]);
+                box.innerHTML = htmlSeguro(c[1]);
                 td.appendChild(box);
             } else {
-                td.textContent = m[2];
+                td.textContent = c[1];
             }
             tr.append(th, td);
             tb.appendChild(tr);
         });
+    }
+
+    // A mesma tabela em HTML (texto escapado), para o resumo da movimentação conjunta.
+    function htmlFicha(ficha, pajNumero) {
+        const esc = function (s) { const d = document.createElement('div'); d.textContent = s; return d.innerHTML; };
+        return '<table class="table table-sm w-full"><tbody>' + camposDaFicha(ficha, pajNumero).map(function (c) {
+            return '<tr><th class="align-top whitespace-nowrap text-base-content/70 font-medium w-1/4">' + esc(c[0])
+                + '</th><td class="align-top break-words">'
+                + (c[2] ? '<div class="bg-base-200 rounded p-2">' + htmlSeguro(c[1]) + '</div>' : esc(c[1]))
+                + '</td></tr>';
+        }).join('') + '</tbody></table>';
     }
 
     async function responder(aprovado) {
@@ -160,7 +187,7 @@
     // Exposto para o resumo da movimentação conjunta (aprovação antecipada).
     // `previa` só MOSTRA uma ficha (conferência visual); responder a ela não
     // grava nada, porque o servidor não conhece o id.
-    window.fichaMcp = { rotulo: rotulo, previa: function (p) { abrir(p); } };
+    window.fichaMcp = { rotulo: rotulo, previa: function (p) { abrir(p); }, htmlFicha: htmlFicha };
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar);
     else iniciar();
