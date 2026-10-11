@@ -1734,19 +1734,21 @@
         // janela dele sozinho não adiantaria nada. NÃO sincroniza intimações/
         // prazos automaticamente aqui (removido 2026-09-18) — só manual.
         async function _inicializarPainel() {
+            // Com as leituras pelos MCPs (Painel SISDPU 2.0 — SIS-DPU 2.0 e e-proc),
+            // nada se conecta ao iniciar: nem senha do cofre, nem SISDPU legado
+            // (derrubaria a sessão do Painel 1.0), nem janela do e-proc. Toda
+            // conexão por navegador passa a ser SOB DEMANDA — as ações que precisam
+            // dela (ex.: concluir trâmite, peticionar) já chamam garantirCofre()
+            // na hora (pedido do Defensor, 11/10/2026).
+            var usaNavSisdpu = !{{ 'true' if fonte_mcp_sisdpu() else 'false' }};
+            var usaNavEproc = !{{ 'true' if eproc_intimacoes_mcp else 'false' }};
+            if (!usaNavSisdpu && !usaNavEproc) { window.atualizarSelos(); return; }
             var st = await _lerCofre();
             if (st.configurado && !st.destrancado) {
                 var ok = await window.abrirModalCofre();
                 if (ok) {
-                    // Com os MCPs (Painel SISDPU 2.0) a leitura não usa navegador:
-                    // não loga no SISDPU legado (derrubaria a sessão do Painel 1.0)
-                    // nem abre a janela do e-proc só para as intimações.
-                    var usaNavSisdpu = !{{ 'true' if fonte_mcp_sisdpu() else 'false' }};
-                    var usaNavEproc = !{{ 'true' if eproc_intimacoes_mcp else 'false' }};
-                    if (usaNavSisdpu || usaNavEproc) {
-                        showToast('Cofre desbloqueado — reconectando ' +
-                            [usaNavSisdpu ? 'SISDPU' : '', usaNavEproc ? 'e-proc' : ''].filter(Boolean).join(' e ') + '...', 'info');
-                    }
+                    showToast('Cofre desbloqueado — reconectando ' +
+                        [usaNavSisdpu ? 'SISDPU' : '', usaNavEproc ? 'e-proc' : ''].filter(Boolean).join(' e ') + '...', 'info');
                     // Em SEQUÊNCIA, não em paralelo: os dois sobem um navegador
                     // Playwright (SISDPU headless + e-proc com janela visível) e,
                     // disparados ao mesmo tempo, disputam CPU/IO o bastante pra
