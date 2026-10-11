@@ -563,6 +563,112 @@ async def caixas_e_historico_paj(id_processo: str, limite: int = 10) -> dict:
     return res
 
 
+# ---------------------------------------------------------------------------
+# Download dos arquivos originais (documento_baixar)
+# ---------------------------------------------------------------------------
+
+# Progresso por pasta de destino, para a página do PAJ mostrar "baixando 3/10".
+PROGRESSO_DOWNLOAD: dict[str, dict] = {}
+
+_GRAVADOR = (
+    "import os,sys\n"
+    "d=sys.argv[1];t=d+'.tmp'\n"
+    "open(t,'wb').write(sys.stdin.buffer.read());os.replace(t,d)\n"
+)
+
+
+def _gravar_binario(destino, dados: bytes) -> None:
+    """Grava atômico (tmp + replace). Se o antivírus barrar o processo do
+    servidor (PermissionError — ver sincronizador._gravar_via_subprocesso),
+    grava por um processo Python de vida curta, sem rede."""
+    import os
+    import subprocess
+    import sys
+    tmp = str(destino) + ".tmp"
+    try:
+        with open(tmp, "wb") as fh:
+            fh.write(dados)
+        os.replace(tmp, str(destino))
+        return
+    except PermissionError:
+        pass
+    r = subprocess.run([sys.executable, "-c", _GRAVADOR, str(destino)], input=dados,
+                       capture_output=True, timeout=120)
+    if r.returncode != 0:
+        raise OSError(f"gravação bloqueada: {r.stderr.decode('utf-8', 'replace')[:200]}")
+
+
+def baixar_arquivo_mcp(id_arquivo: int) -> tuple[bytes, dict]:
+    """Baixa o arquivo inteiro (todas as partes) e confere o sha256 do servidor."""
+    import base64
+    import hashlib
+    partes, info, n = [], {}, 1
+    while True:
+        r = sis2.chamar("documento_baixar", {"idArquivo": int(id_arquivo), "parte": n})
+        if not isinstance(r, dict) or "conteudoBase64" not in r:
+            raise RuntimeError(f"resposta inesperada do documento_baixar: {str(r)[:200]}")
+        info = r
+        partes.append(base64.b64decode(r["conteudoBase64"]))
+        if n >= int(r.get("totalPartes") or 1):
+            break
+        n += 1
+    dados = b"".join(partes)
+    esperado = (info.get("sha256DoArquivo") or "").lower()
+    if esperado and hashlib.sha256(dados).hexdigest() != esperado:
+        raise RuntimeError("arquivo corrompido na montagem (sha256 não confere)")
+    return dados, info
+
+
+async def baixar_todos_arquivos(pasta_destino, lista_arquivos: list[dict], log=None,
+                                seq_por_file_id: dict | None = None, **_kw) -> dict:
+    """Mesmo contrato do sisdpu_client.baixar_todos_arquivos (itens com seq,
+    data, nomeArq, href) e o MESMO nome em disco: "seq075 - 43202969 - nome.pdf".
+    Pula o que já existe. Sem navegador nem SISDPU legado."""
+    from pathlib import Path
+    pasta = Path(pasta_destino)
+    pasta.mkdir(parents=True, exist_ok=True)
+    prog = PROGRESSO_DOWNLOAD.setdefault(str(pasta), {})
+    prog.update(total=len(lista_arquivos), feitos=0, baixados=0, erros=0, rodando=True)
+    baixados = pulados = 0
+    erros: list[str] = []
+    try:
+        for item in lista_arquivos:
+            href = item.get("href") or ""
+            nome = item.get("nomeArq") or "arquivo"
+            m = re.search(r"/(\d+)/[^/]*$", href)
+            if not m:
+                erros.append(f"{nome}: sem id de arquivo (anexo antigo só por clique) — não baixado")
+                prog["feitos"] += 1
+                continue
+            file_id = m.group(1)
+            seq = (seq_por_file_id or {}).get(file_id, item.get("seq"))
+            try:
+                seq_fmt = f"{int(seq):03d}"
+            except (TypeError, ValueError):
+                seq_fmt = str(seq)
+            destino = pasta / f"seq{seq_fmt} - {file_id} - {nome}"
+            if destino.exists() and destino.stat().st_size > 0:
+                pulados += 1
+                prog["feitos"] += 1
+                continue
+            try:
+                dados, _info = await asyncio.to_thread(baixar_arquivo_mcp, int(file_id))
+                await asyncio.to_thread(_gravar_binario, destino, dados)
+                baixados += 1
+                prog["baixados"] += 1
+                if log:
+                    log(f"  [mcp] baixado {destino.name} ({len(dados)} bytes)")
+            except Exception as e:  # noqa: BLE001
+                erros.append(f"{nome}: {e}")
+                prog["erros"] += 1
+                if log:
+                    log(f"  [mcp] ERRO {nome}: {e}")
+            prog["feitos"] += 1
+    finally:
+        prog["rodando"] = False
+    return {"baixados": baixados, "pulados": pulados, "erros": erros, "total": len(lista_arquivos)}
+
+
 async def reconectar() -> dict:
     """Sem navegador: só confere se a sessão do MCP continua válida."""
     if not sis2.conectado():
@@ -604,4 +710,5 @@ _SUBSTITUIDAS = {
     "caixa_de_entrada", "parse_item_caixa", "listar_caixa_estruturada",
     "movimentacoes_paj", "buscar_paj_global", "abrir_detalhamento_paj",
     "extrair_documentos_por_seq", "reconectar", "_ensure_logged_in",
+    "baixar_todos_arquivos",
 }

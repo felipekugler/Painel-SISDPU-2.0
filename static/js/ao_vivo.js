@@ -45,12 +45,45 @@
                 + 'somando o painel e o uso do MCP pelo Claude). Uma caixa inteira pode consumir quase todo o limite.\n\n'
                 + usado + '\n\nA leitura automática (ao abrir a caixa e cada PAJ) já mantém o painel atualizado. '
                 + 'Continuar mesmo assim?'
-                + (nivel === 'completa' ? '\n\n(O download dos PDFs abre o SISDPU antigo.)' : ''));
+                + (nivel === 'completa' ? '\n\n(Os PDFs de todos os PAJs também serão baixados pelo MCP.)' : ''));
         }
         return window.confirm('Fonte de dados: SIS-DPU 2.0 (MCP).\n\nA sincronização manual relê o histórico '
-            + 'COMPLETO deste PAJ (~1 registro por movimentação do limite diário). ' + usado + '\n\nContinuar?'
-            + (nivel === 'completa' ? '\n\n(O download dos PDFs abre o SISDPU antigo.)' : ''));
+            + 'COMPLETO deste PAJ (~1 registro por movimentação do limite diário). ' + usado + '\n\nContinuar?');
     };
+
+    /* Baixa pelo MCP os anexos que faltam na pasta do PAJ (em segundo plano no
+     * servidor) e acompanha o andamento. Terminando com arquivo novo, recarrega
+     * a página uma vez para a aba de anexos mostrá-los. */
+    async function baixarAnexos(pajNorm) {
+        const base = '/api/sisdpu2/ao-vivo/paj/' + encodeURIComponent(pajNorm) + '/anexos';
+        let r;
+        try { r = await postar(base); } catch (e) { return; }
+        if (!r || !r.ok || (!r.iniciado && r.motivo !== 'em_andamento')) return;
+        const chave = 'ao-vivo-anexos-' + pajNorm;
+        for (let i = 0; i < 900; i++) {  // até ~30 min
+            await new Promise(function (ok) { setTimeout(ok, 2000); });
+            let p;
+            try { p = await (await fetch(base)).json(); } catch (e) { continue; }
+            const pr = p.progresso || {};
+            if (p.rodando) {
+                selo('SIS-DPU 2.0 — baixando anexos'
+                    + (pr.total ? ' ' + (pr.feitos || 0) + '/' + pr.total : '') + '…');
+                continue;
+            }
+            const res = p.resultado || {};
+            if ((res.erros || []).length) {
+                selo('SIS-DPU 2.0 — anexos: ' + (res.baixados || 0) + ' baixado(s), ' + res.erros.length + ' com erro', 'erro');
+            } else {
+                selo('SIS-DPU 2.0 — anexos em dia', 'ok');
+            }
+            const recem = Date.now() - Number(sessionStorage.getItem(chave) || 0) < 60000;
+            if ((res.baixados || 0) > 0 && !recem) {
+                sessionStorage.setItem(chave, String(Date.now()));
+                setTimeout(function () { window.location.reload(); }, 1200);
+            }
+            return;
+        }
+    }
 
     async function iniciar() {
         let estado;
@@ -65,7 +98,11 @@
             // Evita laço: depois de recarregar por mudança, não relê de novo nesta visita.
             const chave = 'ao-vivo-recarregado-' + pajNorm;
             const recemRecarregado = Date.now() - Number(sessionStorage.getItem(chave) || 0) < 60000;
-            if (recemRecarregado) { selo('SIS-DPU 2.0 — PAJ atualizado', 'ok'); return; }
+            if (recemRecarregado) {
+                selo('SIS-DPU 2.0 — PAJ atualizado', 'ok');
+                await baixarAnexos(pajNorm);
+                return;
+            }
             selo('SIS-DPU 2.0 — atualizando o PAJ…');
             try {
                 const r = await postar('/api/sisdpu2/ao-vivo/paj/' + encodeURIComponent(pajNorm));
@@ -73,6 +110,7 @@
                     sessionStorage.setItem(chave, String(Date.now()));
                     selo('SIS-DPU 2.0 — novidades no PAJ, recarregando…');
                     setTimeout(function () { window.location.reload(); }, 600);
+                    return;  // os anexos são baixados depois do recarregamento
                 } else if (r.ok) {
                     selo('SIS-DPU 2.0 — PAJ em dia', 'ok');
                 } else if (r.motivo === 'sincronizacao_em_andamento') {
@@ -83,6 +121,7 @@
             } catch (e) {
                 selo('SIS-DPU 2.0 — falha de rede ao atualizar', 'erro');
             }
+            await baixarAnexos(pajNorm);
             return;
         }
 

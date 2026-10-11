@@ -61,6 +61,9 @@ _TOOLS_LEITURA = {
     "decurso_do_paj", "decurso_caixa", "prazos", "prazos_da_caixa",
     "audiencias_do_paj", "audiencias_do_paj_futuras", "agenda_audiencias",
     "tag_dos_pajs", "marcacao_do_paj", "ultimos_trabalhados", "pajs_parados",
+    # Arquivo original em base64, em partes de ~240 KB (TI, versão 1.23.0 de
+    # 11/10/2026). Conta no teto diário — estimativa: 1 registro por parte.
+    "documento_baixar",
 }
 
 _RE_TETO = re.compile(r"teto de (\d+) (?:leituras )?por minuto", re.IGNORECASE)

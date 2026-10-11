@@ -132,6 +132,89 @@ async def atualizar_paj(paj_norm: str) -> dict:
             "registros_gastos": sis2.consumo_hoje()["registros"] - reg_antes}
 
 
+# ---------------------------------------------------------------------------
+# Anexos do PAJ aberto (download pelo MCP, sem freio de consumo)
+# ---------------------------------------------------------------------------
+
+_downloads: dict[str, dict] = {}  # paj_norm -> {rodando, inicio, resultado}
+
+
+def _anexos_faltando(paj_norm: str) -> int:
+    """Quantos anexos com id direto ainda não estão na pasta Arquivos (local, sem MCP)."""
+    import re
+    pasta = PAJS_DIR / paj_norm
+    try:
+        m = json.loads((pasta / "metadata.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return 0
+    existentes = {p.name for p in (pasta / "Arquivos").glob("*")} if (pasta / "Arquivos").exists() else set()
+    ids_locais = {re.match(r"seq\d+ - (\d+) - ", n).group(1) for n in existentes if re.match(r"seq\d+ - (\d+) - ", n)}
+    faltam = 0
+    for mv in (m.get("detalhes_sisdpu") or {}).get("movimentacoes") or []:
+        for d in mv.get("documentos") or []:
+            achado = re.search(r"/pdf/(\d+)/", d.get("urlDownload") or "")
+            if achado and achado.group(1) not in ids_locais:
+                faltam += 1
+    return faltam
+
+
+async def baixar_anexos_paj(paj_norm: str) -> dict:
+    """Dispara, em segundo plano, o download dos anexos que faltam do PAJ —
+    o mesmo caminho da sincronização completa (nomes, limite de anexos por PAJ,
+    contagem no metadata), lendo os arquivos pelo MCP. Sem freio de consumo:
+    baixar o que vai usar é trabalho do Defensor (decisão de 11/10/2026); só
+    para se o próprio servidor recusar."""
+    if config_painel_service.get_fonte_dados() != "mcp" or not sis2.conectado():
+        return {"ok": False, "motivo": "inativo"}
+    atual = _downloads.get(paj_norm)
+    if atual and atual.get("rodando"):
+        return {"ok": True, "iniciado": False, "motivo": "em_andamento"}
+    faltam = _anexos_faltando(paj_norm)
+    if not faltam:
+        return {"ok": True, "iniciado": False, "faltam": 0}
+    _downloads[paj_norm] = {"rodando": True, "inicio": datetime.now().isoformat(timespec="seconds"),
+                            "faltam": faltam, "resultado": None}
+
+    async def _tarefa():
+        linhas: list[str] = []
+
+        async def _rodar():
+            t1 = fonte.MODO.set("paj")
+            t2 = fonte.CAIXA_EM_CACHE_SERVE.set(True)
+            try:
+                return await sincronizador.rodar_paj_via_busca_global(
+                    _paj_de(paj_norm), linhas.append, deve_cancelar=lambda: False,
+                    baixar_anexos=True, rodar_ocr=False, forcar_sessao=False, extrair_documentos=True,
+                    esperas_curtas=True, fora_da_caixa_confirmado=False)
+            finally:
+                fonte.CAIXA_EM_CACHE_SERVE.reset(t2)
+                fonte.MODO.reset(t1)
+
+        res = None
+        try:
+            # Espera a vez se houver outra leitura/sync (não pula: o Defensor quer os arquivos).
+            for _ in range(120):
+                res = await _com_lock(_rodar)
+                if res is not None:
+                    break
+                await asyncio.sleep(5)
+        except Exception as e:  # noqa: BLE001
+            res = {"erros": [f"{type(e).__name__}: {e}"]}
+        _downloads[paj_norm].update(rodando=False, resultado={
+            "baixados": (res or {}).get("baixados", 0), "erros": ((res or {}).get("erros") or [])[:5]})
+
+    asyncio.create_task(_tarefa())
+    return {"ok": True, "iniciado": True, "faltam": faltam}
+
+
+def progresso_anexos(paj_norm: str) -> dict:
+    est = dict(_downloads.get(paj_norm) or {})
+    prog = fonte.PROGRESSO_DOWNLOAD.get(str(PAJS_DIR / paj_norm / "Arquivos")) or {}
+    est["progresso"] = {k: prog.get(k) for k in ("total", "feitos", "baixados", "erros")}
+    est["faltam_agora"] = _anexos_faltando(paj_norm)
+    return est
+
+
 async def atualizar_caixa(forcar: bool = False, automatico: bool = False) -> dict:
     if not ativo():
         return {"ok": False, "motivo": "inativo"}

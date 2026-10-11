@@ -82,6 +82,18 @@ async def api_ao_vivo_paj(paj_norm: str):
     return await ao_vivo_service.atualizar_paj(paj_norm)
 
 
+@router.post("/api/sisdpu2/ao-vivo/paj/{paj_norm}/anexos", response_class=JSONResponse)
+async def api_ao_vivo_paj_anexos(paj_norm: str):
+    from services import ao_vivo_service
+    return await ao_vivo_service.baixar_anexos_paj(paj_norm)
+
+
+@router.get("/api/sisdpu2/ao-vivo/paj/{paj_norm}/anexos", response_class=JSONResponse)
+async def api_ao_vivo_paj_anexos_progresso(paj_norm: str):
+    from services import ao_vivo_service
+    return ao_vivo_service.progresso_anexos(paj_norm)
+
+
 @router.post("/api/sisdpu2/ao-vivo/caixa", response_class=JSONResponse)
 async def api_ao_vivo_caixa(forcar: bool = False):
     from services import ao_vivo_service
