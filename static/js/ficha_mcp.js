@@ -218,7 +218,20 @@
     // Exposto para o resumo da movimentação conjunta (aprovação antecipada).
     // `previa` só MOSTRA uma ficha (conferência visual); responder a ela não
     // grava nada, porque o servidor não conhece o id.
-    window.fichaMcp = { rotulo: rotulo, previa: function (p) { abrir(p); }, htmlFicha: htmlFicha };
+    // Campos essenciais da ficha como [{rotulo, html}] (html já seguro) — para
+    // telas que montam a própria tabela (ex.: lápis "Alterar" na descrição do
+    // modal de mera ciência).
+    function camposEssenciais(ficha, pajNumero) {
+        const esc = function (s) { const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; };
+        return camposDaFicha(ficha, pajNumero).campos
+            .filter(function (c) { return !OCULTOS_ESSENCIAL.test(c[0]); })
+            .map(function (c) {
+                return { rotulo: /^Fases$/i.test(c[0]) ? 'Fase' : c[0], html: c[2] ? htmlSeguro(c[1]) : esc(c[1]) };
+            });
+    }
+
+    window.fichaMcp = { rotulo: rotulo, previa: function (p) { abrir(p); }, htmlFicha: htmlFicha,
+                        camposEssenciais: camposEssenciais };
 
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', iniciar);
     else iniciar();

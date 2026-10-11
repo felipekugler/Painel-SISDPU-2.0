@@ -347,7 +347,7 @@ def _chave_mera_ciencia(processo: str, ato: str) -> str:
 async def _worker_mera_ciencia(job: _Job, processo: str, ato: str, descricao_mov: str,
                                 eventos_selecionados: list[str] | None,
                                 gerenciamento_tipo: str | None, gerenciamento_procurador_valor: str | None,
-                                gerenciamento_procurador_rotulo: str | None) -> None:
+                                gerenciamento_procurador_rotulo: str | None, gerenciar: bool = True) -> None:
     chave = job.chave
 
     def log_cb(level: str, msg: str) -> None:
@@ -358,7 +358,7 @@ async def _worker_mera_ciencia(job: _Job, processo: str, ato: str, descricao_mov
             processo, ato, descricao_mov, log_cb, eventos_selecionados=eventos_selecionados,
             gerenciamento_tipo=gerenciamento_tipo,
             gerenciamento_procurador_valor=gerenciamento_procurador_valor,
-            gerenciamento_procurador_rotulo=gerenciamento_procurador_rotulo)
+            gerenciamento_procurador_rotulo=gerenciamento_procurador_rotulo, gerenciar=gerenciar)
     except Exception as e:  # noqa: BLE001 — nunca deixa o job sem "done"
         resultado = {"ok": False, "erro": f"{type(e).__name__}: {e}"}
         log_cb("erro", f"Falha inesperada: {e}")
@@ -370,7 +370,7 @@ async def _worker_mera_ciencia(job: _Job, processo: str, ato: str, descricao_mov
 @router.get("/api/intimacoes/{processo}/dar-mera-ciencia")
 async def api_dar_mera_ciencia(processo: str, ato: str, descricao: str = "", eventos: str = "",
                                 gerenciamento_tipo: str = "", gerenciamento_procurador_valor: str = "",
-                                gerenciamento_procurador_rotulo: str = ""):
+                                gerenciamento_procurador_rotulo: str = "", gerenciar: str = "1"):
     """SSE — IRREVERSÍVEL: dispara, para ESTE ATO (`ato` — identifica o
     sub-caso, ver módulo `intimacao_service`), as 3 ações reais e sempre
     iguais que fecham uma intimação de mera ciência (ciência com renúncia ao
@@ -417,7 +417,8 @@ async def api_dar_mera_ciencia(processo: str, ato: str, descricao: str = "", eve
     _JOBS[chave] = job
     job.task = asyncio.create_task(
         _worker_mera_ciencia(job, processo, ato, descricao, eventos_selecionados,
-                              tipo_override, valor_override, rotulo_override))
+                              tipo_override, valor_override, rotulo_override,
+                              gerenciar=gerenciar not in ("0", "false", "nao")))
     return EventSourceResponse(_tail_job(job))
 
 

@@ -273,72 +273,119 @@
      do menu acima (escapar do overflow:hidden do card .collapse). -->
 <template x-teleport="body">
     <div class="modal" :class="{'modal-open': confirmDialog.show}" @click.self="_responderConfirmModal(false)">
-        <div class="modal-box w-full max-w-[50vw]">
-            <h3 class="font-bold text-base text-center bg-error/10 text-error border border-error/40 rounded-md py-2">Atenção</h3>
-            <p class="pt-3 text-sm">Ao prosseguir, serão executadas as seguintes ações de maneira irreversível no e-proc e no SISDPU:</p>
-            <div class="flex flex-col gap-3 py-3">
-                <div class="text-sm">
-                    <div>1) Peticionamento no e-proc com o evento:</div>
-                    <div class="pl-5 mt-1 text-base-content/70">• ciência, com renúncia ao prazo</div>
-                    <!-- Checklist "Selecione o(s) prazo(s) a ser(em) fechado(s)" —
-                         mesmo estilo/seção já usada em "Ações no Eproc" (pedido do
-                         usuário 2026-09-24: poder desmarcar algum evento do
-                         litisconsórcio antes de fechar). -->
-                    <div class="ret-acao-bloco mt-2 ml-5" x-show="confirmDialog.fase === 'confirmando'">
-                        <div class="ret-acao-titulo">Selecione o(s) prazo(s) a ser(em) fechado(s)</div>
-                        <div class="flex flex-col gap-1">
-                            <template x-for="p in confirmDialog.prazosDisponiveis" :key="p.evento_intimacao">
-                                <label class="flex items-start gap-2 cursor-pointer">
-                                    <input type="checkbox" class="checkbox checkbox-xs mt-0.5"
-                                           x-model="confirmDialog.prazosSelecionados[p.evento_intimacao]"
-                                           @change="_atualizarDescricaoSugerida()">
-                                    <span>
+        <div class="modal-box w-11/12 max-w-3xl">
+            <style>
+                .revisao-compacta .table :where(th, td) { padding: 1px 6px; line-height: 1.3; font-size: 11px; }
+                .revisao-compacta .table th { width: 30%; }
+                .revisao-compacta .bg-base-200 { padding: 2px 6px; }
+            </style>
+            <h3 class="font-bold text-base text-center bg-error/10 text-error border border-error/40 rounded-md py-2">Confirmação de mera ciência em intimação</h3>
+            <p class="pt-3 text-sm">Ao confirmar, as ações abaixo serão executadas de maneira irreversível no e-proc e no SISDPU:</p>
+            <!-- Remodelado 11/10/2026 (pedido do Defensor): mesmo formato da revisão da
+                 movimentação conjunta — card "No e-proc" (prazo a fechar, evento fixo,
+                 gerenciamento opcional) e card "No SISDPU" (ficha do SIS-DPU 2.0, com
+                 lápis para alterar a descrição: a ficha é refeita e substitui a anterior). -->
+            <div class="flex flex-col gap-3 py-3 revisao-compacta">
+                <div class="border border-info/30 bg-info/10 rounded px-3 py-2">
+                    <div class="text-sm font-semibold mb-1"
+                         x-text="'No e-proc — Processo ' + _fmtProcessoMc(confirmDialog.numeroProcesso)"></div>
+                    <table class="table table-sm w-full"><tbody>
+                        <tr>
+                            <th class="align-top whitespace-nowrap text-base-content/70 font-medium">Evento</th>
+                            <td class="align-top break-words">CIÊNCIA, COM RENÚNCIA AO PRAZO</td>
+                        </tr>
+                        <tr>
+                            <th class="align-top whitespace-nowrap text-base-content/70 font-medium">Prazo(s) a fechar</th>
+                            <td class="align-top break-words">
+                                <template x-for="p in confirmDialog.prazosDisponiveis" :key="p.evento_intimacao">
+                                    <label class="flex items-start gap-2 cursor-pointer">
+                                        <input type="checkbox" class="checkbox checkbox-xs mt-0.5"
+                                               :disabled="confirmDialog.fase !== 'confirmando'"
+                                               x-model="confirmDialog.prazosSelecionados[p.evento_intimacao]"
+                                               @change="_atualizarDescricaoSugerida()">
                                         <span x-text="p.label"></span>
-                                        <span class="text-base-content/40 font-mono" x-text="' · ' + confirmDialog.numeroProcesso"></span>
-                                    </span>
+                                    </label>
+                                </template>
+                            </td>
+                        </tr>
+                        <tr>
+                            <th class="align-top whitespace-nowrap text-base-content/70 font-medium">Gerenciamento de processo</th>
+                            <td class="align-top break-words">
+                                <label class="flex items-center gap-2 cursor-pointer">
+                                    <input type="checkbox" class="checkbox checkbox-xs" x-model="confirmDialog.gerenciarAtivo"
+                                           :disabled="confirmDialog.fase !== 'confirmando'">
+                                    <span>Gerenciar processo depois de peticionar (substabelecer)?</span>
                                 </label>
-                            </template>
-                        </div>
-                    </div>
+                                <div class="flex items-center gap-2 flex-wrap mt-1"
+                                     x-show="confirmDialog.gerenciarAtivo && confirmDialog.fase === 'confirmando'">
+                                    <select class="select select-bordered select-xs" x-model="confirmDialog.gerenciamentoTipo">
+                                        <template x-for="t in tiposGerenciamento" :key="t.valor">
+                                            <option :value="t.valor" x-text="t.rotulo"></option>
+                                        </template>
+                                    </select>
+                                    <select class="select select-bordered select-xs min-w-[16rem]" x-show="confirmDialog.gerenciamentoTipo !== 'D'"
+                                            x-model="confirmDialog.gerenciamentoProcuradorValor" @change="_onTrocarGerenciamentoProcurador()">
+                                        <option value="">Escolha um Procurador</option>
+                                        <template x-for="p in confirmDialog.procuradoresDropdown" :key="p.valor">
+                                            <option :value="p.valor" x-text="p.rotulo"></option>
+                                        </template>
+                                    </select>
+                                    <span x-show="confirmDialog.gerenciamentoTipo !== 'D' && !confirmDialog.procuradoresDropdown.length"
+                                          class="text-[11px] text-base-content/50">configure em Configurações › e-proc</span>
+                                </div>
+                                <div class="text-base-content/70 mt-0.5" x-show="confirmDialog.gerenciarAtivo && confirmDialog.fase !== 'confirmando'"
+                                     x-text="(tiposGerenciamento.find(t => t.valor === confirmDialog.gerenciamentoTipo) || {}).rotulo
+                                             + (confirmDialog.gerenciamentoTipo !== 'D' ? (' → ' + (confirmDialog.gerenciamentoProcuradorRotulo || confirmDialog.gerenciamentoProcuradorValor)) : '')"></div>
+                            </td>
+                        </tr>
+                    </tbody></table>
                 </div>
-                <div class="text-sm">
-                    <div>2) Gerenciamento do processo judicial (substabelecimento):</div>
-                    <!-- Mesmos 2 dropdowns de "Ações no Eproc" (pedido do usuário
-                         2026-09-24), pré-preenchidos com o padrão configurado mas
-                         editáveis aqui só pra este disparo. -->
-                    <div class="pl-5 mt-1 flex items-center gap-2 flex-wrap" x-show="confirmDialog.fase === 'confirmando'">
-                        <select class="select select-bordered select-sm" x-model="confirmDialog.gerenciamentoTipo">
-                            <template x-for="t in tiposGerenciamento" :key="t.valor">
-                                <option :value="t.valor" x-text="t.rotulo"></option>
-                            </template>
-                        </select>
-                        <select class="select select-bordered select-sm min-w-[18rem]" x-show="confirmDialog.gerenciamentoTipo !== 'D'"
-                                x-model="confirmDialog.gerenciamentoProcuradorValor" @change="_onTrocarGerenciamentoProcurador()">
-                            <option value="">Escolha um Procurador</option>
-                            <template x-for="p in confirmDialog.procuradoresDropdown" :key="p.valor">
-                                <option :value="p.valor" x-text="p.rotulo"></option>
-                            </template>
-                        </select>
-                        <span x-show="confirmDialog.gerenciamentoTipo !== 'D' && !confirmDialog.procuradoresDropdown.length"
-                              class="text-[11px] text-base-content/50">
-                            configure em Configurações › e-proc
-                        </span>
+
+                <div class="border border-success/30 bg-success/10 rounded px-3 py-2">
+                    <div class="text-sm font-semibold mb-1" x-text="'No SISDPU — PAJ ' + _pajLabelAtual()"></div>
+                    <div class="text-xs text-base-content/60 mb-1" x-show="(confirmDialog.fichaMc || {}).carregando">
+                        <span class="loading loading-spinner loading-xs"></span> Conferindo com o SIS-DPU 2.0…
                     </div>
-                    <div class="pl-5 mt-1 text-base-content/70" x-show="confirmDialog.fase !== 'confirmando'"
-                         x-text="'• ' + (tiposGerenciamento.find(t => t.valor === confirmDialog.gerenciamentoTipo) || {}).rotulo
-                                 + (confirmDialog.gerenciamentoTipo !== 'D' ? (' → ' + (confirmDialog.gerenciamentoProcuradorRotulo || confirmDialog.gerenciamentoProcuradorValor)) : '')"></div>
-                </div>
-                <div class="text-sm">
-                    <div>3) Movimentação no SISDPU da fase petição de mera ciência, com descrição:</div>
-                    <!-- Caixa editável (pedido do usuário 2026-09-24) — sugestão
-                         pré-preenchida, mas o Defensor pode ajustar antes de
-                         disparar (mesmo padrão da página Intimações). -->
-                    <textarea class="textarea textarea-bordered textarea-sm w-[calc(100%-1.25rem)] ml-5 mt-1"
-                              rows="2" x-show="confirmDialog.fase === 'confirmando'"
-                              x-model="confirmDialog.descricaoMov"
-                              @input="confirmDialog.descricaoMovEditada = true"></textarea>
-                    <div class="pl-5 mt-1 text-base-content/70" x-show="confirmDialog.fase !== 'confirmando'"
-                         x-text="'• ' + confirmDialog.descricaoMov"></div>
+                    <table class="table table-sm w-full"><tbody>
+                        <template x-for="(c, ci) in _camposSisdpuMc()" :key="ci">
+                            <tr>
+                                <th class="align-top whitespace-nowrap text-base-content/70 font-medium" x-text="c.rotulo"></th>
+                                <td class="align-top break-words">
+                                    <template x-if="c.rotulo !== 'Descrição' || !confirmDialog.editandoDesc">
+                                        <div class="flex items-start gap-2">
+                                            <div class="flex-1 min-w-0" :class="c.rotulo === 'Descrição' ? 'bg-base-200 rounded' : ''" x-html="c.html"></div>
+                                            <button type="button" class="btn btn-ghost btn-xs px-1" title="Alterar a descrição"
+                                                    x-show="c.rotulo === 'Descrição' && confirmDialog.fase === 'confirmando'"
+                                                    @click="_editarDescricaoMc()">
+                                                <svg xmlns="http://www.w3.org/2000/svg" class="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24"
+                                                     stroke="currentColor" stroke-width="2" aria-hidden="true">
+                                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                                          d="M15.232 5.232l3.536 3.536M9 13l6.232-6.232a2.5 2.5 0 113.536 3.536L12.536 16.536 9 17l.464-3.536z"/>
+                                                </svg>
+                                                Alterar
+                                            </button>
+                                        </div>
+                                    </template>
+                                    <template x-if="c.rotulo === 'Descrição' && confirmDialog.editandoDesc">
+                                        <div>
+                                            <textarea class="textarea textarea-bordered textarea-xs w-full text-xs" rows="2"
+                                                      x-model="confirmDialog.descRascunho"></textarea>
+                                            <div class="text-xs text-error font-semibold" x-show="_avisoDescricaoMc(confirmDialog.descRascunho)"
+                                                 x-text="_avisoDescricaoMc(confirmDialog.descRascunho)"></div>
+                                            <div class="flex gap-2 justify-end mt-1">
+                                                <button type="button" class="btn btn-ghost btn-xs" @click="confirmDialog.editandoDesc = false">Cancelar</button>
+                                                <button type="button" class="btn btn-success btn-xs" @click="_aplicarDescricaoMc()"
+                                                        :disabled="!!_avisoDescricaoMc(confirmDialog.descRascunho)">Confirmar alteração</button>
+                                            </div>
+                                        </div>
+                                    </template>
+                                </td>
+                            </tr>
+                        </template>
+                    </tbody></table>
+                    <template x-for="(e, ei) in ((confirmDialog.fichaMc || {}).erros || [])" :key="'e' + ei">
+                        <div class="text-error text-xs font-medium mt-1" x-text="'⚠ ' + e"></div>
+                    </template>
                 </div>
             </div>
             <p class="text-sm font-medium" x-show="confirmDialog.fase === 'confirmando'">Deseja prosseguir?</p>
@@ -352,8 +399,8 @@
                 <template x-if="confirmDialog.fase === 'confirmando'">
                     <div class="flex gap-2">
                         <button type="button" class="btn btn-sm" @click="_responderConfirmModal(false)">Cancelar</button>
-                        <button type="button" class="btn btn-sm btn-success" @click="_responderConfirmModal(true)"
-                                :disabled="!_algumPrazoSelecionado() || !confirmDialog.descricaoMov.trim() || !_gerenciamentoValido()">Confirmar</button>
+                        <button type="button" class="btn btn-sm btn-success" @click="_confirmarMeraCiencia()"
+                                :disabled="!_podeConfirmarMc()">Confirmar</button>
                     </div>
                 </template>
                 <template x-if="confirmDialog.fase === 'executando'">

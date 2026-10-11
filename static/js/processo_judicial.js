@@ -392,6 +392,7 @@ function processoJudicialBlock(cfg) {
             const cd = this.confirmDialog;
             if (cd.descricaoMovEditada) return;
             cd.descricaoMov = this._descricaoMeraCiencia(cd.prazosDisponiveis, cd.prazosSelecionados, cd.descricaoAto);
+            this._gerarFichaMc();
         },
         _algumPrazoSelecionado() {
             return Object.values(this.confirmDialog.prazosSelecionados || {}).some(Boolean);
@@ -401,7 +402,92 @@ function processoJudicialBlock(cfg) {
         // Eproc"/do backend, ver `mera_ciencia_service.dar_mera_ciencia`).
         _gerenciamentoValido() {
             const cd = this.confirmDialog;
-            return cd.gerenciamentoTipo === 'D' || !!cd.gerenciamentoProcuradorValor;
+            return !cd.gerenciarAtivo || cd.gerenciamentoTipo === 'D' || !!cd.gerenciamentoProcuradorValor;
+        },
+        // --- Fonte SIS-DPU 2.0 (MCP): a ficha da movimentação aparece NO MODAL,
+        // antes do e-proc (mesmo modelo da movimentação conjunta). Confirmar vale
+        // como aprovação dela; a gravação no fim usa essa aprovação.
+        _avisoDescricaoMc(texto) {
+            const n = String((texto === undefined ? this.confirmDialog.descricaoMov : texto) || '').trim().length;
+            return n >= 10 ? '' : 'Gravação vedada: Descrição precisa do mínimo de 10 caracteres';
+        },
+        _fmtProcessoMc(n) {
+            const d = String(n || '').replace(/\D/g, '');
+            if (d.length !== 20) return n || '';
+            return d.slice(0, 7) + '-' + d.slice(7, 9) + '.' + d.slice(9, 13) + '.' + d.slice(13, 14)
+                + '.' + d.slice(14, 16) + '.' + d.slice(16);
+        },
+        // Linhas do card "No SISDPU": a ficha do SIS-DPU 2.0 (campos essenciais);
+        // sem ela (carregando, ou fonte SISDPU antigo), os dados que o painel vai enviar.
+        _camposSisdpuMc() {
+            const cd = this.confirmDialog;
+            const f = ((cd.fichaMc || {}).fichas || [])[0];
+            if (window.PAINEL_FONTE_SISDPU_MCP && f && window.fichaMcp && window.fichaMcp.camposEssenciais) {
+                return window.fichaMcp.camposEssenciais(f.ficha, f.paj);
+            }
+            const esc = (t) => { const d = document.createElement('div'); d.textContent = t || ''; return d.innerHTML; };
+            return [{ rotulo: 'Fase', html: 'Petição simples, De mera ciência ou por cota nos autos' },
+                    { rotulo: 'Descrição', html: esc(cd.descricaoMov) }];
+        },
+        // Lápis "Alterar": edita a descrição; ao confirmar a alteração, a ficha é
+        // refeita no SIS-DPU 2.0 e substitui a anterior.
+        _editarDescricaoMc() {
+            this.confirmDialog.descRascunho = this.confirmDialog.descricaoMov;
+            this.confirmDialog.editandoDesc = true;
+        },
+        _aplicarDescricaoMc() {
+            const cd = this.confirmDialog;
+            const texto = (cd.descRascunho || '').trim();
+            if (this._avisoDescricaoMc(texto)) return;
+            cd.descricaoMov = texto;
+            cd.descricaoMovEditada = true;
+            cd.editandoDesc = false;
+            this._gerarFichaMc();
+        },
+        _pajLabelAtual() {
+            const m = String(window._paj_norm || '').match(/^PAJ-(\d{4})-(\d{3})-(\d+)$/);
+            return m ? m[1] + '/' + m[2] + '-' + m[3] : '';
+        },
+        async _gerarFichaMc() {
+            const cd = this.confirmDialog;
+            if (!window.PAINEL_FONTE_SISDPU_MCP || cd.fase !== 'confirmando') return;
+            const texto = (cd.descricaoMov || '').trim();
+            cd.fichaMc = { carregando: true, fichas: [], erros: [], texto };
+            if (this._avisoDescricaoMc()) { cd.fichaMc = { carregando: false, fichas: [], erros: [], texto: null }; return; }
+            try {
+                const r = await (await fetch('/api/sisdpu2/escrita/fichas-resumo', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id_processo: '', paj: this._pajLabelAtual(), paj_norm: window._paj_norm || '',
+                                           fase: 'Petição simples, De mera ciência ou por cota nos autos',
+                                           descricao_mov: texto, descricao_mov_html: '0' }),
+                })).json();
+                if ((this.confirmDialog.descricaoMov || '').trim() !== texto) return;  // texto mudou no meio
+                this.confirmDialog.fichaMc = { carregando: false, fichas: r.fichas || [], erros: r.erros || [], texto };
+            } catch (e) {
+                this.confirmDialog.fichaMc = { carregando: false, fichas: [], erros: ['Falha de rede ao montar a ficha do SIS-DPU 2.0: ' + e], texto };
+            }
+        },
+        _fichaMcPronta() {
+            if (!window.PAINEL_FONTE_SISDPU_MCP) return true;
+            const f = this.confirmDialog.fichaMc || {};
+            return !f.carregando && !(f.erros || []).length && (f.fichas || []).length > 0
+                && f.texto === (this.confirmDialog.descricaoMov || '').trim();
+        },
+        _podeConfirmarMc() {
+            return this._algumPrazoSelecionado() && !this._avisoDescricaoMc() && this._gerenciamentoValido()
+                && !this.confirmDialog.editandoDesc && this._fichaMcPronta();
+        },
+        async _confirmarMeraCiencia() {
+            if (!this._podeConfirmarMc()) return;
+            if (window.PAINEL_FONTE_SISDPU_MCP) {
+                try {
+                    await fetch('/api/sisdpu2/aprovacoes-antecipadas', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ fichas: this.confirmDialog.fichaMc.fichas }),
+                    });
+                } catch (e) { /* sem a pré-aprovação, a ficha é mostrada de novo no fim */ }
+            }
+            this._responderConfirmModal(true);
         },
         // Guarda o rótulo junto do valor pro log/histórico ficarem legíveis
         // (mesmo padrão de `static/js/acoes_eproc.js:onTrocarProcuradorDestino`).
@@ -429,7 +515,10 @@ function processoJudicialBlock(cfg) {
                     gerenciamentoProcuradorRotulo: dados.gerenciamentoProcuradorRotulo,
                     procuradoresDropdown: dados.procuradoresDropdown,
                     descricaoMov: dados.descricaoMov, descricaoMovEditada: false,
+                    gerenciarAtivo: false, fichaMc: { carregando: false, fichas: [], erros: [], texto: null },
+                    editandoDesc: false, descRascunho: '',
                 };
+                this._gerarFichaMc();
             });
         },
         _responderConfirmModal(ok) {
@@ -440,8 +529,7 @@ function processoJudicialBlock(cfg) {
             // (botão já fica desabilitado nesses casos, isto aqui é só a
             // segunda trava).
             if (this.confirmDialog.fase !== 'confirmando') return;
-            if (ok && (!this._algumPrazoSelecionado() || !this.confirmDialog.descricaoMov.trim()
-                       || !this._gerenciamentoValido())) return;
+            if (ok && !this._podeConfirmarMc()) return;
             const resolver = this.confirmDialog.resolver;
             if (ok) {
                 this.confirmDialog.fase = 'executando';
@@ -457,6 +545,8 @@ function processoJudicialBlock(cfg) {
                 descricaoAto: '', prazosDisponiveis: [], prazosSelecionados: {},
                 gerenciamentoTipo: 'S', gerenciamentoProcuradorValor: '', gerenciamentoProcuradorRotulo: '',
                 procuradoresDropdown: [], descricaoMov: '', descricaoMovEditada: false,
+                gerenciarAtivo: false, fichaMc: { carregando: false, fichas: [], erros: [], texto: null },
+                    editandoDesc: false, descRascunho: '',
             };
         },
         async darMeraCienciaPaj(idx, it) {
@@ -540,19 +630,20 @@ function processoJudicialBlock(cfg) {
                     .filter((p) => prazosSelecionados[p.evento_intimacao])
                     .map((p) => String(p.evento_intimacao));
                 const descricao = cd.descricaoMov.trim();
-                const gerTipo = cd.gerenciamentoTipo;
-                const gerValor = gerTipo === 'D' ? '' : cd.gerenciamentoProcuradorValor;
-                const gerRotulo = gerTipo === 'D' ? '' : cd.gerenciamentoProcuradorRotulo;
+                const gerTipo = cd.gerenciarAtivo ? cd.gerenciamentoTipo : '';
+                const gerValor = !cd.gerenciarAtivo || gerTipo === 'D' ? '' : cd.gerenciamentoProcuradorValor;
+                const gerRotulo = !cd.gerenciarAtivo || gerTipo === 'D' ? '' : cd.gerenciamentoProcuradorRotulo;
+                const gerenciar = cd.gerenciarAtivo;
 
                 entregue = true;
                 await this._executarMeraCienciaSSE(idx, chaveBusy, numero, caso.ato, descricao, eventosSelecionados,
-                                                    gerTipo, gerValor, gerRotulo);
+                                                    gerTipo, gerValor, gerRotulo, gerenciar);
             } finally {
                 if (!entregue) this.meraCienciaBusy[chaveBusy] = false;
             }
         },
         _executarMeraCienciaSSE(idx, chaveBusy, numero, ato, descricao, eventosSelecionados,
-                                 gerenciamentoTipo, gerenciamentoProcuradorValor, gerenciamentoProcuradorRotulo) {
+                                 gerenciamentoTipo, gerenciamentoProcuradorValor, gerenciamentoProcuradorRotulo, gerenciar) {
             return new Promise((resolve) => {
                 this.confirmDialog.status = 'Executando…';
                 const qs = new URLSearchParams({
@@ -560,6 +651,7 @@ function processoJudicialBlock(cfg) {
                     gerenciamento_tipo: gerenciamentoTipo || '',
                     gerenciamento_procurador_valor: gerenciamentoProcuradorValor || '',
                     gerenciamento_procurador_rotulo: gerenciamentoProcuradorRotulo || '',
+                    gerenciar: gerenciar ? '1' : '0',
                 });
                 const es = new EventSource(`/api/intimacoes/${encodeURIComponent(numero)}/dar-mera-ciencia?${qs}`);
                 es.addEventListener('log', (ev) => {

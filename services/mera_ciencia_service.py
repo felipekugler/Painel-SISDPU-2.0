@@ -76,7 +76,8 @@ async def dar_mera_ciencia(processo: str, ato: str, descricao_mov: str, log_cb,
                             eventos_selecionados: list[str] | None = None,
                             gerenciamento_tipo: str | None = None,
                             gerenciamento_procurador_valor: str | None = None,
-                            gerenciamento_procurador_rotulo: str | None = None) -> dict:
+                            gerenciamento_procurador_rotulo: str | None = None,
+                            gerenciar: bool = True) -> dict:
     """Roda as 3 ações reais em sequência — parando no primeiro erro, sem
     tentar os próximos passos — pro ATO dado (`ato` identifica o sub-caso,
     ver módulo `intimacao_service` — mudança 2026-09-XX: "Dar mera ciência"
@@ -248,6 +249,10 @@ async def dar_mera_ciencia(processo: str, ato: str, descricao_mov: str, log_cb,
     # (`gerenciamento_tipo`/`gerenciamento_procurador_valor`); senão cai no
     # padrão de sempre (Substituir procurador + padrão de Configurações ›
     # e-proc).
+    # Gerenciamento é OPCIONAL (checkbox no modal da página do PAJ, pedido do
+    # Defensor 11/10/2026); a página Intimações segue gerenciando sempre.
+    if not gerenciar:
+        registrar("muted", f"{processo}: Gerenciamento de Processo não solicitado — pulado.")
     tipo_gerenciamento = gerenciamento_tipo or TIPO_GERENCIAMENTO
     if gerenciamento_procurador_valor is not None:
         procurador_valor = gerenciamento_procurador_valor
@@ -258,7 +263,7 @@ async def dar_mera_ciencia(processo: str, ato: str, descricao_mov: str, log_cb,
         procurador_rotulo = procurador_padrao.get("rotulo") or procurador_valor
     # "Desassociar procurador" (tipo "D") não tem procurador DESTINO — só os
     # demais tipos exigem um valor escolhido (mesma regra de "Ações no Eproc").
-    if tipo_gerenciamento != "D" and not procurador_valor:
+    if gerenciar and tipo_gerenciamento != "D" and not procurador_valor:
         msg = ("Ciência protocolada, mas não há procurador padrão configurado em Configurações › "
                "e-proc — Gerenciamento de Processo e movimentação no SISDPU NÃO foram executados. "
                "Configure o procurador padrão e finalize este caso manualmente.")
@@ -267,10 +272,15 @@ async def dar_mera_ciencia(processo: str, ato: str, descricao_mov: str, log_cb,
                                          mera_ciencia={"resultado": resultado, "log": log})
         return {"ok": False, "erro": msg, "resultado": resultado}
 
-    registrar("info", f"{processo}: executando Gerenciamento de Processo "
-                      f'({tipo_gerenciamento}{" → " + procurador_rotulo if tipo_gerenciamento != "D" else ""})…')
-    res_ger = await acoes_eproc_service.executar_gerenciamento_real(processo, tipo_gerenciamento, procurador_valor)
-    if not res_ger.get("ok"):
+    if gerenciar:
+        registrar("info", f"{processo}: executando Gerenciamento de Processo "
+                          f'({tipo_gerenciamento}{" → " + procurador_rotulo if tipo_gerenciamento != "D" else ""})…')
+        res_ger = await acoes_eproc_service.executar_gerenciamento_real(processo, tipo_gerenciamento, procurador_valor)
+    else:
+        res_ger = {"ok": True, "pulado": True}
+    if res_ger.get("pulado"):
+        pass
+    elif not res_ger.get("ok"):
         if res_ger.get("bloqueado_por_residual"):
             # NÃO é erro fatal — outro ato (simultâneo ou autônomo) deste
             # processo ainda tem prazo aberto no meu Painel do Procurador, e
