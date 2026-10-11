@@ -117,6 +117,16 @@
         return { campos: campos, anexos: anexos, faseAnexos: faseAnexos };
     }
 
+    // Tipo do anexo como extensão ("pdf"), pedido do Defensor: do nome do arquivo,
+    // ou do tipo MIME quando o nome não tiver extensão.
+    function extensao(nome, mime) {
+        const m = (nome || '').match(/\.([A-Za-z0-9]{1,6})$/);
+        if (m) return m[1].toLowerCase();
+        const sub = (mime || '').split('/')[1] || '';
+        return sub.replace(/^vnd\..*officedocument\.wordprocessingml.*$/, 'docx').replace(/^msword$/, 'doc')
+                  .replace(/^jpeg$/, 'jpg').toLowerCase();
+    }
+
     function tamanhoLegivel(b) {
         if (!b && b !== 0) return '';
         if (b < 1024) return b + ' B';
@@ -147,15 +157,13 @@
             const tipo = iTipo > 0 ? partes[iTipo] : '';
             const tam = iTipo > 0 ? partes.slice(iTipo + 1).join(', ') : '';
             const meu = doPainel.find(function (a) { return a.nome === nome; }) || {};
-            return [nome, meu.descricao || '', tipo, tam || tamanhoLegivel(meu.bytes)];
+            return [nome, meu.descricao || '', extensao(nome, tipo), tam || tamanhoLegivel(meu.bytes)];
         });
         if (!linhas.length && doPainel.length) {
-            linhas = doPainel.map(function (a) { return [a.nome, a.descricao || '', '', tamanhoLegivel(a.bytes)]; });
+            linhas = doPainel.map(function (a) { return [a.nome, a.descricao || '', extensao(a.nome, ''), tamanhoLegivel(a.bytes)]; });
         }
         if (linhas.length) {
-            html += '<div class="font-semibold mt-4 mb-1">Anexos (' + linhas.length + ')'
-                + (f.faseAnexos ? ' <span class="font-normal text-base-content/70">— fase: ' + esc(f.faseAnexos) + '</span>' : '')
-                + '</div>'
+            html += '<div class="font-semibold mt-4 mb-1">Anexos</div>'
                 + '<table class="table table-sm table-zebra w-full"><thead><tr>'
                 + '<th>Arquivo</th><th>Descrição</th><th>Tipo</th><th class="text-right">Tamanho</th></tr></thead><tbody>'
                 + linhas.map(function (l) {
