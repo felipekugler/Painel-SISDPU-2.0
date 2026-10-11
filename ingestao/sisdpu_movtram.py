@@ -522,6 +522,12 @@ async def movimentar_paj(
     """Registra uma MOVIMENTAÇÃO (novo sequencial) em um ou vários PAJs.
     pajs: [{"id": <id_processo>, "numero": "AAAA/UUU-NNNNN"}, ...] (bloco = mesma unidade).
     Retorna {ok, status, detalhe, pajs, anexos, mov_seq}."""
+    # Fonte "SIS-DPU 2.0 (MCP)": grava pelo MCP, com a ficha aprovada no modal
+    # padrão do painel (ingestao/sisdpu2_movtram.py). Mesmo retorno.
+    from ingestao import sisdpu2_movtram
+    if sisdpu2_movtram.ativo():
+        return await sisdpu2_movtram.movimentar_paj(pajs, descricao, fase, anexos, tipo_arquivo,
+                                                    dry_run, descricao_html)
     pajs = [p for p in (pajs or []) if p and p.get("id")]
     if not pajs:
         return {"ok": False, "status": "falha", "detalhe": "Nenhum PAJ informado."}
@@ -672,6 +678,10 @@ async def tramitar_paj(
 ) -> dict:
     """Registra uma TRAMITAÇÃO (Trâmite Interno) de PAJ(s) para um GRUPO da unidade
     e/ou USUÁRIO(s). Confirma SEM movimentar. Retorna {ok, status, detalhe, pajs}."""
+    from ingestao import sisdpu2_movtram
+    if sisdpu2_movtram.ativo():
+        return await sisdpu2_movtram.tramitar_paj(pajs, grupo, usuarios, descricao, prazo_data,
+                                                  prazo_desc, dry_run)
     pajs = [p for p in (pajs or []) if p and p.get("id")]
     if not pajs:
         return {"ok": False, "status": "falha", "detalhe": "Nenhum PAJ informado."}

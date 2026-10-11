@@ -100,6 +100,68 @@ async def api_ao_vivo_caixa(forcar: bool = False):
     return await ao_vivo_service.atualizar_caixa(forcar=forcar)
 
 
+# --- Gravação: modal padrão de aprovação da ficha (services/aprovacao_mcp_service) ---
+
+@router.get("/api/sisdpu2/aprovacoes/pendentes", response_class=JSONResponse)
+async def api_aprovacoes_pendentes():
+    from services import aprovacao_mcp_service
+    return {"pendentes": aprovacao_mcp_service.listar_pendentes()}
+
+
+@router.post("/api/sisdpu2/aprovacoes/{ident}", response_class=JSONResponse)
+async def api_aprovacao_responder(ident: str, request: Request):
+    from services import aprovacao_mcp_service
+    body = await request.json()
+    ok = aprovacao_mcp_service.responder(ident, bool(body.get("aprovado")))
+    return {"ok": ok, "erro": "" if ok else "Esta ficha não está mais aguardando (venceu ou já foi respondida)."}
+
+
+@router.post("/api/sisdpu2/aprovacoes-antecipadas", response_class=JSONResponse)
+async def api_aprovacoes_antecipadas(request: Request):
+    """O Defensor aprovou no resumo da movimentação conjunta as fichas que
+    lhe foram mostradas (devolvidas por /escrita/fichas-resumo)."""
+    from services import aprovacao_mcp_service
+    body = await request.json()
+    fichas = [f for f in body.get("fichas") or [] if f.get("ficha") and f.get("paj") and f.get("tipo")]
+    return {"ok": True, "registradas": aprovacao_mcp_service.registrar_antecipadas(fichas)}
+
+
+@router.post("/api/sisdpu2/escrita/fichas-resumo", response_class=JSONResponse)
+async def api_fichas_resumo(request: Request):
+    """Roda a ação do console SEM GRAVAR (dry-run) e devolve as fichas que o
+    SIS-DPU 2.0 montaria — para o resumo da movimentação conjunta mostrar a
+    ficha integral ANTES de executar o e-proc. Corpo: {paj, id_processo,
+    paj_norm} + (os campos de uma execução única) ou {itens: [...]} (fila)."""
+    from ingestao import sisdpu2_movtram
+    from services import acoes_sisdpu_service as svc
+    b = await request.json()
+    coleta: list = []
+    t = sisdpu2_movtram.COLETA_FICHAS.set(coleta)
+    erros: list[str] = []
+    try:
+        if b.get("itens"):
+            gen = svc.executar_fila_stream(b.get("id_processo") or "", paj=b.get("paj") or "",
+                                           paj_norm=b.get("paj_norm") or "", itens=b["itens"], dry_run=True)
+        else:
+            gen = svc.executar_stream(
+                b.get("id_processo") or "", paj=b.get("paj") or "", paj_norm=b.get("paj_norm") or "",
+                fase=b.get("fase") or "", descricao_mov=b.get("descricao_mov") or "",
+                descricao_mov_html=bool(int(b.get("descricao_mov_html") or 0)), grupo=b.get("grupo") or None,
+                descricao_tram=b.get("descricao_tram") or "", prazo_dias=int(b.get("prazo") or 0),
+                prazo_data=b.get("prazo_data") or "", id_tramites=b.get("id_tramites") or [],
+                dry_run=True, anexos=b.get("anexos") or [])
+        async for ev in gen:
+            if ev.get("level") == "erro":
+                erros.append(ev.get("msg", ""))
+            if ev.get("done"):
+                res = ev.get("resultado") or {}
+                if not res.get("ok") and res.get("detalhe"):
+                    erros.append(res["detalhe"])
+    finally:
+        sisdpu2_movtram.COLETA_FICHAS.reset(t)
+    return {"ok": not erros, "fichas": coleta, "erros": erros[:5]}
+
+
 @router.get("/api/sisdpu2/login", response_class=JSONResponse)
 async def api_sisdpu2_login():
     try:

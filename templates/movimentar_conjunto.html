@@ -347,6 +347,27 @@
               ele NÃO entra na execução, só o que está na lista acima. Volte lá e clique em "Adicionar à fila" se quiser incluí-lo também.
             </div>
           </div>
+          <!-- Fonte SIS-DPU 2.0 (MCP): a ficha INTEGRAL de cada gravação no SISDPU -->
+          <div class="border border-info/30 bg-info/5 rounded p-3 text-sm"
+               x-show="fichasMcpCarregando || fichasMcp.length || fichasMcpErros.length">
+            <div class="font-semibold mb-2">Fichas do SIS-DPU 2.0 — exatamente o que vai ao prontuário do PAJ</div>
+            <div x-show="fichasMcpCarregando" class="text-base-content/60">
+              <span class="loading loading-spinner loading-xs"></span> Conferindo com o SIS-DPU 2.0…
+            </div>
+            <template x-for="(f, fi) in fichasMcp" :key="fi">
+              <div class="mb-2">
+                <div class="text-xs font-semibold" x-text="(fi + 1) + '. ' + (f.tipo === 'tramitacao' ? 'Tramitação' : 'Movimentação') + ' — PAJ ' + f.paj"></div>
+                <pre class="text-xs whitespace-pre-wrap break-words bg-base-200 rounded p-2 mt-1" x-text="f.ficha"></pre>
+              </div>
+            </template>
+            <template x-for="(e, ei) in fichasMcpErros" :key="'e' + ei">
+              <div class="text-error text-xs" x-text="'⚠ ' + e"></div>
+            </template>
+            <div class="text-[11px] text-base-content/60 mt-1" x-show="fichasMcp.length">
+              "Confirmar e executar tudo" vale como sua aprovação destas fichas. Se a execução demorar e alguma vencer,
+              ela é mostrada de novo para confirmar.
+            </div>
+          </div>
           <div class="text-[11px] text-warning font-medium border border-warning/40 rounded p-2">
             "Confirmar e executar tudo" protocola/lança o evento no e-proc e, em seguida, movimenta o SISDPU.
             O peticionamento no e-proc é IRREVERSÍVEL.
@@ -386,7 +407,7 @@
                 x-show="etapaConjunta !== 'executando'"
                 x-text="etapaConjunta === 'concluido' ? 'Fechar' : 'Cancelar'"></button>
         <button type="button" class="btn btn-sm btn-error" @click="confirmarExecucaoConjunta()"
-                x-show="etapaConjunta === 'resumo'">
+                x-show="etapaConjunta === 'resumo'" :disabled="fichasMcpCarregando || fichasMcpErros.length > 0">
           Confirmar e executar tudo
         </button>
       </div>
@@ -404,6 +425,9 @@ function movimentarConjuntoApp() {
     montandoResumo: false, resumoErro: '',
     modalResumoAberto: false, etapaConjunta: 'resumo',
     resumoEproc: null, resumoSisdpu: null,
+    // Fonte SIS-DPU 2.0 (MCP): fichas integrais do SISDPU mostradas no resumo,
+    // ANTES do e-proc — aprovadas junto com "Confirmar e executar tudo".
+    fichasMcp: [], fichasMcpErros: [], fichasMcpCarregando: false,
     resultadoEproc: null, resultadoGerenciamento: null, erroExecucao: '',
 
     async init() {
@@ -544,8 +568,30 @@ function movimentarConjuntoApp() {
           } : null,
         } : null;
         this.resultadoEproc = null; this.resultadoGerenciamento = null; this.erroExecucao = '';
+        this.fichasMcp = []; this.fichasMcpErros = [];
         this.etapaConjunta = 'resumo';
         this.modalResumoAberto = true;
+        // Fonte SIS-DPU 2.0: pede ao servidor as fichas do que o card do SISDPU vai
+        // gravar (nada é gravado aqui) e as mostra no resumo.
+        if (sisdpuData && this.resumoSisdpu) {
+          let fonte = 'sisdpu';
+          try { fonte = (await (await fetch('/api/sisdpu2/fonte')).json()).fonte; } catch (e) {}
+          if (fonte === 'mcp') {
+            this.fichasMcpCarregando = true;
+            try {
+              const rf = await (await fetch('/api/sisdpu2/escrita/fichas-resumo', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(sisdpuData.corpoExecucaoMcp()),
+              })).json();
+              this.fichasMcp = rf.fichas || [];
+              this.fichasMcpErros = rf.erros || [];
+            } catch (e) {
+              this.fichasMcpErros = ['Falha de rede ao montar as fichas do SIS-DPU 2.0: ' + e];
+            } finally {
+              this.fichasMcpCarregando = false;
+            }
+          }
+        }
       } catch (e) {
         this.resumoErro = 'Erro de rede: ' + e;
       } finally {
@@ -559,7 +605,21 @@ function movimentarConjuntoApp() {
       const eprocData = this.eprocDados();
       const sisdpuData = this.sisdpuDados();
       if (!eprocData) { this.erroExecucao = 'Card "Ações no Eproc" ainda não está pronto.'; this.etapaConjunta = 'resumo'; return; }
+      if (this.fichasMcpErros.length) {
+        // O SIS-DPU 2.0 recusou montar a ficha: não protocolar no e-proc (irreversível)
+        // sabendo que o SISDPU não vai gravar.
+        this.erroExecucao = 'O SIS-DPU 2.0 recusou a gravação no SISDPU — corrija antes de executar: ' + this.fichasMcpErros[0];
+        this.etapaConjunta = 'resumo'; return;
+      }
       try {
+        if (this.fichasMcp.length) {
+          // As fichas lidas acima ficam aprovadas: quando o card do SISDPU gravar,
+          // um preparo com o MESMO conteúdo segue sem perguntar de novo.
+          await fetch('/api/sisdpu2/aprovacoes-antecipadas', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ fichas: this.fichasMcp }),
+          });
+        }
         const chave = eprocData.chaveRascunho();
         const respPrep = await fetch('/api/acoes-eproc/executar/' + encodeURIComponent(chave), { method: 'POST' });
         const jPrep = await respPrep.json();

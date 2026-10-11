@@ -69,6 +69,22 @@ async def resolver(paj: str, forcar: bool = False) -> dict:
         if not forcar and chave in cache and cache[chave].get("url"):
             return {"ok": True, "url": cache[chave]["url"], "cache": True}
 
+        from ingestao import sisdpu2_fonte, sisdpu2_mcp_client
+        if sisdpu2_fonte.fonte_mcp_ativa() and sisdpu2_mcp_client.conectado():
+            # Fonte SIS-DPU 2.0: o id vem do MCP (mesmo id do legado), sem navegador.
+            try:
+                import asyncio
+                rr = await asyncio.to_thread(sisdpu2_mcp_client.chamar, "processo_resolver", {"numero": chave})
+            except Exception as e:  # noqa: BLE001
+                return {"ok": False, "erro": f"Falha ao buscar o PAJ no SIS-DPU 2.0: {e}"}
+            if not isinstance(rr, dict) or not rr.get("idProcesso"):
+                return {"ok": False, "erro": "PAJ não localizado no SIS-DPU 2.0."}
+            url = sisdpu2_fonte.URL_DETALHE_LEGADO.format(id=rr["idProcesso"])
+            cache[chave] = {"url": url, "resolvido_em": datetime.now().isoformat(timespec="seconds")}
+            with contextlib.suppress(Exception):
+                _gravar_cache(cache)
+            return {"ok": True, "url": url, "cache": False}
+
         from ingestao import sisdpu_client
         try:
             r = await sisdpu_client.buscar_paj_global(

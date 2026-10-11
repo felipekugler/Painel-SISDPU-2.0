@@ -64,6 +64,8 @@ _TOOLS_LEITURA = {
     # Arquivo original em base64, em partes de ~240 KB (TI, versão 1.23.0 de
     # 11/10/2026). Conta no teto diário — estimativa: 1 registro por parte.
     "documento_baixar",
+    # domínios para montar gravações (só leitura)
+    "movimentacao_opcoes", "tramite_destinos",
 }
 
 _RE_TETO = re.compile(r"teto de (\d+) (?:leituras )?por minuto", re.IGNORECASE)
@@ -387,6 +389,23 @@ def _ler_resposta(r: httpx.Response, req_id: int) -> dict:
     return r.json()
 
 
+# Gravação: só por `chamar_escrita`, e SÓ estas. Preparar não grava (devolve a
+# ficha); confirmar e anexo_guardar gravam — esses NUNCA são repetidos às cegas.
+_TOOLS_ESCRITA = {
+    "movimentacao_preparar", "movimentacao_confirmar", "movimentacao_anexo_guardar",
+    "tramite_interno_preparar", "tramite_interno_confirmar",
+}
+_TOOLS_ESCRITA_SEM_REPETIR = {"movimentacao_confirmar", "movimentacao_anexo_guardar", "tramite_interno_confirmar"}
+
+
+def chamar_escrita(nome: str, args: Optional[dict] = None, timeout: float = 180) -> Any:
+    """Ferramentas de gravação (ver `_TOOLS_ESCRITA`). Quem chama é o
+    ingestao/sisdpu2_movtram.py, sempre depois da ficha aprovada no painel."""
+    if nome not in _TOOLS_ESCRITA:
+        raise Sisdpu2Erro(f"'{nome}' não é ferramenta de gravação liberada no painel.")
+    return _chamar(nome, args, timeout, repetir=nome not in _TOOLS_ESCRITA_SEM_REPETIR)
+
+
 def chamar(nome: str, args: Optional[dict] = None, timeout: float = 90) -> Any:
     """Chama uma ferramenta de LEITURA e devolve o JSON (ou o texto) do 1º bloco.
 
@@ -394,8 +413,12 @@ def chamar(nome: str, args: Optional[dict] = None, timeout: float = 90) -> Any:
     o manual do servidor. Ferramenta fora da lista de leitura: recusada aqui."""
     if nome not in _TOOLS_LEITURA:
         raise Sisdpu2Erro(f"'{nome}' não é ferramenta de leitura liberada nesta fase do painel.")
+    return _chamar(nome, args, timeout, repetir=True)
+
+
+def _chamar(nome: str, args: Optional[dict], timeout: float, repetir: bool) -> Any:
     args = args or {}
-    for tentativa in range(4):
+    for tentativa in range(4 if repetir else 1):
         msg = _sessao.tools_call(nome, args, timeout=timeout)
         if "error" in msg:
             raise Sisdpu2Erro(f"{nome}: {msg['error'].get('message', msg['error'])}")
@@ -408,7 +431,7 @@ def chamar(nome: str, args: Optional[dict] = None, timeout: float = 90) -> Any:
                 _registrar_consumo(nome, 0, (int(dia.group(1)), int(dia.group(2))))
                 raise Sisdpu2TetoDiario(texto[:800])
             _registrar_consumo(nome, 0)
-            if _RE_TETO.search(texto) and tentativa < 3:
+            if repetir and _RE_TETO.search(texto) and tentativa < 3:
                 time.sleep(20 * (tentativa + 1))
                 continue
             raise Sisdpu2Erro(texto[:800] or f"{nome}: erro sem mensagem")

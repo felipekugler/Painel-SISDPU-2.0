@@ -347,16 +347,28 @@ async def rodar_sync_movimentacoes(paj_identificador: str) -> None:
 
     await iniciar_em_segundo_plano(
         titulo,
-        lambda emit: sincronizador.rodar_paj_unico(
+        lambda emit: _leitura_incremental_mcp(sincronizador.rodar_paj_unico(
             paj_identificador,
             emit,
             deve_cancelar=deve_cancelar,
             baixar_anexos=False,
             extrair_documentos=False,
             esperas_curtas=True,
-        ),
+        )),
         meta=meta,
     )
+
+
+async def _leitura_incremental_mcp(coro):
+    """Com a fonte SIS-DPU 2.0, "atualizar movimentações" (ex.: logo depois de
+    gravar) lê só as movimentações novas, não o histórico inteiro — cada
+    movimentação lida conta no teto diário do MCP. Sem efeito na fonte legada."""
+    from ingestao import sisdpu2_fonte
+    t = sisdpu2_fonte.MODO.set("paj")
+    try:
+        return await coro
+    finally:
+        sisdpu2_fonte.MODO.reset(t)
 
 
 async def rodar_sync_watchlist(

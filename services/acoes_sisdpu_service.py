@@ -266,6 +266,10 @@ def _iso_to_br(s: str) -> str:
 def _parece_problema_sessao(resultado, excecao: Exception | None) -> bool:
     """True quando a falha indica SESSÃO indisponível (conflito, deslogado, cofre
     bloqueado) — casos em que vale reconectar e tentar de novo, em vez de desistir."""
+    if isinstance(resultado, dict) and resultado.get("fonte") == "mcp-sisdpu2":
+        # Gravação pelo MCP: nunca "reconectar e repetir" — repetir exigiria nova
+        # ficha/aprovação, e a falha pode ter acontecido depois de gravar.
+        return False
     if excecao is not None:
         return True
     if isinstance(resultado, dict) and not resultado.get("ok"):

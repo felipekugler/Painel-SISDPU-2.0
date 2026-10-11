@@ -825,6 +825,27 @@ function acoesSisdpuBlock(cfg) {
         // SISDPU" — ver movimentar_conjunto.html) — evita perguntar de novo o que
         // já foi confirmado ali, mesmo espírito de outras confirmações redundantes
         // já removidas neste projeto (pedido do usuário 2026-09-11).
+        // Mesmo conteúdo que executar()/executarFila() mandariam, como corpo JSON —
+        // usado pelo resumo da movimentação conjunta para pedir ao SIS-DPU 2.0 (MCP)
+        // as fichas ANTES de executar (POST /api/sisdpu2/escrita/fichas-resumo).
+        corpoExecucaoMcp() {
+            const base = { id_processo: this.idProcesso, paj: this.paj || '', paj_norm: this.pajNorm || '' };
+            if (this.fila.length > 0) {
+                return { ...base, itens: this.fila.map((it) => ({
+                    fase: it.fase, descricao_mov: it.descricao_mov,
+                    descricao_mov_html: it.descricao_mov_html ? '1' : '0',
+                    grupo: it.grupo, descricao_tram: it.descricao_tram,
+                    prazo: it.prazo, prazo_data: it.prazo_data, id_tramites: it.id_tramites,
+                    anexos: it.anexos.map((a) => ({ origem: a.origem, ref: a.ref,
+                        descricao: a.descricao || a.nome, tipo_arquivo: a.tipoArquivo || 'Não informado' })),
+                })) };
+            }
+            return { ...base, fase: this.fase, descricao_mov: this.descMovEfetiva(),
+                descricao_mov_html: this.descMovEhHtml() ? '1' : '0',
+                grupo: this.grupo || '', descricao_tram: this.descTramEfetiva(),
+                prazo: this.prazo > 0 ? this.prazo : 0, prazo_data: this.prazoData || '',
+                id_tramites: [], anexos: this.fase ? this.anexosStagedParaEnviar() : [] };
+        },
         async executar(pularConfirmacao) {
             // Fila não-vazia — desvia pra executarFila() (roda os itens da fila em
             // sequência, na mesma sessão do SISDPU) em vez do fluxo de execução
