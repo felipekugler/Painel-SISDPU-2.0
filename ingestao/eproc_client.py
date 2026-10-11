@@ -82,7 +82,7 @@ _JS_CLICAR_PERFIL = r"""(alvo)=>{
 }"""
 
 # Porta CDP DEDICADA ao e-proc (o SAT usa a 9222).
-_CDP_PORT = 9223
+_CDP_PORT = 9223 + config.CDP_OFFSET
 
 _pw = None
 _eproc_pid: int | None = None  # PID do Chromium do e-proc (p/ fechá-lo no shutdown)

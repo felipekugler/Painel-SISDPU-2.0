@@ -33,7 +33,7 @@ import config
 from ingestao import sat_client
 
 _PROFILE = Path(config.OFICIO_GERAL) / "_esisrec_profile"
-_CDP_PORT = 9226  # SAT=9222, e-proc=9223, RPV=9224, SD=9225
+_CDP_PORT = 9226 + config.CDP_OFFSET  # SAT=9222, e-proc=9223, RPV=9224, SD=9225
 
 ESISREC_HOME = "https://esisrec.inss.gov.br/esisrec/"
 # Porta de entrada informada pelo usuário (2026-10-06): o CAS do GERID-INSS já

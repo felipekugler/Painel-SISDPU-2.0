@@ -45,7 +45,7 @@ from playwright.async_api import async_playwright
 import config
 
 _PROFILE = Path(config.OFICIO_GERAL) / "_rpv_profile"
-_CDP_PORT = 9224  # SAT=9222, e-proc=9223 — porta própria, coexiste com as duas
+_CDP_PORT = 9224 + config.CDP_OFFSET  # SAT=9222, e-proc=9223 — porta própria, coexiste com as duas
 
 CEF_URL = (
     "https://depositojudicial.caixa.gov.br/sigsj_internet/"

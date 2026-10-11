@@ -20,6 +20,11 @@ PECAS_FEITAS_DIR = OFICIO_GERAL / "Peças Feitas"
 # roda em paralelo noutra porta (PAINEL_PORT=8002 no .env dele), para os dois
 # poderem ficar abertos lado a lado durante o desenvolvimento.
 PAINEL_PORT = int(os.getenv("PAINEL_PORT", "8001"))
+# Deslocamento das portas CDP dos navegadores automáticos (SAT 9222, e-proc 9223,
+# RPV 9224, SD 9225, e-Sisrec 9226, CadÚnico 9227). Com 0 (Painel 1.0) ficam
+# como sempre; o Painel SISDPU 2.0 usa 100 (.env) para ter navegadores próprios
+# e não se conectar aos do 1.0 quando os dois estão abertos.
+CDP_OFFSET = int(os.getenv("PAINEL_CDP_OFFSET", "0"))
 # Nome exibido no topo da sidebar — distingue visualmente as duas instancias.
 PAINEL_NOME = os.getenv("PAINEL_NOME") or "Painel SISDPU"
 

@@ -47,7 +47,7 @@ from playwright.async_api import async_playwright
 import config
 
 _PROFILE = Path(config.OFICIO_GERAL) / "_cadunico_profile"
-_CDP_PORT = 9227  # SAT=9222, e-proc=9223, RPV=9224, SD=9225, e-Sisrec=9226
+_CDP_PORT = 9227 + config.CDP_OFFSET  # SAT=9222, e-proc=9223, RPV=9224, SD=9225, e-Sisrec=9226
 
 CADUN_URL = "https://www.cadastrounico.caixa.gov.br/cadun/abrirAplicacao.do"
 

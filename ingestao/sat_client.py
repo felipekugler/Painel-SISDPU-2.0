@@ -34,7 +34,7 @@ _PROFILE = Path(config.OFICIO_GERAL) / "_sat_profile"
 SAT_CONSULTA = (
     "https://consultas.inss.gov.br/satcentral/pages/consultaCidadao/consultaCidadao.xhtml"
 )
-_CDP_PORT = 9222
+_CDP_PORT = 9222 + config.CDP_OFFSET
 
 # --- TOTP (2FA) automático para o login GERID/CAS --------------------------
 # O login no SAT Central (GERID/Dataprev, via CAS em geridinss.dataprev.gov.br)

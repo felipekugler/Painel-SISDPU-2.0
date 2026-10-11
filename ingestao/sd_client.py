@@ -38,7 +38,7 @@ import config
 from ingestao import sat_client
 
 _PROFILE = Path(config.OFICIO_GERAL) / "_sd_profile"
-_CDP_PORT = 9225  # SAT=9222, e-proc=9223, RPV=9224
+_CDP_PORT = 9225 + config.CDP_OFFSET  # SAT=9222, e-proc=9223, RPV=9224
 
 SKILLS_DIR = Path.home() / ".claude" / "skills"
 COLETOR_VINCULOS = SKILLS_DIR / "SD-DossieVinculos" / "sd_coletor.js"
