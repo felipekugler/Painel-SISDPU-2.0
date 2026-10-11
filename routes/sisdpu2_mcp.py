@@ -32,6 +32,22 @@ async def api_sisdpu2_status():
     return {"conectado": True, "sessao": quem, "minutos": sis2.minutos_restantes()}
 
 
+@router.get("/api/sisdpu2/status-selo", response_class=JSONResponse)
+async def api_sisdpu2_status_selo():
+    """Selo "MCP" dentro do selo do SISDPU (base.html). Não chama o servidor:
+    só olha o token guardado — o selo é consultado a cada página e cada
+    consulta ao MCP conta no teto diário."""
+    if not sis2.conectado():
+        return {"ok": False, "erro": "Painel não conectado ao MCP do SIS-DPU 2.0 "
+                                     "(Configurações › SISDPU › Fonte de dados)."}
+    c = sis2.consumo_hoje()
+    if c["teto_atingido"]:
+        return {"ok": False, "erro": "Limite diário de leitura do MCP atingido hoje."}
+    from services import config_painel_service
+    mins = sis2.minutos_restantes()
+    return {"ok": True, "fonte": config_painel_service.get_fonte_dados(), "minutos": mins}
+
+
 @router.get("/api/sisdpu2/fonte", response_class=JSONResponse)
 async def api_sisdpu2_fonte():
     from services import config_painel_service

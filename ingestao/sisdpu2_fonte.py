@@ -308,11 +308,20 @@ def _incremental(id_processo: int, capa: dict, locais: list[dict]) -> Optional[l
     return novas + locais
 
 
+_ficha_lida_em: dict = {}  # idPessoa -> "AAAA-MM-DD" da última leitura da ficha
+
+
 def _contatos(capa: dict, paj: str) -> dict:
     """Telefones/e-mails/endereços do assistido principal (ficha do SIS 2)."""
     principal = next((a for a in capa.get("assistidos") or [] if a.get("principal")), None)
     if not principal:
         return {}
+    # A ficha custa ~7 registros e quase nunca muda: no máximo 1 leitura por
+    # pessoa por dia. Sem as chaves, o sincronizador preserva os contatos atuais.
+    hoje = datetime.now().strftime("%Y-%m-%d")
+    if _ficha_lida_em.get(principal.get("idPessoa")) == hoje and _metadata_atual(paj).get("telefones") is not None:
+        return {}
+    _ficha_lida_em[principal.get("idPessoa")] = hoje
     try:
         ficha = sis2.chamar("assistido_ficha", {"idPessoa": int(principal["idPessoa"])})
     except Exception:  # noqa: BLE001
@@ -513,6 +522,45 @@ async def extrair_documentos_por_seq(seqs_conhecidos=None, deve_cancelar=None, l
     return {"paj": det["paj"], "assistido": det.get("assistido", ""),
             "movimentacoes_com_documentos": com_docs, "total_documentos": total, "indice": 0,
             "seqsPuladas": pulados, "seqsVerificadosSemDocumento": sem_docs, "tabela_markdown": ""}
+
+
+_cache_tramites: dict = {}  # id_processo -> (monotonic, resultado)
+
+
+def _tramitacoes(id_processo: int, limite: int) -> dict:
+    itens = (sis2.chamar("tramite_historico", {"idProcesso": id_processo, "limite": limite, "pagina": 1})
+             or {}).get("itens") or []
+    todas, abertas = [], []
+    for t in itens:
+        local = t.get("grupo") or t.get("destinatario") or ""
+        linha = {"local": local, "grupo": t.get("grupo") or "", "destinatario": t.get("destinatario") or "",
+                 "remetente": t.get("remetente") or "", "data": _br(t.get("dataTramite")),
+                 "descricao": html.unescape(t.get("descricao") or ""),
+                 "prazo": _br(t.get("prazo"), com_hora=False) if t.get("prazo") else "",
+                 "conclusao": _br(t.get("dataConclusao")) if t.get("concluido") else ""}
+        todas.append(linha)
+        if not t.get("concluido") and local:
+            abertas.append(linha)
+    return {"ok": True, "abertas": abertas, "tramitacoes": todas, "erro": "", "fonte": "mcp-sisdpu2"}
+
+
+async def caixas_e_historico_paj(id_processo: str, limite: int = 10) -> dict:
+    """Mesmo retorno de sisdpu_movtram.caixas_e_historico_paj (painel "Caixas
+    onde o PAJ está aberto"), pelo MCP. ~`limite` registros; cache de 10 min
+    porque a página do PAJ consulta isto a cada abertura."""
+    import time as _t
+    if not id_processo:
+        return {"ok": False, "abertas": [], "tramitacoes": [], "erro": "id_processo ausente."}
+    chave = (int(id_processo), limite)
+    em_cache = _cache_tramites.get(chave)
+    if em_cache and _t.monotonic() - em_cache[0] < 600:
+        return em_cache[1]
+    try:
+        res = await asyncio.to_thread(_tramitacoes, int(id_processo), limite)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "abertas": [], "tramitacoes": [], "erro": f"SIS-DPU 2.0: {e}"}
+    _cache_tramites[chave] = (_t.monotonic(), res)
+    return res
 
 
 async def reconectar() -> dict:

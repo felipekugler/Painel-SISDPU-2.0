@@ -117,6 +117,9 @@ async def api_paj_tramitacoes(paj_norm: PajNorm, limite: int = 10):
     # `ok=False` aqui significa "não foi possível confirmar" (conflito de sessão,
     # timeout...) — NUNCA interpretar abertas/tramitacoes vazias como "sem
     # tramitação" nesse caso (ver docstring de caixas_e_historico_paj).
+    from ingestao import sisdpu2_fonte, sisdpu2_mcp_client
+    if sisdpu2_fonte.fonte_mcp_ativa() and sisdpu2_mcp_client.conectado():
+        return await sisdpu2_fonte.caixas_e_historico_paj(id_processo, limite)
     return await sisdpu_movtram.caixas_e_historico_paj(id_processo, limite)
 
 

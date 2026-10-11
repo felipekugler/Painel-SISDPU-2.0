@@ -1185,8 +1185,9 @@
                 <span class="sys-selo sys-off" id="selo-sisdpu" data-sys="sisdpu"
                       title="Verificando conexão com o SISDPU…">
                     <span class="dot"></span><span class="txt">SISDPU</span>
-                    <!-- Selo "MCP" omitido: ainda não há MCP configurado para o SISDPU.
-                         Quando houver, adicionar aqui o mesmo <span class="mcp-pill"> do e-proc. -->
+                    <!-- Selo "MCP": conexão com o MCP do SIS-DPU 2.0 (mesmo banco do SISDPU). -->
+                    <span class="mcp-pill mcp-none" id="mcp-sisdpu"
+                          title="Verificando conexão MCP com o SIS-DPU 2.0…">✗ MCP</span>
                     <button type="button" class="sys-recon" onclick="reconectarSistema('sisdpu', event)"
                             title="Reconectar a sessão do SISDPU (recupera de conflito / sessão derrubada por outro login).">
                         {{ _recon_svg }}
@@ -1590,7 +1591,8 @@
                 if (st && st.ok) {
                     el.className = 'mcp-pill mcp-on';
                     el.textContent = '✓ MCP';
-                    el.title = 'Conexão MCP (headless, sem navegador) ativa.';
+                    el.title = 'Conexão MCP (headless, sem navegador) ativa.'
+                        + (st.minutos != null ? ' A sessão vence em ' + st.minutos + ' min (depois, conecte de novo em Configurações).' : '');
                 } else {
                     el.className = 'mcp-pill mcp-off';
                     el.textContent = '✗ MCP';
@@ -1629,6 +1631,7 @@
             _atualizarSeloSessao('eproc', '/api/prazos/sessao-leve', 'e-proc');
             _atualizarSeloSessao('sat', '/api/sat/sessao-leve', 'SAT');
             _atualizarMcpPill('eproc', '/api/eproc-mcp/status?instancia=1');
+            _atualizarMcpPill('sisdpu', '/api/sisdpu2/status-selo');
             _atualizarSeloClaude();
         };
 
