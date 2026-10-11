@@ -48,8 +48,8 @@
     function abrir(p) {
         montar();
         aberta = p.id;
-        document.getElementById('ficha-mcp-titulo').textContent = 'Confirmar ' + rotulo(p.tipo) + ' no SISDPU';
-        document.getElementById('ficha-mcp-campos').innerHTML = htmlFicha(p.ficha, p.paj, p.contexto);
+        document.getElementById('ficha-mcp-titulo').textContent = 'Confirmar ' + rotulo(p.tipo) + ' no SISDPU' + (p.paj ? ' — PAJ ' + p.paj : '');
+        document.getElementById('ficha-mcp-campos').innerHTML = htmlFicha(p.ficha, p.paj, p.contexto, { essencial: true });
         // A ficha vence no servidor (~10 min): o modal fecha sozinho junto, sem gravar.
         clearInterval(relogio);
         relogio = setTimeout(fechar, Math.max(1, p.restam_seg) * 1000);
@@ -138,9 +138,18 @@
     // de anexos. Usada no modal e no resumo da movimentação conjunta.
     // `contexto.anexos` (do painel): [{nome, descricao, bytes}] — a descrição que o
     // Defensor deu a cada anexo, que a ficha do servidor não repete.
-    function htmlFicha(ficha, pajNumero, contexto) {
+    // `opcoes.essencial` (resumo da conjunta, pedido do Defensor 11/10/2026): só o que
+    // precisa de conferência — fase, descrição, caixa de destino, prazo e anexos.
+    // Fora: PAJ (já é o da tela), tipo de movimentação, acompanhamento público e
+    // "sai da caixa de origem" (sempre os mesmos).
+    const OCULTOS_ESSENCIAL = /^(PAJ|Tipo de movimenta[çc][ãa]o|Acompanhamento público|Sai da caixa de origem)$/i;
+    function htmlFicha(ficha, pajNumero, contexto, opcoes) {
         const esc = function (s) { const d = document.createElement('div'); d.textContent = s == null ? '' : s; return d.innerHTML; };
         const f = camposDaFicha(ficha, pajNumero);
+        if ((opcoes || {}).essencial) {
+            f.campos = f.campos.filter(function (c) { return !OCULTOS_ESSENCIAL.test(c[0]); })
+                .map(function (c) { return /^Fases$/i.test(c[0]) ? ['Fase', c[1], c[2]] : c; });
+        }
         let html = '<table class="table table-sm w-full"><tbody>' + f.campos.map(function (c) {
             return '<tr><th class="align-top whitespace-nowrap text-base-content/70 font-medium w-1/4">' + esc(c[0])
                 + '</th><td class="align-top break-words">'

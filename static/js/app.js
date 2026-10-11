@@ -489,6 +489,42 @@ async function atualizarMovimentacoesPajMcp(pajNorm) {
     }
 }
 
+/* Fonte SIS-DPU 2.0, logo depois de gravar: relê o PAJ (forçado) e baixa os
+ * anexos novos ESPERANDO terminar, com o andamento em `progresso(msg)` (o modal
+ * de execução do card) — a página do PAJ abre uma vez só, já em dia, sem reler
+ * nem recarregar sozinha depois (marcas em sessionStorage lidas por ao_vivo.js). */
+async function releituraPosGravacaoMcp(pajNorm, progresso) {
+    const avisar = (m) => { try { if (progresso) progresso(m); } catch (e) {} };
+    const marcar = (k) => { try { sessionStorage.setItem(k + pajNorm, String(Date.now())); } catch (e) {} };
+    const base = '/api/sisdpu2/ao-vivo/paj/' + encodeURIComponent(pajNorm);
+    avisar('Atualizando as movimentações do PAJ pelo SIS-DPU 2.0…');
+    const r = await (await fetch(base + '?forcar=true', { method: 'POST' })).json().catch(() => ({}));
+    if (!r.ok) { avisar('Não foi possível reler o PAJ agora (' + (r.motivo || 'erro') + ') — a página relê ao abrir.'); return; }
+    marcar('ao-vivo-recarregado-');
+    const a = await (await fetch(base + '/anexos', { method: 'POST' })).json().catch(() => ({}));
+    if (!a.ok || (!a.iniciado && a.motivo !== 'em_andamento')) {
+        if (a.ok) marcar('ao-vivo-anexos-em-dia-');
+        return;
+    }
+    avisar('Baixando os anexos novos do PAJ…');
+    for (let i = 0; i < 900; i++) {  // até ~30 min
+        await new Promise((ok) => setTimeout(ok, 1500));
+        const p = await (await fetch(base + '/anexos')).json().catch(() => null);
+        if (!p) continue;
+        const pr = p.progresso || {};
+        if (p.rodando) {
+            if (pr.total) avisar('Baixando os anexos novos do PAJ ' + (pr.feitos || 0) + '/' + pr.total + '…');
+            continue;
+        }
+        const res = p.resultado || {};
+        const novos = pr.baixados != null ? pr.baixados : (res.baixados || 0);  // progresso = só os novos
+        avisar('Anexos: ' + novos + ' baixado(s)'
+            + ((res.erros || []).length ? ', ' + res.erros.length + ' com erro' : '') + '.');
+        marcar('ao-vivo-anexos-em-dia-');
+        return;
+    }
+}
+
 function atualizarMovimentacoesPaj(pajNorm) {
     if (window.PAINEL_FONTE_SISDPU_MCP) return atualizarMovimentacoesPajMcp(pajNorm);
     return new Promise(function(resolve) {
@@ -644,9 +680,13 @@ function baixarAnexosDesde(pajNorm) {
  * não tivesse terminado de escrever em metadata.json ANTES do reload, a
  * página recarregava mostrando as movimentações ainda desatualizadas — foi
  * exatamente o bug relatado em 2026-08-13 com o disparo por evento antigo. */
-async function posExecucaoPaj(pajNorm, resultado) {
+async function posExecucaoPaj(pajNorm, resultado, progresso) {
     if (resultado && resultado.mov_seq && resultado.status !== 'falha') {
-        try { await atualizarMovimentacoesPaj(pajNorm); } catch (e) {}
+        if (window.PAINEL_FONTE_SISDPU_MCP) {
+            try { await releituraPosGravacaoMcp(pajNorm, progresso); } catch (e) {}
+        } else {
+            try { await atualizarMovimentacoesPaj(pajNorm); } catch (e) {}
+        }
     }
     try {
         const r = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/pos-execucao-sisdpu', {

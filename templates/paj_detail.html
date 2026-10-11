@@ -923,7 +923,7 @@
              x-data="acoesSisdpuBlock({
                          idProcesso: '{{ dados.id_processo }}', paj: '{{ meta.paj }}', pajNorm: '{{ paj_norm }}',
                          idTramite: '{{ dados.id_tramite }}', tramitacoesCaixa: window._paj_tramitacoes_caixa,
-                         onExecutado: (res) => posExecucaoPaj('{{ paj_norm }}', res),
+                         onExecutado: (res, progresso) => posExecucaoPaj('{{ paj_norm }}', res, progresso),
                      })" x-init="init()">
             <!-- justify-end quando há seta+e-proc (aproxima o botão do
                  centro, em vez de centralizá-lo na coluna inteira, que pode

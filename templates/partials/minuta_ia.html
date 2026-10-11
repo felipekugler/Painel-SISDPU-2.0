@@ -61,7 +61,23 @@
 <!-- Modal de seleção de documentos -->
 <dialog class="modal" :open="modalAberto" @close="fecharModal()">
     <div class="modal-box max-w-6xl w-11/12">
-        <h3 class="font-bold text-lg mb-1">Selecionar documentos para a minuta</h3>
+        <!-- Cabeçalho com as ações (Cancelar / Gerar minuta) no TOPO do modal
+             — pedido do usuário, 2026-10-11 (antes ficavam no rodapé, depois
+             das tabelas longas). Sticky: o modal-box rola inteiro, então a
+             barra acompanha a rolagem e os botões ficam sempre à mão. -->
+        <div class="sticky -top-6 z-20 bg-base-100 -mx-6 -mt-6 px-6 pt-6 pb-2 mb-1 border-b border-base-200">
+            <div class="flex items-center gap-2 flex-wrap">
+                <h3 class="font-bold text-lg mr-auto">Selecionar documentos para a minuta</h3>
+                <span class="text-xs text-base-content/50"
+                      x-text="(totalSelecionadosProcesso() + totalSelecionadosPaj()) + ' documento(s) selecionado(s)'"></span>
+                <button type="button" class="btn btn-sm btn-ghost" @click="fecharModal()">Cancelar</button>
+                <button type="button" class="btn btn-sm btn-primary" :disabled="gerando" @click="gerar()">
+                    <span x-show="gerando" class="loading loading-spinner loading-xs"></span>
+                    Gerar minuta
+                </button>
+            </div>
+            <div class="text-xs text-error mt-1" x-show="erro" x-text="erro"></div>
+        </div>
         <p class="text-xs text-base-content/50 mb-3">
             Clique no badge de um documento pra selecioná-lo (mesmo gesto de sempre — só que agora
             marca pra enviar à IA em vez de abrir/baixar). Clique de novo pra desmarcar.
@@ -128,17 +144,6 @@
             {% include "partials/movimentacoes_tabela.html" %}
         </div>
 
-        <div class="text-xs text-error mt-2" x-show="erro" x-text="erro"></div>
-
-        <div class="modal-action">
-            <span class="text-xs text-base-content/50 mr-auto"
-                  x-text="(totalSelecionadosProcesso() + totalSelecionadosPaj()) + ' documento(s) selecionado(s)'"></span>
-            <button type="button" class="btn btn-sm btn-ghost" @click="fecharModal()">Cancelar</button>
-            <button type="button" class="btn btn-sm btn-primary" :disabled="gerando" @click="gerar()">
-                <span x-show="gerando" class="loading loading-spinner loading-xs"></span>
-                Gerar minuta
-            </button>
-        </div>
     </div>
     <form method="dialog" class="modal-backdrop"><button type="button" @click="fecharModal()">fechar</button></form>
 </dialog>

@@ -3,26 +3,39 @@
  * Só age quando a fonte de dados é "SIS-DPU 2.0 (MCP)" e o painel está
  * conectado. Na página do PAJ: relê o PAJ ao abrir e recarrega a página se algo
  * mudou. No dashboard: atualiza a caixa (o servidor limita a 1x a cada 3 min) e
- * avisa a lista para recarregar. Um selo discreto no canto mostra o andamento.
+ * avisa a lista para recarregar. O andamento aparece num toast no padrão do
+ * painel (canto inferior direito, mesmo #toast-container de showToast).
  */
 (function () {
     'use strict';
 
+    let sumir = null;
+
+    /* Toast único e atualizável (não empilha um por etapa): azul com indicador
+     * girando enquanto lê, verde ao terminar (some em 5 s), vermelho em erro
+     * (fica até o próximo status). */
     function selo(texto, tom) {
+        const container = document.getElementById('toast-container');
+        if (!container) return;
         let el = document.getElementById('ao-vivo-selo');
         if (!el) {
             el = document.createElement('div');
             el.id = 'ao-vivo-selo';
-            el.style.cssText = 'position:fixed;left:16px;bottom:16px;z-index:60;padding:6px 12px;'
-                + 'border-radius:999px;font-size:12px;box-shadow:0 2px 8px rgba(0,0,0,.25);'
-                + 'background:var(--surface-2,#1f2937);color:var(--text,#e5e7eb);opacity:.92;'
-                + 'transition:opacity .6s';
-            document.body.appendChild(el);
+            el.style.transition = 'opacity .3s';
+            container.appendChild(el);
         }
-        el.textContent = texto;
-        el.style.borderLeft = '4px solid ' + (tom === 'ok' ? '#22c55e' : tom === 'erro' ? '#ef4444' : '#38bdf8');
-        el.style.opacity = '.92';
-        if (tom === 'ok') setTimeout(function () { el.style.opacity = '0'; }, 4000);
+        const classe = tom === 'ok' ? 'alert-success' : tom === 'erro' ? 'alert-error' : 'alert-info';
+        el.className = 'alert ' + classe + ' text-sm py-2 px-4 shadow-lg';
+        el.innerHTML = (tom ? '' : '<span class="loading loading-spinner loading-xs"></span>') + '<span></span>';
+        el.lastChild.textContent = texto;
+        el.style.opacity = '1';
+        clearTimeout(sumir);
+        if (tom === 'ok') {
+            sumir = setTimeout(function () {
+                el.style.opacity = '0';
+                setTimeout(function () { if (el.style.opacity === '0') el.remove(); }, 300);
+            }, 5000);
+        }
     }
 
     async function postar(url) {
@@ -71,13 +84,14 @@
                 continue;
             }
             const res = p.resultado || {};
+            const novos = pr.baixados != null ? pr.baixados : (res.baixados || 0);  // progresso = só os novos
             if ((res.erros || []).length) {
-                selo('SIS-DPU 2.0 — anexos: ' + (res.baixados || 0) + ' baixado(s), ' + res.erros.length + ' com erro', 'erro');
+                selo('SIS-DPU 2.0 — anexos: ' + novos + ' baixado(s), ' + res.erros.length + ' com erro', 'erro');
             } else {
                 selo('SIS-DPU 2.0 — anexos em dia', 'ok');
             }
             const recem = Date.now() - Number(sessionStorage.getItem(chave) || 0) < 60000;
-            if ((res.baixados || 0) > 0 && !recem) {
+            if (novos > 0 && !recem) {
                 sessionStorage.setItem(chave, String(Date.now()));
                 setTimeout(function () { window.location.reload(); }, 1200);
             }
@@ -100,7 +114,10 @@
             const recemRecarregado = Date.now() - Number(sessionStorage.getItem(chave) || 0) < 60000;
             if (recemRecarregado) {
                 selo('SIS-DPU 2.0 — PAJ atualizado', 'ok');
-                await baixarAnexos(pajNorm);
+                // Anexos já baixados logo antes de abrir (pós-gravação, app.js:
+                // releituraPosGravacaoMcp) — não confere de novo.
+                const anexosEmDia = Date.now() - Number(sessionStorage.getItem('ao-vivo-anexos-em-dia-' + pajNorm) || 0) < 60000;
+                if (!anexosEmDia) await baixarAnexos(pajNorm);
                 return;
             }
             selo('SIS-DPU 2.0 — atualizando o PAJ…');

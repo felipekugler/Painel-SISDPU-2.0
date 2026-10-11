@@ -145,7 +145,7 @@
                            // 2026-09-14) e, ao terminar, só recarregava esta MESMA
                            // tela em vez de abrir a página do PAJ (pedido do usuário,
                            // mesma data, pra já conferir as movimentações geradas).
-                           onExecutado: (resultado) => posExecucaoPaj(pajNorm, resultado),
+                           onExecutado: (resultado, progresso) => posExecucaoPaj(pajNorm, resultado, progresso),
                            aposExecutarIrPara: '/paj/' + pajNorm,
                        })" x-init="init()">
             {% include "partials/acoes_sisdpu.html" %}
@@ -172,26 +172,29 @@
   <!-- Modal: resumo combinado + execução -->
   <div class="modal" :class="{'modal-open': modalResumoAberto}">
     <div class="modal-box w-[75vw] max-w-[75vw]">
+      <style>
+        .revisao-compacta .table :where(th, td) { padding: 1px 6px; line-height: 1.3; font-size: 11px; }
+        .revisao-compacta .table th { width: 30%; }
+        .revisao-compacta .bg-base-200 { padding: 2px 6px; }
+        .revisao-compacta .mt-4 { margin-top: 6px; }
+      </style>
       <h3 class="font-bold text-lg mb-1" x-text="etapaConjunta === 'concluido' ? 'Executado — Eproc + SISDPU' : 'Revisar antes de executar'"></h3>
       <div class="text-[11px] text-error mb-2" x-show="erroExecucao" x-text="erroExecucao"></div>
 
       <template x-if="etapaConjunta === 'resumo' && resumoEproc">
         <div class="flex flex-col gap-4">
-          <div class="border border-info/30 bg-info/10 rounded p-3">
-            <div class="text-sm font-semibold mb-1">No e-proc</div>
+          <div class="border border-info/30 bg-info/10 rounded px-3 py-2 revisao-compacta">
+            <div class="text-sm font-semibold mb-1"
+                 x-text="'No e-proc' + (resumoEproc.processo ? ' — Processo ' + fmtProcesso(resumoEproc.processo) : '')"></div>
             <!-- Mesmo formato de tabela da ficha do SISDPU (static/js/ficha_mcp.js:htmlFicha) -->
             <table class="table table-sm w-full">
               <tbody>
                 <tr>
-                  <th class="align-top whitespace-nowrap text-base-content/70 font-medium w-1/4">Processo</th>
-                  <td class="align-top break-words"><span class="font-mono" x-text="fmtProcesso(resumoEproc.processo)"></span></td>
-                </tr>
-                <tr>
-                  <th class="align-top whitespace-nowrap text-base-content/70 font-medium w-1/4">Evento</th>
+                  <th class="align-top whitespace-nowrap text-base-content/70 font-medium">Evento</th>
                   <td class="align-top break-words" x-text="resumoEproc.evento"></td>
                 </tr>
                 <tr>
-                  <th class="align-top whitespace-nowrap text-base-content/70 font-medium w-1/4">Prazo(s) a fechar</th>
+                  <th class="align-top whitespace-nowrap text-base-content/70 font-medium">Prazo(s) a fechar</th>
                   <td class="align-top break-words">
                     <template x-for="p in (resumoEproc.prazos || [])" :key="p"><div x-text="p"></div></template>
                     <span class="text-base-content/40" x-show="!(resumoEproc.prazos || []).length">Nenhum</span>
@@ -216,7 +219,7 @@
                   </td>
                 </tr>
                 <tr>
-                  <th class="align-top whitespace-nowrap text-base-content/70 font-medium w-1/4">Anexos</th>
+                  <th class="align-top whitespace-nowrap text-base-content/70 font-medium">Anexos</th>
                   <td class="align-top break-words">
                     <template x-if="!resumoEproc.evento_sem_anexo">
                       <div>
@@ -228,7 +231,7 @@
                   </td>
                 </tr>
                 <tr>
-                  <th class="align-top whitespace-nowrap text-base-content/70 font-medium w-1/4">Gerenciamento de processo</th>
+                  <th class="align-top whitespace-nowrap text-base-content/70 font-medium">Gerenciamento de processo</th>
                   <td class="align-top break-words">
                     <span x-show="resumoEproc.gerenciamento && resumoEproc.gerenciamento.ativo"
                           x-text="resumoEproc.gerenciamento ? (resumoEproc.gerenciamento.tipo_label + ' - ' + (resumoEproc.gerenciamento.procurador_rotulo || 'Não informado')) : ''"></span>
@@ -239,7 +242,7 @@
             </table>
           </div>
           <div class="border border-success/30 bg-success/10 rounded p-3" x-show="resumoSisdpu">
-            <div class="text-sm font-semibold mb-1">No SISDPU</div>
+            <div class="text-sm font-semibold mb-1" x-text="'No SISDPU' + (pajLabel ? ' — PAJ ' + pajLabel : '')"></div>
             <!-- Fonte SIS-DPU 2.0 (MCP): o card mostra a FICHA devolvida pelo SIS-DPU 2.0
                  (exatamente o que vai ao PAJ), no mesmo padrão do modal de confirmação. -->
             <template x-if="resumoFonteMcp">
@@ -247,13 +250,37 @@
                 <div x-show="fichasMcpCarregando" class="text-sm text-base-content/60">
                   <span class="loading loading-spinner loading-xs"></span> Conferindo com o SIS-DPU 2.0…
                 </div>
-                <!-- Uma ficha por card (movimentação, tramitação), lado a lado para conferência -->
-                <div class="grid gap-3 items-start" :class="fichasMcp.length > 1 ? 'md:grid-cols-2' : ''">
-                  <template x-for="(f, fi) in fichasMcp" :key="fi">
-                    <div class="border border-success/30 bg-base-100 rounded p-3 min-w-0">
-                      <div class="text-sm font-semibold mb-1"
-                           x-text="f.tipo === 'tramitacao' ? 'Tramitação' : 'Movimentação'"></div>
-                      <div class="text-sm" x-html="window.fichaMcp ? window.fichaMcp.htmlFicha(f.ficha, f.paj, f.contexto) : ''"></div>
+                <!-- Um bloco por item da fila: faixa "Registro N"; embaixo
+                     [Movimentação | Tramitação] e a conclusão de trâmite (largura toda) -->
+                <div class="flex flex-col gap-3 revisao-compacta">
+                  <template x-for="(bloco, bi) in blocosRevisao()" :key="bi">
+                    <div class="grid grid-cols-2 gap-2 items-stretch">
+                      <div class="col-span-2 bg-success/25 rounded px-2 py-0.5 text-xs font-semibold"
+                           x-text="'Registro ' + (bi + 1)"></div>
+                      <template x-for="lado in ['movimentacao', 'tramitacao']" :key="lado">
+                        <div class="border border-success/30 bg-base-100 rounded px-2 py-1.5 min-w-0">
+                          <div class="text-xs font-semibold mb-0.5"
+                               x-text="lado === 'tramitacao' ? 'Tramitação' : 'Movimentação'"></div>
+                          <div class="text-xs" x-show="bloco[lado]"
+                               x-html="bloco[lado] && window.fichaMcp ? window.fichaMcp.htmlFicha(bloco[lado].ficha, bloco[lado].paj, bloco[lado].contexto, { essencial: true }) : ''"></div>
+                          <div class="text-xs text-base-content/40" x-show="!bloco[lado]"
+                               x-text="lado === 'tramitacao' ? 'Sem tramitação' : 'Sem movimentação'"></div>
+                        </div>
+                      </template>
+                      <div class="col-span-2 border border-success/30 bg-base-100 rounded px-2 py-1.5">
+                        <div class="text-xs font-semibold mb-0.5">Conclusão de trâmite</div>
+                        <template x-for="(t, ti) in bloco.conclusoes" :key="ti">
+                          <div class="text-[11px] leading-tight">
+                            <span x-text="t.descricao"></span>
+                            <span class="text-base-content/50" x-show="t.remetente || t.data_envio"
+                                  x-text="' — ' + (t.remetente || '') + (t.remetente && t.data_envio ? ' · ' : '') + (t.data_envio || '')"></span>
+                          </div>
+                        </template>
+                        <div class="text-[11px] text-base-content/50 mt-0.5" x-show="bloco.conclusoes.length">
+                          Concluído por último, pelo SISDPU antigo (navegador) — o cofre é pedido antes do e-proc.
+                        </div>
+                        <div class="text-[11px] text-base-content/40" x-show="!bloco.conclusoes.length">Nenhum trâmite será concluído</div>
+                      </div>
                     </div>
                   </template>
                 </div>
@@ -386,23 +413,6 @@
               </div>
             </template>
           </div>
-          <!-- Conclusão de trâmite (fonte SIS-DPU 2.0): vedada no MCP — roda POR ÚLTIMO,
-               depois da movimentação/tramitação, pelo SISDPU antigo (navegador). -->
-          <div class="border border-success/30 bg-success/10 rounded p-3" x-show="resumoFonteMcp && conclusoesResumo().length">
-            <div class="text-sm font-semibold mb-1">Conclusão de trâmite no SISDPU</div>
-            <ul class="list-disc ml-6 text-sm">
-              <template x-for="(t, ti) in conclusoesResumo()" :key="ti">
-                <li>
-                  <span x-text="t.descricao"></span>
-                  <span class="block text-xs text-base-content/50" x-show="t.remetente || t.data_envio"
-                        x-text="(t.remetente || '') + (t.remetente && t.data_envio ? ' · ' : '') + (t.data_envio || '')"></span>
-                </li>
-              </template>
-            </ul>
-            <div class="text-xs text-base-content/60 mt-2">
-              Feita por último, depois da gravação acima, pelo SISDPU antigo (navegador) — o cofre é pedido antes do e-proc.
-            </div>
-          </div>
           <div class="text-[11px] text-warning font-medium border border-warning/40 rounded p-2">
             "Confirmar e executar tudo" protocola/lança o evento no e-proc e, em seguida, movimenta o SISDPU.
             O peticionamento no e-proc é IRREVERSÍVEL.
@@ -463,6 +473,29 @@ function movimentarConjuntoApp() {
     // Fonte SIS-DPU 2.0 (MCP): fichas integrais do SISDPU mostradas no resumo,
     // ANTES do e-proc — aprovadas junto com "Confirmar e executar tudo".
     fichasMcp: [], fichasMcpErros: [], fichasMcpCarregando: false, resumoFonteMcp: false,
+    // Um bloco por item da fila (sem fila, um só): ficha da movimentação e da
+    // tramitação do item (o servidor marca `item` em cada ficha) e os trâmites
+    // que o item conclui.
+    blocosRevisao() {
+      const r = this.resumoSisdpu || { fila: [], formularioAtual: null };
+      const n = Math.max(r.fila.length || 1, ...this.fichasMcp.map((f) => (f.item || 0) + 1));
+      const blocos = [];
+      for (let i = 0; i < n; i++) {
+        let conclusoes = [];
+        if (r.fila.length) {
+          conclusoes = (r.fila[i] && r.fila[i].concluir_detalhes) || [];
+        } else if (r.formularioAtual && r.formularioAtual.concluir) {
+          conclusoes = (r.formularioAtual.concluir_detalhes || []).length ? r.formularioAtual.concluir_detalhes
+            : [{ descricao: 'Concluir o trâmite da caixa de entrada', remetente: '', data_envio: '' }];
+        }
+        blocos.push({ movimentacao: null, tramitacao: null, conclusoes });
+      }
+      this.fichasMcp.forEach((f) => {
+        const b = blocos[f.item || 0];
+        if (b) b[f.tipo === 'tramitacao' ? 'tramitacao' : 'movimentacao'] = f;
+      });
+      return blocos;
+    },
     // Número CNJ com pontos e hífen: 5055128-09.2026.4.04.7000
     fmtProcesso(n) {
       const d = String(n || '').replace(/\D/g, '');

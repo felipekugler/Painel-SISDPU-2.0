@@ -86,6 +86,9 @@ async def _id_processo(paj: dict) -> int:
 
 
 MIN_DESCRICAO = 10  # o SIS-DPU 2.0 recusa descrição de movimentação mais curta
+# O SIS-DPU 2.0 exige a descrição da tramitação (o legado aceitava em branco):
+# em branco, vai só um ponto — decisão do Defensor (11/10/2026), aparece na ficha.
+DESCRICAO_TRAMITACAO_VAZIA = "."
 
 
 def _texto_da_descricao(descricao: str, descricao_html: bool) -> str:
@@ -265,7 +268,7 @@ async def tramitar_paj(pajs: list[dict], grupo: Optional[str] = None, usuarios: 
                     "detalhe": f"Caixa '{grupo}' não encontrada entre os destinos do SIS-DPU 2.0 "
                                f"(opções={[x.get(campo) for x in lista]})"}
         args = {"idProcesso": idp, "idGrupoDestino": int(g.get("id") or g.get("idGrupo")),
-                "descricaoTramite": (descricao or "").strip() or f"Encaminhamento para {g.get(campo)}"}
+                "descricaoTramite": (descricao or "").strip() or DESCRICAO_TRAMITACAO_VAZIA}
         if _iso(prazo_data):
             args["dataPrazo"] = _iso(prazo_data)
             if prazo_desc:

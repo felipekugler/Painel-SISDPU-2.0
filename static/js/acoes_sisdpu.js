@@ -516,6 +516,13 @@ function acoesSisdpuBlock(cfg) {
         },
         // O aviso aparece na própria linha dos botões (onde fica "Rascunho gravado"),
         // sem janela do navegador; some na próxima ação que passar na checagem.
+        // Linhas de andamento do pós-execução (releitura/anexos) no log do modal.
+        _progressoPos() {
+            return (msg) => {
+                this.sseLog.push({ level: 'info', msg });
+                this.$nextTick(() => { const b = this.$refs.acoesSisdpuSseBox; if (b) b.scrollTop = b.scrollHeight; });
+            };
+        },
         _bloqueiaDescricaoCurta() {
             this.avisoGravacao = this.avisoDescricaoCurta(this.fase, this.descMovEfetiva(), this.descMovEhHtml());
             return !!this.avisoGravacao;
@@ -941,7 +948,10 @@ function acoesSisdpuBlock(cfg) {
                     // visível antes de fechar este modal (o de sincronização, se houver,
                     // abre em seguida — ver posExecucaoPaj() em app.js).
                     await new Promise((r) => setTimeout(r, 1200));
-                    this.sseAberto = false;
+                    // Fonte SIS-DPU 2.0: o modal fica aberto mostrando a releitura do PAJ
+                    // e o download dos anexos novos (posExecucaoPaj) — a página do PAJ
+                    // abre uma vez só, já em dia.
+                    if (!window.PAINEL_FONTE_SISDPU_MCP) this.sseAberto = false;
                 }
                 // ESPERA onExecutado() terminar ANTES de recarregar — na página do PAJ,
                 // onExecutado (posExecucaoPaj em app.js) já inclui esperar a
@@ -951,7 +961,7 @@ function acoesSisdpuBlock(cfg) {
                 // de ser feito no SISDPU, sem depender do usuário lembrar de dar F5.
                 // SEM esperar onExecutado, o reload derrubava a sincronização de
                 // movimentações no meio do caminho e a tabela continuava desatualizada.
-                await this.onExecutado(resultadoEnriquecido);
+                await this.onExecutado(resultadoEnriquecido, this._progressoPos());
                 if (res.ok) { if (this.aposExecutarIrPara) window.location.href = this.aposExecutarIrPara; else window.location.reload(); }
             });
             es.onerror = () => {
@@ -1040,9 +1050,12 @@ function acoesSisdpuBlock(cfg) {
                         fetch('/api/acoes-sisdpu/rascunho/' + encodeURIComponent(this.pajNorm), { method: 'DELETE' }).catch(() => {});
                     }
                     await new Promise((r) => setTimeout(r, 1200));
-                    this.sseAberto = false;
+                    // Fonte SIS-DPU 2.0: o modal fica aberto mostrando a releitura do PAJ
+                    // e o download dos anexos novos (posExecucaoPaj) — a página do PAJ
+                    // abre uma vez só, já em dia.
+                    if (!window.PAINEL_FONTE_SISDPU_MCP) this.sseAberto = false;
                 }
-                await this.onExecutado({ ...res, fila: true });
+                await this.onExecutado({ ...res, fila: true }, this._progressoPos());
                 if (res.ok) { if (this.aposExecutarIrPara) window.location.href = this.aposExecutarIrPara; else window.location.reload(); }
             });
             es.onerror = () => {

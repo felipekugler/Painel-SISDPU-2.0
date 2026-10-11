@@ -107,7 +107,7 @@
             <div x-data="acoesSisdpuBlock({
                      idProcesso: '', paj: numeroPajConfirmado, pajNorm: pajNormNovo,
                      aberto: true,
-                     onExecutado: async (res) => { await posExecucaoPaj(pajNormNovo, res); fecharModalNovo(); },
+                     onExecutado: async (res, progresso) => { await posExecucaoPaj(pajNormNovo, res, progresso); fecharModalNovo(); },
                  })" x-init="init()">
               {% include "partials/acoes_sisdpu.html" %}
             </div>

@@ -150,7 +150,12 @@ async def api_fichas_resumo(request: Request):
                 descricao_tram=b.get("descricao_tram") or "", prazo_dias=int(b.get("prazo") or 0),
                 prazo_data=b.get("prazo_data") or "", id_tramites=b.get("id_tramites") or [],
                 dry_run=True, anexos=b.get("anexos") or [])
+        item = 0  # item da fila de cada ficha (o resumo agrupa movimentação + tramitação por item)
         async for ev in gen:
+            for f in coleta:
+                f.setdefault("item", item)
+            if ev.get("item_done"):
+                item = int(ev.get("index", item)) + 1
             if ev.get("level") == "erro":
                 erros.append(ev.get("msg", ""))
             if ev.get("done"):
@@ -159,6 +164,8 @@ async def api_fichas_resumo(request: Request):
                 if not res.get("ok") and detalhe:
                     # o log já trouxe a mesma mensagem com prefixo ("Movimentação: …") — fica só uma
                     erros = [e for e in erros if detalhe not in e] + [detalhe]
+        for f in coleta:
+            f.setdefault("item", item)
     finally:
         sisdpu2_movtram.COLETA_FICHAS.reset(t)
     return {"ok": not erros, "fichas": coleta, "erros": erros[:5]}

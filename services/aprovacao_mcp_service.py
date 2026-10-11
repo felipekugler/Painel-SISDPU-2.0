@@ -52,7 +52,18 @@ def ficha_para_exibir(ficha: str) -> str:
 
 
 def _normalizar(ficha: str) -> str:
-    return re.sub(r"\s+", " ", ficha_para_exibir(ficha)).strip()
+    """Para casar a ficha do resumo da conjunta com a da gravação. Ignora só o
+    alerta de repetição ("você já gravou N vez(es) neste mesmo PAJ…"): no resumo
+    ainda não houve gravação, e dentro do lote aprovado os registros anteriores
+    são justamente os itens dele (11/10/2026: a tramitação após 2 movimentações
+    voltava a pedir confirmação por causa desse alerta). Qualquer outro alerta
+    ou campo diferente continua exigindo nova confirmação."""
+    linhas = [l for l in ficha_para_exibir(ficha).splitlines()
+              if not re.search(r"j[áa] gravou \d+ vez(\(es\)|es)? neste mesmo PAJ", l, re.I)]
+    # cabeçalho "Alertas …:" sem nenhum alerta restante embaixo também sai
+    texto = "\n".join(linhas)
+    texto = re.sub(r"\n\s*Alertas[^\n]*:\s*(?=\n\s*\n|\Z)", "", texto, flags=re.I)
+    return re.sub(r"\s+", " ", texto).strip()
 
 
 def _validade_seg(ficha: str) -> float:
