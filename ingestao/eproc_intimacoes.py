@@ -867,7 +867,7 @@ async def _sincronizar_impl() -> dict:
             creds = cofre_service.get_credenciais("eproc")
             if creds:
                 usuario, senha = creds
-                await ec._abrir_impl(ec.EPROC_HOME, usuario, senha)
+                await ec._abrir_impl(ec.EPROC_INTERNO, usuario, senha)
                 res = await ler_todos()
     if res.get("ok"):
         salvar(res)

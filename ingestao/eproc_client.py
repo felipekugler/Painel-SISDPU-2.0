@@ -65,6 +65,36 @@ def _gerar_codigo_totp() -> str | None:
 EPROC_JFPR = "https://eproc.jfpr.jus.br/eprocV2/"
 EPROC_TRF4 = "https://eproc.trf4.jus.br/"
 EPROC_HOME = EPROC_JFPR
+# Ponto de partida das ações com a sessão JÁ logada: a raiz (EPROC_HOME), com
+# sessão ativa, faz o próprio e-proc abrir o alerta "Usuário logado como …
+# Utilize o botão Sair do Sistema" — e um alerta que surge depois de o painel
+# se desconectar da aba trava a janela (relato do Defensor, 11/10/2026).
+# `controlador.php` sem ação abre a área interna sem alerta; sem sessão, cai no
+# login do SSO como a raiz. NUNCA usar `acao=` sem o hash do servidor: o e-proc
+# ENCERRA a sessão (visto em teste, 11/10/2026).
+EPROC_INTERNO = EPROC_JFPR + "controlador.php"
+
+
+async def _ir_para_inicio(page, espera_ms: int = 800) -> None:
+    """Leva a aba à página inicial do Procurador SEM o alerta "Usuário logado
+    como…" (da raiz) e SEM a tela "Ação '' não reconhecida pelo controlador."
+    (de `controlador.php` puro): passa por `controlador.php` só para pegar, no
+    cabeçalho, o link assinado pelo servidor do Painel do Procurador
+    (`acao=painel_advogado_listar&hash=…`) e segue por ele. Sem sessão, fica na
+    tela de login do SSO (quem chama confere com `_status_dict`)."""
+    await page.goto(EPROC_INTERNO, wait_until="domcontentloaded", timeout=30000)
+    await page.wait_for_timeout(espera_ms)
+    if not _status_dict(page.url)["logado"]:
+        return
+    href = None
+    with contextlib.suppress(Exception):
+        href = await page.evaluate(
+            """() => { const a = document.querySelector("a[href*='acao=painel_advogado_listar'][href*='hash=']");
+                       return a ? a.href : null; }""")
+    if href:
+        with contextlib.suppress(Exception):
+            await page.goto(href, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(espera_ms)
 
 # Perfil a selecionar na tela "Seleção de perfil" do SSO (entrar_sso). O painel de
 # prazos do defensor é o "Painel do Procurador" → perfil PROCURADOR (não o de
@@ -145,7 +175,7 @@ async def _pw_reiniciar() -> None:
         _pw = None
 
 
-async def _ensure_chromium(url: str = EPROC_HOME) -> None:
+async def _ensure_chromium(url: str = EPROC_INTERNO) -> None:
     """Garante um Chromium persistente rodando com remote-debugging (processo
     separado). Lança-o apontando já para o e-proc (o usuário loga na janela)."""
     global _eproc_pid
@@ -176,7 +206,7 @@ async def _ensure_chromium(url: str = EPROC_HOME) -> None:
 
 
 
-async def _connect(url: str = EPROC_HOME):
+async def _connect(url: str = EPROC_INTERNO):
     """Conecta ao Chromium persistente e devolve (browser, page). Chame
     `browser.close()` ao fim — fecha só a CONEXÃO CDP, não o Chromium."""
     await _ensure_chromium(url)
@@ -546,7 +576,7 @@ async def _selecionar_perfil(page, perfil: str = PERFIL_PADRAO) -> bool:
 _browser_lock = asyncio.Lock()
 
 
-async def abrir(url: str = EPROC_HOME, usuario: str = "", senha: str = "") -> dict:
+async def abrir(url: str = EPROC_INTERNO, usuario: str = "", senha: str = "") -> dict:
     """Abre/traz à frente a janela do e-proc e tenta ENTRAR sozinho, em cadeia:
 
       1) tela de login (Keycloak ou nativa) → se `usuario`/`senha` vierem (cofre
@@ -578,6 +608,9 @@ async def _abrir_impl(url: str, usuario: str, senha: str) -> dict:
             await page.wait_for_timeout(1500)
 
         await _entrar(page, usuario, senha)
+        if _status_dict(page.url)["logado"] and "acao=" not in (page.url or ""):
+            with contextlib.suppress(Exception):
+                await _ir_para_inicio(page)
         status_final = _status_dict(page.url)
         # Fecha qualquer aba extra (ex.: popup de SSO/2FA que ficou aberto) —
         # o usuário só quer ver a aba principal, já autenticada, na janela.
@@ -666,12 +699,11 @@ async def _garantir_login(page) -> bool:
     with contextlib.suppress(Exception):
         await _entrar(page, usuario, senha)
     with contextlib.suppress(Exception):
-        await page.goto(EPROC_HOME, wait_until="domcontentloaded", timeout=30000)
-        await page.wait_for_timeout(800)
+        await _ir_para_inicio(page, 800)
     return _status_dict(page.url)["logado"]
 
 
-async def status(url: str = EPROC_HOME) -> dict:
+async def status(url: str = EPROC_INTERNO) -> dict:
     """Verifica se a sessão está ativa navegando para o e-proc (deixa a tela
     pronta)."""
     browser, page = await _connect(url)
@@ -739,8 +771,7 @@ async def _abrir_tela_peticionamento(page, numero: str) -> str:
     """Navega, numa página JÁ conectada, até a tela "Movimentar/Peticionar" de UM
     processo — busca rápida (real, gera hash assinado pelo servidor) → clica o link
     real "Movimentar/Peticionar". Devolve "" em sucesso, ou uma mensagem de erro."""
-    await page.goto(EPROC_HOME, wait_until="domcontentloaded", timeout=30000)
-    await page.wait_for_timeout(800)
+    await _ir_para_inicio(page, 800)
     if not _status_dict(page.url)["logado"] and not await _garantir_login(page):
         return ("Sessão do e-proc não está logada — faça login na janela do e-proc "
                 "e tente de novo.")
@@ -1330,8 +1361,7 @@ async def abrir_processo_por_numero(numero: str) -> dict:
     ctx = pagina_ref.context
     try:
         page = await ctx.new_page()
-        await page.goto(EPROC_HOME, wait_until="domcontentloaded", timeout=30000)
-        await page.wait_for_timeout(800)
+        await _ir_para_inicio(page, 800)
         if not _status_dict(page.url)["logado"] and not await _garantir_login(page):
             return {
                 "ok": False,
@@ -1373,8 +1403,7 @@ async def _abrir_tela_gerenciamento(page, numero: str) -> str | None:
     ações — devolve uma mensagem de erro (str) se o processo não for encontrado
     ou o botão não existir (ex.: usuário não é procurador de nenhuma parte),
     ou None em caso de sucesso (a `page` fica na tela de Gerenciamento)."""
-    await page.goto(EPROC_HOME, wait_until="domcontentloaded", timeout=30000)
-    await page.wait_for_timeout(600)
+    await _ir_para_inicio(page, 600)
     if not _status_dict(page.url)["logado"] and not await _garantir_login(page):
         return "Sessão do e-proc não está logada — faça login na janela do e-proc e tente de novo."
 

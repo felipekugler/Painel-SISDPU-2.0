@@ -441,7 +441,7 @@ async def preparar(plano: dict) -> dict:
                 await p.close()
         page = await ctx.new_page()
         try:
-            await page.goto(ec.EPROC_HOME, wait_until="domcontentloaded", timeout=30000)
+            await page.goto(ec.EPROC_INTERNO, wait_until="domcontentloaded", timeout=30000)
             await page.wait_for_timeout(1000)
             if not ec._status_dict(page.url)["logado"]:
                 return {"ok": False, "passos": passos,
