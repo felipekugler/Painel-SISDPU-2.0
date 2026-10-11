@@ -785,7 +785,8 @@ async function concluirPajCaixa(pajNorm, idProcesso, paj, idTramite) {
  * mais sensível — desarquivar não tem "desfazer" trivial). */
 async function desarquivarPaj(pajNorm, idProcesso, paj) {
     if (!confirm('Desarquivar ' + (paj || pajNorm) + '?\n\nIsso lança a fase "Paj desarquivado" no SISDPU (sem descrição, tramitação ou conclusão de trâmite).')) return;
-    if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
+    // Fonte SIS-DPU 2.0 (MCP): é uma movimentação, gravada pelo MCP — sem cofre.
+    if (!window.PAINEL_FONTE_SISDPU_MCP && typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
 
     const qs = new URLSearchParams({
         id_processo: idProcesso || '', paj: paj || '', paj_norm: pajNorm || '',

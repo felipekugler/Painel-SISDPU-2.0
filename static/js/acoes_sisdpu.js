@@ -870,8 +870,10 @@ function acoesSisdpuBlock(cfg) {
                 + (anexosSel.length ? '\n+ ' + anexosSel.length + ' anexo(s)' : '')
                 + (this.grupo ? '\nTramitar para: ' + this.grupo + prazoTxt : '\nSem tramitação')
                 + concluirTxt)) return;
-            // Garante o cofre desbloqueado ANTES de acionar o SISDPU.
-            if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
+            // Garante o cofre desbloqueado ANTES de acionar o SISDPU — com a fonte
+            // SIS-DPU 2.0 (MCP) só quando há conclusão (vedada no MCP, vai pelo legado).
+            const precisaCofre = !window.PAINEL_FONTE_SISDPU_MCP || concluirEfetivo;
+            if (precisaCofre && typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
             this.exec = true;
             this.sseTitulo = 'Executando no SISDPU — ' + (this.paj || this.idProcesso);
             this.sseLog = []; this.sseStatus = ''; this.sseAberto = true;
@@ -969,7 +971,9 @@ function acoesSisdpuBlock(cfg) {
                 + (it.id_tramites.length ? ' (conclui ' + it.id_tramites.length + ' trâmite(s))' : '')).join('\n');
             if (!pularConfirmacao && !confirm('Executar a fila (' + lote.length + ' movimentação(ões)) no SISDPU — '
                 + (this.paj || this.idProcesso) + '?\n\n' + resumo)) return;
-            if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
+            // Fonte SIS-DPU 2.0 (MCP): o cofre só é pedido se algum item conclui trâmite.
+            const precisaCofre = !window.PAINEL_FONTE_SISDPU_MCP || lote.some((it) => (it.id_tramites || []).length);
+            if (precisaCofre && typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
             this.exec = true;
             this.sseTitulo = 'Executando fila (' + lote.length + ') no SISDPU — ' + (this.paj || this.idProcesso);
             this.sseLog = []; this.sseStatus = ''; this.sseAberto = true;
