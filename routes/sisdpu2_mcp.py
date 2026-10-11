@@ -209,3 +209,46 @@ async def api_sisdpu2_oauth_callback(code: str = "", state: str = "", error: str
     return HTMLResponse(_PAGINA_RETORNO.format(
         titulo="✅ Painel conectado ao SIS-DPU 2.0", texto="Pode fechar esta aba e voltar ao painel.",
         evento="ok", fechar=2500))
+
+
+# --- Documento do PAJ sob demanda (clique na tabela de movimentações) ----------
+# Abrir o PAJ não baixa mais os documentos (pedido do Defensor, 11/10/2026): o
+# clique num documento ainda não baixado chama esta rota, que baixa SÓ ele pelo
+# MCP, grava em Arquivos/ com o nome de sempre ("seq075 - 43202969 - nome.pdf")
+# e já devolve o arquivo — igual à consulta processual do e-proc.
+@router.get("/api/sisdpu2/documento/{paj_norm}")
+async def api_sisdpu2_documento(paj_norm: str, id: str, seq: str = "", nome: str = ""):
+    import mimetypes
+    import re
+    from pathlib import Path
+
+    from fastapi.responses import FileResponse
+
+    from config import PAJS_DIR
+    from ingestao import sisdpu2_fonte as fonte
+
+    if not re.fullmatch(r"PAJ-\d{4}-\d{3}-\d+", paj_norm or "") or not re.fullmatch(r"\d{1,12}", id or ""):
+        return JSONResponse({"ok": False, "erro": "Parâmetros inválidos."}, status_code=400)
+    nome_limpo = re.sub(r'[\\/:*?"<>|]+', "_", (nome or "arquivo").strip()) or "arquivo"
+    try:
+        seq_fmt = f"{int(seq):03d}"
+    except ValueError:
+        seq_fmt = re.sub(r"\D", "", seq) or "000"
+    pasta = Path(PAJS_DIR) / paj_norm / "Arquivos"
+    destino = pasta / f"seq{seq_fmt} - {id} - {nome_limpo}"
+    if not (destino.exists() and destino.stat().st_size > 0):
+        existente = next((f for f in pasta.glob(f"seq* - {id} - *") if f.stat().st_size > 0), None) if pasta.is_dir() else None
+        if existente:
+            destino = existente
+        else:
+            if not sis2.conectado():
+                return HTMLResponse("<p>Painel não conectado ao SIS-DPU 2.0 — reconecte para baixar o documento.</p>",
+                                    status_code=409)
+            try:
+                dados, _info = await run_in_threadpool(fonte.baixar_arquivo_mcp, int(id))
+            except Exception as e:  # noqa: BLE001
+                return HTMLResponse(f"<p>Não foi possível baixar o documento pelo SIS-DPU 2.0: {e}</p>", status_code=502)
+            pasta.mkdir(parents=True, exist_ok=True)
+            await run_in_threadpool(fonte._gravar_binario, destino, dados)
+    tipo = mimetypes.guess_type(destino.name)[0] or "application/octet-stream"
+    return FileResponse(destino, media_type=tipo, filename=destino.name, content_disposition_type="inline")

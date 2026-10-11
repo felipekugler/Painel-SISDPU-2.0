@@ -234,6 +234,34 @@ function tabelaMovimentacoes() {
             else this.selecionados.add(id);
         },
 
+        // Fonte SIS-DPU 2.0: clique num documento ainda não baixado baixa SÓ ele pelo
+        // MCP e já abre numa aba (igual à consulta processual) — abrir o PAJ não
+        // baixa mais tudo (pedido do Defensor, 11/10/2026). Sem o MCP, o clique
+        // segue marcando para "Baixar selecionados".
+        _sobDemandaMcp(doc) {
+            return !!window.PAINEL_FONTE_SISDPU_MCP && /^\d+$/.test(this._idDocumento(doc) || '');
+        },
+        dicaNaoBaixado(doc) {
+            if (this._sobDemandaMcp(doc)) return ' — clique para baixar e abrir';
+            return this.estaSelecionado(doc) ? ' — selecionado (clique p/ desmarcar)' : ' — clique p/ selecionar';
+        },
+        cliqueNaoBaixado(mov, doc) {
+            if (!this._sobDemandaMcp(doc)) { this.toggleSelecao(doc); return; }
+            const qs = new URLSearchParams({ id: this._idDocumento(doc), seq: mov.seq, nome: doc.nomeArquivo || '' });
+            window.open('/api/sisdpu2/documento/' + encodeURIComponent(this.pajNorm) + '?' + qs, '_blank');
+            this._aguardarArquivoLocal(doc);
+        },
+        // Quando o arquivo chega na pasta, o badge passa a "baixado" sem recarregar.
+        async _aguardarArquivoLocal(doc) {
+            for (let i = 0; i < 40 && !this.temArquivoLocal(doc); i++) {
+                await new Promise((ok) => setTimeout(ok, 2000));
+                try {
+                    const d = await (await fetch('/api/paj/' + encodeURIComponent(this.pajNorm) + '/movimentacoes')).json();
+                    if (d && d.ok !== false && d.anexos_sisdpu) { this.anexos = d.anexos_sisdpu; this.__mapaArquivoLocal = null; }
+                } catch (e) { /* tenta de novo */ }
+            }
+        },
+
         // Dentre os nao-baixados da seq, quantos/quais estao selecionados —
         // usado pelo botao "Baixar selecionados".
         selecionadosNaSeq(mov) {

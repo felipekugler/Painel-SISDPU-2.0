@@ -162,10 +162,10 @@
                                         <div class="flex flex-wrap items-center gap-1">
                                             <template x-for="(doc, idx) in mov.documentos" :key="mov.seq + '-' + idx + '-' + doc.urlDownload">
                                                 <a :href="(modoSelecao || !temArquivoLocal(doc)) ? null : linkDocumento(doc)" target="_blank"
-                                                   @click="modoSelecao ? ($event.preventDefault(), toggleSelecaoIA(doc)) : (temArquivoLocal(doc) ? null : ($event.preventDefault(), toggleSelecao(doc)))"
+                                                   @click="modoSelecao ? ($event.preventDefault(), toggleSelecaoIA(doc)) : (temArquivoLocal(doc) ? null : ($event.preventDefault(), cliqueNaoBaixado(mov, doc)))"
                                                    class="badge badge-sm gap-1 border border-black/15"
                                                    :class="modoSelecao ? (estaSelecionadoIA(doc) ? 'badge-neutral ring-2 ring-primary' : (temArquivoLocal(doc) ? corBadgeDocumento(doc.nomeArquivo) : 'bg-base-200 text-base-content/60')) : (temArquivoLocal(doc) ? corBadgeDocumento(doc.nomeArquivo) : (estaSelecionado(doc) ? 'badge-neutral' : 'bg-base-200 text-base-content/60'))"
-                                                   :title="modoSelecao ? (doc.nomeArquivo + (temArquivoLocal(doc) ? (estaSelecionadoIA(doc) ? ' — selecionado (clique p/ desmarcar)' : ' — clique p/ selecionar') : ' — ainda não sincronizado, não pode ser selecionado')) : (temArquivoLocal(doc) ? doc.nomeArquivo : (doc.nomeArquivo + (estaSelecionado(doc) ? ' — selecionado (clique p/ desmarcar)' : ' — clique p/ selecionar')))">
+                                                   :title="modoSelecao ? (doc.nomeArquivo + (temArquivoLocal(doc) ? (estaSelecionadoIA(doc) ? ' — selecionado (clique p/ desmarcar)' : ' — clique p/ selecionar') : ' — ainda não sincronizado, não pode ser selecionado')) : (temArquivoLocal(doc) ? doc.nomeArquivo : (doc.nomeArquivo + dicaNaoBaixado(doc)))">
                                                     <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                                                     <span x-text="extDocumento(doc.nomeArquivo)"></span>
                                                 </a>
@@ -179,10 +179,10 @@
                                         <div class="flex flex-col gap-0.5">
                                             <template x-for="(doc, idx) in mov.documentos" :key="mov.seq + '-' + idx + '-' + doc.urlDownload">
                                                 <a :href="(modoSelecao || !temArquivoLocal(doc)) ? null : linkDocumento(doc)" target="_blank"
-                                                   @click="modoSelecao ? ($event.preventDefault(), toggleSelecaoIA(doc)) : (temArquivoLocal(doc) ? null : ($event.preventDefault(), toggleSelecao(doc)))"
+                                                   @click="modoSelecao ? ($event.preventDefault(), toggleSelecaoIA(doc)) : (temArquivoLocal(doc) ? null : ($event.preventDefault(), cliqueNaoBaixado(mov, doc)))"
                                                    class="badge badge-sm gap-1 max-w-full justify-start border border-black/15"
                                                    :class="modoSelecao ? (estaSelecionadoIA(doc) ? 'badge-neutral ring-2 ring-primary' : (temArquivoLocal(doc) ? corBadgeDocumento(doc.nomeArquivo) : 'bg-base-200 text-base-content/60')) : (temArquivoLocal(doc) ? corBadgeDocumento(doc.nomeArquivo) : (estaSelecionado(doc) ? 'badge-neutral' : 'bg-base-200 text-base-content/60'))"
-                                                   :title="modoSelecao ? (doc.nomeArquivo + (temArquivoLocal(doc) ? (estaSelecionadoIA(doc) ? ' — selecionado (clique p/ desmarcar)' : ' — clique p/ selecionar') : ' — ainda não sincronizado, não pode ser selecionado')) : (temArquivoLocal(doc) ? doc.nomeArquivo : (doc.nomeArquivo + (estaSelecionado(doc) ? ' — selecionado (clique p/ desmarcar)' : ' — clique p/ selecionar')))">
+                                                   :title="modoSelecao ? (doc.nomeArquivo + (temArquivoLocal(doc) ? (estaSelecionadoIA(doc) ? ' — selecionado (clique p/ desmarcar)' : ' — clique p/ selecionar') : ' — ainda não sincronizado, não pode ser selecionado')) : (temArquivoLocal(doc) ? doc.nomeArquivo : (doc.nomeArquivo + dicaNaoBaixado(doc)))">
                                                     <svg class="w-3 h-3 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
                                                     <span class="truncate" x-text="doc.nomeArquivo"></span>
                                                 </a>
