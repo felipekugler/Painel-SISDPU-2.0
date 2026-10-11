@@ -95,13 +95,13 @@ function processoJudicialBlock(cfg) {
             ]);
         },
 
-        // Mesmo endpoint já usado pela tela de Configurações (exibe "cadastrado
-        // · <usuario>") — reaproveitado aqui só pra saber QUEM é o procurador
-        // logado, nunca a senha. Vazio (cofre trancado/sem credencial "eproc")
-        // = identidade indisponível, ver `temPrazosSemIdentidade`.
+        // QUEM é o procurador logado (nunca a senha): usuário do login do MCP do
+        // e-proc em 1º lugar, cofre só como reserva (pedido do Defensor,
+        // 11/10/2026 — o cofre não é mais a 1ª opção). Vazio = identidade
+        // indisponível, ver `temPrazosSemIdentidade`.
         async carregarIdentidade() {
             try {
-                const r = await fetch('/api/config/eproc/status');
+                const r = await fetch('/api/eproc-mcp/meu-identificador');
                 const d = await r.json();
                 this.meuIdentificador = (d && d.usuario) || '';
             } catch (e) {

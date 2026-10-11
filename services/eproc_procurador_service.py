@@ -22,6 +22,7 @@ associado, sem adivinhação nenhuma."""
 
 from __future__ import annotations
 
+import contextlib
 import re
 
 
@@ -32,13 +33,36 @@ def meu_identificador() -> str:
     2026-09-23 que é o MESMO texto usado pelo e-proc como `identificador`
     de representante (ex.: "DPU551") — nenhum cadastro novo é necessário.
 
-    Vazio quando o cofre está trancado ou sem credencial "eproc" salva —
-    nesse caso NÃO há como saber a quais partes o procurador está
-    associado. Os chamadores devem tratar isso como identidade
-    indisponível e NUNCA arriscar mostrar/agir sobre uma parte adivinhada."""
+    1ª opção (pedido do Defensor, 11/10/2026): o usuário do LOGIN do MCP do
+    e-proc, guardado no Credential Manager do Windows — é o MESMO
+    identificador (ex.: "DPU551") e não depende do cofre, que no Painel
+    SISDPU 2.0 fica trancado (não pede a senha-mestra ao abrir). O cofre é
+    só reserva, para quem não tiver o MCP do e-proc configurado.
+
+    Vazio quando nenhuma das duas fontes tem o usuário — nesse caso NÃO há
+    como saber a quais partes o procurador está associado. Os chamadores
+    devem tratar isso como identidade indisponível e NUNCA arriscar
+    mostrar/agir sobre uma parte adivinhada."""
     from services import cofre_service
 
-    return (cofre_service.get_usuario("eproc") or "").strip()
+    return (_usuario_mcp_eproc()
+            or (cofre_service.get_usuario("eproc") or "").strip())
+
+
+def _usuario_mcp_eproc() -> str:
+    """Usuário do login do MCP eproc-trf4 (chave definida no config.json dele)."""
+    try:
+        import json
+
+        import keyring
+
+        from ingestao.eproc_mcp_client import MCP_DIR
+        chave = "mcp-eproc"
+        with contextlib.suppress(Exception):
+            chave = json.loads((MCP_DIR / "config.json").read_text(encoding="utf-8")).get("credential_key") or chave
+        return (keyring.get_password(chave, "usuario") or "").strip()
+    except Exception:  # noqa: BLE001
+        return ""
 
 
 def _normalizar(s: str) -> str:

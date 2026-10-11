@@ -36,6 +36,15 @@ from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, PlainTex
 router = APIRouter()
 
 
+@router.get("/api/eproc-mcp/meu-identificador", response_class=JSONResponse)
+async def api_eproc_meu_identificador():
+    """Quem é o procurador logado no e-proc (ex.: "DPU551") — usuário do login
+    do MCP do e-proc em 1º lugar, cofre como reserva (ver
+    services.eproc_procurador_service.meu_identificador). Nunca a senha."""
+    from services import eproc_procurador_service
+    return {"ok": True, "usuario": eproc_procurador_service.meu_identificador()}
+
+
 @router.get("/api/eproc-mcp/status", response_class=JSONResponse)
 async def api_eproc_mcp_status(instancia: int = 1):
     """Verifica/renova a sessão HTTP (headless) da instância — sem navegador,
