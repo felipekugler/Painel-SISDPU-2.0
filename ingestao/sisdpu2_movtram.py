@@ -120,6 +120,13 @@ async def _aprovar(tipo: str, paj_num: str, ficha: str, contexto: dict) -> Optio
     return await aprov.solicitar(tipo, paj_num, ficha, contexto)
 
 
+def _invalidar_caches(id_processo: int) -> None:
+    """Depois de gravar: o painel do PAJ e a caixa voltam a ler do SIS-DPU 2.0."""
+    from ingestao import sisdpu2_fonte
+    sisdpu2_fonte.invalidar_tramites(id_processo)
+    sisdpu2_fonte.invalidar_cache_caixa()
+
+
 async def _total_movimentacoes(id_processo: int) -> Optional[int]:
     try:
         capa = await asyncio.to_thread(sis2.chamar, "paj_capa", {"idProcesso": id_processo})
@@ -182,6 +189,7 @@ async def movimentar_paj(pajs: list[dict], descricao: str, fase: str, anexos: Op
         if not isinstance(r, dict) or not r.get("idsGerados"):
             return {"fonte": "mcp-sisdpu2", "ok": False, "status": "falha", "pajs": numeros,
                     "detalhe": f"Resultado inesperado do SIS-DPU 2.0 — CONFIRA no PAJ antes de repetir: {str(r)[:300]}"}
+        _invalidar_caches(idp)
         seq = await _total_movimentacoes(idp)
         return {"fonte": "mcp-sisdpu2", "ok": True, "status": "movimentado", "pajs": numeros, "anexos": nomes_anexos, "mov_seq": seq,
                 "detalhe": "Movimentação gravada no SIS-DPU 2.0" + (f" · Mov {seq}" if seq else "")}
@@ -246,6 +254,7 @@ async def tramitar_paj(pajs: list[dict], grupo: Optional[str] = None, usuarios: 
                                     {**args, "token": token.group(1), "confirmacao": resposta})
         if isinstance(r, str) and re.search(r"recusad|erro|falh", r, re.I):
             return {"fonte": "mcp-sisdpu2", "ok": False, "status": "falha", "pajs": numeros, "detalhe": f"SIS-DPU 2.0: {r[:300]}"}
+        _invalidar_caches(idp)
         return {"fonte": "mcp-sisdpu2", "ok": True, "status": "tramitado", "pajs": numeros,
                 "detalhe": f"Tramitado no SIS-DPU 2.0 para {g.get(campo)}"}
     except sis2.Sisdpu2LoginNecessario:

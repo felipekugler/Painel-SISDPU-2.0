@@ -524,7 +524,15 @@ async def extrair_documentos_por_seq(seqs_conhecidos=None, deve_cancelar=None, l
             "seqsPuladas": pulados, "seqsVerificadosSemDocumento": sem_docs, "tabela_markdown": ""}
 
 
-_cache_tramites: dict = {}  # id_processo -> (monotonic, resultado)
+_cache_tramites: dict = {}  # (id_processo, limite) -> (monotonic, resultado)
+_CACHE_TRAMITES_SEG = 120
+
+
+def invalidar_tramites(id_processo) -> None:
+    """Chamada depois de toda gravação do painel no PAJ: a próxima leitura do
+    painel "Caixas onde o PAJ está aberto" já traz o que acabou de ser gravado."""
+    for chave in [c for c in _cache_tramites if c[0] == int(id_processo)]:
+        _cache_tramites.pop(chave, None)
 
 
 def _tramitacoes(id_processo: int, limite: int) -> dict:
@@ -546,14 +554,15 @@ def _tramitacoes(id_processo: int, limite: int) -> dict:
 
 async def caixas_e_historico_paj(id_processo: str, limite: int = 10) -> dict:
     """Mesmo retorno de sisdpu_movtram.caixas_e_historico_paj (painel "Caixas
-    onde o PAJ está aberto"), pelo MCP. ~`limite` registros; cache de 10 min
-    porque a página do PAJ consulta isto a cada abertura."""
+    onde o PAJ está aberto"), pelo MCP. ~`limite` registros; cache curto
+    (_CACHE_TRAMITES_SEG) porque a página do PAJ consulta isto a cada abertura —
+    e apagado a cada gravação do painel no PAJ (invalidar_tramites)."""
     import time as _t
     if not id_processo:
         return {"ok": False, "abertas": [], "tramitacoes": [], "erro": "id_processo ausente."}
     chave = (int(id_processo), limite)
     em_cache = _cache_tramites.get(chave)
-    if em_cache and _t.monotonic() - em_cache[0] < 600:
+    if em_cache and _t.monotonic() - em_cache[0] < _CACHE_TRAMITES_SEG:
         return em_cache[1]
     try:
         res = await asyncio.to_thread(_tramitacoes, int(id_processo), limite)
