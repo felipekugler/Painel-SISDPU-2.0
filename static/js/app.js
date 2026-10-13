@@ -755,7 +755,12 @@ function concluirPajModalApp(pajNorm, idProcesso, paj, idTramite) {
             }
 
             if (this.tramitacoes.length <= 1) {
-                concluirPajCaixa(this.pajNorm, this.idProcesso, this.paj, this.idTramite);
+                // O trâmite que a conferência ao vivo ACABOU de ler (o "trâmite de
+                // trabalho" da página pode estar vazio/desatualizado — bug real
+                // 13/10/2026, PAJ 2026/029-02727: aviso "não está com trâmite
+                // pendente" com o trâmite aberto na caixa).
+                const idLido = (this.tramitacoes[0] || {}).id_tramite || this.idTramite;
+                concluirPajCaixa(this.pajNorm, this.idProcesso, this.paj, idLido);
                 return;
             }
             // Pré-marca o "trâmite de trabalho" (o mesmo usado por Ações no

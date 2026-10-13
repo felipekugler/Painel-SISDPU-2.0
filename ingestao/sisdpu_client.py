@@ -278,8 +278,15 @@ async def _login() -> None:
                 from services import conexao_service
                 conexao_service.marcar_erro("O SISDPU recusou o usuário/senha.")
             raise CredenciaisInvalidas(msg_recusa[:200]) from None
-        # Nao foi login fail explicito — repropaga como timeout.
-        raise
+        # Nao foi login fail explicito: diz ONDE o SISDPU parou (endereço + texto
+        # da tela) em vez de só "Timeout 15000ms" — ex.: aviso, troca de senha,
+        # seleção de unidade, lentidão (13/10/2026).
+        tela = ""
+        with contextlib.suppress(Exception):
+            tela = " ".join((await page.evaluate("document.body.innerText") or "").split())[:300]
+        raise TimeoutError(
+            f"O login no SISDPU não chegou à caixa de entrada em 15 s. Página atual: {page.url}"
+            + (f" — tela: {tela}" if tela else "")) from None
     # Login OK — sessão saudável; limpa qualquer conflito/erro anterior.
     with contextlib.suppress(Exception):
         from services import conexao_service
