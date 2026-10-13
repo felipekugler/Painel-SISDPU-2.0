@@ -59,6 +59,32 @@ def _log_passo(passos: list, msg: str) -> None:
     passos.append({"hora": datetime.now().strftime("%H:%M:%S"), "msg": msg})
 
 
+async def _marcar_radio(page, rid: str) -> bool:
+    """Radio do e-proc no estilo Bootstrap (`custom-control-input`): o input
+    fica sob o rótulo desenhado, e o `check()` do Playwright esperava 30 s pelo
+    clique que o rótulo interceptava (TimeoutError visto em 13/10/2026). Clica
+    no RÓTULO, como uma pessoa; se não pegar, clique forçado no input e, por
+    último, o clique pela própria página. Confere o resultado."""
+    campo = page.locator(f"#{rid}")
+    marcado = lambda: campo.is_checked()  # noqa: E731
+    with contextlib.suppress(Exception):
+        await page.locator(f"label[for='{rid}']").first.click(timeout=5000)
+    with contextlib.suppress(Exception):
+        if await marcado():
+            return True
+    with contextlib.suppress(Exception):
+        await campo.check(force=True, timeout=5000)
+    with contextlib.suppress(Exception):
+        if await marcado():
+            return True
+    with contextlib.suppress(Exception):
+        await page.evaluate("""(id) => { const el = document.getElementById(id);
+            if (el && !el.checked) el.click(); }""", rid)
+    with contextlib.suppress(Exception):
+        return await marcado()
+    return False
+
+
 async def _titulo(page) -> str:
     with contextlib.suppress(Exception):
         return await page.title()
@@ -364,7 +390,8 @@ async def _etapa3_partes(page, d: dict, passos: list) -> str:
     # Radios DEPOIS do Consultar (ele reseta justiça gratuita/representante).
     for rid in ("rdoJusticaGratuitaSim", "rdoPossuiRepresentanteNao", "rdoAutorInternacaoHospNao",
                 "rdoAutorPresoNao", "rdoRetencaoHonorarioContratualNao"):
-        await page.locator(f"#{rid}").check()
+        if not await _marcar_radio(page, rid):
+            return f"Não foi possível marcar a opção {rid} na página de Partes."
 
     await _digitar(page, "#txtNumeroBeneficio", d["nb"])
 
@@ -460,7 +487,7 @@ async def preparar(plano: dict) -> dict:
 
             ia = page.locator("#btnPredicao")
             if await ia.count() and not await ia.is_checked():
-                await ia.check()
+                await _marcar_radio(page, "btnPredicao")  # mesmo cuidado dos controles estilizados
             _log_passo(passos, "Apoio por Inteligência Artificial ligado.")
 
             res = await _limpar_documentos_pendentes(page, passos)

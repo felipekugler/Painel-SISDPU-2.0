@@ -70,6 +70,8 @@ ESPECIALIDADES = [
 # tipo de documento do e-proc. ORDEM IMPORTA (primeira regra que casar vence).
 REGRAS_TIPO = [
     (r"peticao inicial", "PETIÇÃO INICIAL"),
+    # Antes da identidade: "CTPS e RG" é a carteira de trabalho (pedido do Defensor, 13/10/2026)
+    (r"carteira de trabalho|\bctps\b", "CARTEIRA DE TRABALHO - CTPS"),
     (r"\brg\b|\bcpf\b|identidade|\bcnh\b|documento de identifica", "CARTEIRA DE IDENTIDADE"),
     (r"comprovante de residencia|comprovante de endereco", "COMPROVANTE DE RESIDÊNCIA"),
     (r"outorga|procuracao", "PROCURAÇÃO"),
