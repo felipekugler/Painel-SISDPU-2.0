@@ -161,6 +161,67 @@ def _invalidar_caches(id_processo: int) -> None:
     sisdpu2_fonte.invalidar_cache_caixa()
 
 
+async def cadastrar_processo_judicial(paj_num: str, numero: str, instancia: int = 1) -> dict:
+    """Depois da petição inicial (pedido do Defensor, 13/10/2026): vincula o
+    processo judicial ao PAJ e sincroniza com o tribunal — o SIS-DPU 2.0 grava
+    número, órgão julgador (juízo), autuação, classe, valor e partes. Cada passo
+    com a SUA ficha no modal de confirmação. Se o processo já estiver vinculado,
+    só sincroniza. A chave de consulta NÃO tem campo no MCP (pedido à TI) e segue
+    só na descrição da movimentação "Petição inicial"."""
+    base = {"fonte": "mcp-sisdpu2", "cadastrado": False, "sincronizado": False}
+    digitos = re.sub(r"\D", "", numero or "")
+    if len(digitos) != 20:
+        return {**base, "ok": False, "detalhe": f"Número de processo inválido: {numero!r}"}
+    try:
+        idp = await _id_processo({"numero": paj_num})
+
+        async def _vinculo():
+            vs = await asyncio.to_thread(sis2.chamar, "paj_processos_judiciais", {"idProcesso": idp})
+            return next((v for v in (vs or []) if re.sub(r"\D", "", str(v.get("numeroProcessoJudicial"))) == digitos), None)
+
+        vinc = await _vinculo()
+        if not vinc:
+            args = {"idProcesso": idp, "numero": numero, "instancia": int(instancia)}
+            ficha = await asyncio.to_thread(sis2.chamar_escrita, "processo_judicial_cadastrar_preparar", args)
+            ficha_txt = ficha if isinstance(ficha, str) else str(ficha)
+            token = re.search(r"Token de confirma\w*:\s*([0-9a-f]+)", ficha_txt, re.I)
+            if not token:
+                return {**base, "ok": False,
+                        "detalhe": f"O SIS-DPU 2.0 recusou o cadastro: {aprov.ficha_para_exibir(ficha_txt)[:600]}"}
+            resposta = await _aprovar("processo_judicial", paj_num, ficha_txt, {})
+            if not resposta:
+                return {**base, "ok": False, "detalhe": "Cadastro do processo judicial NÃO confirmado pelo Defensor."}
+            await asyncio.to_thread(sis2.chamar_escrita, "processo_judicial_cadastrar_confirmar",
+                                    {**args, "token": token.group(1), "confirmacao": resposta})
+            base["cadastrado"] = True
+            vinc = await _vinculo()
+            if not vinc:
+                return {**base, "ok": False, "detalhe": "Cadastro confirmado, mas o vínculo não apareceu no PAJ — confira."}
+
+        ficha = await asyncio.to_thread(sis2.chamar_escrita, "processo_judicial_sincronizar_preparar",
+                                        {"idVinculo": int(vinc["id"])})
+        ficha_txt = ficha if isinstance(ficha, str) else str(ficha)
+        token = re.search(r"Token de confirma\w*:\s*([0-9a-f]+)", ficha_txt, re.I)
+        if not token:
+            return {**base, "ok": False,
+                    "detalhe": f"O SIS-DPU 2.0 recusou a sincronização: {aprov.ficha_para_exibir(ficha_txt)[:600]}"}
+        resposta = await _aprovar("sincronizacao", paj_num, ficha_txt, {})
+        if not resposta:
+            return {**base, "ok": False, "detalhe": "Sincronização com o tribunal NÃO confirmada pelo Defensor."}
+        r = await asyncio.to_thread(sis2.chamar_escrita, "processo_judicial_sincronizar_confirmar",
+                                    {"idVinculo": int(vinc["id"]), "token": token.group(1), "confirmacao": resposta})
+        _invalidar_caches(idp)
+        vinc = await _vinculo() or vinc
+        msg = (r or {}).get("mensagem") if isinstance(r, dict) else str(r)
+        return {**base, "ok": True, "sincronizado": bool((r or {}).get("sincronizado", True)) if isinstance(r, dict) else True,
+                "juizo": vinc.get("juizo"), "id_vinculo": vinc.get("id"),
+                "detalhe": msg or "Processo judicial sincronizado com o tribunal."}
+    except sis2.Sisdpu2LoginNecessario:
+        return {**base, "ok": False, "detalhe": "Sessão do SIS-DPU 2.0 encerrada — reconecte e repita o cadastro do processo."}
+    except Exception as e:  # noqa: BLE001
+        return {**base, "ok": False, "detalhe": f"{type(e).__name__}: {e}"[:400]}
+
+
 async def _total_movimentacoes(id_processo: int) -> Optional[int]:
     try:
         capa = await asyncio.to_thread(sis2.chamar, "paj_capa", {"idProcesso": id_processo})

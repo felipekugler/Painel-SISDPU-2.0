@@ -138,8 +138,28 @@ function peticaoInicialApp(pajNorm, pajLabel) {
                 this.posLog.push({ ok: false, msg: 'Gerenciamento falhou (rede): ' + e });
             }
 
-            // 3) movimentação no SISDPU pelo console "Ações no SISDPU" da página
+            // 3) processo judicial no PAJ (SIS-DPU 2.0): cadastro + sincronização com o
+            //    tribunal, cada um com a sua ficha no modal de confirmação.
+            if (window.PAINEL_FONTE_SISDPU_MCP) await this._cadastrarProcessoJudicial(r);
+
+            // 4) movimentação no SISDPU pelo console "Ações no SISDPU" da página
             await this._movimentarSisdpu(r);
+        },
+
+        async _cadastrarProcessoJudicial(r) {
+            this.posLog.push({ ok: null, msg: 'Cadastrando o processo ' + r.numero + ' no PAJ e sincronizando com o tribunal (SIS-DPU 2.0)…' });
+            let c;
+            try {
+                c = await (await fetch('/api/sisdpu2/processo-judicial/cadastrar', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ paj_label: pajLabel, numero: r.numero, instancia: 1 }),
+                })).json();
+            } catch (e) { c = { ok: false, detalhe: 'Erro de rede: ' + e }; }
+            this.posLog.pop();
+            this.posLog.push({ ok: !!c.ok,
+                msg: c.ok ? 'Processo judicial ' + (c.cadastrado ? 'cadastrado e ' : '') + 'sincronizado no PAJ'
+                            + (c.juizo ? ' — ' + c.juizo : '') + '. ' + (c.detalhe || '')
+                          : 'Processo judicial no PAJ: ' + (c.detalhe || 'falhou') + ' — dá para cadastrar pela tela do SISDPU.' });
         },
 
         async _movimentarSisdpu(r) {

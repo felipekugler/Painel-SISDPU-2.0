@@ -403,8 +403,12 @@ def _ler_resposta(r: httpx.Response, req_id: int) -> dict:
 _TOOLS_ESCRITA = {
     "movimentacao_preparar", "movimentacao_confirmar", "movimentacao_anexo_guardar",
     "tramite_interno_preparar", "tramite_interno_confirmar",
+    # processo judicial no PAJ após a petição inicial (13/10/2026)
+    "processo_judicial_cadastrar_preparar", "processo_judicial_cadastrar_confirmar",
+    "processo_judicial_sincronizar_preparar", "processo_judicial_sincronizar_confirmar",
 }
-_TOOLS_ESCRITA_SEM_REPETIR = {"movimentacao_confirmar", "movimentacao_anexo_guardar", "tramite_interno_confirmar"}
+_TOOLS_ESCRITA_SEM_REPETIR = {"movimentacao_confirmar", "movimentacao_anexo_guardar", "tramite_interno_confirmar",
+                              "processo_judicial_cadastrar_confirmar", "processo_judicial_sincronizar_confirmar"}
 
 
 def chamar_escrita(nome: str, args: Optional[dict] = None, timeout: float = 180) -> Any:
