@@ -14,7 +14,8 @@
     /* Toast único e atualizável (não empilha um por etapa): azul com indicador
      * girando enquanto lê, verde ao terminar (some em 5 s), vermelho em erro
      * (fica até o próximo status). */
-    function selo(texto, tom) {
+    // `acao` (opcional): {rotulo, fn} — botão no próprio toast (ex.: "Interromper").
+    function selo(texto, tom, acao) {
         const container = document.getElementById('toast-container');
         if (!container) return;
         let el = document.getElementById('ao-vivo-selo');
@@ -28,6 +29,14 @@
         el.className = 'alert ' + classe + ' text-sm py-2 px-4 shadow-lg';
         el.innerHTML = (tom ? '' : '<span class="loading loading-spinner loading-xs"></span>') + '<span></span>';
         el.lastChild.textContent = texto;
+        if (acao) {
+            const b = document.createElement('button');
+            b.type = 'button';
+            b.className = 'btn btn-xs';
+            b.textContent = acao.rotulo;
+            b.onclick = function () { b.disabled = true; acao.fn(); };
+            el.appendChild(b);
+        }
         el.style.opacity = '1';
         clearTimeout(sumir);
         if (tom === 'ok') {
@@ -64,6 +73,53 @@
             + 'COMPLETO deste PAJ (~1 registro por movimentação do limite diário). ' + usado + '\n\nContinuar?');
     };
 
+    /* Abrir o PAJ baixa pelo MCP TODOS os documentos que faltam na pasta (em
+     * segundo plano no servidor) — o PAJ fica sempre em dia para as análises
+     * (decisão do Defensor, 13/10/2026, revendo a de 11/10). Acompanha o
+     * andamento; terminando com arquivo novo, atualiza a tabela de documentos. */
+    async function baixarAnexos(pajNorm) {
+        try { if (sessionStorage.getItem('ao-vivo-anexos-interrompido-' + pajNorm)) return; } catch (e) {}
+        const base = '/api/sisdpu2/ao-vivo/paj/' + encodeURIComponent(pajNorm) + '/anexos';
+        let r;
+        try { r = await postar(base); } catch (e) { return; }
+        if (!r || !r.ok || (!r.iniciado && r.motivo !== 'em_andamento')) return;
+        const chave = 'ao-vivo-anexos-' + pajNorm;
+        for (let i = 0; i < 900; i++) {  // até ~30 min
+            await new Promise(function (ok) { setTimeout(ok, 2000); });
+            let p;
+            try { p = await (await fetch(base)).json(); } catch (e) { continue; }
+            const pr = p.progresso || {};
+            if (p.rodando) {
+                selo('SIS-DPU 2.0 — baixando anexos'
+                    + (pr.total ? ' ' + (pr.feitos || 0) + '/' + pr.total : '') + '…', null,
+                    { rotulo: 'Interromper', fn: function () {
+                        // Nesta aba, reabrir o PAJ não recomeça o download sozinho; a
+                        // análise com IA ainda baixa o que faltar antes de rodar.
+                        try { sessionStorage.setItem('ao-vivo-anexos-interrompido-' + pajNorm, '1'); } catch (e) {}
+                        postar(base + '/interromper').catch(function () {});
+                    } });
+                continue;
+            }
+            if (p.interrompido) {
+                selo('SIS-DPU 2.0 — download interrompido (' + (pr.baixados || 0) + ' baixado(s)); '
+                    + 'o restante é baixado antes de uma análise com IA', 'ok');
+                if ((pr.baixados || 0) > 0) window.dispatchEvent(new CustomEvent('anexos-paj-atualizados'));
+                return;
+            }
+            const res = p.resultado || {};
+            const novos = pr.baixados != null ? pr.baixados : (res.baixados || 0);  // progresso = só os novos
+            if ((res.erros || []).length) {
+                selo('SIS-DPU 2.0 — anexos: ' + novos + ' baixado(s), ' + res.erros.length + ' com erro', 'erro');
+            } else {
+                selo('SIS-DPU 2.0 — anexos em dia', 'ok');
+            }
+            // Arquivos novos: a tabela de documentos se atualiza no lugar (sem
+            // recarregar a página inteira) — static/js/movimentacoes.js.
+            if (novos > 0) window.dispatchEvent(new CustomEvent('anexos-paj-atualizados'));
+            return;
+        }
+    }
+
     async function iniciar() {
         let estado;
         try { estado = await (await fetch('/api/sisdpu2/ao-vivo/estado')).json(); } catch (e) { return; }
@@ -79,6 +135,10 @@
             const recemRecarregado = Date.now() - Number(sessionStorage.getItem(chave) || 0) < 60000;
             if (recemRecarregado) {
                 selo('SIS-DPU 2.0 — PAJ atualizado', 'ok');
+                // Anexos já baixados logo antes de abrir (pós-gravação, app.js:
+                // releituraPosGravacaoMcp) — não confere de novo.
+                const anexosEmDia = Date.now() - Number(sessionStorage.getItem('ao-vivo-anexos-em-dia-' + pajNorm) || 0) < 60000;
+                if (!anexosEmDia) await baixarAnexos(pajNorm);
                 return;
             }
             selo('SIS-DPU 2.0 — atualizando o PAJ…');
@@ -88,7 +148,7 @@
                     sessionStorage.setItem(chave, String(Date.now()));
                     selo('SIS-DPU 2.0 — novidades no PAJ, recarregando…');
                     setTimeout(function () { window.location.reload(); }, 600);
-                    return;
+                    return;  // os anexos são baixados depois do recarregamento
                 } else if (r.ok) {
                     selo('SIS-DPU 2.0 — PAJ em dia', 'ok');
                 } else if (r.motivo === 'sincronizacao_em_andamento') {
@@ -99,10 +159,7 @@
             } catch (e) {
                 selo('SIS-DPU 2.0 — falha de rede ao atualizar', 'erro');
             }
-            // Abrir o PAJ NÃO baixa os documentos (pedido do Defensor, 11/10/2026:
-            // gastava chamadas e disco em PAJ que nem ia ser trabalhado). A tabela
-            // mostra a relação; baixa-se por seleção ("Baixar selecionados" /
-            // "Baixar todos" da seq) ou pela sincronização completa.
+            await baixarAnexos(pajNorm);
             return;
         }
 

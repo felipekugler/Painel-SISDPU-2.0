@@ -450,6 +450,14 @@ def iniciar(paj_norm: str, forcar: bool = False) -> dict:
         # documento-por-documento da skill não trabalhar com texto
         # incompleto. Idempotente e best-effort; pula se a cota está
         # esgotada (a organização também falharia).
+        # Documentos do PAJ conferidos ANTES da análise (decisão do Defensor,
+        # 13/10/2026): baixa o que faltar e extrai o texto (OCR) do que estiver
+        # sem — services/preparo_documentos_service. Best-effort.
+        with contextlib.suppress(Exception):
+            from services.preparo_documentos_service import preparar_documentos_paj
+
+            session.last_action = "conferindo os documentos do PAJ (download e OCR)…"
+            preparar_documentos_paj(paj_norm)
         with contextlib.suppress(Exception):
             import services.cota_service as _cota_chk
 

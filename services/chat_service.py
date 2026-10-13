@@ -308,6 +308,14 @@ class ChatSession:
 
         # --- Fluxo normal (do zero) ---
         prompt_path = PAJS_DIR / self.paj_norm / "PROMPT_MAX.md"
+        # Documentos do PAJ conferidos ANTES da análise (decisão do Defensor,
+        # 13/10/2026): baixa o que faltar e extrai o texto (OCR) do que estiver
+        # sem — services/preparo_documentos_service. Best-effort.
+        with contextlib.suppress(Exception):
+            from services.preparo_documentos_service import preparar_documentos_paj
+
+            self.last_action = "conferindo os documentos do PAJ (download e OCR)…"
+            preparar_documentos_paj(self.paj_norm)
         # Fallback OCR-LLM: ANTES de montar o prompt, transcreve com Sonnet (por
         # visao) os anexos cujo OCR local ficou fraco/ausente, pra o Opus ler o
         # texto melhorado em vez de abrir o PDF com visao toda vez. Idempotente e

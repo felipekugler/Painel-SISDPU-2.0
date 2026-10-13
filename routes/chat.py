@@ -223,7 +223,9 @@ async def chat_websocket(websocket: WebSocket, paj_norm: str):
 
     session = get_or_create_session(paj_norm)
     if not session.is_alive():
-        session.start()
+        # start() agora confere/baixa/faz OCR dos documentos antes (pode levar
+        # minutos) — fora do laço do servidor, para não travar o painel.
+        await asyncio.to_thread(session.start)
 
     try:
 

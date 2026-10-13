@@ -578,6 +578,9 @@ async def caixas_e_historico_paj(id_processo: str, limite: int = 10) -> dict:
 
 # Progresso por pasta de destino, para a página do PAJ mostrar "baixando 3/10".
 PROGRESSO_DOWNLOAD: dict[str, dict] = {}
+# Pastas cujo download foi interrompido pelo Defensor (toast "Interromper"): o
+# laço de baixar_todos_arquivos para antes do próximo arquivo.
+INTERROMPER_DOWNLOAD: set[str] = set()
 
 _GRAVADOR = (
     "import os,sys\n"
@@ -641,7 +644,14 @@ async def baixar_todos_arquivos(pasta_destino, lista_arquivos: list[dict], log=N
     baixados = pulados = 0
     erros: list[str] = []
     try:
+        INTERROMPER_DOWNLOAD.discard(str(pasta))
         for item in lista_arquivos:
+            if str(pasta) in INTERROMPER_DOWNLOAD:
+                INTERROMPER_DOWNLOAD.discard(str(pasta))
+                prog["interrompido"] = True
+                if log:
+                    log("  [mcp] download interrompido pelo Defensor")
+                break
             href = item.get("href") or ""
             nome = item.get("nomeArq") or "arquivo"
             m = re.search(r"/(\d+)/[^/]*$", href)

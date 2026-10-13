@@ -246,6 +246,17 @@ async def baixar_anexos_paj(paj_norm: str) -> dict:
     return {"ok": True, "iniciado": True, "faltam": faltam}
 
 
+def interromper_anexos(paj_norm: str) -> dict:
+    """Pedido do Defensor (toast "Interromper"): o download em andamento para
+    antes do próximo arquivo. Os já baixados ficam."""
+    atual = _downloads.get(paj_norm)
+    if not atual or not atual.get("rodando"):
+        return {"ok": True, "interrompido": False, "motivo": "nada_em_andamento"}
+    fonte.INTERROMPER_DOWNLOAD.add(str(PAJS_DIR / paj_norm / "Arquivos"))
+    atual["interrompido"] = True
+    return {"ok": True, "interrompido": True}
+
+
 def progresso_anexos(paj_norm: str) -> dict:
     est = dict(_downloads.get(paj_norm) or {})
     prog = fonte.PROGRESSO_DOWNLOAD.get(str(PAJS_DIR / paj_norm / "Arquivos")) or {}

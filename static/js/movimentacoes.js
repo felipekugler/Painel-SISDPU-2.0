@@ -327,6 +327,16 @@ function tabelaMovimentacoes() {
             }
         },
 
+        // Documentos que chegaram à pasta em segundo plano (download ao abrir o
+        // PAJ, ver static/js/ao_vivo.js): relê só a lista LOCAL — sem MCP.
+        async recarregarAnexosLocais() {
+            if (!this.pajNorm) return;
+            try {
+                const d = await (await fetch('/api/paj/' + encodeURIComponent(this.pajNorm) + '/movimentacoes')).json();
+                if (d && d.ok !== false && d.anexos_sisdpu) { this.anexos = d.anexos_sisdpu; this.__mapaArquivoLocal = null; }
+            } catch (e) { /* segue com a lista atual */ }
+        },
+
         // Abre/fecha o minimenu do clipe de anexo pra `mov` (chamado pelo
         // @click do botão-clipe, ver movimentacoes_tabela.html). Reposiciona
         // sempre no `$el` do botão clicado — mesmo padrão de posMenu em
