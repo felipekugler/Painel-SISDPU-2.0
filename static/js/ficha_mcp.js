@@ -26,7 +26,7 @@
         fundo.addEventListener('cancel', function (e) { e.preventDefault(); });  // Esc não responde por você
         fundo.innerHTML =
             // Só os dados que serão gravados (pedido do Defensor, 11/10/2026).
-            '<div class="modal-box max-w-3xl max-h-[88vh] flex flex-col p-0">'
+            '<div class="modal-box w-[70vw] max-w-[70vw] max-h-[88vh] flex flex-col p-0">'
             + '  <div class="px-6 pt-5 pb-3 border-b border-base-300 shrink-0">'
             + '    <h3 id="ficha-mcp-titulo" class="font-bold text-lg"></h3>'
             + '  </div>'

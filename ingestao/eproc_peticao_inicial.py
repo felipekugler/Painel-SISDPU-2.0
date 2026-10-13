@@ -42,7 +42,9 @@ _ACAO_ETAPA4 = "processo_cadastrar_4"
 # Mesmo `_JS_CLICAR_LINK_EXATO` do eproc_client, mas por textContent (o menu
 # lateral pode estar recolhido — innerText de elemento oculto é vazio).
 _JS_CLICAR_MENU = r"""(alvo)=>{
-  const norm=s=>(s||'').replace(/\s+/g,' ').trim();
+  // Ignora os nomes de ícone que o e-proc põe dentro do link (ex.: "Petição
+  // Inicial arrow_drop_down" — menu virou suspenso, visto em 13/10/2026).
+  const norm=s=>(s||'').replace(/\b[a-z]+(?:_[a-z]+)+\b/g,' ').replace(/\s+/g,' ').trim();
   const el=[...document.querySelectorAll('a')].find(a=>norm(a.textContent)===alvo);
   if(el){el.click(); return true;} return false;
 }"""
@@ -441,8 +443,12 @@ async def preparar(plano: dict) -> dict:
                 await p.close()
         page = await ctx.new_page()
         try:
-            await page.goto(ec.EPROC_INTERNO, wait_until="domcontentloaded", timeout=30000)
-            await page.wait_for_timeout(1000)
+            # Painel do Procurador pelo link assinado (o menu completo, com
+            # "Petição Inicial", não está na tela de erro de `controlador.php`
+            # puro); sessão caída = entra sozinho (credenciais do MCP do e-proc).
+            await ec._ir_para_inicio(page, 1000)
+            if not ec._status_dict(page.url)["logado"] and await ec._garantir_login(page):
+                await ec._ir_para_inicio(page, 1000)
             if not ec._status_dict(page.url)["logado"]:
                 return {"ok": False, "passos": passos,
                         "erro": "Sessão do e-proc não está logada — clique no selo do e-proc (topo) para entrar e tente de novo."}
