@@ -378,11 +378,11 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
             "pretensaopura": metadata.get("pretensaopura", ""),
             "data_caixa": _data_caixa,
             # Descricao do tramite da caixa de entrada (coluna "Descricao" do
-            # dashboard). Fonte primaria: desc_mov_caixa (gravado pelo sync a
-            # partir da linha da caixa). Fallback ate o proximo sync: descricao
-            # da ultima movimentacao, com HTML removido.
-            "desc_caixa": (metadata.get("desc_mov_caixa") or "").strip()
-            or _strip_html(ultima_mov.get("descricao") or "")[:300],
+            # dashboard): EXCLUSIVAMENTE a descricao do tramite enviada pelo
+            # SIS-DPU (desc_mov_caixa, gravada pelo sync a partir da linha da
+            # caixa). Sem reserva — decisao do Defensor 12/10/2026 (antes caia na
+            # ultima movimentacao e mostrava texto que nao era do tramite).
+            "desc_caixa": (metadata.get("desc_mov_caixa") or "").strip(),
             # Todas as tramitações GERAIS pendentes na caixa deste PAJ (pode
             # ser mais de uma — comum no SISDPU) — cada uma com seu próprio
             # id_tramite, pra concluir individualmente. Lista vazia = PAJ
@@ -786,22 +786,31 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
     status = (resultado or {}).get("status")
     ok = bool((resultado or {}).get("ok"))
     ja_ausente = status == "ja_ausente"
-    if not (ok or ja_ausente):
+    # FILA (acoes_sisdpu.js: executarFila): o resultado final só traz os índices
+    # concluídos — o frontend repassa em "itens" o que cada item efetivado fez
+    # (fase/tramitado_para/concluido/descrição). Uma fila interrompida no meio
+    # (ok=False) ainda tem itens efetivados a registrar. Bug real 2026-10-11: a
+    # fila não deixava nenhuma entrada do SISDPU no Histórico.
+    itens_fila = (resultado or {}).get("itens") if (resultado or {}).get("fila") else None
+    itens_fila = [i for i in itens_fila if isinstance(i, dict)] if isinstance(itens_fila, list) else None
+    if not (ok or ja_ausente or itens_fila):
         return {"ok": False, "detalhe": "Execução sem êxito — nada a registrar."}
 
     metadata = _ler_json(meta_path) or {}
-    fase = ((resultado or {}).get("fase") or "").strip()
     concluido = bool((resultado or {}).get("concluido"))
-    tram_caixa = (resultado or {}).get("tramitado_para") or ""
-    # "descricao_mov_texto" (TEXTO PURO, sem tags) é preferida pro Histórico — a
-    # movimentação pode ser HTML de verdade (editor rico Quill); os demais campos
-    # só entram como fallback de compatibilidade.
-    descricao_final = ((resultado or {}).get("descricao_mov_texto") or (resultado or {}).get("descricao_mov")
-                        or (resultado or {}).get("descricao_tram") or "").strip()
 
-    algo_efetivado = bool(concluido or tram_caixa or fase)
-    if algo_efetivado:
-        if concluido:
+    def _registrar_historico(res: dict) -> None:
+        fase = (res.get("fase") or "").strip()
+        concl = bool(res.get("concluido"))
+        tram_caixa = res.get("tramitado_para") or ""
+        # "descricao_mov_texto" (TEXTO PURO, sem tags) é preferida pro Histórico — a
+        # movimentação pode ser HTML de verdade (editor rico Quill); os demais campos
+        # só entram como fallback de compatibilidade.
+        descricao_final = (res.get("descricao_mov_texto") or res.get("descricao_mov")
+                           or res.get("descricao_tram") or "").strip()
+        if not (concl or tram_caixa or fase):
+            return
+        if concl:
             atividade = "Conclusão do PAJ na Caixa de Entrada"
         elif tram_caixa:
             atividade = "Tramitação do PAJ na Caixa de Entrada"
@@ -816,8 +825,14 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
             "assistido": metadata.get("assistido_caixa", ""),
             "origem": "paj", "atividade": atividade,
             "movimentacao": fase or "—", "tramitado_para": tram_caixa,
-            "concluido": concluido, "detalhe": descricao_final[:300],
+            "concluido": concl, "detalhe": descricao_final[:300],
         })
+
+    if itens_fila is not None:
+        for item in itens_fila:
+            _registrar_historico(item)
+    else:
+        _registrar_historico(resultado or {})
 
     saiu_da_caixa = False
     outros_tramites_abertos = 0

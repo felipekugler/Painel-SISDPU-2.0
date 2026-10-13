@@ -878,6 +878,32 @@ async def _processar_paj(
     )
 
 
+def _atualizar_linha_caixa(meta_path, item: dict) -> None:
+    """PAJ pulado na sync da caixa (sem trâmite novo): mesmo assim grava a
+    descrição e a data do trâmite exatamente como vieram na linha da caixa do
+    SIS-DPU (colunas "Descrição"/"Data" do dashboard) — custo zero, a caixa já
+    foi lida. Só escreve se mudou."""
+    try:
+        meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 — sem metadata, a próxima sync completa grava
+        return
+    mudou = False
+    if "desc" in item or "descricao" in item:
+        desc = ((item.get("desc") if "desc" in item else item.get("descricao")) or "").strip()[:500]
+        if meta.get("desc_mov_caixa") != desc:
+            meta["desc_mov_caixa"] = desc
+            mudou = True
+    data_iso = parser.parse_data_br(item.get("data") or "")
+    if data_iso and meta.get("data_mov_caixa") != data_iso:
+        meta["data_mov_caixa"] = data_iso
+        mudou = True
+    if mudou:
+        try:
+            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+        except Exception:  # noqa: BLE001
+            pass
+
+
 async def _processar_paj_pos_detalhamento(
     item: dict,
     det: dict,
@@ -1181,9 +1207,12 @@ async def _processar_paj_pos_detalhamento(
         # Descricao do tramite como aparece na caixa de entrada (coluna "Descricao"
         # do dashboard). Vem da linha da caixa (item.desc / item.descricao); o parser
         # de sisdpu.txt deixa desc_mov_caixa vazio no fluxo atual, entao gravamos aqui.
-        desc_caixa = (item.get("desc") or item.get("descricao") or "").strip()
-        if desc_caixa:
-            metadata["desc_mov_caixa"] = desc_caixa[:500]
+        # Só o que o SIS-DPU enviou na linha da caixa. Item sem a linha (releitura
+        # do PAJ pela busca global) mantém o valor já gravado — nunca outro texto.
+        if "desc" in item or "descricao" in item:
+            metadata["desc_mov_caixa"] = ((item.get("desc") if "desc" in item else item.get("descricao")) or "").strip()[:500]
+        elif "desc_mov_caixa" in meta_antiga:
+            metadata["desc_mov_caixa"] = meta_antiga["desc_mov_caixa"]
         # Data do tramite que esta na caixa de entrada (data da linha da caixa).
         # Substitui o fallback do parser do sisdpu.txt (que caia na data de
         # ABERTURA). Convertida p/ ISO (YYYY-MM-DD) — e' a "Data" do dashboard.
@@ -1871,6 +1900,7 @@ async def rodar(
                             pulou = True
 
         if pulou:
+            _atualizar_linha_caixa(PAJS_DIR / paj_norm_item / "metadata.json", item)
             log(f"[{i}/{len(itens)}] {item.get('paj', '?')} — sem tramitação nova desde a última sync, pulado")
             pajs_na_caixa.add(paj_norm_item)
             vistos.add(paj_norm_item)

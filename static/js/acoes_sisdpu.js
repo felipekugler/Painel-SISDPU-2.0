@@ -1028,12 +1028,16 @@ function acoesSisdpuBlock(cfg) {
                 }))),
             });
             const es = new EventSource('/api/acoes-sisdpu/executar-fila?' + qs.toString());
+            // Resultado de cada item (evento item_done), por índice do lote — o 'done' da
+            // fila só traz os índices concluídos, sem tramitado_para/concluido de cada um.
+            const resultadosItens = {};
             es.addEventListener('log', (ev) => {
                 try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {}
                 this.$nextTick(() => { const b = this.$refs.acoesSisdpuSseBox; if (b) b.scrollTop = b.scrollHeight; });
             });
             es.addEventListener('item_done', async (ev) => {
                 let d = {}; try { d = JSON.parse(ev.data); } catch (e) {}
+                if (typeof d.index === 'number') resultadosItens[d.index] = d.resultado || {};
                 if (d.ok && typeof d.index === 'number' && lote[d.index]) {
                     const pos = this.fila.indexOf(lote[d.index]);
                     if (pos >= 0) this.fila.splice(pos, 1);
@@ -1055,7 +1059,22 @@ function acoesSisdpuBlock(cfg) {
                     // abre uma vez só, já em dia.
                     if (!window.PAINEL_FONTE_SISDPU_MCP) this.sseAberto = false;
                 }
-                await this.onExecutado({ ...res, fila: true }, this._progressoPos());
+                // Um item por movimentação efetivada (itens_concluidos), com o que foi
+                // executado — pro Histórico do painel registrar uma entrada por item
+                // (ver paj_service.registrar_pos_execucao_sisdpu).
+                const itens = (res.itens_concluidos || []).filter((i) => lote[i]).map((i) => {
+                    const it = lote[i], r = resultadosItens[i] || {};
+                    const desc = it.descricao_mov || '';
+                    return {
+                        fase: it.fase || '', grupo: it.grupo || '',
+                        descricao_mov_texto: it.descricao_mov_html ? htmlParaTextoSimples(desc) : desc,
+                        descricao_tram: it.descricao_tram || '',
+                        tramitado_para: r.tramitado_para || '',
+                        concluido: !!r.concluido, concluidos: r.concluidos || [],
+                        status: r.status || '',
+                    };
+                });
+                await this.onExecutado({ ...res, fila: true, itens }, this._progressoPos());
                 if (res.ok) { if (res.paj_na_lixeira) window.location.href = '/'; else if (this.aposExecutarIrPara) window.location.href = this.aposExecutarIrPara; else window.location.reload(); }
             });
             es.onerror = () => {
