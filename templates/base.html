@@ -1748,7 +1748,22 @@
             // na hora (pedido do Defensor, 11/10/2026).
             var usaNavSisdpu = !{{ 'true' if fonte_mcp_sisdpu() else 'false' }};
             var usaNavEproc = !{{ 'true' if eproc_intimacoes_mcp else 'false' }};
-            if (!usaNavSisdpu && !usaNavEproc) { window.atualizarSelos(); return; }
+            if (!usaNavSisdpu && !usaNavEproc) {
+                // Cofre destrancado JÁ AO ABRIR (pedido do Defensor, 13/10/2026):
+                // funções que dependem de credencial (concluir trâmite no SISDPU
+                // antigo, e-Sisrec/SAT, petição pelo e-proc…) falhavam com o cofre
+                // trancado. Só destranca — nenhuma conexão por navegador aqui.
+                // Cancelado = não insiste a cada página nesta sessão do navegador.
+                var stMcp = await _lerCofre();
+                var recusou = false;
+                try { recusou = sessionStorage.getItem('cofre-recusado-ao-abrir') === '1'; } catch (e) {}
+                if (stMcp.configurado && !stMcp.destrancado && !recusou) {
+                    var okMcp = await window.abrirModalCofre();
+                    if (!okMcp) { try { sessionStorage.setItem('cofre-recusado-ao-abrir', '1'); } catch (e) {} }
+                }
+                window.atualizarSelos();
+                return;
+            }
             var st = await _lerCofre();
             if (st.configurado && !st.destrancado) {
                 var ok = await window.abrirModalCofre();

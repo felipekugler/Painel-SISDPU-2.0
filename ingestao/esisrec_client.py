@@ -319,7 +319,18 @@ async def _garantir_sessao(page, usuario: str, senha: str) -> None:
         await page.goto(ESISREC_LOGIN_URL, wait_until="domcontentloaded", timeout=60000)
         await page.wait_for_timeout(1000)
     if not await _garantir_login(page, usuario, senha, timeout_s=60):
-        raise EsisrecErro("Não foi possível logar no e-Sisrec (GERID) com a credencial do SAT Central.")
+        # Diz ONDE parou (captcha, senha recusada, 2FA…) em vez da frase genérica
+        # — perfil novo do Painel 2.0 falhava sem pista (13/10/2026).
+        tela, desafio = "", False
+        with contextlib.suppress(Exception):
+            tela = " ".join((await page.evaluate("document.body.innerText") or "").split())[:300]
+        with contextlib.suppress(Exception):
+            desafio = await page.evaluate("""() => [...document.querySelectorAll('iframe')]
+                .some(f => /recaptcha\\/api2\\/bframe|hcaptcha/.test(f.src || '') && f.offsetParent !== null)""")
+        raise EsisrecErro(
+            "Não foi possível logar no e-Sisrec (GERID) com a credencial do SAT Central."
+            + (" O GERID pediu o desafio do captcha (verificação de robô)." if desafio else "")
+            + f" Página: {page.url}" + (f" — tela: {tela}" if tela else ""))
 
 
 async def _buscar(page, numero: str, usuario: str, senha: str) -> None:
