@@ -1230,6 +1230,16 @@ async def _processar_paj_pos_detalhamento(
         metadata["categoria_caixa"] = categorias_caixa.classificar(
             item.get("desc", ""), item.get("descricao", ""), item.get("etiqueta", ""))
 
+    # Releitura SEM download de anexos (ex.: abrir o PAJ — leitura ao vivo do
+    # SIS-DPU 2.0): mantém o que só o download apura. Sem isso, abrir o PAJ
+    # depois da sincronização completa apagava `n_anexos_sisdpu` e o "Baixar PAJ
+    # Completo" passava a dizer "precisa de sincronização completa" com todos os
+    # documentos na pasta (PAJ 2026/029-03051, 14/10/2026).
+    if not baixar_anexos:
+        for k in ("n_anexos_sisdpu", "anexos_extras", "anexos_sync_falhou"):
+            if k in meta_antiga and k not in metadata:
+                metadata[k] = meta_antiga[k]
+
     (pasta / "metadata.json").write_text(
         json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
         encoding="utf-8",
