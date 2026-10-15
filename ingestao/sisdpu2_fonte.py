@@ -550,15 +550,18 @@ async def extrair_documentos_por_seq(seqs_conhecidos=None, deve_cancelar=None, l
             "seqsPuladas": pulados, "seqsVerificadosSemDocumento": sem_docs, "tabela_markdown": ""}
 
 
-_cache_tramites: dict = {}  # (id_processo, limite) -> (monotonic, resultado)
-_CACHE_TRAMITES_SEG = 120
+# Painel "Caixas onde o PAJ está aberto": SEMPRE em tempo real — cada abertura
+# ou refresh da página do PAJ consulta o SIS-DPU 2.0 na hora (pedido do Defensor,
+# 16/10/2026: o cache de 2 min mostrava caixa já concluída — p. ex. conclusão
+# feita pelo SISDPU antigo, que não passava pela invalidação). Só junta pedidos
+# SIMULTÂNEOS do mesmo PAJ numa única chamada (a página dispara mais de um ao
+# carregar); nada é guardado depois que a resposta chega.
+_tramites_em_andamento: dict = {}  # (id_processo, limite) -> asyncio.Task
 
 
 def invalidar_tramites(id_processo) -> None:
-    """Chamada depois de toda gravação do painel no PAJ: a próxima leitura do
-    painel "Caixas onde o PAJ está aberto" já traz o que acabou de ser gravado."""
-    for chave in [c for c in _cache_tramites if c[0] == int(id_processo)]:
-        _cache_tramites.pop(chave, None)
+    """Mantida para quem chama depois de gravar — sem cache, não há o que apagar."""
+    return None
 
 
 def _tramitacoes(id_processo: int, limite: int) -> dict:
@@ -580,22 +583,19 @@ def _tramitacoes(id_processo: int, limite: int) -> dict:
 
 async def caixas_e_historico_paj(id_processo: str, limite: int = 10) -> dict:
     """Mesmo retorno de sisdpu_movtram.caixas_e_historico_paj (painel "Caixas
-    onde o PAJ está aberto"), pelo MCP. ~`limite` registros; cache curto
-    (_CACHE_TRAMITES_SEG) porque a página do PAJ consulta isto a cada abertura —
-    e apagado a cada gravação do painel no PAJ (invalidar_tramites)."""
-    import time as _t
+    onde o PAJ está aberto"), pelo MCP, lido NA HORA (sem cache)."""
     if not id_processo:
         return {"ok": False, "abertas": [], "tramitacoes": [], "erro": "id_processo ausente."}
     chave = (int(id_processo), limite)
-    em_cache = _cache_tramites.get(chave)
-    if em_cache and _t.monotonic() - em_cache[0] < _CACHE_TRAMITES_SEG:
-        return em_cache[1]
+    tarefa = _tramites_em_andamento.get(chave)
+    if tarefa is None:
+        tarefa = asyncio.ensure_future(asyncio.to_thread(_tramitacoes, int(id_processo), limite))
+        _tramites_em_andamento[chave] = tarefa
+        tarefa.add_done_callback(lambda _t, c=chave: _tramites_em_andamento.pop(c, None))
     try:
-        res = await asyncio.to_thread(_tramitacoes, int(id_processo), limite)
+        return await asyncio.shield(tarefa)
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "abertas": [], "tramitacoes": [], "erro": f"SIS-DPU 2.0: {e}"}
-    _cache_tramites[chave] = (_t.monotonic(), res)
-    return res
 
 
 # ---------------------------------------------------------------------------

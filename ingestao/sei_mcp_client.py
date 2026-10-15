@@ -195,6 +195,30 @@ def conectado() -> bool:
     return _token() is not None
 
 
+def dias_restantes() -> Optional[int]:
+    tok = _token()
+    if not tok or not tok.get("expira_em"):
+        return None
+    return max(0, int((float(tok["expira_em"]) - time.time()) // 86400))
+
+
+def verificar() -> dict:
+    """Conexão de VERDADE: abre uma sessão MCP com o token guardado (o servidor
+    responde 401 se ele tiver sido revogado/expirado — aí o token é apagado).
+    {conectado, dias_restantes, erro}."""
+    if not conectado():
+        return {"conectado": False, "dias_restantes": None, "erro": ""}
+    try:
+        with _sessao.lock:
+            _sessao._inicializar()
+        return {"conectado": True, "dias_restantes": dias_restantes(), "erro": ""}
+    except SeiLoginNecessario:
+        return {"conectado": False, "dias_restantes": None, "erro": "O login no SEI expirou."}
+    except Exception as e:  # noqa: BLE001 — rede/servidor: não afirma que caiu
+        return {"conectado": True, "dias_restantes": dias_restantes(),
+                "erro": f"Não foi possível confirmar a conexão com o SEI agora: {e}"[:300]}
+
+
 # ---------------------------------------------------------------------------
 # Sessão MCP (JSON-RPC sobre streamable HTTP)
 # ---------------------------------------------------------------------------

@@ -44,6 +44,9 @@ UNIDADE_COFE_CTB = 110002671
 TIPO_OFICIO = 649
 EMAIL_RESPOSTA = "dpu.prev.pr@dpu.gov.br"
 
+VOCATIVO_PADRAO = "Prezado(a) Senhor(a),"
+FECHAMENTO_PADRAO = "Atenciosamente,"
+
 ARQ_RASCUNHO = "oficio_sei_rascunho.json"
 ARQ_CRIADOS = "oficios_sei.json"
 
@@ -80,10 +83,19 @@ def status(paj_norm: str) -> dict:
     st = dict(_status.get(paj_norm, {"status": "idle"}))
     pasta = PAJS_DIR / paj_norm
     rascunho = _ler_json(pasta / ARQ_RASCUNHO, None)
+    if rascunho:
+        rascunho = _separar_vocativo_fechamento(rascunho)
     if rascunho and st.get("status") in (None, "idle"):
         st["status"] = "done"
     st["rascunho"] = rascunho
     st["criados"] = _ler_json(pasta / ARQ_CRIADOS, [])
+    # Juntada marcada "running" sem tarefa viva = o painel reiniciou no meio.
+    if not _tarefas_juntada and any(o.get("juntada") == "running" for o in st["criados"]):
+        for o in st["criados"]:
+            if o.get("juntada") == "running":
+                o["juntada"] = "erro"
+                o["erro_juntada"] = "Interrompida (o painel reiniciou) — confira as movimentações do PAJ antes de repetir."
+        _gravar_json(pasta / ARQ_CRIADOS, st["criados"])
     st["sei_conectado"] = sei.conectado()
     return st
 
@@ -104,13 +116,48 @@ def descartar_rascunho(paj_norm: str) -> dict:
 def _limpar_rascunho(r: dict) -> dict:
     return {
         "destinatario": str(r.get("destinatario") or "").strip(),
-        "assunto": str(r.get("assunto") or "").strip(),
-        "referencia": str(r.get("referencia") or "").strip(),
+        "assunto": _sem_rotulo(str(r.get("assunto") or ""), "Assunto"),
+        "referencia": _sem_rotulo(str(r.get("referencia") or ""), "Referência"),
+        "vocativo": str(r.get("vocativo") or "").strip(),
         "corpo_html": str(r.get("corpo_html") or "").strip(),
+        "fechamento": str(r.get("fechamento") or "").strip(),
         "observacoes": str(r.get("observacoes") or "").strip(),
         "orientacao": str(r.get("orientacao") or "").strip(),
         "atualizado_em": datetime.now().isoformat(timespec="seconds"),
     }
+
+
+def _sem_rotulo(texto: str, rotulo: str) -> str:
+    """O modelo do SEI já escreve "Assunto:"/"Referência:" — o campo leva só o
+    conteúdo (com o rótulo junto, o ofício saía com o rótulo duplicado)."""
+    t = texto.strip()
+    return re.sub(rf"^\s*{rotulo[:-1]}\w?\s*:\s*", "", t, flags=re.I).strip() if rotulo else t
+
+
+_RE_P = re.compile(r"<p\b[^>]*>(.*?)</p>", re.I | re.S)
+
+
+def _separar_vocativo_fechamento(r: dict) -> dict:
+    """Rascunho antigo: "Prezado(a) Senhor(a)…," era o 1º parágrafo do corpo e
+    "Atenciosamente," o último — passam para os campos próprios (seções
+    Vocativo e Fechamento do modelo de Ofício)."""
+    if "vocativo" in r and "fechamento" in r:
+        return r
+    r = dict(r)
+    corpo = r.get("corpo_html") or ""
+    paras = list(_RE_P.finditer(corpo))
+    vocativo = fechamento = ""
+    if paras and re.match(r"\s*(prezad|senhor|excelent|ilustr)", _texto_html(paras[0].group(1)), re.I):
+        vocativo = _texto_html(paras[0].group(1))
+        corpo = corpo[:paras[0].start()] + corpo[paras[0].end():]
+        paras = list(_RE_P.finditer(corpo))
+    if paras and re.match(r"\s*(atenciosamente|respeitosamente|cordialmente)", _texto_html(paras[-1].group(1)), re.I):
+        fechamento = _texto_html(paras[-1].group(1))
+        corpo = corpo[:paras[-1].start()] + corpo[paras[-1].end():]
+    r["corpo_html"] = corpo.strip()
+    r.setdefault("vocativo", vocativo or VOCATIVO_PADRAO)
+    r.setdefault("fechamento", fechamento or FECHAMENTO_PADRAO)
+    return r
 
 
 # ---------------------------------------------------------------------------
@@ -185,12 +232,13 @@ Destinatário (uma informação por linha):
   CEP: 80.020-060 - Curitiba/PR
   e-mail: gexctb@inss.gov.br
 Assunto: Solicitação de documentos
-Corpo (depois de "Prezado(a) Senhor(a)," — que o painel já coloca):
+Vocativo: Prezado(a) Senhor(a),
+Corpo:
   A DEFENSORIA PÚBLICA DA UNIÃO, com fulcro no art. 44, inciso X, da Lei Complementar nº 80/94, e atuando nos interesses do assistido FULANO DE TAL, CPF 000.000.000-00, solicita envio dos seguintes documentos:
   a) cópia do processo administrativo do NB 000.000.000-0
   Contando com sua presteza, solicito atendimento no prazo de 15 dias, podendo encaminhar sua resposta com documento digitalizado para o e-mail dpu.prev.pr@dpu.gov.br.
   Ao responder, por gentileza, fazer referência ao Processo de Assistência Jurídica PAJ 2026/029-00000.
-(o painel encerra com "Atenciosamente," — não repita)
+Fechamento: Atenciosamente,
 
 Outro exemplo real (SINE, pensão por morte, dois menores): o 1º parágrafo apresenta os
 assistidos com CPF e a pretensão, o 2º explica em uma frase por que a informação é
@@ -235,14 +283,17 @@ ofício administrativo a ser minutado no SEI.
    Endereço/e-mail de órgão público: só use se tiver certeza; na dúvida, marcador.
 3. Prazo padrão de 15 dias e resposta para {EMAIL_RESPOSTA}, salvo ordem diversa do Defensor.
 4. Menores/incapazes: mencione o representante legal se houver.
-5. Não inclua cabeçalho, número do ofício, data, "Prezado(a) Senhor(a)", "Atenciosamente" nem assinatura
-   — o SEI e o painel colocam.
+5. Não inclua no corpo cabeçalho, número do ofício, data, vocativo ("Prezado(a) Senhor(a)…"),
+   fechamento ("Atenciosamente") nem assinatura — cada um tem seção própria no SEI. O vocativo vai
+   no campo "vocativo", ajustado ao destinatário (ex.: "Prezado(a) Senhor(a) Diretor(a),").
+6. "assunto" é só o texto do assunto — sem a palavra "Assunto:" (o modelo do SEI já escreve).
 
 ## Formato da resposta
 Responda APENAS com um objeto JSON válido (sem texto antes ou depois, sem cercas de código):
 {{
   "destinatario_linhas": ["NOME DO ÓRGÃO/UNIDADE EM MAIÚSCULAS", "endereço", "CEP - cidade/UF", "e-mail: ..."],
   "assunto": "Solicitação de documentos",
+  "vocativo": "Prezado(a) Senhor(a),",
   "corpo_paragrafos": ["parágrafo 1", "a) item", "parágrafo de prazo", "parágrafo de referência ao PAJ"],
   "observacoes": "o que o Defensor deve conferir antes de criar no SEI (ou string vazia)"
 }}
@@ -262,10 +313,10 @@ def _p(texto: str, cls: str) -> str:
 
 
 def _corpo_html(paragrafos: list[str]) -> str:
-    partes = [_p("Prezado(a) Senhor(a),", _CLS_CORPO)]
-    partes += [_p(t, _CLS_CORPO) for t in paragrafos if str(t).strip()]
-    partes.append(_p("Atenciosamente,", _CLS_CORPO))
-    return "\n".join(partes)
+    # Vocativo e fechamento NÃO entram aqui — têm seção própria no modelo do
+    # SEI (campos `vocativo`/`fechamento` do criar_minuta). No corpo, a
+    # saudação aparecia colada ao texto principal (relato do Defensor, 16/10/2026).
+    return "\n".join(_p(t, _CLS_CORPO) for t in paragrafos if str(t).strip())
 
 
 def _redigir_worker(paj_norm: str, orientacao: str) -> None:
@@ -290,8 +341,12 @@ def _redigir_worker(paj_norm: str, orientacao: str) -> None:
         rascunho = _limpar_rascunho({
             "destinatario": "\n".join(str(x) for x in (j.get("destinatario_linhas") or []) if str(x).strip()),
             "assunto": j.get("assunto") or "Solicitação de documentos",
-            "referencia": f"Em resposta a este Ofício, por gentileza, indicar expressamente o PAJ {ctx['paj']}",
+            # Vazia por padrão: o corpo do modelo já termina pedindo que a resposta
+            # cite o PAJ — a referência padrão repetia a mesma frase.
+            "referencia": "",
+            "vocativo": str(j.get("vocativo") or "").strip() or VOCATIVO_PADRAO,
             "corpo_html": _corpo_html([str(x) for x in (j.get("corpo_paragrafos") or [])]),
+            "fechamento": FECHAMENTO_PADRAO,
             "observacoes": j.get("observacoes") or "",
             "orientacao": orientacao,
         })
@@ -320,13 +375,11 @@ def _normalizar_corpo(corpo: str) -> str:
     return re.sub(r"<p(\s[^>]*)?>", f'<p class="{_CLS_CORPO}">', corpo or "")
 
 
-def _assunto_html(assunto: str, referencia: str) -> str:
-    # No modelo da COFE CTB, Assunto e Referência dividem UMA seção só
-    # (idSecaoModelo 1049) — por isso vão juntos no campo `assunto`.
-    partes = [f'<p class="{_CLS_ESQ}">Assunto: <b>{html.escape(assunto.strip())}</b></p>']
-    if referencia.strip():
-        partes.append(f'<p class="{_CLS_ESQ}">Referência: {html.escape(referencia.strip())}</p>')
-    return "\n".join(partes)
+def _numero_oficio(texto: str) -> str:
+    """Nº do ofício ("Ofício - nº 9416409/2026 - COFE CTB") — NÃO o nº do
+    processo de controle (08166.000183/2017-39), que o regex antigo pegava."""
+    m = re.search(r"Of[ií]cio\s*-?\s*n\S{0,2}\s*(\d{5,})\s*/\s*(\d{4})", texto or "", re.I)
+    return f"{m.group(1)}/{m.group(2)}" if m else ""
 
 
 _id_procedimento_cache: dict[str, str] = {}
@@ -356,16 +409,24 @@ def criar_no_sei(paj_norm: str, rascunho: dict) -> dict:
         return {"ok": False, "erro": "Ainda há marcadores a completar: " + ", ".join(sorted(set(pendentes)))}
     _gravar_json(_pasta(paj_norm) / ARQ_RASCUNHO, r)
 
+    # Campos ESTRUTURADOS do criar_minuta (manual do MCP-SEI): cada um vai para a
+    # sua seção do modelo de Ofício — assunto só com o texto (o modelo já põe o
+    # rótulo), referência no campo próprio, vocativo e fechamento fora do corpo.
+    args = {
+        "numero_processo": PROCESSO_OFICIOS,
+        "tipo_documento_id": TIPO_OFICIO,
+        "titulo": f"PAJ {ctx['paj']}",
+        "destinatario": _destinatario_html(r["destinatario"]),
+        "assunto": r["assunto"],
+        "vocativo": r["vocativo"] or VOCATIVO_PADRAO,
+        "html": _normalizar_corpo(r["corpo_html"]),
+        "fechamento": r["fechamento"] or FECHAMENTO_PADRAO,
+    }
+    if r["referencia"]:
+        args["referencia"] = r["referencia"]
     try:
         sei.chamar("auth_select_unit", {"unidade_id": UNIDADE_COFE_CTB})
-        resp = sei.chamar("criar_minuta", {
-            "numero_processo": PROCESSO_OFICIOS,
-            "tipo_documento_id": TIPO_OFICIO,
-            "titulo": f"PAJ {ctx['paj']}",
-            "destinatario": _destinatario_html(r["destinatario"]),
-            "assunto": _assunto_html(r["assunto"], r["referencia"]),
-            "html": _normalizar_corpo(r["corpo_html"]),
-        }, timeout=120)
+        resp = sei.chamar("criar_minuta", args, timeout=120)
     except sei.SeiLoginNecessario:
         return {"ok": False, "login": True, "erro": "O painel não está conectado ao SEI — clique em \"Conectar ao SEI\"."}
     except sei.SeiErro as e:
@@ -382,24 +443,31 @@ def criar_no_sei(paj_norm: str, rascunho: dict) -> dict:
     # payload de sucesso de uma gravação).
     avisos = [w.get("mensagem", "") for w in (resp.get("warnings") or [])
               if isinstance(w, dict) and w.get("severidade") in ("warn", "error")]
-    numero = str(resp.get("numero") or resp.get("numero_provisorio") or "")
+    numero = ""
     conferido = False
     with contextlib.suppress(Exception):
         sec = sei.chamar("listar_secoes", {"id_documento": doc_id, "incluir_conteudo": True,
                                            "max_chars_conteudo": 6000})
-        tudo = html.unescape(" ".join(s.get("conteudo", "") for s in sec.get("secoes", [])))
-        m = re.search(r"n\S*\s*(\d{6,})/\d{4}", tudo)
-        if m:
-            numero = m.group(1)
-        conferido = PROCESSO_OFICIOS in tudo and ctx["paj"] in tudo
-        if r["assunto"] not in tudo:
+        secoes = sec.get("secoes", [])
+        # o listar_secoes devolve o HTML da seção escapado DUAS vezes (&amp;lt;…)
+        tudo = html.unescape(html.unescape(" ".join(s.get("conteudo", "") for s in secoes)))
+        numero = _numero_oficio(tudo)
+        conferido = PROCESSO_OFICIOS in tudo and ctx["paj"] in _texto_html(tudo)
+        texto = _texto_html(tudo)
+        if r["assunto"] not in texto:
             avisos.append("O assunto não apareceu no documento gravado — confira no SEI.")
+        if len(re.findall(r"Assunto\s*:", texto, re.I)) > 1:
+            avisos.append("O rótulo \"Assunto:\" saiu repetido — confira no SEI.")
+        principal = next((s for s in secoes if s.get("PrincipalSecaoDocumento") == "S"), None)
+        voc = (r["vocativo"] or VOCATIVO_PADRAO).strip()
+        if principal and voc[:12].lower() in _texto_html(html.unescape(principal.get("conteudo", ""))).lower():
+            avisos.append("O vocativo saiu dentro do texto principal — confira no SEI.")
     if not conferido:
         avisos.append("Não consegui confirmar pela releitura que o ofício ficou no processo certo — confira no SEI.")
 
     registro = {
         "documento_id": doc_id,
-        "numero_sei": numero,
+        "numero_sei": numero or str(resp.get("numero") or resp.get("numero_provisorio") or ""),
         "processo": PROCESSO_OFICIOS,
         "destinatario": r["destinatario"].splitlines()[0] if r["destinatario"] else "",
         "assunto": r["assunto"],
@@ -417,3 +485,219 @@ def criar_no_sei(paj_norm: str, rascunho: dict) -> dict:
     with _lock:
         _status.pop(paj_norm, None)
     return {"ok": True, "oficio": registro}
+
+
+# ---------------------------------------------------------------------------
+# 3. Depois de criado: assinatura e leitura
+# ---------------------------------------------------------------------------
+
+def atualizar_situacao(paj_norm: str) -> dict:
+    """Confere no SEI os ofícios deste PAJ ainda não vistos como assinados:
+    assinaturas (listar_assinaturas) e o nº definitivo do ofício. Assinado, o
+    item deixa de mostrar "conferir"/"Abrir para assinar" (os avisos eram da
+    minuta — quem assina já revisou). Só leitura no SEI."""
+    pasta = _pasta(paj_norm)
+    criados = _ler_json(pasta / ARQ_CRIADOS, [])
+    mudou = False
+    for o in criados:
+        doc = o.get("documento_id")
+        if not doc or o.get("assinado"):
+            continue
+        try:
+            a = sei.chamar("listar_assinaturas", {"documento_id": doc})
+        except sei.SeiLoginNecessario:
+            return {"ok": False, "login": True, "criados": criados}
+        except sei.SeiErro:
+            continue
+        assinaturas = (a or {}).get("assinaturas") or []
+        if assinaturas:
+            o["assinado"] = True
+            o["assinantes"] = [x.get("nome", "") for x in assinaturas if x.get("nome")]
+            o["assinatura_vista_em"] = datetime.now().isoformat(timespec="seconds")
+            mudou = True
+        if not re.fullmatch(r"\d{5,}/\d{4}", o.get("numero_sei") or ""):
+            with contextlib.suppress(Exception):
+                sec = sei.chamar("listar_secoes", {"id_documento": doc, "incluir_conteudo": True,
+                                                   "max_chars_conteudo": 600})
+                n = _numero_oficio(_texto_html(html.unescape(html.unescape(" ".join(
+                    x.get("conteudo", "") for x in sec.get("secoes", []) if str(x.get("idSecaoModelo")) != "304")))))
+                if n:
+                    o["numero_sei"] = n
+                    mudou = True
+    if mudou:
+        _gravar_json(pasta / ARQ_CRIADOS, criados)
+    return {"ok": True, "criados": criados}
+
+
+# Tira só o que EXECUTA (scripts, objetos, handlers on*) — estilos e imagens
+# (timbre, códigos de barras, QR da assinatura, todos embutidos em data:) ficam,
+# para o ofício sair igual ao SEI. O modal ainda o mostra num iframe sandbox.
+_SANITIZAR = re.compile(r"<(script|iframe|object|embed)\b.*?</\1>|<(script|iframe|object|embed)\b[^>]*>|"
+                        r"\son\w+\s*=\s*(\"[^\"]*\"|'[^']*'|[^\s>]+)", re.I | re.S)
+
+
+def ler_oficio(paj_norm: str, documento_id: str) -> dict:
+    """Conteúdo do ofício (assinado ou não) para leitura no painel — só de
+    documento que este PAJ criou (oficios_sei.json)."""
+    criados = _ler_json(_pasta(paj_norm) / ARQ_CRIADOS, [])
+    if not any(str(o.get("documento_id")) == str(documento_id) for o in criados):
+        return {"ok": False, "erro": "Ofício não pertence a este PAJ."}
+    try:
+        # "html" = documento completo, como o SEI exibe (o "stripped" remove imagens e estilos)
+        d = sei.chamar("ler_documento", {"documento_id": str(documento_id), "formato": "html"}, timeout=120)
+    except sei.SeiLoginNecessario:
+        return {"ok": False, "login": True, "erro": "Conecte o painel ao SEI para ler o ofício."}
+    except sei.SeiErro as e:
+        return {"ok": False, "erro": str(e)}
+    d = d if isinstance(d, dict) else {}
+    corpo = d.get("conteudo_html") or d.get("html") or d.get("conteudo") or ""
+    if not corpo and d.get("texto"):
+        corpo = "".join(f"<p>{html.escape(ln)}</p>" for ln in str(d["texto"]).splitlines() if ln.strip())
+    assinaturas = d.get("assinaturas") or []
+    return {"ok": True, "html": _SANITIZAR.sub("", str(corpo)),
+            "assinaturas": [{"nome": a.get("nome", ""), "cargo": a.get("cargo", ""),
+                             "data": a.get("data") or a.get("data_hora") or a.get("timestamp") or ""}
+                            for a in assinaturas if isinstance(a, dict)]}
+
+
+# ---------------------------------------------------------------------------
+# 4. "Anexar ao PAJ": ofício assinado → movimentação "Juntada de documento"
+#    no SISDPU, com o PDF do ofício (pedido do Defensor, 16/10/2026)
+# ---------------------------------------------------------------------------
+
+SUBPASTA_OFICIOS = "Ofícios SEI"
+_MESES = {m: i for i, m in enumerate(["janeiro", "fevereiro", "março", "abril", "maio", "junho", "julho",
+                                       "agosto", "setembro", "outubro", "novembro", "dezembro"], start=1)}
+_RE_ENDERECO = re.compile(r"^(rua|r\.|av\.?|avenida|travessa|rodovia|pra[çc]a|alameda|estrada|cep\b|e-?mail|"
+                          r"telefone|fone|endere[çc]o|caixa postal)|\d{2}\.?\d{3}-\d{3}", re.I)
+_tarefas_juntada: set = set()
+
+
+def _dados_do_oficio(documento_id: str, registro: dict) -> dict:
+    """Número, data, destinatário e assunto lidos do PRÓPRIO documento no SEI
+    (seções do modelo de Ofício) — o registro local é só reserva."""
+    sec = sei.chamar("listar_secoes", {"id_documento": documento_id, "incluir_conteudo": True,
+                                       "max_chars_conteudo": 4000})
+    por_modelo = {str(s.get("idSecaoModelo")): _texto_html(html.unescape(html.unescape(s.get("conteudo", ""))))
+                  for s in sec.get("secoes", []) if str(s.get("idSecaoModelo")) != "304"}
+    titulo = re.sub(r"\s+", " ", por_modelo.get("182", "")).strip()
+    if not re.search(r"\d{5,}/\d{4}", titulo):
+        titulo = f"Ofício - nº {registro.get('numero_sei') or ''} - COFE CTB"
+    data = ""
+    m = re.search(r"(\d{1,2}) de (\w+) de (\d{4})", por_modelo.get("183", ""), re.I)
+    if m and m.group(2).lower() in _MESES:
+        data = f"{int(m.group(1)):02d}/{_MESES[m.group(2).lower()]:02d}/{m.group(3)}"
+    elif registro.get("criado_em"):
+        data = datetime.fromisoformat(registro["criado_em"]).strftime("%d/%m/%Y")
+    linhas = [ln.strip() for ln in por_modelo.get("184", "").splitlines() if ln.strip()]
+    nome = []
+    for ln in linhas:  # destinatário = linhas antes do endereço/CEP/e-mail
+        if _RE_ENDERECO.search(ln):
+            break
+        nome.append(ln)
+    destinatario = " - ".join(nome) or registro.get("destinatario", "")
+    assunto = re.sub(r"^\s*Assunto\s*:\s*", "", por_modelo.get("1049", "").splitlines()[0]
+                     if por_modelo.get("1049") else "", flags=re.I).strip() or registro.get("assunto", "")
+    return {"titulo": titulo, "data": data, "destinatario": destinatario, "assunto": assunto}
+
+
+def _descricao_juntada(d: dict) -> str:
+    linhas = [d["titulo"], f"Data: {d['data']}", f"Destinatário: {d['destinatario']}",
+              f"Assunto: {d['assunto']}"]
+    return "".join(f"<p>{html.escape(ln)}</p>" for ln in linhas)
+
+
+def _descricao_anexo(d: dict) -> str:
+    """Descrição do PDF anexado: "Ofício - nº 9416409/2026 - DIRETORIA
+    EXECUTIVA - COMPLEXO DE SAÚDE PEQUENO COTOLENGO" (sem a unidade e sem o
+    "À/Ao" do destinatário — pedido do Defensor, 16/10/2026)."""
+    numero = re.search(r"\d{5,}/\d{4}", d["titulo"])
+    destino = re.sub(r"^(à|ao|aos|às|a|o)\s+", "", d["destinatario"].strip(), flags=re.I)
+    partes = [f"Ofício - nº {numero.group(0)}" if numero else d["titulo"], destino]
+    return " - ".join(p for p in partes if p)
+
+
+def _salvar_registro(paj_norm: str, documento_id: str, **campos) -> None:
+    pasta = _pasta(paj_norm)
+    criados = _ler_json(pasta / ARQ_CRIADOS, [])
+    for o in criados:
+        if str(o.get("documento_id")) == str(documento_id):
+            o.update(campos)
+    _gravar_json(pasta / ARQ_CRIADOS, criados)
+
+
+async def _juntar_oficio(paj_norm: str, registro: dict) -> None:
+    import asyncio
+    import base64
+
+    from ingestao import sisdpu_movtram as movtram
+    from services import acoes_sisdpu_service, sat_service
+    from services.dossie_sd_service import _id_processo_local, _ler_meta
+
+    doc = str(registro["documento_id"])
+    try:
+        dados = await asyncio.to_thread(_dados_do_oficio, doc, registro)
+        pdf = await asyncio.to_thread(sei.chamar, "baixar_documento_pdf", {"documento_id": doc}, 180)
+        b64 = (pdf or {}).get("conteudo_base64") if isinstance(pdf, dict) else None
+        if not b64:
+            raise RuntimeError("o SEI não devolveu o PDF do ofício "
+                               f"({(pdf or {}).get('modo') if isinstance(pdf, dict) else str(pdf)[:120]}).")
+        conteudo = base64.b64decode(b64)
+        if conteudo[:5] != b"%PDF-":
+            raise RuntimeError("o arquivo devolvido pelo SEI não é um PDF.")
+        numero = re.search(r"(\d{5,})/(\d{4})", dados["titulo"])
+        nome_pdf = (f"Oficio {numero.group(1)}-{numero.group(2)} - COFE CTB.pdf" if numero
+                    else f"Oficio SEI {doc}.pdf")
+        pasta = _pasta(paj_norm) / SUBPASTA_OFICIOS
+        pasta.mkdir(parents=True, exist_ok=True)
+        (pasta / nome_pdf).write_bytes(conteudo)
+
+        meta = _ler_meta(paj_norm)
+        paj_label = (meta.get("paj") or "").strip()
+        id_proc, _ev, erro = await acoes_sisdpu_service._resolver_id_processo(_id_processo_local(meta), paj_label)
+        if not id_proc:
+            raise RuntimeError(erro or "id do PAJ no SISDPU não encontrado.")
+        anexos = [{"nome": nome_pdf, "caminho": str(pasta / nome_pdf), "tipo": "pdf",
+                   "descricao": _descricao_anexo(dados)}]
+        mv, exc, _ev = await acoes_sisdpu_service.com_auto_reconexao(
+            lambda: movtram.movimentar_paj([{"id": id_proc, "numero": paj_label}],
+                                           _descricao_juntada(dados), sat_service.FASE_MOV,
+                                           anexos, sat_service.TIPO_ARQUIVO, False, descricao_html=True))
+        if exc is not None:
+            raise RuntimeError(f"{type(exc).__name__}: {exc}")
+        if not (mv or {}).get("ok"):
+            detalhe = (mv or {}).get("detalhe") or "falha na movimentação"
+            if "não foi confirmada" in detalhe:
+                # O Defensor recusou a ficha: só cancela — nada foi gravado, o
+                # botão volta ao normal, sem mensagem de erro (16/10/2026).
+                _salvar_registro(paj_norm, doc, juntada="", erro_juntada="")
+                return
+            raise RuntimeError(detalhe)
+        _salvar_registro(paj_norm, doc, juntada="ok", juntada_mov_seq=mv.get("mov_seq"),
+                         juntada_em=datetime.now().isoformat(timespec="seconds"), juntada_arquivo=nome_pdf,
+                         erro_juntada="")
+        with contextlib.suppress(Exception):
+            from services import ao_vivo_service
+            await ao_vivo_service.atualizar_paj(paj_norm, forcar=True)
+    except Exception as e:  # noqa: BLE001
+        _salvar_registro(paj_norm, doc, juntada="erro", erro_juntada=f"{e}"[:400])
+
+
+def anexar_ao_paj(paj_norm: str, documento_id: str) -> dict:
+    """Dispara a juntada (task no loop corrente — chamar de rota async). A
+    movimentação passa pela ficha de confirmação do SIS-DPU 2.0, como as demais."""
+    import asyncio
+
+    criados = _ler_json(_pasta(paj_norm) / ARQ_CRIADOS, [])
+    registro = next((o for o in criados if str(o.get("documento_id")) == str(documento_id)), None)
+    if not registro:
+        return {"ok": False, "erro": "Ofício não pertence a este PAJ."}
+    if not registro.get("assinado"):
+        return {"ok": False, "erro": "Só o ofício assinado pode ser anexado ao PAJ."}
+    if registro.get("juntada") in ("running", "ok"):
+        return {"ok": False, "erro": "Este ofício já foi anexado ao PAJ ou está sendo anexado."}
+    _salvar_registro(paj_norm, documento_id, juntada="running", erro_juntada="")
+    t = asyncio.get_running_loop().create_task(_juntar_oficio(paj_norm, registro))
+    _tarefas_juntada.add(t)
+    t.add_done_callback(_tarefas_juntada.discard)
+    return {"ok": True}

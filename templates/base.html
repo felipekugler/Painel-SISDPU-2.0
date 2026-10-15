@@ -1206,6 +1206,18 @@
                     </button>
                 </span>
 
+                <!-- SEI: conexão do painel com o MCP-SEI (OAuth, login LDAP na página da
+                     DPU — a senha não passa pelo painel; vale ~30 dias). Usado pelo
+                     "Minutar Ofício". Clique: confere de verdade / conecta. -->
+                <span class="sys-selo sys-off" id="selo-sei" data-sys="sei"
+                      title="Verificando conexão com o SEI…">
+                    <span class="dot"></span><span class="txt">SEI</span>
+                    <button type="button" class="sys-recon" onclick="reconectarSistema('sei', event)"
+                            title="Conferir a conexão com o SEI (abre o login da DPU se precisar).">
+                        {{ _recon_svg }}
+                    </button>
+                </span>
+
                 <!-- SAT -->
                 <span class="sys-selo sys-off" id="selo-sat" data-sys="sat"
                       title="Verificando sessão do SAT…">
@@ -1402,7 +1414,7 @@
         // do cofre; só o que depende do SISDPU legado (concluir trâmite) o pede.
         window.PAINEL_FONTE_SISDPU_MCP = {{ 'true' if fonte_mcp_sisdpu() else 'false' }};
     </script>
-    <script src="/static/js/app.js?v={{ app_version }}-mcp7"></script>
+    <script src="/static/js/app.js?v={{ app_version }}-mcp8"></script>
     <script src="/static/js/movimentacoes.js?v={{ app_version }}-mcp2"></script>
     <script src="/static/js/rich_editor.js?v={{ app_version }}"></script>
     <script src="/static/js/acoes_sisdpu.js?v={{ app_version }}-mcp8"></script>
@@ -1410,7 +1422,7 @@
     <script src="/static/js/processo_judicial.js?v={{ app_version }}-mcp4"></script>
     <script src="/static/js/eventos_processo.js?v={{ app_version }}"></script>
     <script src="/static/js/minuta_ia.js?v={{ app_version }}"></script>
-    <script src="/static/js/oficio_sei.js?v={{ app_version }}"></script>
+    <script src="/static/js/oficio_sei.js?v={{ app_version }}-mcp3"></script>
     <script src="/static/js/analise_pretensao.js?v={{ app_version }}-mcp1"></script>
     <script src="/static/js/calcular_cnis.js?v={{ app_version }}"></script>
     <script src="/static/js/calcular_qs.js?v={{ app_version }}"></script>
@@ -1632,8 +1644,70 @@
             } catch (e) {}
         }
 
+        // Selo do SEI (MCP-SEI) — leve: só olha o token guardado; o clique confere de verdade.
+        async function _atualizarSeloSei() {
+            try {
+                var st = await (await fetch('/api/sei/status')).json();
+                if (st && st.conectado) {
+                    var d = st.dias_restantes;
+                    if (d != null && d <= 3) {
+                        _setSelo('sei', 'warn', 'SEI', 'Conectado ao SEI — o login vence em ' + d
+                                 + ' dia(s). Clique para conectar de novo.');
+                    } else {
+                        _setSelo('sei', 'on', 'SEI', 'Conectado ao SEI' + (d != null ? ' (vence em ' + d + ' dias)' : '')
+                                 + '. Clique para conferir.');
+                    }
+                } else {
+                    _setSelo('sei', 'off', 'SEI', 'Painel não conectado ao SEI. Clique para conectar (login da DPU).');
+                }
+            } catch (e) {
+                _setSelo('sei', 'off', 'SEI', 'Não foi possível verificar a conexão com o SEI.');
+            }
+        }
+
+        // Conecta o painel ao SEI: abre a página de login da DPU (LDAP) e espera o
+        // retorno (até 5 min). A janela é aberta ANTES de qualquer await — senão o
+        // navegador a bloqueia como pop-up (o clique do usuário já "passou").
+        // Promise<bool>. Usada pelo selo e pelo "Minutar Ofício" antes de gravar.
+        window.conectarSei = function() {
+            var janela = window.open('about:blank', '_blank');
+            return (async function() {
+                try {
+                    var j = await (await fetch('/api/sei/login')).json();
+                    if (!j.ok) { if (janela) janela.close(); showToast(j.erro || 'Falha ao iniciar o login no SEI.', 'error'); return false; }
+                    if (janela) janela.location = j.url; else window.open(j.url, '_blank');
+                    var t0 = Date.now();
+                    while (Date.now() - t0 < 300000) {
+                        await new Promise(function(r) { setTimeout(r, 2500); });
+                        var s = await (await fetch('/api/sei/status')).json();
+                        if (s && s.conectado) { _atualizarSeloSei(); return true; }
+                        if (janela && janela.closed && Date.now() - t0 > 5000) {
+                            s = await (await fetch('/api/sei/status')).json();
+                            _atualizarSeloSei();
+                            return !!(s && s.conectado);
+                        }
+                    }
+                } catch (e) {}
+                _atualizarSeloSei();
+                return false;
+            })();
+        };
+
+        // Garante a conexão com o SEI antes de gravar: confere de verdade e, se
+        // caiu, pede o login. Chame DIRETO do clique (sem await antes) se ainda
+        // não houver conexão — ver window.conectarSei.
+        window.garantirSei = async function() {
+            try {
+                var st = await (await fetch('/api/sei/status?real=1')).json();
+                _atualizarSeloSei();
+                if (st && st.conectado) return true;
+            } catch (e) {}
+            return false;
+        };
+
         window.atualizarSelos = async function() {
             await _lerCofre();
+            _atualizarSeloSei();
             _atualizarSeloSisdpu();
             _atualizarSeloSessao('eproc', '/api/prazos/sessao-leve', 'e-proc');
             _atualizarSeloSessao('sat', '/api/sat/sessao-leve', 'SAT');
@@ -1653,6 +1727,17 @@
         // Reconexão/abertura por sistema.
         window.reconectarSistema = async function(sys, ev) {
             var btn = ev && ev.currentTarget ? ev.currentTarget : null;
+            if (sys === 'sei') {
+                // Sem token: abre o login já no clique (pop-up permitido).
+                var semToken = document.getElementById('selo-sei').classList.contains('sys-off');
+                if (btn) btn.classList.add('girando');
+                try {
+                    var ok = semToken ? await window.conectarSei()
+                                      : (await window.garantirSei()) || await window.conectarSei();
+                    showToast(ok ? 'SEI conectado.' : 'O painel não está conectado ao SEI.', ok ? 'success' : 'warning');
+                } finally { if (btn) btn.classList.remove('girando'); }
+                return;
+            }
             if (btn) btn.classList.add('girando');
             try {
                 if (sys === 'sisdpu') {

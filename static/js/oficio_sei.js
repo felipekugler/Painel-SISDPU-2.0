@@ -22,6 +22,8 @@ function oficioSeiApp(pajNorm) {
         destinatario: '',
         assunto: '',
         referencia: '',
+        vocativo: '',
+        fechamento: '',
         observacoes: '',
         orientacaoUsada: '',
         uidCorpo: 'qoficio-' + Math.random().toString(36).slice(2, 9),
@@ -33,6 +35,8 @@ function oficioSeiApp(pajNorm) {
         criando: false,
         erroCriar: '',
         criados: [],
+        aguardandoSei: false,   // "Criar no SEI" esperando o login para continuar
+        leitura: { aberta: false, carregando: false, titulo: '', html: '', erro: '', assinaturas: [] },
 
         async init() {
             await this.fetchStatus(true);
@@ -59,7 +63,64 @@ function oficioSeiApp(pajNorm) {
                 if (this.criados.length || this.status !== 'idle') {
                     Alpine.store('acoesIaMenu').mostrarOficio = true;
                 }
+                if (popular) this._atualizarSituacao();
+                if (this.criados.some((o) => o.juntada === 'running')) this._acompanharJuntada();
             } catch (e) { /* silencioso */ }
+        },
+
+        // Ofício já criado e ainda não visto como assinado: confere no SEI (só
+        // leitura). Assinado, some o "conferir"/"Abrir para assinar".
+        async _atualizarSituacao() {
+            if (!this.seiConectado || !this.criados.some((o) => !o.assinado)) return;
+            try {
+                const j = await (await fetch('/api/oficio-sei/' + encodeURIComponent(this.pajNorm) + '/atualizar',
+                                             { method: 'POST' })).json();
+                if (j.criados) this.criados = j.criados;
+                if (j.login) this.seiConectado = false;
+            } catch (e) { /* silencioso */ }
+        },
+
+        // "Anexar ao PAJ": juntada do ofício assinado (PDF) no SISDPU — fase
+        // "Juntada de documento", com a ficha de confirmação (modal global).
+        async anexarAoPaj(o) {
+            try {
+                const j = await (await fetch('/api/oficio-sei/' + encodeURIComponent(this.pajNorm) + '/anexar/'
+                                             + encodeURIComponent(o.documento_id), { method: 'POST' })).json();
+                if (!j.ok) { showToast(j.erro || 'Não foi possível anexar o ofício.', 'error'); return; }
+                o.juntada = 'running'; o.erro_juntada = '';
+                this._anexandoId = o.documento_id;
+                showToast('Anexando o ofício ao PAJ — confirme a ficha do SIS-DPU 2.0.', 'info');
+                this._acompanharJuntada();
+            } catch (e) { showToast('Erro de rede: ' + e, 'error'); }
+        },
+        _acompanharJuntada() {
+            if (this._pollJuntada) return;
+            this._pollJuntada = setInterval(async () => {
+                await this.fetchStatus(false);
+                if (!this.criados.some((o) => o.juntada === 'running')) {
+                    clearInterval(this._pollJuntada); this._pollJuntada = null;
+                    // Ficha recusada: a juntada volta a vazio, sem aviso (só cancela).
+                    const feito = this.criados.find((o) => o.documento_id === this._anexandoId && o.juntada === 'ok');
+                    this._anexandoId = null;
+                    if (feito) {
+                        showToast('Ofício anexado ao PAJ' + (feito.juntada_mov_seq ? ' — Mov ' + feito.juntada_mov_seq : '') + '.', 'success');
+                        if (typeof window.atualizarMovimentacoesPajMcp === 'function') window.atualizarMovimentacoesPajMcp(this.pajNorm);
+                    }
+                }
+            }, 3000);
+        },
+
+        async lerOficio(o) {
+            this.leitura = { aberta: true, carregando: true, html: '', erro: '', assinaturas: [],
+                             titulo: 'Ofício ' + (o.numero_sei || '') + ' — ' + (o.destinatario || '') };
+            try {
+                const j = await (await fetch('/api/oficio-sei/' + encodeURIComponent(this.pajNorm) + '/ler/'
+                                             + encodeURIComponent(o.documento_id))).json();
+                if (!j.ok) { this.leitura.erro = j.erro || 'Não foi possível ler o ofício.'; if (j.login) this.seiConectado = false; }
+                else { this.leitura.html = j.html; this.leitura.assinaturas = j.assinaturas || []; }
+            } catch (e) {
+                this.leitura.erro = 'Erro de rede: ' + e;
+            } finally { this.leitura.carregando = false; }
         },
 
         async _montarEditor() {
@@ -77,6 +138,8 @@ function oficioSeiApp(pajNorm) {
             this.destinatario = r.destinatario || '';
             this.assunto = r.assunto || '';
             this.referencia = r.referencia || '';
+            this.vocativo = r.vocativo || 'Prezado(a) Senhor(a),';
+            this.fechamento = r.fechamento || 'Atenciosamente,';
             this.observacoes = r.observacoes || '';
             this.orientacaoUsada = r.orientacao || '';
             await this._montarEditor();
@@ -91,6 +154,7 @@ function oficioSeiApp(pajNorm) {
         _rascunho() {
             return {
                 destinatario: this.destinatario, assunto: this.assunto, referencia: this.referencia,
+                vocativo: this.vocativo, fechamento: this.fechamento,
                 corpo_html: this._corpoHtml(), observacoes: this.observacoes, orientacao: this.orientacaoUsada,
             };
         },
@@ -155,35 +219,44 @@ function oficioSeiApp(pajNorm) {
             await fetch('/api/oficio-sei/' + encodeURIComponent(this.pajNorm) + '/descartar', { method: 'POST' });
             this.status = 'idle';
             this.destinatario = this.assunto = this.referencia = this.observacoes = '';
+            this.vocativo = this.fechamento = '';
             if (this._editorCorpo) this._editorCorpo.setHTML('');
             this.corpoTexto = '';
         },
 
+        // Login no SEI (página da DPU) — mesmo fluxo do selo "SEI" do topo
+        // (window.conectarSei, base.html). Se um "Criar no SEI" estava esperando
+        // a conexão, segue direto para a confirmação.
         async conectarSei() {
             this.conectando = true;
             this.erroCriar = '';
-            try {
-                const j = await (await fetch('/api/sei/login')).json();
-                if (!j.ok) { this.erroCriar = j.erro; this.conectando = false; return; }
-                window.open(j.url, '_blank');
-                // Fallback se o postMessage da aba de retorno não chegar.
-                const t0 = Date.now();
-                const timer = setInterval(async () => {
-                    const s = await (await fetch('/api/sei/status')).json();
-                    if (s.conectado || Date.now() - t0 > 300000) {
-                        clearInterval(timer);
-                        this.seiConectado = !!s.conectado;
-                        this.conectando = false;
-                    }
-                }, 3000);
-            } catch (e) {
-                this.erroCriar = 'Erro de rede: ' + e; this.conectando = false;
-            }
+            const ok = await window.conectarSei();
+            this.conectando = false;
+            this.seiConectado = ok;
+            if (!ok) { this.erroCriar = 'O painel não ficou conectado ao SEI — tente "Conectar ao SEI" de novo.'; return; }
+            if (this.aguardandoSei) { this.aguardandoSei = false; this.confirmando = true; }
+            this._atualizarSituacao();
         },
 
-        pedirConfirmacao() {
+        // Antes de criar: o painel CONFERE a conexão com o SEI (não só o token
+        // guardado) e, se não houver, pede o login antes de seguir (16/10/2026).
+        async pedirConfirmacao() {
             this.erroCriar = '';
-            if (!this.seiConectado) { this.erroCriar = 'Conecte o painel ao SEI antes de criar o ofício.'; return; }
+            if (!this.seiConectado) {
+                // Sem token: abre o login já neste clique (pop-up permitido) e segue sozinho.
+                this.aguardandoSei = true;
+                await this.conectarSei();
+                return;
+            }
+            this.conectando = true;
+            const ok = await window.garantirSei();
+            this.conectando = false;
+            this.seiConectado = ok;
+            if (!ok) {
+                this.aguardandoSei = true;
+                this.erroCriar = 'A conexão com o SEI caiu — clique em "Conectar ao SEI"; o ofício segue para a criação logo depois do login.';
+                return;
+            }
             this.confirmando = true;
         },
 
@@ -205,6 +278,7 @@ function oficioSeiApp(pajNorm) {
                 this.criados = [...this.criados, j.oficio];
                 this.status = 'idle';
                 this.destinatario = this.assunto = this.referencia = this.observacoes = '';
+                this.vocativo = this.fechamento = '';
                 if (this._editorCorpo) this._editorCorpo.setHTML('');
             } catch (e) {
                 this.erroCriar = 'Erro de rede: ' + e + ' — confira no SEI se o ofício foi criado antes de tentar de novo.';

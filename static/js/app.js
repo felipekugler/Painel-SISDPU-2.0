@@ -1097,6 +1097,10 @@ function caixasAbertasApp(pajNorm) {
         erroVerificacao: '',
 
         async init() {
+            // Tempo real (16/10/2026): toda abertura/refresh consulta o SISDPU na
+            // hora — inclusive quando o navegador devolve a página do PAJ pelo
+            // "Voltar" (bfcache), que não roda o init de novo.
+            window.addEventListener('pageshow', (ev) => { if (ev.persisted) this.carregar(); });
             await this.carregar();
         },
         async carregar() {
@@ -1104,7 +1108,8 @@ function caixasAbertasApp(pajNorm) {
             this.falhouVerificacao = false;
             this.erroVerificacao = '';
             try {
-                const j = await (await fetch('/api/paj/' + encodeURIComponent(this.pajNorm) + '/tramitacoes?limite=10')).json();
+                const j = await (await fetch('/api/paj/' + encodeURIComponent(this.pajNorm) + '/tramitacoes?limite=10',
+                                             { cache: 'no-store' })).json();
                 if (j.ok === false) {
                     this.falhouVerificacao = true;
                     this.erroVerificacao = j.erro || 'Não foi possível verificar agora.';

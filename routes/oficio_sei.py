@@ -50,11 +50,45 @@ async def api_oficio_criar(paj_norm: str, request: Request):
         return {"ok": False, "erro": str(e)}
 
 
+@router.post("/api/oficio-sei/{paj_norm}/atualizar", response_class=JSONResponse)
+async def api_oficio_atualizar(paj_norm: str):
+    """Confere no SEI se os ofícios deste PAJ já foram assinados (só leitura)."""
+    try:
+        return await run_in_threadpool(svc.atualizar_situacao, paj_norm)
+    except FileNotFoundError as e:
+        return {"ok": False, "erro": str(e)}
+
+
+@router.post("/api/oficio-sei/{paj_norm}/anexar/{documento_id}", response_class=JSONResponse)
+async def api_oficio_anexar(paj_norm: str, documento_id: str):
+    """Ofício assinado → movimentação "Juntada de documento" no PAJ, com o PDF
+    (ficha de confirmação do SIS-DPU 2.0). Roda em segundo plano — a tela
+    acompanha pelo /status."""
+    try:
+        return svc.anexar_ao_paj(paj_norm, documento_id)
+    except FileNotFoundError as e:
+        return {"ok": False, "erro": str(e)}
+
+
+@router.get("/api/oficio-sei/{paj_norm}/ler/{documento_id}", response_class=JSONResponse)
+async def api_oficio_ler(paj_norm: str, documento_id: str):
+    """Conteúdo do ofício para leitura no painel (modal)."""
+    try:
+        return await run_in_threadpool(svc.ler_oficio, paj_norm, documento_id)
+    except FileNotFoundError as e:
+        return {"ok": False, "erro": str(e)}
+
+
 # --- Conexão do painel com o SEI (OAuth do MCP-SEI) ---
 
 @router.get("/api/sei/status", response_class=JSONResponse)
-async def api_sei_status():
-    return {"conectado": sei.conectado()}
+async def api_sei_status(real: int = 0):
+    """`real=1`: confere de verdade no MCP-SEI (o token pode ter sido revogado
+    antes de vencer) — usado antes de gravar e no clique do selo. Sem `real`,
+    só olha o token guardado (selo do topo, a cada poucos segundos)."""
+    if real:
+        return await run_in_threadpool(sei.verificar)
+    return {"conectado": sei.conectado(), "dias_restantes": sei.dias_restantes()}
 
 
 @router.get("/api/sei/login", response_class=JSONResponse)
