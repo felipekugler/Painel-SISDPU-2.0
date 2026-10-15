@@ -2,8 +2,8 @@
  *
  * Só age quando a fonte de dados é "SIS-DPU 2.0 (MCP)" e o painel está
  * conectado. Na página do PAJ: relê o PAJ ao abrir e recarrega a página se algo
- * mudou. No dashboard: atualiza a caixa (o servidor limita a 1x a cada 3 min) e
- * avisa a lista para recarregar. O andamento aparece num toast no padrão do
+ * mudou. No dashboard: atualiza a caixa ao abrir e a cada 3 min com a aba visível
+ * (o servidor limita a 1x por minuto) e avisa a lista para recarregar. O andamento aparece num toast no padrão do
  * painel (canto inferior direito, mesmo #toast-container de showToast).
  */
 (function () {
@@ -164,25 +164,49 @@
         }
 
         if (caminho === '/' || caminho === '') {
-            selo('SIS-DPU 2.0 — conferindo a caixa…');
-            try {
-                const r = await postar('/api/sisdpu2/ao-vivo/caixa');
-                if (r.ok && r.mudou) {
-                    window.dispatchEvent(new CustomEvent('caixa-ao-vivo-atualizada'));
-                    const p = (r.resultado || {});
-                    selo('SIS-DPU 2.0 — caixa atualizada (' + (p.processados || 0) + ' PAJ(s) com novidade)', 'ok');
-                } else if (r.ok) {
-                    selo('SIS-DPU 2.0 — caixa em dia', 'ok');
-                } else if (r.motivo === 'sincronizacao_em_andamento') {
-                    selo('SIS-DPU 2.0 — sincronização em andamento', 'ok');
-                } else if (r.motivo === 'teto_diario_quase_atingido') {
-                    selo('SIS-DPU 2.0 — limite diário de leitura quase no fim; atualização pausada', 'erro');
-                } else {
-                    selo('SIS-DPU 2.0 — não foi possível conferir a caixa: ' + (r.motivo || 'erro'), 'erro');
-                }
-            } catch (e) {
-                selo('SIS-DPU 2.0 — falha de rede ao conferir a caixa', 'erro');
+            await conferirCaixa(false);
+            // Com a caixa aberta, confere de novo a cada INTERVALO_TELA_MS (1 registro
+            // do teto diário por conferência; só relê a lista se algo mudou) — sem
+            // isso, um trâmite novo só aparecia ao reabrir a tela ou no laço de
+            // fundo de 10 min (14/10/2026, PAJ 2026/029-02674). Aba escondida não confere.
+            setInterval(function () {
+                if (document.visibilityState === 'visible') conferirCaixa(true);
+            }, INTERVALO_TELA_MS);
+        }
+    }
+
+    const INTERVALO_TELA_MS = 3 * 60 * 1000;
+    let caixaMudouEm = null;
+
+    /* `silencioso`: conferência periódica — só mostra o toast se a caixa mudou
+     * ou se o limite diário estiver no fim. */
+    async function conferirCaixa(silencioso) {
+        if (!silencioso) selo('SIS-DPU 2.0 — conferindo a caixa…');
+        try {
+            const r = await postar('/api/sisdpu2/ao-vivo/caixa');
+            // A caixa pode ter sido relida pelo laço de fundo do servidor desde a
+            // última conferência desta tela — aí `mudou` vem false, mas a lista daqui
+            // está velha.
+            const relidaPorFora = r.ok && r.mudou_em && caixaMudouEm && r.mudou_em !== caixaMudouEm;
+            if (r.mudou_em) caixaMudouEm = r.mudou_em;
+            if (r.ok && r.mudou) {
+                window.dispatchEvent(new CustomEvent('caixa-ao-vivo-atualizada'));
+                const p = (r.resultado || {});
+                selo('SIS-DPU 2.0 — caixa atualizada (' + (p.processados || 0) + ' PAJ(s) com novidade)', 'ok');
+            } else if (relidaPorFora) {
+                window.dispatchEvent(new CustomEvent('caixa-ao-vivo-atualizada'));
+                if (!silencioso) selo('SIS-DPU 2.0 — caixa atualizada', 'ok');
+            } else if (r.ok) {
+                if (!silencioso) selo('SIS-DPU 2.0 — caixa em dia', 'ok');
+            } else if (r.motivo === 'sincronizacao_em_andamento') {
+                if (!silencioso) selo('SIS-DPU 2.0 — sincronização em andamento', 'ok');
+            } else if (r.motivo === 'teto_diario_quase_atingido') {
+                selo('SIS-DPU 2.0 — limite diário de leitura quase no fim; atualização pausada', 'erro');
+            } else if (!silencioso) {
+                selo('SIS-DPU 2.0 — não foi possível conferir a caixa: ' + (r.motivo || 'erro'), 'erro');
             }
+        } catch (e) {
+            if (!silencioso) selo('SIS-DPU 2.0 — falha de rede ao conferir a caixa', 'erro');
         }
     }
 

@@ -1396,6 +1396,35 @@ def _apagar_anexos_pasta(pasta: Path, log: Callable[[str], None]) -> tuple[int, 
     return (removidos, bytes_lib)
 
 
+# Trâmites concluídos pelo painel nos últimos minutos: id_tramite -> monotonic.
+# `rodar()` lê a caixa no INÍCIO e grava `tramitacoes_caixa` no FIM — um
+# trâmite concluído no meio da rodada voltava a aparecer no dashboard (bug
+# real 14/10/2026, PAJ 2026/029-02674: "Minuta de petição inicial." concluída
+# às 13:57 e regravada como pendente pela sync que terminou às 14:01). Um
+# id_tramite concluído nunca volta a ficar pendente, então basta filtrá-lo.
+_CONCLUIDOS_RECENTES: dict[str, float] = {}
+_CONCLUIDOS_JANELA_SEG = 3600
+
+
+def registrar_tramites_concluidos(ids: list[str]) -> None:
+    """Chamado por quem conclui trâmite pelo painel (services/paj_service)."""
+    import time as _t
+
+    agora = _t.monotonic()
+    for i in ids or []:
+        if str(i).strip():
+            _CONCLUIDOS_RECENTES[str(i).strip()] = agora
+
+
+def _ids_concluidos_recentes() -> set[str]:
+    import time as _t
+
+    limite = _t.monotonic() - _CONCLUIDOS_JANELA_SEG
+    for i in [i for i, ts in _CONCLUIDOS_RECENTES.items() if ts < limite]:
+        _CONCLUIDOS_RECENTES.pop(i, None)
+    return set(_CONCLUIDOS_RECENTES)
+
+
 async def _ler_tramitacoes_estruturadas_por_paj(
     log: Callable[[str], None],
 ) -> dict[str, list[dict]] | None:
@@ -1417,8 +1446,6 @@ async def _ler_tramitacoes_estruturadas_por_paj(
     E esta função fazia uma SEGUNDA leitura estruturada, no fim: duas idas à
     mesma página por sync completa.
     """
-    from services import categorias_caixa
-
     try:
         res = await sisdpu_movtram.listar_caixa_estruturada()
     except Exception as e:  # noqa: BLE001
@@ -1428,10 +1455,22 @@ async def _ler_tramitacoes_estruturadas_por_paj(
         log(f"  [tramitacoes] {res.get('detalhe', 'não foi possível ler a caixa estruturada')}")
         return None
 
+    return _agrupar_tramitacoes_por_paj(res.get("itens", []) or [])
+
+
+def _agrupar_tramitacoes_por_paj(itens: list[dict]) -> dict[str, list[dict]]:
+    """Linhas de `listar_caixa_estruturada()` → {paj_norm: [tramitação, ...]}
+    no formato gravado em `tramitacoes_caixa`. Trâmites concluídos há pouco
+    pelo painel ficam de fora (ver `registrar_tramites_concluidos`)."""
+    from services import categorias_caixa
+
+    recentes = _ids_concluidos_recentes()
     por_paj: dict[str, list[dict]] = {}
-    for it in res.get("itens", []) or []:
+    for it in itens:
         paj_txt = (it.get("paj") or "").strip()
         if not paj_txt:
+            continue
+        if str(it.get("id_tramite") or "") in recentes:
             continue
         paj_norm = _normalizar_paj(paj_txt)
         categoria = categorias_caixa.classificar(it.get("descricao", ""), it.get("linha_texto", ""))
@@ -1501,6 +1540,7 @@ async def _atualizar_tramitacoes_caixa(
             return 0
 
     # PAJs a atualizar: todo PAJ ainda na caixa.
+    recentes = _ids_concluidos_recentes()  # `por_paj_pronto` pode ser do início da rodada
     atualizados = 0
     pulados_por_falha = 0
     for paj_norm in pajs_na_caixa:
@@ -1522,7 +1562,7 @@ async def _atualizar_tramitacoes_caixa(
         if meta.get("anexos_sync_falhou") or meta.get("docs_sync_falhou"):
             pulados_por_falha += 1
             continue
-        novas = por_paj.get(paj_norm, [])
+        novas = [t for t in por_paj.get(paj_norm, []) if str(t.get("id_tramite") or "") not in recentes]
         if meta.get("tramitacoes_caixa") == novas:
             continue  # sem mudança
         meta["tramitacoes_caixa"] = novas
@@ -1546,7 +1586,9 @@ async def _atualizar_tramitacoes_caixa(
     return atualizados
 
 
-async def atualizar_tramitacoes_paj(paj_norm: str, log: Callable[[str], None]) -> list[dict]:
+async def atualizar_tramitacoes_paj(
+    paj_norm: str, log: Callable[[str], None], paj_ja_lido: bool = False
+) -> list[dict]:
     """Atualiza `tramitacoes_caixa` de UM ÚNICO PAJ, sob demanda — mesma leitura
     de `_atualizar_tramitacoes_caixa` (a caixa inteira, o SISDPU não expõe
     consulta por PAJ), mas grava só este PAJ e devolve a lista fresca.
@@ -1569,6 +1611,10 @@ async def atualizar_tramitacoes_paj(paj_norm: str, log: Callable[[str], None]) -
     geral pendente.
     """
     paj_norm = paj_norm.strip()
+    from ingestao import sisdpu2_fonte
+
+    if sisdpu2_fonte.fonte_mcp_ativa():
+        return await atualizar_tramitacoes_paj_mcp(paj_norm, log, paj_ja_lido=paj_ja_lido)
     await _atualizar_tramitacoes_caixa({paj_norm}, log)
 
     meta_path = PAJS_DIR / paj_norm / "metadata.json"
@@ -1579,6 +1625,56 @@ async def atualizar_tramitacoes_paj(paj_norm: str, log: Callable[[str], None]) -
     except Exception:
         return []
     return meta.get("tramitacoes_caixa") or []
+
+
+async def atualizar_tramitacoes_paj_mcp(
+    paj_norm: str, log: Callable[[str], None], paj_ja_lido: bool
+) -> list[dict]:
+    """Fonte SIS-DPU 2.0: trâmites de UM PAJ pela busca da caixa (~1 registro
+    por trâmite dele, em vez de reler a caixa inteira). Grava
+    `tramitacoes_caixa` e acerta `em_caixa_atual` — com trâmite pendente o PAJ
+    volta ao dashboard (inclusive um escondido cedo demais por uma conclusão
+    feita com a lista desatualizada); sem nenhum, sai dele, como na conclusão
+    pelo painel (services/paj_service), sem apagar anexos.
+
+    `paj_ja_lido=False` (só os trâmites, sem reler o PAJ): trâmite novo marca
+    `tramitacao_nao_lida`, que impede `rodar()` de pular o PAJ por "sem
+    tramitação nova" — senão as movimentações que vieram com ele nunca
+    seriam lidas. O campo some sozinho quando o PAJ é processado (o metadata
+    é remontado do zero).
+
+    Levanta RuntimeError se a leitura falhar — nunca grava "fora da caixa"
+    por falha."""
+    from ingestao import sisdpu2_fonte
+
+    meta_path = PAJS_DIR / paj_norm / "metadata.json"
+    if not meta_path.exists():
+        return []
+    paj = re.sub(r"^PAJ-(\d{4})-(\d{3})-(\d+)$", r"\1/\2-\3", paj_norm)
+    res = await sisdpu2_fonte.tramites_caixa_do_paj(paj)
+    if not res.get("ok"):
+        raise RuntimeError(res.get("detalhe") or "não foi possível ler os trâmites do PAJ na caixa")
+    novas = _agrupar_tramitacoes_por_paj(res["itens"]).get(paj_norm, [])
+
+    meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    antes = meta.get("tramitacoes_caixa")
+    ids_antes = {t.get("id_tramite") for t in (antes or [])}
+    if not paj_ja_lido and any(t.get("id_tramite") not in ids_antes for t in novas):
+        meta["tramitacao_nao_lida"] = True
+    meta["tramitacoes_caixa"] = novas
+    if novas:
+        if meta.get("em_caixa_atual") is not True:
+            log(f"  [tramitacoes] {paj_norm}: trâmite pendente na caixa — volta ao dashboard")
+        meta["em_caixa_atual"] = True
+        meta.pop("concluido_em", None)
+    elif meta.get("em_caixa_atual") is True:
+        from datetime import datetime as _dt
+
+        log(f"  [tramitacoes] {paj_norm}: nenhum trâmite pendente na caixa — sai do dashboard")
+        meta["em_caixa_atual"] = False
+        meta["concluido_em"] = _dt.now().isoformat(timespec="seconds")
+    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    return novas
 
 
 def _reconciliar_concluidos(
@@ -1900,6 +1996,8 @@ async def rodar(
                         meta_item is not None
                         and meta_item.get("em_caixa_atual") is True
                         and meta_item.get("tramitacoes_caixa") is not None
+                        # trâmite novo gravado sem reler o PAJ (atualizar_tramitacoes_paj_mcp)
+                        and not meta_item.get("tramitacao_nao_lida")
                     ):
                         ids_conhecidos = {
                             t.get("id_tramite")
@@ -2677,7 +2775,7 @@ async def rodar_paj_unico(
             # derruba a sincronização do PAJ em si, só fica sem essa atualização
             # extra (o campo permanece no que já estava).
             try:
-                await atualizar_tramitacoes_paj(paj_norm, log)
+                await atualizar_tramitacoes_paj(paj_norm, log, paj_ja_lido=True)
             except Exception as e:  # noqa: BLE001
                 log(f"  [tramitacoes] falha ao atualizar (best-effort): {type(e).__name__}: {e}")
     except Exception as e:
@@ -2812,7 +2910,7 @@ async def rodar_paj_via_busca_global(
             # estiver (comum pra watchlist), grava `[]` corretamente
             # (`atualizar_tramitacoes_paj` já trata isso). Best-effort.
             try:
-                await atualizar_tramitacoes_paj(paj_norm, log)
+                await atualizar_tramitacoes_paj(paj_norm, log, paj_ja_lido=True)
             except Exception as e:  # noqa: BLE001
                 log(f"  [tramitacoes] falha ao atualizar (best-effort): {type(e).__name__}: {e}")
     except Exception as e:

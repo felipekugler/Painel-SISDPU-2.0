@@ -491,7 +491,10 @@ async def atualizar_tramitacoes_paj(paj_norm: str) -> dict:
             "ok": False, "tramitacoes_caixa": [],
             "mensagem": "já existe uma sincronização em andamento — tente novamente em alguns segundos",
         }
-    if not SISDPU_USERNAME or not SISDPU_PASSWORD:
+    from ingestao import sisdpu2_fonte
+
+    # Fonte SIS-DPU 2.0: lê só os trâmites deste PAJ pelo MCP — não usa a senha do legado.
+    if not sisdpu2_fonte.fonte_mcp_ativa() and (not SISDPU_USERNAME or not SISDPU_PASSWORD):
         return {
             "ok": False, "tramitacoes_caixa": [],
             "mensagem": "credenciais SISDPU ausentes — preencha SISDPU_USERNAME/SISDPU_PASSWORD no .env",

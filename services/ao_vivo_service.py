@@ -47,7 +47,9 @@ LIMITE_AUTOMATICO = 0.70         # acima disso do teto diário, só leitura ao a
 LIMITE_ABERTURA = 0.95           # acima disso, nada (reserva para o uso pelo chat)
 
 _ultimo_paj: dict[str, float] = {}
-_caixa: dict = {"ts": 0.0, "assinatura": None, "quando": None, "resultado": None}
+# mudou_em: quando a caixa foi relida de fato (pela tela OU pelo laço de fundo) —
+# a tela aberta compara com o último que viu e recarrega a lista se mudou.
+_caixa: dict = {"ts": 0.0, "assinatura": None, "quando": None, "resultado": None, "mudou_em": None}
 
 # A assinatura da caixa sobrevive ao reinício do painel: sem isso, cada reinício
 # relia a caixa INTEIRA na 1ª conferência (11/10/2026: ~2.700 registros do dia
@@ -107,7 +109,8 @@ def _assinatura_paj(paj_norm: str) -> tuple:
     movs = (m.get("detalhes_sisdpu") or {}).get("movimentacoes") or []
     return (len(movs), sum(len(mv.get("documentos") or []) for mv in movs),
             m.get("pretensao"), len(m.get("telefones") or []),
-            tuple(sorted(t.get("id_tramite", "") for t in m.get("tramitacoes_caixa") or [])))
+            tuple(sorted(t.get("id_tramite", "") for t in m.get("tramitacoes_caixa") or [])),
+            m.get("em_caixa_atual"))
 
 
 async def _com_lock(coro_factory):
@@ -273,7 +276,8 @@ async def atualizar_caixa(forcar: bool = False, automatico: bool = False) -> dic
     if _fracao_consumida() >= LIMITE_ABERTURA:
         return {"ok": False, "motivo": "teto_diario_quase_atingido"}
     if not forcar and time.monotonic() - _caixa["ts"] < MIN_INTERVALO_CAIXA_SEG:
-        return {"ok": True, "mudou": False, "motivo": "recente", "quando": _caixa["quando"]}
+        return {"ok": True, "mudou": False, "motivo": "recente", "quando": _caixa["quando"],
+                "mudou_em": _caixa["mudou_em"]}
     reg_antes = sis2.consumo_hoje()["registros"]
     try:
         assinatura = await asyncio.to_thread(fonte.assinatura_caixa)
@@ -282,7 +286,7 @@ async def atualizar_caixa(forcar: bool = False, automatico: bool = False) -> dic
     _caixa["ts"] = time.monotonic()
     if assinatura == _caixa["assinatura"] and not forcar:
         _caixa["quando"] = datetime.now().isoformat(timespec="seconds")
-        return {"ok": True, "mudou": False, "quando": _caixa["quando"],
+        return {"ok": True, "mudou": False, "quando": _caixa["quando"], "mudou_em": _caixa["mudou_em"],
                 "registros_gastos": sis2.consumo_hoje()["registros"] - reg_antes}
 
     linhas: list[str] = []
@@ -309,10 +313,12 @@ async def atualizar_caixa(forcar: bool = False, automatico: bool = False) -> dic
     if not erros:
         _caixa["assinatura"] = assinatura  # com erro, a próxima conferência tenta de novo
     _caixa["quando"] = datetime.now().isoformat(timespec="seconds")
+    _caixa["mudou_em"] = _caixa["quando"]
     if not erros:
         _salvar_assinatura()
     _caixa["resultado"] = {k: res.get(k) for k in ("total_caixa", "processados", "pulados", "concluidos")}
-    return {"ok": not erros, "mudou": True, "quando": _caixa["quando"], "resultado": _caixa["resultado"],
+    return {"ok": not erros, "mudou": True, "quando": _caixa["quando"], "mudou_em": _caixa["mudou_em"],
+            "resultado": _caixa["resultado"],
             "erros": erros[:5], "registros_gastos": sis2.consumo_hoje()["registros"] - reg_antes}
 
 

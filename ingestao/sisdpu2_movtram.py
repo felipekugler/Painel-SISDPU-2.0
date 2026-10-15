@@ -32,7 +32,9 @@ from ingestao import sisdpu2_mcp_client as sis2
 from services import aprovacao_mcp_service as aprov
 
 TIPO_MOV_PADRAO = "MOVIMENTAÇÃO MANUAL"
-_PEDACO_BYTES = 3 * 1024 * 1024  # ~4 MB em base64 por chamada
+# O servidor recusa "conteudoBase64" acima de 400.000 caracteres por chamada
+# (14/10/2026); 288 KB viram 393.216 caracteres em base64.
+_PEDACO_BYTES = 288 * 1024
 
 # Dry-run com coleta: o resumo da movimentação conjunta roda a ação inteira
 # sem gravar e recolhe aqui as fichas, para mostrá-las ANTES do e-proc.

@@ -195,29 +195,55 @@ def parse_item_caixa(item_raw: str) -> dict | None:
     }
 
 
+def _item_estruturado(it: dict) -> dict:
+    desc = html.unescape(it.get("descricao") or "")
+    paj = _paj_fmt(it.get("processo", ""))
+    return {
+        "id_tramite": str(it.get("idTramite") or ""),
+        "id": str(it.get("idProcesso") or ""),
+        "paj": paj,
+        "assistido": it.get("assistido") or "",
+        "data_envio": _br(it.get("dataEnvio")),
+        "remetente": it.get("remetente") or "",
+        "prazo": _br(it.get("prazo"), com_hora=False) if it.get("prazo") else "",
+        "descricao": desc,
+        "linha_texto": " | ".join(x for x in (paj, it.get("assistido") or "", _br(it.get("dataEnvio")),
+                                              it.get("remetente") or "", desc) if x),
+        "url_detalhe": URL_DETALHE_LEGADO.format(id=it.get("idProcesso")),
+    }
+
+
 async def listar_caixa_estruturada() -> dict:
     try:
         itens = await asyncio.to_thread(_caixa_completa)
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "detalhe": str(e), "itens": []}
-    out = []
-    for it in itens:
-        desc = html.unescape(it.get("descricao") or "")
-        paj = _paj_fmt(it.get("processo", ""))
-        out.append({
-            "id_tramite": str(it.get("idTramite") or ""),
-            "id": str(it.get("idProcesso") or ""),
-            "paj": paj,
-            "assistido": it.get("assistido") or "",
-            "data_envio": _br(it.get("dataEnvio")),
-            "remetente": it.get("remetente") or "",
-            "prazo": _br(it.get("prazo"), com_hora=False) if it.get("prazo") else "",
-            "descricao": desc,
-            "linha_texto": " | ".join(x for x in (paj, it.get("assistido") or "", _br(it.get("dataEnvio")),
-                                                  it.get("remetente") or "", desc) if x),
-            "url_detalhe": URL_DETALHE_LEGADO.format(id=it.get("idProcesso")),
-        })
-    return {"ok": True, "itens": out}
+    return {"ok": True, "itens": [_item_estruturado(it) for it in itens]}
+
+
+def _tramites_caixa_do_paj(paj: str) -> list[dict]:
+    """Trâmites pendentes de UM PAJ na caixa, pela busca da própria caixa
+    (~1 registro por trâmite do PAJ — reler a caixa inteira custaria ~1 por
+    trâmite da caixa toda). A busca é por texto: só ficam as linhas cujo
+    número de PAJ bate exatamente. Levanta erro se a resposta vier fora do
+    formato — NUNCA devolve [] por falha (quem chama trataria como "saiu da
+    caixa")."""
+    r = sis2.chamar("caixa_entrada", {"busca": paj, "limite": 100, "pagina": 0,
+                                      "ordenarPor": "DATA_ENVIO", "direcao": "DESC"})
+    if not isinstance(r, dict) or "itens" not in r or "total" not in r:
+        raise RuntimeError(f"Caixa do SIS-DPU 2.0 veio em formato inesperado: {str(r)[:200]}")
+    if int(r.get("totalPaginas") or 1) > 1:
+        raise RuntimeError(f"Busca de {paj} na caixa trouxe mais de uma página — resultado não confiável.")
+    return [_item_estruturado(it) for it in (r["itens"] or []) if _paj_fmt(it.get("processo", "")) == paj]
+
+
+async def tramites_caixa_do_paj(paj: str) -> dict:
+    """{ok, itens} no formato de `listar_caixa_estruturada`, só deste PAJ."""
+    try:
+        itens = await asyncio.to_thread(_tramites_caixa_do_paj, paj)
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "detalhe": str(e), "itens": []}
+    return {"ok": True, "itens": itens}
 
 
 # ---------------------------------------------------------------------------

@@ -863,10 +863,10 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
             if ids_concluidos:
                 await _dar_baixa_retorno_se_aplicavel(tramitacoes_caixa, ids_concluidos)
                 ids_set = set(ids_concluidos)
-                restantes = [
+                restantes = await _confirmar_restantes(paj_norm, ids_concluidos, [
                     t for t in tramitacoes_caixa
                     if str(t.get("id_tramite") or "").strip() not in ids_set
-                ]
+                ])
                 outros_tramites_abertos = len(restantes)
                 metadata["tramitacoes_caixa"] = restantes
                 # `tramitacoes_caixa` agora inclui geral+retorno+sat
@@ -887,6 +887,9 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
             # Modelo antigo (PAJ ainda não passou por uma sync com a lista) —
             # confirma ao vivo se não resta nenhum outro trâmite (qualquer
             # grupo/pessoa, não só minha caixa) antes de esconder do dashboard.
+            from ingestao import sincronizador
+
+            sincronizador.registrar_tramites_concluidos(ids_concluidos)
             sisdpu_raw = metadata.get("sisdpu_raw", {}) or {}
             url_detalhe = sisdpu_raw.get("url", "") or ""
             m_id = re.search(r"[?&]id=(\d+)", url_detalhe)
@@ -919,6 +922,30 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
         "ok": True, "concluido": concluido, "saiu_da_caixa": saiu_da_caixa,
         "outros_tramites_abertos": outros_tramites_abertos,
     }
+
+
+async def _confirmar_restantes(
+    paj_norm: str, ids_concluidos: list[str], restantes: list[dict]
+) -> list[dict]:
+    """Trâmites que sobram na caixa depois de uma conclusão pelo painel.
+
+    Registra os concluídos no sincronizador (uma sync em andamento, que leu a
+    caixa antes, não os regrava como pendentes). Se a lista local ficou vazia
+    e a fonte é o SIS-DPU 2.0, confere ao vivo antes de tirar o PAJ do
+    dashboard (~1 registro): a lista local pode estar atrasada e não ter um
+    trâmite chegado depois — bug real 14/10/2026, PAJ 2026/029-02674: concluir
+    a "Minuta" escondeu o PAJ com o trâmite de 13:35 ainda aberto. Falha na
+    conferência → fica a conta local, como antes."""
+    from ingestao import sincronizador, sisdpu2_fonte
+
+    sincronizador.registrar_tramites_concluidos(ids_concluidos)
+    if restantes or not sisdpu2_fonte.fonte_mcp_ativa():
+        return restantes
+    paj = re.sub(r"^PAJ-(\d{4})-(\d{3})-(\d+)$", r"\1/\2-\3", paj_norm)
+    res = await sisdpu2_fonte.tramites_caixa_do_paj(paj)
+    if not res.get("ok"):
+        return restantes
+    return sincronizador._agrupar_tramitacoes_por_paj(res["itens"]).get(paj_norm, [])
 
 
 async def _dar_baixa_retorno_se_aplicavel(
@@ -1014,7 +1041,9 @@ async def concluir_tramites_caixa(paj_norm: str, id_tramites: list[str]) -> dict
     saiu_da_caixa = False
     outros_tramites_abertos = 0
     if tramitacoes_caixa is not None:
-        restantes = [t for t in tramitacoes_caixa if t.get("id_tramite") not in concluidos_ok]
+        restantes = await _confirmar_restantes(paj_norm, concluidos_ok, [
+            t for t in tramitacoes_caixa if t.get("id_tramite") not in concluidos_ok
+        ])
         outros_tramites_abertos = len(restantes)
         metadata["tramitacoes_caixa"] = restantes
         # `tramitacoes_caixa` agora inclui geral+retorno+sat (2026-09-19), então
