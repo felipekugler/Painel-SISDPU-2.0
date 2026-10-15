@@ -65,6 +65,7 @@ from __future__ import annotations
 import contextlib
 import re
 import subprocess
+import sys
 import threading
 from datetime import datetime
 from pathlib import Path
@@ -73,7 +74,7 @@ from config import PAJS_DIR
 from services import config_painel_service
 from services.chat_service import CLAUDE_CMD
 from services.peticao_ia_service import (
-    MODELOS_DIR, _REGRAS_FORMATO, _docx_para_html, _docx_para_pdf, _gerar_docx_sem_viuva,
+    MODELOS_DIR, _REGRAS_FORMATO, _docx_para_pdf, _gerar_docx_sem_viuva,
 )
 
 # Só usada por `_ler_area_texto_migracao` (migração ÚNICA do cadastro antigo,
@@ -284,44 +285,30 @@ def _gerar_worker(paj_norm: str, processo: str, tipo_slug: str, documentos: list
         texto_referencia, caminhos_referencia = _resolver_arquivos_referencia(cfg)
         criterio_area = (cfg.get("instrucao") or "") + texto_referencia
         paj_exibicao = _paj_exibicao(paj_norm)
-        antes = _listar_arquivos(pasta_pecas_ia)
-        prompt = _montar_prompt(paj_exibicao, processo, criterio_area, caminhos, pasta_pecas_ia,
+        prompt = _montar_prompt(paj_exibicao, processo, criterio_area, caminhos,
                                  orientacao=orientacao, cfg=cfg, caminhos_referencia=caminhos_referencia)
 
-        # Prompt por STDIN (não argumento) — mesmo motivo de peticao_ia_service.py:
-        # o texto dos documentos-fonte facilmente passa do limite de linha de
-        # comando do Windows. cwd = MODELOS_DIR (NÃO teses-dpu — ver docstring
-        # do módulo: rodar dentro de teses-dpu carregaria o CLAUDE.md raiz
-        # daquele monorepo, com a regra "peça sempre extensa", errada aqui).
-        cmd = [*CLAUDE_CMD, "-p", "--permission-mode", "bypassPermissions"]
-        proc = subprocess.run(
-            cmd, cwd=str(MODELOS_DIR), input=prompt, capture_output=True, text=True,
-            encoding="utf-8", errors="replace", timeout=300,
-        )
-        depois = _listar_arquivos(pasta_pecas_ia)
-        novos = sorted(depois - antes)
-        docx_novos = [n for n in novos if n.lower().endswith(".docx")]
-        if not docx_novos:
-            saida = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
-            _falhar(paj_norm, f"A IA não gerou nenhum arquivo .docx novo em 'Peças IA'. Saída: {saida[-1500:] or '(vazia)'}")
+        # Resposta direto em HTML (15/10/2026, PAJ 2025/029-04069 estourou os
+        # 5 min): antes a IA abria cada documento com a ferramenta de leitura,
+        # escrevia e rodava um script `peticao_base.py` pra gerar um .docx — que
+        # o painel em seguida convertia DE VOLTA pra HTML (`_docx_para_html`)
+        # só pra caixa de edição. Várias idas e voltas com o modelo pra nada: a
+        # formatação DPU de verdade só acontece depois, em `formatar_e_salvar`,
+        # a partir do HTML. Agora o texto dos documentos já vai embutido no
+        # prompt (`_texto_documento`) e a IA só redige. Sem Bash/Write/Edit —
+        # só leitura, pra um PDF escaneado sem texto (ver `_montar_prompt`).
+        # Prompt por STDIN (não argumento) — o texto dos documentos passa
+        # fácil do limite de linha de comando do Windows. cwd = MODELOS_DIR
+        # (NÃO teses-dpu — ver docstring do módulo).
+        cmd = [*CLAUDE_CMD, "-p", "--permission-mode", "bypassPermissions",
+               "--disallowedTools", "Bash", "Write", "Edit", "NotebookEdit"]
+        saida, erro_proc = _rodar_claude(cmd, prompt, timeout=300)
+        if erro_proc == "timeout":
+            _falhar(paj_norm, "A IA excedeu o tempo limite (5 min) redigindo a minuta.")
             return
-
-        # NÃO converte pra PDF nem deixa o(s) .docx do RASCUNHO em "Peças IA" —
-        # é só um rascunho pra virar texto editável na caixa do painel (o
-        # Defensor revisa/ajusta ANTES de gerar o arquivo final de verdade,
-        # via `formatar_e_salvar`, mesmo padrão de "Incluir petição nos
-        # anexos" em peticao_ia_service.py). Extrai o HTML do primeiro .docx
-        # gerado e descarta o(s) arquivo(s)-rascunho.
-        docx_path = pasta_pecas_ia / docx_novos[0]
-        peticao_html = ""
-        with contextlib.suppress(Exception):
-            peticao_html = _docx_para_html(docx_path)
-        for nome in docx_novos:
-            with contextlib.suppress(Exception):
-                (pasta_pecas_ia / nome).unlink()
-
+        peticao_html = _extrair_peticao_html(saida)
         if not peticao_html:
-            _falhar(paj_norm, "A IA gerou o rascunho, mas não foi possível extrair o texto dele.")
+            _falhar(paj_norm, f"A IA não devolveu o texto da minuta. Saída: {saida[-1500:].strip() or '(vazia)'}")
             return
 
         with _lock:
@@ -329,16 +316,92 @@ def _gerar_worker(paj_norm: str, processo: str, tipo_slug: str, documentos: list
                 "status": "done", "erro": "", "peticao_html": peticao_html,
                 "concluido_em": datetime.now().isoformat(timespec="seconds"),
             }
-    except subprocess.TimeoutExpired:
-        _falhar(paj_norm, "A IA excedeu o tempo limite (5 min) redigindo a minuta.")
     except Exception as e:  # noqa: BLE001
         _falhar(paj_norm, f"{type(e).__name__}: {e}"[:500])
 
 
-def _listar_arquivos(pasta: Path) -> set[str]:
-    if not pasta.exists():
-        return set()
-    return {f.name for f in pasta.iterdir() if f.is_file()}
+def _rodar_claude(cmd: list[str], prompt: str, timeout: int) -> tuple[str, str | None]:
+    """Roda o Claude CLI e devolve (stdout+stderr, erro). Em caso de tempo
+    esgotado, mata a ÁRVORE de processos: no Windows o CLI roda via
+    `cmd.exe /c claude.cmd`, e o `kill()` do subprocess.run só derrubava o
+    cmd.exe — o Claude seguia rodando escondido (bug real 15/10/2026: o
+    rascunho apareceu em "Peças IA" ~20 min depois do aviso de tempo limite)."""
+    proc = subprocess.Popen(
+        cmd, cwd=str(MODELOS_DIR), stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE, text=True, encoding="utf-8", errors="replace",
+    )
+    try:
+        out, err = proc.communicate(input=prompt, timeout=timeout)
+    except subprocess.TimeoutExpired:
+        if sys.platform == "win32":
+            subprocess.run(["taskkill", "/PID", str(proc.pid), "/T", "/F"], capture_output=True)
+        else:
+            proc.kill()
+        with contextlib.suppress(Exception):
+            proc.communicate(timeout=10)
+        return "", "timeout"
+    return (out or "") + "\n" + (err or ""), None
+
+
+_MARCA_INICIO = "<<<MINUTA>>>"
+_MARCA_FIM = "<<<FIM>>>"
+
+
+def _extrair_peticao_html(saida: str) -> str:
+    """HTML da peça entre as marcas pedidas no prompt — o que vier fora delas
+    (ex.: o parágrafo de classificação do caso) não entra na caixa de edição.
+    Tolera cercas de código markdown em volta."""
+    m = re.search(re.escape(_MARCA_INICIO) + r"(.*?)" + re.escape(_MARCA_FIM), saida or "", re.DOTALL)
+    if not m:
+        return ""
+    html = m.group(1).strip()
+    cerca = re.search(r"```(?:html)?\s*(.*?)```", html, re.DOTALL)
+    if cerca:
+        html = cerca.group(1).strip()
+    return html if re.sub(r"<[^>]+>", "", html).strip() else ""
+
+
+# Teto de texto embutido por documento — um prontuário de centenas de páginas
+# não pode inflar o prompt sem limite; o resto fica acessível pelo caminho.
+_MAX_CHARS_DOC = 80_000
+
+
+def _texto_documento(caminho: Path) -> str:
+    """Texto do documento extraído em Python (rápido, sem OCR) pra embutir no
+    prompt. "" quando não há texto aproveitável (PDF escaneado, .doc antigo
+    etc.) — aí a IA lê o arquivo pelo caminho."""
+    ext = caminho.suffix.lower()
+    texto = ""
+    with contextlib.suppress(Exception):
+        if ext == ".pdf":
+            import fitz  # PyMuPDF
+
+            with fitz.open(caminho) as doc:
+                texto = "\n".join(pg.get_text() for pg in doc)
+            # Média < 200 caracteres por página → escaneado/imagem.
+            with fitz.open(caminho) as doc:
+                if len(texto.strip()) < 200 * max(1, doc.page_count):
+                    texto = ""
+        elif ext == ".docx":
+            import docx as _docx
+
+            texto = "\n".join(p.text for p in _docx.Document(str(caminho)).paragraphs)
+        elif ext in (".txt", ".md"):
+            texto = caminho.read_text(encoding="utf-8", errors="replace")
+        elif ext in (".html", ".htm"):
+            # Documento do e-proc: o cliente MCP já grava um .txt irmão.
+            irmao = caminho.with_suffix(".txt")
+            if irmao.exists():
+                texto = irmao.read_text(encoding="utf-8", errors="replace")
+            else:
+                from bs4 import BeautifulSoup
+
+                texto = BeautifulSoup(caminho.read_text(encoding="utf-8", errors="replace"),
+                                      "html.parser").get_text("\n")
+    texto = re.sub(r"\n{3,}", "\n\n", texto or "").strip()
+    if len(texto) > _MAX_CHARS_DOC:
+        texto = texto[:_MAX_CHARS_DOC] + f"\n\n[... texto truncado — íntegra em `{caminho}`]"
+    return texto
 
 
 _MESES_PT = [
@@ -512,7 +575,21 @@ _INSTRUCAO_ESTILO_PADRAO = (
 )
 
 
-def _montar_prompt(paj_exibicao: str, processo: str, criterio_area: str, caminhos: list[Path], pasta_destino: Path,
+def _bloco_documentos(titulo: str, caminhos: list[Path]) -> str:
+    """Seção de documentos do prompt: texto já extraído embutido (a IA não
+    precisa abrir nada), ou só o caminho quando não há texto aproveitável."""
+    partes = [f"### {titulo}"]
+    for c in caminhos:
+        texto = _texto_documento(c)
+        if texto:
+            partes.append(f"#### {c.name}\n<<<DOC\n{texto}\nDOC>>>")
+        else:
+            partes.append(f"#### {c.name}\n(sem texto extraível — leia o arquivo com a ferramenta de "
+                          f"leitura: `{c}`)")
+    return "\n\n".join(partes)
+
+
+def _montar_prompt(paj_exibicao: str, processo: str, criterio_area: str, caminhos: list[Path],
                     orientacao: str = "", cfg: dict | None = None, caminhos_referencia: list[Path] | None = None) -> str:
     # Sem documento nenhum (só permitido pra tipos com documentos_obrigatorios=
     # False, ex.: "peticao-generica") — a peça se apoia só na Orientação
@@ -524,15 +601,13 @@ def _montar_prompt(paj_exibicao: str, processo: str, criterio_area: str, caminho
     caminhos_referencia = caminhos_referencia or []
     blocos_docs = []
     if caminhos_referencia:
-        blocos_docs.append("### Material de referência desta área (cadastrado no tipo, vale pra qualquer caso)\n"
-                            + "\n".join(f"- `{c}`" for c in caminhos_referencia))
+        blocos_docs.append(_bloco_documentos(
+            "Material de referência desta área (cadastrado no tipo, vale pra qualquer caso)", caminhos_referencia))
     if caminhos:
-        blocos_docs.append("### Documentos do caso selecionados pelo Defensor\n"
-                            + "\n".join(f"- `{c}`" for c in caminhos))
+        blocos_docs.append(_bloco_documentos("Documentos do caso selecionados pelo Defensor", caminhos))
     lista_docs = ("\n\n".join(blocos_docs) if blocos_docs
                   else "(nenhum documento foi selecionado — baseie-se na Orientação Diretiva "
                        "abaixo e no que for de conhecimento geral pertinente)")
-    nome_sugerido = pasta_destino / f"manifestacao-{datetime.now().strftime('%d-%m-%Y')}.docx"
     cfg = cfg or {}
 
     # Orientação diretiva do Defensor (caixa compartilhada com "Analisar"/
@@ -564,7 +639,8 @@ def _montar_prompt(paj_exibicao: str, processo: str, criterio_area: str, caminho
         f"Redija uma manifestação sobre os documentos abaixo, no processo judicial "
         f"{processo or '(ver documentos)'} (PAJ {paj_exibicao} — referência interna da DPU, "
         "não aparece pro juízo).\n\n"
-        "## Documentos-fonte selecionados pelo Defensor (leia todos antes de redigir)\n"
+        "## Documentos-fonte selecionados pelo Defensor (o texto já está aqui — leia todos antes de "
+        "redigir)\n"
         f"{lista_docs}\n\n"
         + bloco_orientacao +
         "## Critérios desta área — LEIA COM ATENÇÃO (define a classificação do caso e o "
@@ -580,48 +656,34 @@ def _montar_prompt(paj_exibicao: str, processo: str, criterio_area: str, caminho
         + instrucao_estilo
         + _REGRAS_FORMATO +
         "\n---\n\n"
-        "## Como gerar o arquivo\n"
-        f"Use a biblioteca `peticao_base.py` (já está em `{MODELOS_DIR}` — rode a partir "
-        "dessa pasta, ou faça `sys.path.insert(0, r'" + str(MODELOS_DIR) + "')` antes do "
-        "import). Ela já traz as REGRAS DE ESTILO obrigatórias da DPU no próprio "
-        "docstring do módulo — leia-o primeiro e siga-as TAMBÉM, além das regras acima.\n\n"
-        "Estrutura ESPERADA, NESTA ORDEM (adapte o conteúdo, mas siga a sequência de "
-        "chamadas):\n"
-        "1. `novo_documento()` para abrir o doc.\n"
-        "2. `enderecamento(doc, texto_endereco, num_processo)` — ANTES da qualificação. "
-        "`texto_endereco` é algo como 'EXCELENTÍSSIMO(A) SENHOR(A) JUIZ(A) FEDERAL' (ajuste "
-        "o cargo/vara conforme a instância/classe do processo, se souber pelos documentos); "
-        f"`num_processo` é '{processo}'.\n"
-        f"3. Logo após, insira uma linha adicional (mesmo padrão de `par()`/`r()`, alinhado à "
-        f"esquerda, sem recuo de 1ª linha) com a referência do PAJ, em NEGRITO: "
-        f"'PAJ {paj_exibicao}' (EXATAMENTE este texto — não use nenhum outro identificador de "
-        "PAJ). Logo depois desta linha, 3 parágrafos em branco (`blank()`) antes da "
-        "qualificação.\n"
-        "4. `qualificacao(doc, nome_da_parte, '', texto_pre=<frase>, texto_pos='')` — nome "
-        "em maiúsculas (a função já faz isso). `texto_pre` deve ser algo como ', qualificada "
-        "nos autos, representada pela Defensoria Pública da União, comparece, perante Vossa "
-        "Excelência, para se manifestar sobre [o laudo pericial / a avaliação social / o que "
-        "for objeto desta manifestação, conforme os documentos].' — ajuste o final da frase "
-        "ao conteúdo real sendo respondido.\n"
-        "5. Parágrafos com `par()`/`r()` — texto corrido, conciso, seguindo as regras de "
-        "estilo acima. Poucos parágrafos (3 a 6) — isto NÃO é petição inicial.\n"
+        "## Como entregar a peça\n"
+        "Responda com o TEXTO da peça em HTML simples — NÃO gere arquivo, NÃO escreva nem "
+        "rode script (ignore qualquer menção acima a `peticao_base.py`, `novo_documento()`, "
+        "`par()`, `salvar()` etc.: a formatação no padrão DPU é aplicada depois pelo painel, "
+        "a partir do seu HTML). Use só `<p>` (um por parágrafo), `<strong>`, `<em>`, `<u>` e, "
+        "para citação recuada, `<blockquote>`. Nada de títulos `<h1>`-`<h6>`, `<hr>`, estilos "
+        "ou classes.\n\n"
+        "Estrutura ESPERADA, NESTA ORDEM:\n"
+        "1. `<p><strong>EXCELENTÍSSIMO(A) SENHOR(A) JUIZ(A) FEDERAL ...</strong></p>` — "
+        "ajuste o cargo/vara/turma conforme a instância/classe do processo, se souber pelos "
+        "documentos.\n"
+        f"2. `<p><strong>Autos nº {processo}</strong></p>`\n"
+        f"3. `<p><strong>PAJ {paj_exibicao}</strong></p>` (EXATAMENTE este texto — não use "
+        "nenhum outro identificador de PAJ).\n"
+        "4. Parágrafo de qualificação: NOME DA PARTE em maiúsculas e negrito, seguido de algo "
+        "como ', qualificada nos autos, representada pela Defensoria Pública da União, "
+        "comparece, perante Vossa Excelência, para se manifestar sobre [o objeto desta "
+        "manifestação, conforme os documentos].' — ajuste o final da frase ao conteúdo real.\n"
+        "5. Corpo em parágrafos, seguindo as regras de estilo e estrutura acima.\n"
         "6. Se houver pedido, encerre o corpo com o requerimento (sem usar dois-pontos "
         "antes da lista).\n"
-        f"7. `assinatura(doc, termos=False, data='{_data_por_extenso()}')` — chame-a UMA "
-        "ÚNICA VEZ, IMEDIATAMENTE após o último parágrafo do pedido, e NÃO escreva você "
-        "mesmo nenhuma linha de fecho antes dela (nem 'Termos em que pede deferimento' — "
-        "NÃO usar essa linha nesta peça —, nem a data, nem o nome/cargo do defensor) — "
-        "`assinatura()` já gera TODAS essas linhas sozinha, EXATAMENTE nesses parâmetros "
-        "(não altere `termos` nem `data`).\n"
-        f"8. `salvar(doc, r'{nome_sugerido}')` — pode ajustar só o nome-base do arquivo pra "
-        "algo mais descritivo do tipo de peça, mas mantenha a pasta exatamente essa.\n\n"
-        "NÃO gere PDF nem rode conversão nenhuma — a conversão pra PDF é feita "
-        "automaticamente pelo painel, em Python, depois que o `.docx` for salvo.\n\n"
-        "IMPORTANTE sobre idioma: toda comunicação nesta tarefa em português do Brasil, "
-        "inclusive comentários de passagem entre a leitura de um anexo e outro.\n\n"
-        "Escreva e execute o script diretamente (você tem acesso a Bash/Write) — não "
-        "peça confirmação, não mostre o texto antes de salvar. Ao final, confirme em 1-2 "
-        "linhas que o arquivo foi salvo e a classificação do caso adotada."
+        "NÃO escreva fecho (nem 'Termos em que pede deferimento', nem cidade/data, nem "
+        "nome/cargo do defensor) — o painel acrescenta a assinatura sozinho.\n"
+        "Não deixe parágrafos vazios para espaçamento — o painel cuida disso.\n\n"
+        "Formato EXATO da resposta: primeiro o parágrafo de classificação do caso (texto "
+        f"puro), depois a peça entre as marcas `{_MARCA_INICIO}` e `{_MARCA_FIM}`, cada uma "
+        "sozinha na sua linha, sem cercas de código. Nada depois da marca final.\n\n"
+        "Toda comunicação em português do Brasil. Não peça confirmação."
     )
 
 

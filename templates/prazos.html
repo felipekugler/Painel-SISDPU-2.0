@@ -186,7 +186,7 @@
             <tbody>
               <template x-for="c in casosDe(item.chave)" :key="item.chave + '-' + c.processo + '-' + (c._prazoIdx ?? 0)">
                 <tr :class="c.cor ? 'linha-eproc' : ''" :style="c.cor ? ('background-color:' + c.cor) : ''">
-                  <td class="max-w-[15rem]">
+                  <td class="max-w-[15rem] text-center">
                     <div class="font-mono text-xs whitespace-nowrap">
                       <button class="link" title="Escolher onde abrir o processo"
                               @click.stop="menuAbertoProc = (menuAbertoProc === c.processo ? null : c.processo);
@@ -196,13 +196,6 @@
                                             posMenu = { top: rect.bottom, left: rect.left };
                                           }"
                               x-text="c.processo"></button>
-                      <template x-if="c.novo">
-                        <span class="badge badge-success badge-sm ml-1" title="Nova desde a última sincronização">novo</span>
-                      </template>
-                      <template x-if="c._totalPrazos > 1">
-                        <span class="badge badge-success badge-sm ml-1" :title="rotuloBadgePrazos(c).titulo"
-                              x-text="rotuloBadgePrazos(c).texto"></span>
-                      </template>
                       <template x-if="(c.lembrete_itens || []).length">
                         <svg class="lembrete-icon inline-block ml-1" width="15" height="15" viewBox="0 0 16 16"
                              @mouseenter="mostrarLembrete($event, c)" @mouseleave="lembreteTip.show = false"
@@ -213,6 +206,12 @@
                       </template>
                     </div>
                     <div class="text-[10px] text-base-content/40" x-show="c.juizo" x-text="'Juízo: ' + c.juizo"></div>
+                    <div class="flex flex-wrap justify-center gap-1 mt-1" x-show="c._totalPrazos > 1">
+                      <template x-if="c._totalPrazos > 1">
+                        <span class="badge badge-success badge-sm" :title="rotuloBadgePrazos(c).titulo"
+                              x-text="rotuloBadgePrazos(c).texto"></span>
+                      </template>
+                    </div>
                     <template x-if="partesDe(c)">
                       <div class="text-xs cell-wrap mt-1 leading-tight text-center">
                         <div class="font-bold" x-text="papelAtivo(partesDe(c))"></div>
@@ -244,8 +243,44 @@
                     <template x-for="(p, i) in c.prazos" :key="i">
                       <div class="mb-1">
                         <span x-text="p.evento"></span>
-                        <template x-if="p.prazo_dias">
-                          <span class="badge badge-sm ml-1" :class="badgeDias(p.prazo_dias)" x-text="p.prazo_dias + 'd'"></span>
+                        <!-- Ato(s) referenciado(s) — mesmos badges da página do PAJ
+                             ("Intimações pendentes") e da Triagem de Intimações: verde/
+                             vermelho = já baixado (abre), cinza = clique p/ baixar. Dado
+                             carregado em segundo plano (`_carregarAtosReferenciados`). -->
+                        <template x-if="atosDe(c, p).length">
+                          <div class="mt-3">
+                            <div class="font-semibold">Ato referenciado:</div>
+                            <div class="flex flex-col gap-1 mt-1">
+                              <template x-for="ato in atosDe(c, p)" :key="ato.numero">
+                                <div class="flex flex-wrap items-center gap-1">
+                                  <span x-text="'Evento ' + ato.numero"></span>
+                                  <template x-if="(ato.arquivos_baixados || []).length">
+                                    <template x-for="arq in ato.arquivos_baixados" :key="arq.arquivo">
+                                      <a :href="linkArquivoAto(c, arq)" target="_blank"
+                                         class="badge badge-sm gap-1 border border-black/15"
+                                         :class="corBadgeDocumentoAto(arq.nome_arquivo)"
+                                         :title="'Ler ' + arq.nome_arquivo">
+                                        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                        <span x-text="nomeDocumentoAto(arq.nome_arquivo)"></span>
+                                      </a>
+                                    </template>
+                                  </template>
+                                  <template x-if="!(ato.arquivos_baixados || []).length && (ato.documentos || []).length">
+                                    <template x-for="(d, di) in ato.documentos" :key="di">
+                                      <button type="button" @click="baixarDocAto(c, p, ato)"
+                                              :disabled="baixandoAto[c.processo + ':' + ato.numero]"
+                                              class="badge badge-sm gap-1 border border-black/15 bg-base-200 text-base-content/60"
+                                              :title="(d.sigla || d.nome || 'documento') + ' — clique p/ baixar'">
+                                        <span x-show="baixandoAto[c.processo + ':' + ato.numero]" class="loading loading-spinner loading-xs"></span>
+                                        <svg x-show="!baixandoAto[c.processo + ':' + ato.numero]" class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"></path></svg>
+                                        <span x-text="d.sigla || d.nome || 'doc'"></span>
+                                      </button>
+                                    </template>
+                                  </template>
+                                </div>
+                              </template>
+                            </div>
+                          </div>
                         </template>
                       </div>
                     </template>
@@ -327,6 +362,10 @@ function prazosEprocApp() {
     menuAbertoProc: null,
     menuAbertoProcObj: null,
     posMenu: { top: 0, left: 0 },
+    // Ato(s) referenciado(s) por prazo — { [processo + '|' + _chaveAto(p)]: [atos] }
+    // (ver `_carregarAtosReferenciados`); `baixandoAto`: { [processo + ':' + nº evento]: bool }.
+    atoRef: {},
+    baixandoAto: {},
 
     async init() {
       this.verificarSessao();
@@ -398,6 +437,87 @@ function prazosEprocApp() {
       // padrão mesmo que o Defensor tenha reordenado por outra coluna antes.
       this.sortCampo = 'final';
       this.sortDir = 1;
+      this._carregarAtosReferenciados();
+    },
+
+    // Ato(s) referenciado(s) de cada prazo — mesmos badges da página do PAJ
+    // ("Intimações pendentes") e da Triagem de Intimações, reaproveitando os
+    // MESMOS endpoints: `/api/intimacoes/{processo}/atos` (casa o prazo cru
+    // com o seu `ato` por evento+data_envio+prazo_dias — mesmo casamento de
+    // `_acharAto` em static/js/processo_judicial.js) e `/evento-referenciado`
+    // (sem IA, cacheado em disco por ato — só a 1ª visita consulta o e-proc).
+    // Em segundo plano, com teto de 6 processos simultâneos (mesmo teto da
+    // Triagem de Intimações).
+    async _carregarAtosReferenciados() {
+      const porProcesso = {};
+      for (const casos of Object.values(this.secoes || {})) {
+        for (const c of casos || []) {
+          if (!c.processo) continue;
+          const chaves = porProcesso[c.processo] || (porProcesso[c.processo] = new Set());
+          for (const p of c.prazos || []) chaves.add(this._chaveAto(p));
+        }
+      }
+      const fila = Object.entries(porProcesso);
+      const worker = async () => {
+        while (fila.length) {
+          const [processo, chaves] = fila.shift();
+          try {
+            const r = await (await fetch(`/api/intimacoes/${encodeURIComponent(processo)}/atos`)).json();
+            for (const caso of (r && r.ok) ? (r.casos || []) : []) {
+              const chavesCaso = (caso.prazos || []).map((p) => this._chaveAto(p)).filter((k) => chaves.has(k));
+              if (!chavesCaso.length || chavesCaso.every((k) => (processo + '|' + k) in this.atoRef)) continue;
+              const qs = new URLSearchParams({ ato: caso.ato });
+              const d = await (await fetch(`/api/intimacoes/${encodeURIComponent(processo)}/evento-referenciado?${qs}`)).json();
+              const dados = (d && d.ok) ? d.dados : null;
+              const atos = (dados && dados.atos_referenciados) || [];
+              for (const ato of atos) {
+                ato._instancia = dados.instancia || 1;
+                // Pré-semeia a chave reativa antes do badge existir (Alpine
+                // `:disabled` preso em chave nunca definida).
+                if (!((processo + ':' + ato.numero) in this.baixandoAto)) this.baixandoAto[processo + ':' + ato.numero] = false;
+              }
+              for (const k of chavesCaso) this.atoRef[processo + '|' + k] = atos;
+            }
+          } catch (e) { /* sem badge para este processo — não trava a página */ }
+        }
+      };
+      await Promise.all(Array.from({ length: 6 }, worker));
+    },
+    atosDe(c, p) { return this.atoRef[c.processo + '|' + this._chaveAto(p)] || []; },
+    nomeDocumentoAto(nomeArquivo) { return (nomeArquivo || '').replace(/\.[^.]+$/, '') || nomeArquivo; },
+    corBadgeDocumentoAto(nomeArquivo) {
+      const ext = ((nomeArquivo || '').split('.').pop() || '').toLowerCase();
+      if (ext === 'pdf') return 'badge-error';
+      if (['doc', 'docx', 'html'].includes(ext)) return 'badge-info';
+      if (['jpg', 'jpeg', 'png', 'gif'].includes(ext)) return 'badge-warning';
+      return 'badge-ghost';
+    },
+    linkArquivoAto(c, arq) {
+      const qs = new URLSearchParams({ numero: c.processo, arquivo: arq.arquivo });
+      return `/api/eproc-mcp/arquivo?${qs}`;
+    },
+    // Baixa o(s) documento(s) do evento — clicar em qualquer badge do mesmo
+    // evento baixa todos (a API do e-proc baixa por evento inteiro).
+    async baixarDocAto(c, p, ato) {
+      const chave = c.processo + ':' + ato.numero;
+      if (this.baixandoAto[chave]) return;
+      this.baixandoAto[chave] = true;
+      try {
+        const resp = await fetch('/api/eproc-mcp/baixar-documentos', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ numero: c.processo, instancia: ato._instancia || 1, evento_ids: [String(ato.numero)] }),
+        });
+        const r = await resp.json();
+        if (!resp.ok || r.erro) { alert(r.erro || 'Falha ao baixar o documento do ato.'); return; }
+        const arqs = (r.arquivos_por_evento || {})[String(ato.numero)];
+        if (arqs) ato.arquivos_baixados = arqs;
+        if (r.erros && r.erros.length) alert('Documento não pôde ser baixado (acesso restrito ou indisponível).');
+      } catch (e) {
+        alert('Falha de rede ao baixar o documento.');
+      } finally {
+        this.baixandoAto[chave] = false;
+      }
     },
 
     // Tooltip do lembrete (post-it) — posiciona ao lado do ícone
@@ -527,8 +647,6 @@ function prazosEprocApp() {
       const p = this._p0(c);
       return (campo === 'inicio' ? p.inicio_estimado : p.final_estimado) || '';
     },
-    badgeDias(d) { const n = parseInt(d, 10);
-      if (isNaN(n)) return 'badge-ghost'; if (n <= 5) return 'badge-error'; if (n <= 10) return 'badge-warning'; return 'badge-success'; },
     badgeCategoria(chave) {
       if (chave.includes('urgente')) return 'badge-error';
       if (chave === 'prazo_aberto') return 'badge-warning';

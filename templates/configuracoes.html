@@ -1282,7 +1282,7 @@
 
         <!-- Modal: novo/editar modelo -->
         <div class="modal" :class="{'modal-open': modalAberto}" @click.self="fecharModal()">
-            <div class="modal-box max-w-2xl">
+            <div class="modal-box" style="width:70vw;max-width:70vw">
                 <h3 class="font-bold text-lg mb-3" x-text="editandoIndex >= 0 ? 'Editar modelo' : 'Novo modelo'"></h3>
                 <!-- SEM x-if aqui (era o bug): x-if destrói e recria este bloco a cada
                      abertura/fechamento do modal — inclusive o <div :id="uidModelo">
@@ -1404,7 +1404,7 @@
 
         <!-- Modal: novo/editar tipo de petição com IA -->
         <div class="modal" :class="{'modal-open': modalAberto}" @click.self="fecharModal()">
-            <div class="modal-box max-w-3xl">
+            <div class="modal-box" style="width:70vw;max-width:70vw">
                 <h3 class="font-bold text-lg mb-3" x-text="editandoIndex >= 0 ? 'Editar tipo de petição com IA' : 'Novo tipo de petição com IA'"></h3>
                 <div class="flex flex-col gap-3">
                     <div class="grid grid-cols-1 sm:grid-cols-2 gap-3">
