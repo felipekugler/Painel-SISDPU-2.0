@@ -320,14 +320,17 @@
                                      x-show="confirmDialog.gerenciarAtivo && confirmDialog.fase === 'confirmando'">
                                     <select class="select select-bordered select-xs" x-model="confirmDialog.gerenciamentoTipo">
                                         <template x-for="t in tiposGerenciamento" :key="t.valor">
-                                            <option :value="t.valor" x-text="t.rotulo"></option>
+                                            <option :value="t.valor" x-text="t.rotulo" :selected="t.valor === confirmDialog.gerenciamentoTipo"></option>
                                         </template>
                                     </select>
                                     <select class="select select-bordered select-xs min-w-[16rem]" x-show="confirmDialog.gerenciamentoTipo !== 'D'"
                                             x-model="confirmDialog.gerenciamentoProcuradorValor" @change="_onTrocarGerenciamentoProcurador()">
                                         <option value="">Escolha um Procurador</option>
+                                        <!-- :selected — o padrão de Configurações › e-proc entra no x-model ANTES
+                                             das <option> (x-for) existirem; sem isto o <select> mostrava
+                                             "Escolha um Procurador" com o padrão certo por trás (16/10/2026). -->
                                         <template x-for="p in confirmDialog.procuradoresDropdown" :key="p.valor">
-                                            <option :value="p.valor" x-text="p.rotulo"></option>
+                                            <option :value="p.valor" x-text="p.rotulo" :selected="p.valor === confirmDialog.gerenciamentoProcuradorValor"></option>
                                         </template>
                                     </select>
                                     <span x-show="confirmDialog.gerenciamentoTipo !== 'D' && !confirmDialog.procuradoresDropdown.length"

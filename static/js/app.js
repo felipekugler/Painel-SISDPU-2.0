@@ -845,25 +845,87 @@ async function concluirPajCaixa(pajNorm, idProcesso, paj, idTramite) {
     });
 }
 
+/* Etapa do PAJ (desenho aprovado pelo Defensor 15/10/2026 — ver
+ * services/etapa_paj_service.py). Escolha manual = movimentação "Etapa: …" no
+ * SIS-DPU 2.0, com a ficha no modal de confirmação global (ficha_mcp.js). */
+function _escolherEtapaModal(titulo, texto, opcoes, rotuloBotao) {
+    return new Promise(function (resolve) {
+        const dlg = document.createElement('dialog');
+        dlg.className = 'modal';
+        const opts = opcoes.map(function (o) {
+            return '<option value="' + _htmlEscape(o.chave) + '">' + _htmlEscape(o.rotulo) + '</option>';
+        }).join('');
+        dlg.innerHTML = '<div class="modal-box max-w-md">'
+            + '<h3 class="font-bold text-lg mb-2">' + _htmlEscape(titulo) + '</h3>'
+            + '<p class="text-sm opacity-80 mb-3">' + _htmlEscape(texto) + '</p>'
+            + '<select class="select select-bordered select-sm w-full" data-etapa>'
+            + '<option value="" disabled selected>Selecione a etapa…</option>' + opts + '</select>'
+            + '<p class="text-xs text-error mt-2 hidden" data-aviso>Selecione a etapa em que o PAJ se encontra.</p>'
+            + '<div class="modal-action"><button type="button" class="btn btn-sm btn-ghost" data-cancelar>Cancelar</button>'
+            + '<button type="button" class="btn btn-sm btn-primary" data-ok>' + _htmlEscape(rotuloBotao) + '</button></div>'
+            + '</div>';
+        document.body.appendChild(dlg);
+        let valor = null;
+        dlg.querySelector('[data-cancelar]').onclick = function () { dlg.close(); };
+        dlg.querySelector('[data-ok]').onclick = function () {
+            const v = dlg.querySelector('[data-etapa]').value;
+            if (!v) { dlg.querySelector('[data-aviso]').classList.remove('hidden'); return; }
+            valor = v;
+            dlg.close();
+        };
+        dlg.addEventListener('close', function () { dlg.remove(); resolve(valor); });
+        dlg.showModal();
+    });
+}
+
+async function alterarEtapaPaj(pajNorm, chave, rotulo, btn) {
+    if (btn) { btn.disabled = true; }
+    const el = document.getElementById('etapa-paj-status');
+    if (el) el.textContent = 'Gravando "Etapa: ' + rotulo + '" — confirme a ficha do SIS-DPU 2.0…';
+    try {
+        const r = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/etapa', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ etapa: chave }),
+        });
+        const d = await r.json().catch(function () { return {}; });
+        if (!d.ok) {
+            if (el) el.textContent = d.erro || 'A etapa não foi gravada.';
+            showToast(d.erro || 'A etapa não foi gravada.', 'error');
+            return;
+        }
+        showToast('Etapa registrada: ' + rotulo + ' — recarregando', 'success');
+        setTimeout(function () { window.location.reload(); }, 500);
+    } catch (e) {
+        if (el) el.textContent = 'Falha ao gravar a etapa: ' + e;
+    } finally {
+        if (btn) { btn.disabled = false; }
+    }
+}
+
 /* Desarquivar PAJ — botão do banner "PAJ arquivado" no cabeçalho (ver
- * templates/paj_detail.html). Lança SÓ a fase "Paj desarquivado" no SISDPU —
- * sem descrição, sem tramitação, sem conclusão de trâmite (movimentar/
- * tramitar/concluir são independentes em /api/acoes-sisdpu/executar, então
- * omitir grupo/concluir/id_tramite já garante isso). "Paj desarquivado" é uma
- * fase real, já cadastrada em Configurações › SISDPU (sisdpu_fases_todas) —
- * mesma string usada aqui, não é texto livre. Mesmo padrão de modal/SSE de
- * concluirPajCaixa() acima, só que com confirmação antes (ação menos comum e
- * mais sensível — desarquivar não tem "desfazer" trivial). */
+ * templates/paj_detail.html). Lança a fase "Paj desarquivado" e, na mesma
+ * execução, a etapa em que o PAJ volta (escolha OBRIGATÓRIA — pedido do
+ * Defensor 15/10/2026), sem tramitação nem conclusão. */
 async function desarquivarPaj(pajNorm, idProcesso, paj) {
-    if (!confirm('Desarquivar ' + (paj || pajNorm) + '?\n\nIsso lança a fase "Paj desarquivado" no SISDPU (sem descrição, tramitação ou conclusão de trâmite).')) return;
+    let todas = [];
+    try {
+        const r = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/etapa');
+        todas = ((await r.json()) || {}).todas || [];
+    } catch (e) { /* sem lista: não dá para desarquivar sem a etapa */ }
+    if (!todas.length) { showToast('Não foi possível carregar as etapas do PAJ.', 'error'); return; }
+    const etapa = await _escolherEtapaModal(
+        'Desarquivar ' + (paj || pajNorm),
+        'Lança a fase "Paj desarquivado" e registra a etapa em que o PAJ se encontra (duas movimentações, cada uma com sua ficha).',
+        todas, 'Desarquivar');
+    if (!etapa) return;
     // Fonte SIS-DPU 2.0 (MCP): é uma movimentação, gravada pelo MCP — sem cofre.
     if (!window.PAINEL_FONTE_SISDPU_MCP && typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
 
     const qs = new URLSearchParams({
         id_processo: idProcesso || '', paj: paj || '', paj_norm: pajNorm || '',
-        fase: 'Paj desarquivado', descricao_mov: '', descricao_mov_html: '0',
+        fase: 'Paj desarquivado', descricao_mov: 'PAJ desarquivado.', descricao_mov_html: '0',
         grupo: '', descricao_tram: '', prazo: '0', prazo_data: '',
-        id_tramite: '', concluir: '0', anexos: '[]',
+        id_tramite: '', concluir: '0', anexos: '[]', etapa: etapa,
     });
     const es = new EventSource('/api/acoes-sisdpu/executar?' + qs.toString());
     let ultimoRes = {};

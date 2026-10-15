@@ -81,6 +81,15 @@ PREFIXOS_PECA_JUDICIAL = (
 )
 
 
+def _etapa_resumo(paj_norm: str, metadata: dict) -> dict:
+    try:
+        from services import etapa_paj_service
+        e = etapa_paj_service.calcular(paj_norm, metadata)
+        return {k: e[k] for k in ("chave", "rotulo", "ordem", "cor_fundo", "cor_texto", "icone", "arquivado")}
+    except Exception:  # noqa: BLE001
+        return {}
+
+
 def _ler_json(path: Path) -> dict | list | None:
     if not path.exists():
         return None
@@ -416,6 +425,10 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
             # minutada pela IA na pasta (Peças IA/ ou raiz do PAJ, mesma
             # checagem do botão "Organizar Documentos para Ajuizamento").
             "tem_peticao_inicial": _tem_peticao_inicial(paj_norm),
+            # Etapa do PAJ (badge + filtro do dashboard) — services/etapa_paj_service.
+            "etapa": (_et := _etapa_resumo(paj_norm, metadata)),
+            # ordenação da coluna Etapa: pela posição no trilho; arquivado por último
+            "etapa_ordem": 99 if _et.get("arquivado") else _et.get("ordem", 0),
             # Estado atual usado pelo frontend pra detectar novidades desde a
             # ultima visita (snapshot guardado em localStorage). Vide
             # static/js/app.js -> calcularNovidades().

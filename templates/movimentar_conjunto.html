@@ -267,6 +267,12 @@
                                x-text="lado === 'tramitacao' ? 'Sem tramitação' : 'Sem movimentação'"></div>
                         </div>
                       </template>
+                      <!-- Etapa do PAJ: movimentação "Etapa: …" gravada depois da tramitação e antes da conclusão -->
+                      <div class="col-span-2 border border-success/30 bg-base-100 rounded px-2 py-1.5" x-show="bloco.etapa">
+                        <div class="text-xs font-semibold mb-0.5">Etapa do PAJ</div>
+                        <div class="text-xs"
+                             x-html="bloco.etapa && window.fichaMcp ? window.fichaMcp.htmlFicha(bloco.etapa.ficha, bloco.etapa.paj, bloco.etapa.contexto, { essencial: true }) : ''"></div>
+                      </div>
                       <div class="col-span-2 border border-success/30 bg-base-100 rounded px-2 py-1.5">
                         <div class="text-xs font-semibold mb-0.5">Conclusão de trâmite</div>
                         <template x-for="(t, ti) in bloco.conclusoes" :key="ti">
@@ -488,11 +494,11 @@ function movimentarConjuntoApp() {
           conclusoes = (r.formularioAtual.concluir_detalhes || []).length ? r.formularioAtual.concluir_detalhes
             : [{ descricao: 'Concluir o trâmite da caixa de entrada', remetente: '', data_envio: '' }];
         }
-        blocos.push({ movimentacao: null, tramitacao: null, conclusoes });
+        blocos.push({ movimentacao: null, tramitacao: null, etapa: null, conclusoes });
       }
       this.fichasMcp.forEach((f) => {
         const b = blocos[f.item || 0];
-        if (b) b[f.tipo === 'tramitacao' ? 'tramitacao' : 'movimentacao'] = f;
+        if (b) b[f.tipo === 'tramitacao' ? 'tramitacao' : f.tipo === 'etapa' ? 'etapa' : 'movimentacao'] = f;
       });
       return blocos;
     },

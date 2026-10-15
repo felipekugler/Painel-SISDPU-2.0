@@ -359,6 +359,7 @@ async def executar_stream(
     id_tramites: list[str] | None = None,
     dry_run: bool = False,
     anexos: list[dict] | None = None,
+    etapa: str = "",
 ) -> AsyncIterator[dict]:
     """Executa mov→tram→conclui (cada etapa opcional) em UM PAJ do SISDPU identificado
     por `id_processo`. Emite eventos SSE-like: {level,msg} de log; evento final
@@ -414,7 +415,7 @@ async def executar_stream(
 
     async for ev in _executar_um_item_stream(
         id_resolvido, paj, paj_norm, fase, descricao_mov, descricao_mov_html,
-        grupo, descricao_tram, prazo_dias, prazo_data, ids_concluir, dry_run, anexos,
+        grupo, descricao_tram, prazo_dias, prazo_data, ids_concluir, dry_run, anexos, etapa,
     ):
         if ev.get("done") and (ev.get("resultado") or {}).get("ok") and not dry_run:
             async for e2 in _pasta_para_lixeira_se_arquivado(paj_norm, [fase], ev["resultado"]):
@@ -451,6 +452,7 @@ async def _executar_um_item_stream(
     ids_concluir: list[str],
     dry_run: bool,
     anexos: list[dict] | None,
+    etapa: str = "",
 ) -> AsyncIterator[dict]:
     """UM ciclo mov→tram→conclui — corpo original de `executar_stream` (movido daqui
     2026-09-11 pra virar reutilizável por `executar_fila_stream`). `id_processo` já
@@ -461,8 +463,9 @@ async def _executar_um_item_stream(
     descricao_mov = (descricao_mov or "").strip()
     descricao_tram = (descricao_tram or "").strip()
     concluir_efetivo = bool(ids_concluir)
-    if not fase and not grupo and not concluir_efetivo:
-        yield _ev("erro", "Selecione ao menos uma ação: movimentar, tramitar ou concluir.")
+    etapa = (etapa or "").strip()
+    if not fase and not grupo and not concluir_efetivo and not etapa:
+        yield _ev("erro", "Selecione ao menos uma ação: movimentar, tramitar, etapa ou concluir.")
         yield {"done": True, "resultado": {"ok": False, "detalhe": "Nenhuma ação selecionada."}}
         return
 
@@ -560,6 +563,30 @@ async def _executar_um_item_stream(
             yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": tr.get("detalhe", "")}}
             return
         tram_caixa = grupo
+
+    # 2b) ETAPA DO PAJ (opcional) — movimentação "Etapa: …" própria, depois da
+    # tramitação e antes da conclusão (desenho aprovado pelo Defensor 15/10/2026).
+    if etapa:
+        from services import etapa_paj_service as etapas
+        if etapa not in {e[0] for e in etapas.ETAPAS}:
+            yield _ev("erro", f"Etapa do PAJ desconhecida: {etapa}")
+            yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": "Etapa desconhecida."}}
+            return
+        rot = etapas.info(etapa)["rotulo"]
+        yield _ev("info", f"Registrando a etapa do PAJ ({rot})…")
+        et, exc, eventos = await com_auto_reconexao(
+            lambda: movtram.movimentar_paj(pajs, etapas.descricao_movimentacao(etapa), etapas.FASE_ETAPA,
+                                           None, "Não informado", dry_run, tipo_ficha="etapa"))
+        for ev in eventos:
+            yield ev
+        if exc is not None or not (et or {}).get("ok"):
+            det = str(exc)[:300] if exc is not None else (et or {}).get("detalhe", "")
+            yield _ev("erro", f"Etapa do PAJ: {det}")
+            yield {"done": True, "resultado": {"ok": False, "status": "parcial", "detalhe": det}}
+            return
+        yield _ev("ok", f"Etapa do PAJ: {et.get('detalhe', '')}")
+        if et.get("mov_seq"):
+            mv = {**mv, "mov_seq": et["mov_seq"]}
 
     # 3) CONCLUIR (opcional — só quando houver ao menos um id em ids_concluir)
     concluido = False
@@ -673,7 +700,7 @@ async def executar_fila_stream(
             item.get("fase", ""), item.get("descricao_mov", ""), bool(item.get("descricao_mov_html")),
             item.get("grupo") or None, item.get("descricao_tram", ""),
             int(item.get("prazo") or 0), item.get("prazo_data", ""),
-            ids_concluir_item, dry_run, item.get("anexos") or [],
+            ids_concluir_item, dry_run, item.get("anexos") or [], item.get("etapa") or "",
         ):
             if ev.get("done"):
                 resultado_item = ev.get("resultado") or {}

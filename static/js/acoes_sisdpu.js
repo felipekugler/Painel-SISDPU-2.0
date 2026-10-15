@@ -65,6 +65,16 @@ const TIPOS_ARQUIVO_ANEXO = [
     'Despachos do Defensor', 'Parecer', 'Petições',
 ];
 
+// Etapas do PAJ escolhidas manualmente (rótulos EXATOS — espelham ETAPAS em
+// services/etapa_paj_service.py; o backend valida a chave).
+const ETAPAS_MANUAIS_PAJ = [
+    { chave: 'inviavel', rotulo: 'Analisado – Inviável' },
+    { chave: 'diligencia', rotulo: 'Analisado – Em diligência' },
+    { chave: 'viavel', rotulo: 'Analisado – Viável' },
+    { chave: 'ajuizado', rotulo: 'Ajuizado' },
+    { chave: 'cumprimento_sentenca', rotulo: 'Cumprimento de sentença' },
+];
+
 function acoesSisdpuBlock(cfg) {
     cfg = cfg || {};
     const getDescricaoMovFn = typeof cfg.getDescricaoMov === 'function' ? cfg.getDescricaoMov
@@ -146,6 +156,12 @@ function acoesSisdpuBlock(cfg) {
         // editor da movimentação. Só existe quando há PAJ local (pajNorm).
         gerandoSinteseIA: false, erroSinteseIA: '',
         prazo: 0, prazoData: '', concluir: true, exec: false,
+        // Etapa do PAJ (opcional) — ver seção "Etapa do PAJ" no partial.
+        etapa: '', etapasManuais: ETAPAS_MANUAIS_PAJ,
+        rotuloEtapa(chave) {
+            const o = ETAPAS_MANUAIS_PAJ.find((e) => e.chave === chave);
+            return o ? o.rotulo : chave;
+        },
 
         // Anexos da MOVIMENTAÇÃO — lista staged única, misturando origem 'externo'
         // (upload do computador do usuário — o caso comum) e 'paj' (documento já
@@ -297,6 +313,7 @@ function acoesSisdpuBlock(cfg) {
                     if (r.prazo) this.prazo = r.prazo;
                     if (r.prazo_data) this.prazoData = r.prazo_data;
                     if (typeof r.concluir === 'boolean') this.concluir = r.concluir;
+                    if (r.etapa) this.etapa = r.etapa;
                     this._descMovHtmlRascunho = r.descricao_mov_html || '';
                     if (!this.getDescricaoTram) this.descTram = r.descricao_tram || this.descTram;
                     this.anexosStaged = r.anexos || [];
@@ -319,6 +336,7 @@ function acoesSisdpuBlock(cfg) {
                         paj_label: this.paj,
                         fase: this.fase, grupo: this.grupo,
                         prazo: this.prazo, prazo_data: this.prazoData, concluir: this.concluir,
+                        etapa: this.etapa,
                         descricao_mov_html: this.getDescricaoMov ? '' : this.descMovEfetiva(),
                         descricao_tram: this.getDescricaoTram ? '' : this.descTramEfetiva(),
                         anexos: this.anexosStaged,
@@ -458,7 +476,7 @@ function acoesSisdpuBlock(cfg) {
             try {
                 const r = await fetch('/api/acoes-sisdpu/sintese-paj/' + encodeURIComponent(this.pajNorm), { method: 'POST' });
                 const d = await r.json().catch(() => ({}));
-                if (!d.ok) { this.erroSinteseIA = d.detalhe || 'Falha ao gerar a síntese.'; return; }
+                if (!d.ok) { this.erroSinteseIA = d.detalhe || 'Falha ao gerar o relatório.'; return; }
                 const html = paraHtmlSeTextoPuro(d.texto || '');
                 if (this._editorMov) {
                     this._editorMov.insertHTML(html);
@@ -467,7 +485,7 @@ function acoesSisdpuBlock(cfg) {
                     this.descMov = (this.descMov ? this.descMov + '\n\n' : '') + (d.texto || '');
                 }
             } catch (e) {
-                this.erroSinteseIA = 'Falha de conexão ao gerar a síntese.';
+                this.erroSinteseIA = 'Falha de conexão ao gerar o relatório.';
             } finally {
                 this.gerandoSinteseIA = false;
             }
@@ -595,6 +613,7 @@ function acoesSisdpuBlock(cfg) {
                 prazo_data: this.prazoData,
                 id_tramites: this._idsConcluirFormulario(),
                 anexos: this.anexosStaged.map((a) => ({ ...a })),
+                etapa: this.etapa,
             };
         },
         // Limpa o formulário (fase/despachos/tramitação/conclusão/anexos) pra
@@ -609,6 +628,7 @@ function acoesSisdpuBlock(cfg) {
             this.prazoData = '';
             this.descTram = '';
             this.concluir = true;
+            this.etapa = '';
             if (this.tramitacoesCaixa !== null) {
                 this.tramitacoesCaixa.forEach((t) => { this.idsTramiteSelecionados[t.id_tramite] = false; });
             }
@@ -623,8 +643,8 @@ function acoesSisdpuBlock(cfg) {
         // (mesmo endpoint de sempre — `fila` é só mais um campo do rascunho).
         async adicionarItemFila() {
             const item = this._capturarItemFormulario();
-            if (!item.fase && !item.grupo && !item.id_tramites.length) {
-                alert('Preencha ao menos uma ação (movimentar, tramitar ou concluir) antes de adicionar à fila.');
+            if (!item.fase && !item.grupo && !item.etapa && !item.id_tramites.length) {
+                alert('Preencha ao menos uma ação (movimentar, tramitar, etapa ou concluir) antes de adicionar à fila.');
                 return;
             }
             if (this._bloqueiaDescricaoCurta()) return;
@@ -650,6 +670,7 @@ function acoesSisdpuBlock(cfg) {
             this.prazo = item.prazo || 0;
             this.prazoData = item.prazo_data || '';
             this.descTram = item.descricao_tram || '';
+            this.etapa = item.etapa || '';
             const idsItem = new Set(item.id_tramites || []);
             if (this.tramitacoesCaixa !== null) {
                 this.tramitacoesCaixa.forEach((t) => { this.idsTramiteSelecionados[t.id_tramite] = idsItem.has(t.id_tramite); });
@@ -861,6 +882,7 @@ function acoesSisdpuBlock(cfg) {
                     descricao_mov_html: it.descricao_mov_html ? '1' : '0',
                     grupo: it.grupo, descricao_tram: it.descricao_tram,
                     prazo: it.prazo, prazo_data: it.prazo_data, id_tramites: [],  // conclusão: legado, fora da ficha
+                    etapa: it.etapa || '',
                     anexos: it.anexos.map((a) => ({ origem: a.origem, ref: a.ref,
                         descricao: a.descricao || a.nome, tipo_arquivo: a.tipoArquivo || 'Não informado' })),
                 })) };
@@ -869,7 +891,8 @@ function acoesSisdpuBlock(cfg) {
                 descricao_mov_html: this.descMovEhHtml() ? '1' : '0',
                 grupo: this.grupo || '', descricao_tram: this.descTramEfetiva(),
                 prazo: this.prazo > 0 ? this.prazo : 0, prazo_data: this.prazoData || '',
-                id_tramites: [], anexos: this.fase ? this.anexosStagedParaEnviar() : [] };
+                id_tramites: [], anexos: this.fase ? this.anexosStagedParaEnviar() : [],
+                etapa: this.etapa || '' };
         },
         async executar(pularConfirmacao) {
             // Fila não-vazia — desvia pra executarFila() (roda os itens da fila em
@@ -879,7 +902,7 @@ function acoesSisdpuBlock(cfg) {
             if (this.fila.length > 0) { await this.executarFila(pularConfirmacao); return; }
             const concluirEfetivo = this.concluirEfetivo();
             const idsSelecionados = this.idsTramiteSelecionadosArr();
-            if (this.exec || (!this.fase && !this.grupo && !concluirEfetivo)) return;
+            if (this.exec || (!this.fase && !this.grupo && !this.etapa && !concluirEfetivo)) return;
             if (this._bloqueiaDescricaoCurta()) return;
             const prazoTxt = this.grupo
                 ? (this.urgenteSelecionado() ? ' (URGENTE — mesmo dia da movimentação)'
@@ -895,6 +918,7 @@ function acoesSisdpuBlock(cfg) {
                 + (this.fase ? 'Movimentar (fase: ' + this.fase + ')' : 'Sem movimentação')
                 + (anexosSel.length ? '\n+ ' + anexosSel.length + ' anexo(s)' : '')
                 + (this.grupo ? '\nTramitar para: ' + this.grupo + prazoTxt : '\nSem tramitação')
+                + (this.etapa ? '\nEtapa do PAJ: ' + this.rotuloEtapa(this.etapa) : '')
                 + concluirTxt)) return;
             // Garante o cofre desbloqueado ANTES de acionar o SISDPU — com a fonte
             // SIS-DPU 2.0 (MCP) só quando há conclusão (vedada no MCP, vai pelo legado).
@@ -915,6 +939,7 @@ function acoesSisdpuBlock(cfg) {
                 // só é enviado quando o chamador passou tramitacoesCaixa (ex.: página do PAJ).
                 id_tramites: this.tramitacoesCaixa !== null ? JSON.stringify(idsSelecionados) : '',
                 anexos: JSON.stringify(anexosSel),
+                etapa: this.etapa || '',
             });
             const es = new EventSource('/api/acoes-sisdpu/executar?' + qs.toString());
             es.addEventListener('log', (ev) => {
@@ -1004,6 +1029,7 @@ function acoesSisdpuBlock(cfg) {
             // em `this.fila` (que vai encolhendo conforme os itens terminam).
             const resumo = lote.map((it, i) => (i + 1) + '. ' + (it.fase || 'sem movimentação')
                 + (it.grupo ? ' → ' + it.grupo : '')
+                + (it.etapa ? ' · Etapa: ' + this.rotuloEtapa(it.etapa) : '')
                 + (it.id_tramites.length ? ' (conclui ' + it.id_tramites.length + ' trâmite(s))' : '')).join('\n');
             if (!pularConfirmacao && !confirm('Executar a fila (' + lote.length + ' movimentação(ões)) no SISDPU — '
                 + (this.paj || this.idProcesso) + '?\n\n' + resumo)) return;
@@ -1021,6 +1047,7 @@ function acoesSisdpuBlock(cfg) {
                     grupo: it.grupo, descricao_tram: it.descricao_tram,
                     prazo: it.prazo, prazo_data: it.prazo_data,
                     id_tramites: it.id_tramites,
+                    etapa: it.etapa || '',
                     anexos: it.anexos.map((a) => ({
                         origem: a.origem, ref: a.ref,
                         descricao: a.descricao || a.nome, tipo_arquivo: a.tipoArquivo || 'Não informado',

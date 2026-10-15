@@ -47,7 +47,7 @@
                                 x-show="pajNorm" @click="gerarSinteseIA()"
                                 title="Analisa o PAJ (PROMPT_MAX) e gera, por IA, um texto corrido com a síntese cronológica da tramitação — insere no cursor, não substitui o que já estiver escrito.">
                             <span x-show="gerandoSinteseIA" class="loading loading-spinner loading-xs"></span>
-                            <span x-show="!gerandoSinteseIA">🧠 Gerar Síntese do PAJ</span>
+                            <span x-show="!gerandoSinteseIA">🧠 Gerar Relatório do PAJ</span>
                             <span x-show="gerandoSinteseIA">Gerando…</span>
                         </button>
                         <div class="dropdown dropdown-end" x-show="modelosDespacho.length">
@@ -340,15 +340,7 @@
                                         <span x-text="t.descricao || '—'"></span>
                                         <span class="block text-[10.5px] text-base-content/50"
                                               x-text="(t.remetente || '') + (t.remetente && t.data_envio ? ' · ' : '') + (t.data_envio || '')"></span>
-                                        <span x-show="t.id_tramite === idTramite" class="badge badge-primary badge-xs mt-0.5">trâmite de trabalho</span>
-                                        <!-- Badge de subtipo (retorno/sat) — pedido do usuário 2026-09-19:
-                                             esses trâmites agora aparecem aqui também (antes só na página
-                                             própria), então avisa o que é pra não confundir. Concluir por
-                                             aqui já "dá baixa" automaticamente na Retornos/Arquivos SAT
-                                             (ver services.paj_service._dar_baixa_retorno_se_aplicavel). -->
-                                        <span x-show="t.subtipo === 'retorno'" class="badge badge-accent badge-xs mt-0.5">retorno</span>
-                                        <span x-show="t.subtipo === 'sat'" class="badge badge-accent badge-xs mt-0.5">SAT</span>
-                                    </span>
+                                        <span x-show="t.id_tramite === idTramite" class="badge badge-primary badge-xs mt-0.5">trâmite de trabalho</span>                                    </span>
                                 </label>
                             </template>
                         </div>
@@ -364,6 +356,24 @@
                     <span class="text-[11px] text-base-content/50">(retira o PAJ da caixa)</span>
                 </div>
             </template>
+
+            <!-- Etapa do PAJ (15/10/2026 — ver services/etapa_paj_service.py):
+                 item extra do registro — movimentação "Etapa: …" própria, gravada
+                 DEPOIS da tramitação e ANTES da conclusão, com ficha própria. -->
+            <div class="ret-acao-bloco mt-2" x-show="pajNorm">
+                <div class="ret-acao-titulo">Etapa do PAJ</div>
+                <div class="flex items-center gap-2 flex-wrap mt-1">
+                    <select class="select select-bordered select-xs min-w-[18rem]" x-model="etapa">
+                        <option value="">Não alterar</option>
+                        <template x-for="o in etapasManuais" :key="o.chave">
+                            <option :value="o.chave" x-text="o.rotulo" :selected="o.chave === etapa"></option>
+                        </template>
+                    </select>
+                    <span class="text-[11px] text-base-content/50" x-show="etapa">
+                        grava a movimentação "Etapa: <span x-text="rotuloEtapa(etapa)"></span>" (fase Aguardando tramitação judicial/Administrativa)
+                    </span>
+                </div>
+            </div>
 
             <!-- Fila de movimentações sequenciais (2026-09-11) — 0, 1 ou N
                  movimentações guardadas via "Adicionar à fila" (abaixo), pra rodar
@@ -388,7 +398,10 @@
                             <template x-for="(item, i) in fila" :key="i">
                                 <tr class="hover:bg-base-300/30" :class="editandoFilaIndice === i ? 'bg-primary/5' : ''">
                                     <td x-text="i + 1"></td>
-                                    <td x-text="item.fase || '—'"></td>
+                                    <td>
+                                        <span x-text="item.fase || '—'"></span>
+                                        <span x-show="item.etapa" class="badge badge-xs badge-ghost ml-1" x-text="'Etapa: ' + rotuloEtapa(item.etapa)"></span>
+                                    </td>
                                     <td class="text-center">
                                         <svg x-show="(item.anexos || []).length" class="w-3.5 h-3.5 inline text-error" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"
                                              :title="(item.anexos || []).length + ' anexo(s)'">
@@ -419,7 +432,7 @@
                 </div>
                 <div class="text-[11px] text-base-content/50 mt-1">
                     "Executar" roda estas movimentações em sequência, na mesma sessão do SISDPU.
-                    <template x-if="editandoFilaIndice === null && (fase || grupo || concluirEfetivo())">
+                    <template x-if="editandoFilaIndice === null && (fase || grupo || etapa || concluirEfetivo())">
                         <span class="text-warning">O formulário acima ainda não foi adicionado à fila — clique em "Adicionar à fila", ou ele será ignorado ao Executar.</span>
                     </template>
                 </div>
@@ -446,7 +459,7 @@
                     Gravar
                 </button>
                 <button type="button" class="btn btn-sm btn-success ret-btn-exec" @click="executar()"
-                        :disabled="(fila.length === 0 && !fase && !grupo && !concluirEfetivo()) || exec">
+                        :disabled="(fila.length === 0 && !fase && !grupo && !etapa && !concluirEfetivo()) || exec">
                     <span x-show="exec" class="loading loading-spinner loading-xs"></span>
                     <span x-text="fila.length ? 'Executar fila (' + fila.length + ')' : 'Executar no SISDPU'"></span>
                 </button>

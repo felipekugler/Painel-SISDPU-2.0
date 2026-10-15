@@ -518,16 +518,19 @@ async def movimentar_paj(
     tipo_arquivo: str = "Documentos do Assistido",
     dry_run: bool = False,
     descricao_html: bool = False,
+    tipo_ficha: str = "movimentacao",
 ) -> dict:
     """Registra uma MOVIMENTAÇÃO (novo sequencial) em um ou vários PAJs.
     pajs: [{"id": <id_processo>, "numero": "AAAA/UUU-NNNNN"}, ...] (bloco = mesma unidade).
-    Retorna {ok, status, detalhe, pajs, anexos, mov_seq}."""
+    Retorna {ok, status, detalhe, pajs, anexos, mov_seq}.
+    `tipo_ficha`: só a fonte SIS-DPU 2.0 usa (rótulo da ficha — "etapa" para a
+    Etapa do PAJ)."""
     # Fonte "SIS-DPU 2.0 (MCP)": grava pelo MCP, com a ficha aprovada no modal
     # padrão do painel (ingestao/sisdpu2_movtram.py). Mesmo retorno.
     from ingestao import sisdpu2_movtram
     if sisdpu2_movtram.ativo():
         return await sisdpu2_movtram.movimentar_paj(pajs, descricao, fase, anexos, tipo_arquivo,
-                                                    dry_run, descricao_html)
+                                                    dry_run, descricao_html, tipo_ficha=tipo_ficha)
     pajs = [p for p in (pajs or []) if p and p.get("id")]
     if not pajs:
         return {"ok": False, "status": "falha", "detalhe": "Nenhum PAJ informado."}

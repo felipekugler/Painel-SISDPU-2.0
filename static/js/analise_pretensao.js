@@ -137,15 +137,32 @@ function analiseIaApp(pajNorm, tipoPadrao) {
             }
         },
 
-        async enviarReenvio() {
-            const msg = (this.mensagemReenvio || '').trim();
+        // "Minutar Petição Inicial" (15/10/2026): manda a instrução de minuta —
+        // o texto digitado entra como parâmetros — e a etapa do PAJ passa a
+        // "Elaborando minuta de inicial" (services/etapa_paj_service.py).
+        async minutarInicial() {
+            const params = (this.mensagemReenvio || '').trim();
+            const msg = 'Minute a petição inicial deste PAJ, com base na análise já feita. '
+                + 'Salve a minuta em .docx com "peticao_inicial" no nome do arquivo.'
+                + (params ? '\n\nParâmetros do Defensor para a minuta:\n' + params : '');
+            const ok = await this.enviarReenvio(msg);
+            if (!ok) return;
+            try {
+                await fetch('/api/paj/' + encodeURIComponent(this.pajNorm) + '/etapa/minuta-solicitada', { method: 'POST' });
+                const barra = document.querySelector('[data-etapa]');
+                if (barra) setTimeout(function () { window.location.reload(); }, 800);
+            } catch (e) { /* a etapa é só indicativa — a minuta segue */ }
+        },
+
+        async enviarReenvio(mensagemPronta) {
+            const msg = (typeof mensagemPronta === 'string' ? mensagemPronta : (this.mensagemReenvio || '')).trim();
             if (!msg) {
                 showToast('Digite uma mensagem primeiro', 'warning');
                 return;
             }
             if (this.status === 'running') {
                 showToast('Aguarde a operação atual terminar', 'warning');
-                return;
+                return false;
             }
             this.enviando = true;
             this.status = 'running';
@@ -161,14 +178,16 @@ function analiseIaApp(pajNorm, tipoPadrao) {
                     this.status = 'error';
                     this.error = d.erro || 'Falha ao enviar.';
                     showToast(this.error, 'error');
-                    return;
+                    return false;
                 }
                 this.mensagemReenvio = '';
                 showToast('Mensagem enviada — Claude está processando', 'info');
                 this.startPolling();
+                return true;
             } catch (e) {
                 this.status = 'error';
                 this.error = 'Falha ao enviar: ' + e.message;
+                return false;
             } finally {
                 this.enviando = false;
             }

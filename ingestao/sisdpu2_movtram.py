@@ -234,7 +234,8 @@ async def _total_movimentacoes(id_processo: int) -> Optional[int]:
 
 async def movimentar_paj(pajs: list[dict], descricao: str, fase: str, anexos: Optional[list[dict]] = None,
                          tipo_arquivo: str = "Documentos do Assistido", dry_run: bool = False,
-                         descricao_html: bool = False, log: Optional[Callable] = None, **_kw) -> dict:
+                         descricao_html: bool = False, log: Optional[Callable] = None,
+                         tipo_ficha: str = "movimentacao", **_kw) -> dict:
     numeros = [p.get("numero") for p in pajs]
     if len(pajs) != 1:
         return {"fonte": "mcp-sisdpu2", "ok": False, "status": "falha", "pajs": numeros,
@@ -279,7 +280,7 @@ async def movimentar_paj(pajs: list[dict], descricao: str, fase: str, anexos: Op
             return {"fonte": "mcp-sisdpu2", "ok": True, "status": "dry_run", "pajs": numeros, "anexos": nomes_anexos,
                     "detalhe": "Ficha conferida pelo SIS-DPU 2.0 (nada gravado).",
                     "ficha": aprov.ficha_para_exibir(ficha_txt)}
-        resposta = await _aprovar("movimentacao", paj.get("numero") or "", ficha_txt,
+        resposta = await _aprovar(tipo_ficha, paj.get("numero") or "", ficha_txt,
                                   {"fase": fase, "anexos": anexos_ficha})
         if COLETA_FICHAS.get() is not None:
             return {"fonte": "mcp-sisdpu2", "ok": True, "status": "dry_run", "pajs": numeros, "anexos": nomes_anexos,

@@ -4,7 +4,7 @@ from fastapi import APIRouter, Body, Request, Response
 from fastapi.responses import HTMLResponse, JSONResponse
 
 from ingestao import sisdpu_movtram
-from services import lembretes_service
+from services import etapa_paj_service, lembretes_service
 from services.download_completo_service import gerar_pdf_consolidado, verificar_sincronizacao_completa
 from services.paj_service import (
     PajNorm,
@@ -36,8 +36,33 @@ async def paj_detail(request: Request, paj_norm: PajNorm):
         html = template.render(request=request, paj_norm=paj_norm)
         return HTMLResponse(html)
     template = request.app.state.jinja.get_template("paj_detail.html")
-    html = template.render(request=request, dados=dados, paj_norm=paj_norm)
+    html = template.render(request=request, dados=dados, paj_norm=paj_norm,
+                           etapa=etapa_paj_service.calcular(paj_norm),
+                           etapas_manuais=etapa_paj_service.opcoes_manuais(),
+                           etapas_todas=etapa_paj_service.opcoes_todas())
     return HTMLResponse(html)
+
+
+@router.get("/api/paj/{paj_norm}/etapa", response_class=JSONResponse)
+async def api_etapa(paj_norm: PajNorm):
+    """Etapa atual do PAJ (manual = última movimentação "Etapa: …"; automática =
+    deduzida das rotinas do painel) — ver services/etapa_paj_service."""
+    return {"ok": True, "etapa": etapa_paj_service.calcular(paj_norm),
+            "manuais": etapa_paj_service.opcoes_manuais(), "todas": etapa_paj_service.opcoes_todas()}
+
+
+@router.post("/api/paj/{paj_norm}/etapa", response_class=JSONResponse)
+async def api_registrar_etapa(paj_norm: PajNorm, payload: dict = Body(...)):
+    """Grava a etapa escolhida pelo Defensor como movimentação "Etapa: …" no
+    SIS-DPU 2.0 (com a ficha de confirmação). Body: {"etapa": "<chave>"}."""
+    r = await etapa_paj_service.registrar(paj_norm, (payload or {}).get("etapa") or "")
+    return JSONResponse(r, status_code=200 if r.get("ok") else 400)
+
+
+@router.post("/api/paj/{paj_norm}/etapa/minuta-solicitada", response_class=JSONResponse)
+async def api_etapa_minuta_solicitada(paj_norm: PajNorm):
+    """Botão "Minutar Petição Inicial": a etapa passa a "Elaborando minuta de inicial"."""
+    return etapa_paj_service.marcar_minuta_solicitada(paj_norm)
 
 
 @router.get("/api/paj/{paj_norm}", response_class=JSONResponse)

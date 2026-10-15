@@ -44,7 +44,8 @@
     function rotulo(tipo) {
         return tipo === 'tramitacao' ? 'Tramitação'
             : tipo === 'processo_judicial' ? 'Cadastro do Processo Judicial'
-            : tipo === 'sincronizacao' ? 'Sincronização do Processo Judicial' : 'Movimentação';
+            : tipo === 'sincronizacao' ? 'Sincronização do Processo Judicial'
+            : tipo === 'etapa' ? 'Etapa do PAJ' : 'Movimentação';
     }
 
     function abrir(p) {

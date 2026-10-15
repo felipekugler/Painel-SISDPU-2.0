@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import html
 import logging
 import re
 import socket
@@ -24,6 +25,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from urllib.parse import urljoin
 
 from playwright.async_api import async_playwright
 
@@ -75,13 +77,38 @@ EPROC_HOME = EPROC_JFPR
 EPROC_INTERNO = EPROC_JFPR + "controlador.php"
 
 
+async def _link_painel_procurador(ctx) -> str | None:
+    """Link assinado do Painel do Procurador (`acao=painel_advogado_listar&hash=…`)
+    lido de `controlador.php` por uma requisição da PRÓPRIA sessão do navegador
+    (mesmos cookies), SEM renderizar a página — `controlador.php` puro é a tela
+    vermelha "Ação '' não reconhecida pelo controlador", que aparecia em toda
+    ação do painel (relato do Defensor, 16/10/2026). None sem sessão (a
+    requisição cai no SSO) ou se o link não vier."""
+    with contextlib.suppress(Exception):
+        r = await ctx.request.get(EPROC_INTERNO, timeout=30000)
+        if not _status_dict(r.url)["logado"]:
+            return None
+        texto = (await r.body()).decode("latin-1")  # o e-proc serve ISO-8859-1
+        m = re.search(r"""href=["']([^"']*acao=painel_advogado_listar[^"']*hash=[^"']*)["']""", texto)
+        if m:
+            return urljoin(r.url, html.unescape(m.group(1)))
+    return None
+
+
 async def _ir_para_inicio(page, espera_ms: int = 800) -> None:
     """Leva a aba à página inicial do Procurador SEM o alerta "Usuário logado
     como…" (da raiz) e SEM a tela "Ação '' não reconhecida pelo controlador."
-    (de `controlador.php` puro): passa por `controlador.php` só para pegar, no
-    cabeçalho, o link assinado pelo servidor do Painel do Procurador
-    (`acao=painel_advogado_listar&hash=…`) e segue por ele. Sem sessão, fica na
+    (de `controlador.php` puro): o link assinado do Painel do Procurador é lido
+    sem exibir a página (`_link_painel_procurador`) e a aba vai direto por ele.
+    Sem sessão, cai no caminho antigo — passa por `controlador.php`, que leva à
     tela de login do SSO (quem chama confere com `_status_dict`)."""
+    href = await _link_painel_procurador(page.context)
+    if href:
+        with contextlib.suppress(Exception):
+            await page.goto(href, wait_until="domcontentloaded", timeout=30000)
+            await page.wait_for_timeout(espera_ms)
+        if _status_dict(page.url)["logado"]:
+            return
     await page.goto(EPROC_INTERNO, wait_until="domcontentloaded", timeout=30000)
     await page.wait_for_timeout(espera_ms)
     if not _status_dict(page.url)["logado"]:
@@ -269,6 +296,54 @@ async def _fechar_abas_extras(ctx, manter) -> None:
             continue
         with contextlib.suppress(Exception):
             await p.close()
+
+
+def _abas_do_processo(ctx, numero: str) -> list:
+    """Abas já abertas em alguma tela do processo `numero` (consulta processual,
+    resultado da pesquisa rápida…), fora a tela de peticionamento."""
+    return [p for p in ctx.pages
+            if numero and numero in (p.url or "") and "processo_movimento_consultar" not in (p.url or "")]
+
+
+async def _aba_para_processo(ctx, numero: str):
+    """Reaproveita uma aba já aberta do processo em vez de abrir outra — cada
+    ação do painel abria uma aba nova e elas ficavam acumulando (relato do
+    Defensor, 16/10/2026). Sem nenhuma, abre uma."""
+    abas = _abas_do_processo(ctx, numero)
+    return abas[0] if abas else await ctx.new_page()
+
+
+async def _arrumar_abas(ctx, manter, numero: str = "") -> None:
+    """Ao fim de um peticionamento/ciência/gerenciamento: ficam só a aba inicial
+    (a 1ª da janela) e `manter` (a do processo). Preserva a tela de
+    peticionamento de OUTRO processo — preparada e aguardando a confirmação do
+    Defensor. Nunca fecha a última aba (ver `_fechar_abas_extras`)."""
+    paginas = list(ctx.pages)
+    principal = paginas[0] if paginas else None
+    for p in paginas:
+        if p is manter or p is principal:
+            continue
+        u = p.url or ""
+        if "processo_movimento_consultar" in u and not (numero and numero in u):
+            continue
+        with contextlib.suppress(Exception):
+            await p.close()
+
+
+async def _pesquisar_processo(page, numero: str) -> None:
+    """Consulta processual de `numero` na aba, pela pesquisa rápida (GET novo —
+    a página fica atualizada). Usado depois do protocolo no lugar de recarregar
+    a aba: a tela que sucede o "Peticionar" pode ser o resultado do envio do
+    formulário, e recarregá-la poderia reenviar a petição."""
+    campo = page.locator("#txtNumProcessoPesquisaRapida:visible")
+    if not await campo.count():
+        await _ir_para_inicio(page, 600)
+        campo = page.locator("#txtNumProcessoPesquisaRapida:visible")
+    await campo.click()
+    await campo.fill(numero)
+    await campo.press("Enter")
+    await page.wait_for_load_state("domcontentloaded", timeout=20000)
+    await page.wait_for_timeout(600)
 
 
 async def _dispensar_dialogo(dialog) -> None:
@@ -1134,7 +1209,7 @@ async def preparar_peticionamento(numero_processo: str, evento: str, documentos:
     browser, pagina_ref = await _connect()
     ctx = pagina_ref.context
     await _fechar_abas_peticionamento(ctx, numero)
-    page = await ctx.new_page()
+    page = await _aba_para_processo(ctx, numero)
     try:
         erro = await _abrir_tela_peticionamento(page, numero)
         if erro:
@@ -1182,6 +1257,8 @@ async def preparar_peticionamento(numero_processo: str, evento: str, documentos:
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:400]}
     finally:
+        with contextlib.suppress(Exception):
+            await _arrumar_abas(ctx, page, numero)
         with contextlib.suppress(Exception):
             await browser.close()
 
@@ -1258,7 +1335,18 @@ async def confirmar_peticionamento(numero_processo: str, evento: str = "") -> di
                     }""", evento)
                 if raspado:
                     evento_info = raspado
-        return {"ok": True, "url_final": pagina.url,
+        url_final = pagina.url
+        if protocolado:
+            # Fim do peticionamento: a aba fica na consulta processual ATUALIZADA
+            # (pesquisa rápida — ver `_pesquisar_processo`), à frente, e as abas de
+            # trabalho do painel são fechadas (pedido do Defensor, 16/10/2026).
+            with contextlib.suppress(Exception):
+                await _pesquisar_processo(pagina, numero)
+            with contextlib.suppress(Exception):
+                await pagina.bring_to_front()
+            with contextlib.suppress(Exception):
+                await _arrumar_abas(ctx, pagina, numero)
+        return {"ok": True, "url_final": url_final,
                 "dialogo": getattr(pagina, "_eproc_ultimo_dialogo", ""),
                 "provavel_sucesso": protocolado, **evento_info}
     except Exception as e:  # noqa: BLE001
@@ -1332,7 +1420,8 @@ async def abrir_processo(url: str) -> dict:
     browser, page = await _connect()
     ctx = page.context
     try:
-        nova = await ctx.new_page()
+        m = re.search(r"num_processo=(\d+)", url)
+        nova = await _aba_para_processo(ctx, m.group(1)) if m else await ctx.new_page()
         with contextlib.suppress(Exception):
             await nova.goto(url, wait_until="domcontentloaded", timeout=60000)
             await nova.wait_for_timeout(400)
@@ -1360,7 +1449,7 @@ async def abrir_processo_por_numero(numero: str) -> dict:
     browser, pagina_ref = await _connect()
     ctx = pagina_ref.context
     try:
-        page = await ctx.new_page()
+        page = await _aba_para_processo(ctx, numero_limpo)
         await _ir_para_inicio(page, 800)
         if not _status_dict(page.url)["logado"] and not await _garantir_login(page):
             return {
@@ -1500,8 +1589,9 @@ async def gerenciar_processo(numero_processo: str, tipo: str, procurador_valor: 
 
     browser, pagina_ref = await _connect()
     ctx = pagina_ref.context
+    page = None
     try:
-        page = await ctx.new_page()
+        page = await _aba_para_processo(ctx, numero)
         _garantir_hook_dialogo(ctx)
         erro = await _abrir_tela_gerenciamento(page, numero)
         if erro:
@@ -1652,16 +1742,16 @@ async def gerenciar_processo(numero_processo: str, tipo: str, procurador_valor: 
         # novo, movimentar, etc.), em vez de parada na tela de resultado. Com erro em
         # QUALQUER parte, a tela de resultado fica como está, pra análise do usuário
         # (pedido do usuário 2026-08-19) — nunca navega para longe de um erro.
+        # Pela pesquisa rápida NA MESMA ABA: o link dos autos na tela de resultado
+        # abre uma aba NOVA (target do próprio e-proc) — a de resultado ficava
+        # parada e a do processo sobrava depois da limpeza (teste de 16/10/2026).
+        url_final = page.url
         if sucesso:
             with contextlib.suppress(Exception):
-                link_autos = page.locator('table a[href*="processo_selecionar"]').first
-                if await link_autos.count():
-                    await link_autos.click()
-                    await page.wait_for_load_state("domcontentloaded", timeout=20000)
-                    await page.wait_for_timeout(500)
+                await _pesquisar_processo(page, numero)
 
         return {
-            "ok": True, "provavel_sucesso": sucesso, "url_final": page.url,
+            "ok": True, "provavel_sucesso": sucesso, "url_final": url_final,
             "partes_marcadas": marcadas, "partes_indisponiveis": indisponiveis,
             "resultado": blocos_resultado, "partes_com_erro": partes_com_erro,
             "dialogo": getattr(page, "_eproc_ultimo_dialogo", ""),
@@ -1669,5 +1759,10 @@ async def gerenciar_processo(numero_processo: str, tipo: str, procurador_valor: 
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:400]}
     finally:
+        if page is not None:
+            with contextlib.suppress(Exception):
+                await page.bring_to_front()
+            with contextlib.suppress(Exception):
+                await _arrumar_abas(ctx, page, numero)
         with contextlib.suppress(Exception):
             await browser.close()

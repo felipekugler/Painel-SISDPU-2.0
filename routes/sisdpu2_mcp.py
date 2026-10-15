@@ -165,7 +165,7 @@ async def api_fichas_resumo(request: Request):
                 descricao_mov_html=bool(int(b.get("descricao_mov_html") or 0)), grupo=b.get("grupo") or None,
                 descricao_tram=b.get("descricao_tram") or "", prazo_dias=int(b.get("prazo") or 0),
                 prazo_data=b.get("prazo_data") or "", id_tramites=b.get("id_tramites") or [],
-                dry_run=True, anexos=b.get("anexos") or [])
+                dry_run=True, anexos=b.get("anexos") or [], etapa=b.get("etapa") or "")
         item = 0  # item da fila de cada ficha (o resumo agrupa movimentação + tramitação por item)
         async for ev in gen:
             for f in coleta:

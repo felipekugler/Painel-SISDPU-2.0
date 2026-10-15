@@ -124,13 +124,13 @@ async def api_excluir_rascunho(paj_norm: str):
 async def _stream_executar(id_processo: str, paj: str, paj_norm: str, fase: str, descricao_mov: str,
                            descricao_mov_html: bool, grupo: str, descricao_tram: str, prazo: int,
                            prazo_data: str, id_tramite: str, concluir: bool, id_tramites: list,
-                           dry: bool, anexos: list):
+                           dry: bool, anexos: list, etapa: str = ""):
     async for ev in acoes_sisdpu_service.executar_stream(
         id_processo, paj=paj, paj_norm=paj_norm, fase=fase, descricao_mov=descricao_mov,
         descricao_mov_html=descricao_mov_html, grupo=grupo or None,
         descricao_tram=descricao_tram, prazo_dias=prazo, prazo_data=prazo_data,
         id_tramite=id_tramite or None, concluir=concluir, id_tramites=id_tramites,
-        dry_run=dry, anexos=anexos,
+        dry_run=dry, anexos=anexos, etapa=etapa,
     ):
         if ev.get("done"):
             yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
@@ -142,7 +142,7 @@ async def _stream_executar(id_processo: str, paj: str, paj_norm: str, fase: str,
 async def executar(paj: str = "", id_processo: str = "", paj_norm: str = "", fase: str = "", descricao_mov: str = "",
                    descricao_mov_html: int = 0, grupo: str = "", descricao_tram: str = "", prazo: int = 0,
                    prazo_data: str = "", id_tramite: str = "", concluir: int = 0, id_tramites: str = "",
-                   dry: int = 0, anexos: str = ""):
+                   dry: int = 0, anexos: str = "", etapa: str = ""):
     """SSE: movimenta (fase + despacho da movimentação, opcionalmente com documentos do
     PAJ anexados — `anexos`, JSON de caminhos relativos, requer `paj_norm` — e HTML de
     verdade quando `descricao_mov_html=1`, escrito direto no CKEditor do despacho) →
@@ -170,7 +170,8 @@ async def executar(paj: str = "", id_processo: str = "", paj_norm: str = "", fas
         id_tramites_list = []
     return EventSourceResponse(_stream_executar(
         id_processo, paj, paj_norm, fase, descricao_mov, bool(int(descricao_mov_html)), grupo, descricao_tram,
-        int(prazo), prazo_data, id_tramite, bool(int(concluir)), id_tramites_list, bool(int(dry)), anexos_list))
+        int(prazo), prazo_data, id_tramite, bool(int(concluir)), id_tramites_list, bool(int(dry)), anexos_list,
+        etapa))
 
 
 async def _stream_executar_fila(id_processo: str, paj: str, paj_norm: str, itens: list, dry: bool):
