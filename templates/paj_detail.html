@@ -243,7 +243,20 @@
 {% set badge_etapa = 'border-radius:4px; background: rgba(255,255,255,0.28); color: inherit; border-color: rgba(0,0,0,0.12);' %}
 <div class="alert rounded-b-none border-b-0 mb-0 flex flex-wrap items-center gap-2"
      style="background: {{ etapa.cor_fundo }}; color: {{ etapa.cor_texto }};{% if etapa.chave == 'diligencia' %} border: 1px solid #EF9F27; border-bottom: 0;{% else %} border-color: transparent;{% endif %}"
-     data-etapa="{{ etapa.chave }}">
+     data-etapa="{{ etapa.chave }}"
+     {% if etapa.chave in ('aguardando_analise', 'em_analise') %}
+     {# "Aguardando análise" ⇄ "Em análise" em tempo real: a análise por IA desta
+        página avisa quando começa/termina (evento analise-ia-status, 16/10/2026) #}
+     x-data="{ emAnalise: {{ 'true' if etapa.chave == 'em_analise' else 'false' }} }"
+     @analise-ia-status.window="if ($event.detail.paj === '{{ paj_norm }}') emAnalise = $event.detail.running"
+     {% endif %}>
+    {% if etapa.chave in ('aguardando_analise', 'em_analise') %}
+    <span class="loading loading-spinner loading-sm shrink-0" x-show="emAnalise"></span>
+    <svg class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" x-show="!emAnalise">
+        <path stroke-linecap="round" stroke-linejoin="round" d="{{ _icones['inbox'] }}"></path>
+    </svg>
+    <span class="font-bold" x-text="emAnalise ? 'Em análise' : 'Aguardando análise'">{{ etapa.rotulo }}</span>
+    {% else %}
     {% if etapa.icone == 'spinner' %}
     <span class="loading loading-spinner loading-sm shrink-0"></span>
     {% else %}
@@ -252,6 +265,7 @@
     </svg>
     {% endif %}
     <span class="font-bold">{{ etapa.rotulo }}</span>
+    {% endif %}
     {% if etapa.mov_seq %}
     <span class="badge badge-sm font-semibold" style="{{ badge_etapa }}">Mov {{ etapa.mov_seq }}</span>
     {% endif %}

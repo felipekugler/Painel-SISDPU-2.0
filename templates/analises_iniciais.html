@@ -59,6 +59,7 @@
                             <th class="w-40">Assunto</th>
                             <th>Atividade</th>
                             <th class="w-32 text-center">Status</th>
+                            <th class="w-44">Etapa</th>
                             <th class="w-28 text-center">Ações</th>
                         </tr>
                     </thead>
@@ -84,6 +85,18 @@
                                         Em andamento
                                     </span>
                                 </td>
+                                <td>
+                                    <!-- Etapa do PAJ (16/10/2026) — mesma da caixa de entrada -->
+                                    <template x-if="r.etapa && r.etapa.chave">
+                                        <span class="inline-flex items-center gap-1 text-[11px] font-semibold rounded px-1.5 py-0.5 leading-tight"
+                                              :style="r.etapa.arquivado ? 'background:#F7C1C1; color:#791F1F'
+                                                                        : ('background:' + r.etapa.cor_fundo + '; color:' + r.etapa.cor_texto)">
+                                            <span x-show="!r.etapa.arquivado && r.etapa.icone === 'spinner'" class="loading loading-spinner shrink-0" style="width:10px"></span>
+                                            <span x-text="r.etapa.arquivado ? 'Arquivado' : r.etapa.rotulo"></span>
+                                        </span>
+                                    </template>
+                                    <span x-show="!r.etapa || !r.etapa.chave" class="text-base-content/30">—</span>
+                                </td>
                                 <td class="text-center">
                                     <button type="button" class="btn btn-xs btn-outline gap-1"
                                             @click="abrirPastaPaj(r.paj_norm, $el)"
@@ -97,7 +110,7 @@
                             </tr>
                         </template>
                         <tr x-show="processando.length === 0">
-                            <td colspan="7" class="text-center text-base-content/40 py-6">
+                            <td colspan="8" class="text-center text-base-content/40 py-6">
                                 Nada em processamento no momento.
                             </td>
                         </tr>
@@ -130,6 +143,7 @@
                             <th>Atividade</th>
                             <th class="w-28 text-center">Status</th>
                             <th class="w-36 text-center">Documentos</th>
+                            <th class="w-44">Etapa</th>
                             <th class="w-28 text-center">Ações</th>
                         </tr>
                     </thead>
@@ -173,6 +187,18 @@
                                     <span x-show="r.doc_status === 'sem_peticao'" class="text-base-content/30"
                                           title="Ainda não há petição inicial gerada para este PAJ">—</span>
                                 </td>
+                                <td>
+                                    <!-- Etapa do PAJ (16/10/2026) — mesma da caixa de entrada -->
+                                    <template x-if="r.etapa && r.etapa.chave">
+                                        <span class="inline-flex items-center gap-1 text-[11px] font-semibold rounded px-1.5 py-0.5 leading-tight"
+                                              :style="r.etapa.arquivado ? 'background:#F7C1C1; color:#791F1F'
+                                                                        : ('background:' + r.etapa.cor_fundo + '; color:' + r.etapa.cor_texto)">
+                                            <span x-show="!r.etapa.arquivado && r.etapa.icone === 'spinner'" class="loading loading-spinner shrink-0" style="width:10px"></span>
+                                            <span x-text="r.etapa.arquivado ? 'Arquivado' : r.etapa.rotulo"></span>
+                                        </span>
+                                    </template>
+                                    <span x-show="!r.etapa || !r.etapa.chave" class="text-base-content/30">—</span>
+                                </td>
                                 <td class="text-center">
                                     <div class="flex flex-col items-center gap-1">
                                         <button type="button" class="btn btn-xs btn-outline gap-1"
@@ -193,12 +219,12 @@
                             </tr>
                         </template>
                         <tr x-show="!carregando && peticoes.length === 0">
-                            <td colspan="8" class="text-center text-base-content/40 py-6">
+                            <td colspan="9" class="text-center text-base-content/40 py-6">
                                 Nenhuma petição inicial pendente de revisão.
                             </td>
                         </tr>
                         <tr x-show="carregando">
-                            <td colspan="8" class="text-center py-6"><span class="loading loading-spinner"></span> Carregando…</td>
+                            <td colspan="9" class="text-center py-6"><span class="loading loading-spinner"></span> Carregando…</td>
                         </tr>
                     </tbody>
                 </table>
@@ -223,6 +249,7 @@
                             <th class="w-40">Assunto</th>
                             <th>Atividade</th>
                             <th class="w-28 text-center">Status</th>
+                            <th class="w-44">Etapa</th>
                             <th class="w-28 text-center">Ações</th>
                         </tr>
                     </thead>
@@ -247,6 +274,18 @@
                                           :class="r.status === 'done' ? 'badge-success' : (r.status === 'error' ? 'badge-error' : 'badge-ghost')"
                                           x-text="r.status === 'done' ? 'Concluída' : (r.status === 'error' ? 'Erro' : (r.status || '—'))"></span>
                                 </td>
+                                <td>
+                                    <!-- Etapa do PAJ (16/10/2026) — mesma da caixa de entrada -->
+                                    <template x-if="r.etapa && r.etapa.chave">
+                                        <span class="inline-flex items-center gap-1 text-[11px] font-semibold rounded px-1.5 py-0.5 leading-tight"
+                                              :style="r.etapa.arquivado ? 'background:#F7C1C1; color:#791F1F'
+                                                                        : ('background:' + r.etapa.cor_fundo + '; color:' + r.etapa.cor_texto)">
+                                            <span x-show="!r.etapa.arquivado && r.etapa.icone === 'spinner'" class="loading loading-spinner shrink-0" style="width:10px"></span>
+                                            <span x-text="r.etapa.arquivado ? 'Arquivado' : r.etapa.rotulo"></span>
+                                        </span>
+                                    </template>
+                                    <span x-show="!r.etapa || !r.etapa.chave" class="text-base-content/30">—</span>
+                                </td>
                                 <td class="text-center">
                                     <div class="flex flex-col items-center gap-1">
                                         <button type="button" class="btn btn-xs btn-outline gap-1"
@@ -267,12 +306,12 @@
                             </tr>
                         </template>
                         <tr x-show="!carregando && analises.length === 0">
-                            <td colspan="7" class="text-center text-base-content/40 py-6">
+                            <td colspan="8" class="text-center text-base-content/40 py-6">
                                 Nenhuma análise pendente de revisão.
                             </td>
                         </tr>
                         <tr x-show="carregando">
-                            <td colspan="7" class="text-center py-6"><span class="loading loading-spinner"></span> Carregando…</td>
+                            <td colspan="8" class="text-center py-6"><span class="loading loading-spinner"></span> Carregando…</td>
                         </tr>
                     </tbody>
                 </table>

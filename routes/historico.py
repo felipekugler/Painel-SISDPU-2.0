@@ -33,15 +33,32 @@ async def pagina_analises_iniciais(request: Request):
     return HTMLResponse(html)
 
 
+def _com_etapa(registros: list[dict]) -> list[dict]:
+    """Coluna "Etapa" das tabelas (16/10/2026) — mesma etapa da caixa de entrada
+    e da página do PAJ (services/etapa_paj_service), calculada uma vez por PAJ."""
+    from services import etapa_paj_service
+    cache: dict[str, dict] = {}
+    for r in registros:
+        pn = r.get("paj_norm") or ""
+        if pn and pn not in cache:
+            try:
+                e = etapa_paj_service.calcular(pn)
+                cache[pn] = {k: e[k] for k in ("chave", "rotulo", "cor_fundo", "cor_texto", "icone", "arquivado")}
+            except Exception:  # noqa: BLE001
+                cache[pn] = {}
+        r["etapa"] = cache.get(pn) or {}
+    return registros
+
+
 @router.get("/api/analises-iniciais/lista", response_class=JSONResponse)
 async def api_analises_iniciais_lista():
-    return JSONResponse({"registros": historico.listar_analises_iniciais_pendentes()})
+    return JSONResponse({"registros": _com_etapa(historico.listar_analises_iniciais_pendentes())})
 
 
 @router.get("/api/analises-iniciais/em-processamento", response_class=JSONResponse)
 async def api_analises_iniciais_em_processamento():
     """Tabela "Em processamento" — ver `historico.listar_em_processamento`."""
-    return JSONResponse({"registros": historico.listar_em_processamento()})
+    return JSONResponse({"registros": _com_etapa(historico.listar_em_processamento())})
 
 
 @router.get("/api/analises-iniciais/count", response_class=JSONResponse)

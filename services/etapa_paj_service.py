@@ -35,6 +35,10 @@ MARCADOR_MINUTA = "etapa_minuta_solicitada.json"
 # cor de fundo, cor do texto, ícone (Tabler) ou "spinner"
 ETAPAS = [
     ("aguardando_analise", "Aguardando análise", 0, False, "#D3D1C7", "#2C2C2A", "inbox"),
+    # Automática e passageira: análise por IA rodando num PAJ que ainda estava
+    # "Aguardando análise" (16/10/2026). Mesma cor, com spinner. Terminada a
+    # análise, volta a "Aguardando análise" até o Defensor marcar a etapa.
+    ("em_analise", "Em análise", 0, False, "#D3D1C7", "#2C2C2A", "spinner"),
     ("inviavel", "Analisado – Inviável", 1, True, "#F7C1C1", "#791F1F", "ban"),
     ("diligencia", "Analisado – Em diligência", 1, True, "#FDF0B8", "#633806", "hourglass"),
     ("viavel", "Analisado – Viável", 2, True, "#C0DD97", "#173404", "circle-check"),
@@ -68,7 +72,18 @@ def opcoes_manuais() -> list[dict]:
 
 
 def opcoes_todas() -> list[dict]:
-    return [{"chave": e[0], "rotulo": e[1]} for e in ETAPAS]
+    # "Em análise" é só um estado passageiro (análise rodando) — não se escolhe
+    return [{"chave": e[0], "rotulo": e[1]} for e in ETAPAS if e[0] != "em_analise"]
+
+
+def _analise_em_andamento(paj_norm: str) -> dict | None:
+    """Sessão de análise por IA rodando agora neste PAJ (a mesma fonte da
+    página "Análises e iniciais"); None se não houver."""
+    try:
+        from services.analise_pretensao_service import get_status_todos
+        return get_status_todos().get(paj_norm)
+    except Exception:  # noqa: BLE001
+        return None
 
 
 def descricao_movimentacao(chave: str) -> str:
@@ -191,6 +206,13 @@ def calcular(paj_norm: str, metadata: dict | None = None) -> dict:
     if melhor:
         atual = melhor
     chave, d, seq, det = atual
+    # Só "Aguardando análise" vira "Em análise": numa etapa à frente, uma nova
+    # análise/ajuste pela IA não faz o PAJ parecer que voltou atrás.
+    if chave == "aguardando_analise":
+        rodando = _analise_em_andamento(paj_norm)
+        if rodando:
+            return {**info("em_analise"), "arquivado": False, "desde": rodando.get("iniciado_em") or "",
+                    "mov_seq": None, "detalhe": ""}
     return {**info(chave), "arquivado": False, "desde": d.isoformat(timespec="seconds") if d else "",
             "mov_seq": seq, "detalhe": det}
 

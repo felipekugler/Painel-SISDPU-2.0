@@ -79,6 +79,9 @@ function analiseIaApp(pajNorm, tipoPadrao) {
                 const r = await fetch('/api/analise-pretensao/status/' + this.pajNorm);
                 const d = await r.json();
                 this.status = d.status || 'idle';
+                // Barra de etapa da página ("Aguardando análise" ⇄ "Em análise")
+                window.dispatchEvent(new CustomEvent('analise-ia-status',
+                    { detail: { paj: this.pajNorm, running: this.status === 'running' } }));
                 this.lastAction = d.last_action || '';
                 this.summary = d.summary || '';
                 this.error = d.error || '';

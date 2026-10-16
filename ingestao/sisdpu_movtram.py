@@ -187,6 +187,26 @@ _JS_FECHAR_DIALOGO_DECURSO_AUTOMATICO = r"""() => {
     }
     return false;
 }"""
+# Aviso "Estes Pajs se encontram arquivados e não é possível estabelecer decurso…
+# Deseja concluir mesmo assim? [Sim] [Não]" — o SISDPU o abre ao concluir 2+
+# trâmites de PAJ arquivado de uma vez (versão "Plural"; a singular existe mas não
+# apareceu em 1 trâmite). Sem resposta, a conclusão conjunta não acontecia (PAJ
+# 2026/029-04161, 16/10/2026: um a um funcionava). Responde "Sim" — é o mesmo que o
+# Defensor faria à mão para concluir; só age se o SISDPU mostrar o aviso.
+_JS_CONFIRMAR_AVISO_ARQUIVADO = r"""() => {
+    for (const id of ['tabView:listaDecursoForm:dialogoAvisoPajArquivadoPlural',
+                      'tabView:listaDecursoForm:dialogoAvisoPajArquivado']) {
+        const dlg = document.querySelector('[id="' + id + '"]');
+        if (!dlg) continue;
+        const cs = window.getComputedStyle(dlg);
+        if (cs.display === 'none' || cs.visibility === 'hidden' || dlg.getAttribute('aria-hidden') === 'true') continue;
+        for (const b of dlg.querySelectorAll('button, a.ui-button, input[type=button], input[type=submit]')) {
+            const t = ((b.textContent || b.value || '') + '').trim().toLowerCase();
+            if (t === 'sim') { b.click(); return true; }
+        }
+    }
+    return false;
+}"""
 # Lê qualquer feedback visível na tela IMEDIATAMENTE após o clique em
 # "Concluir" (growl, dialog aberto) — sem isso o log só sabia "cliquei" ou
 # "não cliquei", nunca O QUE o SISDPU respondeu.
@@ -840,6 +860,11 @@ async def concluir_paj(id_tramites: list[str], dry_run: bool = False) -> dict:
     if marcados:
         await page.evaluate(_JS_CLICA_BTN_CONCLUIR)
         await _wait_pf_ajax(page, timeout=15000); await page.wait_for_timeout(1300)
+        # PAJ arquivado com 2+ trâmites — ver _JS_CONFIRMAR_AVISO_ARQUIVADO.
+        with contextlib.suppress(Exception):
+            if await page.evaluate(_JS_CONFIRMAR_AVISO_ARQUIVADO):
+                _log.info("concluir_paj: aviso 'PAJ arquivado' apareceu — respondido com 'Sim'")
+                await _wait_pf_ajax(page, timeout=15000); await page.wait_for_timeout(1300)
         # PAJ sem decurso ativo — ver _JS_FECHAR_DIALOGO_DECURSO_AUTOMATICO.
         # Sem isso, o diálogo fica aberto e a conclusão nunca se efetiva.
         with contextlib.suppress(Exception):

@@ -774,13 +774,13 @@
               <!-- Etapa do PAJ (services/etapa_paj_service.py) — substitui a antiga
                    coluna Análise (pedido do Defensor 15/10/2026). Clique filtra. -->
               <td class="px-4 py-3 align-top">
-                <template x-if="paj.etapa && paj.etapa.chave && !paj.etapa.arquivado">
+                <template x-if="etapaDe(paj).chave && !etapaDe(paj).arquivado">
                   <button type="button" class="inline-flex items-center gap-1 text-[11px] font-semibold rounded px-1.5 py-0.5 text-left leading-tight"
-                          :style="'background:' + paj.etapa.cor_fundo + '; color:' + paj.etapa.cor_texto"
-                          @click.stop="filtroEtapa = paj.etapa.chave; aplicarFiltros()"
+                          :style="'background:' + etapaDe(paj).cor_fundo + '; color:' + etapaDe(paj).cor_texto"
+                          @click.stop="filtroEtapa = etapaDe(paj).chave; aplicarFiltros()"
                           title="Etapa do PAJ — clique para filtrar">
-                    <span x-show="paj.etapa.icone === 'spinner'" class="loading loading-spinner shrink-0" style="width:10px"></span>
-                    <span x-text="paj.etapa.rotulo"></span>
+                    <span x-show="etapaDe(paj).icone === 'spinner'" class="loading loading-spinner shrink-0" style="width:10px"></span>
+                    <span x-text="etapaDe(paj).rotulo"></span>
                   </button>
                 </template>
                 <template x-if="paj.etapa && paj.etapa.arquivado">
@@ -895,6 +895,7 @@ function dashboardApp() {
         ordemAsc: true,
         statusMap: {},
         analiseStatusMap: {},
+        _analiseStatusLido: false,
         stats: {running: 0, queued: 0, max_parallel: 5},
         cota: {ativo: false, n_pendentes: 0, redisparo_em: '', pausado: false, ciclo: 0, max_ciclos: 12, ultimo_log: ''},
         lembreteTip: { show: false, x: 0, y: 0, itens: [] },
@@ -1046,7 +1047,7 @@ function dashboardApp() {
         contadoresEtapa() {
             const m = {};
             (this.pajs || []).forEach(p => {
-                const e = p.etapa;
+                const e = this.etapaDe(p);
                 if (!e || !e.chave || e.arquivado) return;
                 if (!m[e.chave]) m[e.chave] = { ...e, n: 0 };
                 m[e.chave].n++;
@@ -1054,8 +1055,8 @@ function dashboardApp() {
             return Object.values(m).sort((a, b) => (a.ordem - b.ordem) || a.rotulo.localeCompare(b.rotulo));
         },
         rotuloEtapaFiltro(chave) {
-            const p = (this.pajs || []).find(x => x.etapa && x.etapa.chave === chave);
-            return p ? p.etapa.rotulo : chave;
+            const p = (this.pajs || []).find(x => this.etapaDe(x).chave === chave);
+            return p ? this.etapaDe(p).rotulo : chave;
         },
 
         limparFiltros() {
@@ -1095,7 +1096,25 @@ function dashboardApp() {
                 this.stats = await rStats.json();
                 this.cota = await rCota.json();
                 this.analiseStatusMap = await rAnalise.json();
+                this._analiseStatusLido = true;
             } catch (e) {}
+        },
+
+        // Etapa EFETIVA do PAJ: "Em análise" segue em tempo real o status das
+        // análises por IA (o mesmo polling da página) — entra quando a análise
+        // começa num PAJ "Aguardando análise" e volta quando termina, sem
+        // esperar a lista da caixa ser relida (16/10/2026).
+        etapaDe(p) {
+            const e = (p && p.etapa) || {};
+            if (e.arquivado) return e;
+            const rodando = this.analiseEmAndamento(p.paj_norm);
+            if (e.chave === 'aguardando_analise' && rodando) {
+                return { ...e, chave: 'em_analise', rotulo: 'Em análise', icone: 'spinner' };
+            }
+            if (e.chave === 'em_analise' && this._analiseStatusLido && !rodando) {
+                return { ...e, chave: 'aguardando_analise', rotulo: 'Aguardando análise', icone: 'inbox' };
+            }
+            return e;
         },
 
         async cotaDispararAgora() {
@@ -1393,7 +1412,7 @@ function dashboardApp() {
                 lista = lista.filter(p => p.data_caixa === this.filtroData);
             }
             if (this.filtroEtapa) {
-                lista = lista.filter(p => p.etapa && !p.etapa.arquivado && p.etapa.chave === this.filtroEtapa);
+                lista = lista.filter(p => { const e = this.etapaDe(p); return e.chave && !e.arquivado && e.chave === this.filtroEtapa; });
             }
             if (this.busca) {
                 const q = this.busca.toLowerCase();
@@ -1408,7 +1427,7 @@ function dashboardApp() {
                     (p.desc_caixa || '').toLowerCase().includes(q) ||
                     (p.data_caixa || '').toLowerCase().includes(q) ||
                     this.formatarData(p.data_caixa).toLowerCase().includes(q) ||
-                    (p.etapa && p.etapa.rotulo || '').toLowerCase().includes(q)
+                    (this.etapaDe(p).rotulo || '').toLowerCase().includes(q)
                 );
             }
             lista = [...lista].sort((a, b) => {
