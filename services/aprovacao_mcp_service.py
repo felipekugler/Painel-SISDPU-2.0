@@ -77,9 +77,50 @@ def _validade_seg(ficha: str) -> float:
     return VALIDADE_PADRAO_SEG
 
 
+# Pré-aprovação de rotina automática (Configurações › Rotinas automáticas,
+# autorizada pelo Defensor em 16/10/2026): a gravação esperada é registrada ANTES
+# de acontecer, com o modelo exato; a ficha só é confirmada sem modal se bater
+# em TUDO — PAJ, tipo, fase, descrição e o conjunto exato de anexos. Qualquer
+# diferença → modal normal. Uso único, com validade curta.
+_pre_aprovacoes: list[dict] = []
+
+
+def pre_aprovar(paj: str, fase: str, descricao: str, anexos: list[str], origem: str,
+                validade_seg: float = 1200) -> None:
+    _pre_aprovacoes.append({"paj": paj, "fase": fase, "descricao": descricao,
+                            "anexos": sorted(anexos), "origem": origem,
+                            "ate": time.time() + validade_seg})
+
+
+def _campo_ficha(ficha: str, rotulo_re: str) -> str:
+    m = re.search(rf"^\s*{rotulo_re}[^:\n]*:\s*(.+)$", ficha or "", re.I | re.M)
+    return re.sub(r"<[^>]+>", " ", m.group(1)).replace("&nbsp;", " ").strip() if m else ""
+
+
+def _casa_pre_aprovacao(tipo: str, paj: str, ficha: str, contexto: dict) -> Optional[dict]:
+    if tipo != "movimentacao":
+        return None
+    agora = time.time()
+    for p in list(_pre_aprovacoes):
+        if p["ate"] < agora:
+            _pre_aprovacoes.remove(p)
+            continue
+        fase = _campo_ficha(ficha, r"Fases?")
+        desc = re.sub(r"\s+", " ", _campo_ficha(ficha, r"Descri[çc][ãa]o"))
+        anexos = sorted(a.get("nome", "") for a in (contexto or {}).get("anexos") or [])
+        if (p["paj"] == paj and fase.lower() == p["fase"].lower() and desc == p["descricao"]
+                and anexos == p["anexos"]):
+            _pre_aprovacoes.remove(p)
+            return p
+    return None
+
+
 async def solicitar(tipo: str, paj: str, ficha: str, contexto: Optional[dict] = None) -> Optional[str]:
     """Espera o Defensor aprovar a ficha. Devolve a resposta (texto) ou None
     (recusou, ou a ficha venceu sem resposta)."""
+    pre = _casa_pre_aprovacao(tipo, paj, ficha, contexto or {})
+    if pre:
+        return RESPOSTA_CLIQUE
     agora = time.time()
     norm = _normalizar(ficha)
     for a in list(_antecipadas):

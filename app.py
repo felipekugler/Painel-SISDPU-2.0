@@ -54,6 +54,7 @@ from routes.seguranca import router as seguranca_router
 from routes.sync import router as sync_router
 from routes.valor_causa import router as valor_causa_router
 from routes.watchlist import router as watchlist_router
+from routes.rotinas import router as rotinas_router
 from services.ambiente_service import verificar_ambiente
 from config import PAINEL_NOME, PAINEL_PORT
 
@@ -311,6 +312,7 @@ app.include_router(movimentar_conjunto_router)
 app.include_router(oficio_sei_router)
 app.include_router(sisdpu2_mcp_router)
 app.include_router(peticao_inicial_router)
+app.include_router(rotinas_router)
 
 # Healthcheck de dependencias externas — expoe em app.state.ambiente pra
 # o dashboard renderizar banner quando algo falta.
@@ -339,6 +341,17 @@ async def _startup_ao_vivo() -> None:
     from services import ao_vivo_service
 
     asyncio.create_task(ao_vivo_service.laco_caixa())
+
+
+@app.on_event("startup")
+async def _startup_rotinas_automaticas() -> None:
+    """Configurações › Rotinas automáticas — Juntada de Dossiê Seguro-Desemprego
+    Web (services/rotina_dossie_sd_service): só age com a rotina ativada."""
+    import asyncio
+
+    from services import rotina_dossie_sd_service
+
+    asyncio.create_task(rotina_dossie_sd_service.laco())
 
 
 @app.on_event("startup")
