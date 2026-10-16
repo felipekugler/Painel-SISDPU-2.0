@@ -32,7 +32,9 @@ function peticaoInicialApp(pajNorm, pajLabel) {
                 if (salvo) {
                     sessionStorage.removeItem(CHAVE_FIM);
                     const s = JSON.parse(salvo);
-                    this.resultado = s.resultado; this.posLog = s.posLog || [];
+                    // nº + chave já estão no card — não repete no log (registros antigos traziam)
+                    this.resultado = s.resultado;
+                    this.posLog = (s.posLog || []).filter((l) => !/^Processo distribu[íi]do:/.test(l.msg || ''));
                     this.posLog.push({ ok: true, msg: 'Movimentação "Petição inicial" executada no SISDPU (ver Histórico/Movimentações).' });
                     this.fase = 'fim'; this.aberto = true;
                 }
@@ -127,8 +129,7 @@ function peticaoInicialApp(pajNorm, pajLabel) {
                 })).json();
             } catch (e) { r = { ok: false, erro: 'Erro de rede: ' + e + ' — confira no e-proc se o processo foi distribuído.' }; }
             if (!r.ok) { this.posErro = r.erro || 'Falha no ajuizamento.'; this.fase = 'preparado'; return; }
-            this.resultado = r;
-            this.posLog.push({ ok: true, msg: 'Processo distribuído: ' + r.numero + ' — chave ' + r.chave });
+            this.resultado = r;  // nº + chave já aparecem no card "Processo distribuído" (sem repetir no log)
 
             // 2) gerenciamento (procurador padrão de Configurações › e-proc)
             try {
@@ -208,6 +209,17 @@ function peticaoInicialApp(pajNorm, pajLabel) {
             return true;
         },
         decidirRevisao(sim) { if (this._decidir) this._decidir(!!sim); },
+        // Card do cadastro do processo, enxuto (pedido do Defensor, 16/10/2026):
+        // só "Número informado" e "Instância" da ficha do SIS-DPU 2.0.
+        cadastroCampos(f) {
+            const out = [];
+            (f && f.ficha || '').split('\n').forEach((linha) => {
+                const m = linha.match(/^\s*(N[úu]mero informado|Inst[âa]ncia)\s*:\s*(.+)$/i);
+                if (m) out.push([m[1], m[2].trim()]);
+            });
+            return out;
+        },
+        fichaDoTipo(tipo) { return (this.revisao.mov || []).find((f) => f.tipo === tipo) || null; },
         fichaHtml(f) {
             return window.fichaMcp ? window.fichaMcp.htmlFicha(f.ficha, f.paj, f.contexto, { essencial: true }) : '';
         },

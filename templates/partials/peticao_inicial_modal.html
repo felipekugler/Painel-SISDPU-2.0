@@ -211,46 +211,59 @@
                  uma confirmação para tudo (a sincronização vai junto com o cadastro). -->
             <template x-if="fase === 'revisao'">
                 <div class="flex flex-col gap-3">
+                    <!-- Card do ajuizamento: nº + chave e, dentro dele, o gerenciamento
+                         (o log não repete o "Processo distribuído" — 16/10/2026). -->
                     <template x-if="resultado">
                         <div class="border border-success/40 rounded p-3 text-sm">
                             <div class="font-semibold mb-1">Processo distribuído</div>
                             <div>Nº <span class="font-mono font-semibold" x-text="resultado.numero"></span>
                                  · Chave <span class="font-mono font-semibold" x-text="resultado.chave"></span></div>
+                            <ul class="text-xs flex flex-col gap-1 mt-2" x-show="posLog.length">
+                                <template x-for="(l, i) in posLog" :key="i">
+                                    <li class="flex gap-1.5 items-start">
+                                        <span x-show="l.ok === true" class="text-success">✓</span>
+                                        <span x-show="l.ok === false" class="text-warning">⚠</span>
+                                        <span x-text="l.msg"></span>
+                                    </li>
+                                </template>
+                            </ul>
                         </div>
                     </template>
-                    <ul class="text-xs flex flex-col gap-1" x-show="posLog.length">
-                        <template x-for="(l, i) in posLog" :key="i">
-                            <li class="flex gap-1.5 items-start">
-                                <span x-show="l.ok === true" class="text-success">✓</span>
-                                <span x-show="l.ok === false" class="text-warning">⚠</span>
-                                <span x-text="l.msg"></span>
-                            </li>
-                        </template>
-                    </ul>
                     <div class="font-semibold text-sm">Gravações no SISDPU — confira e confirme de uma vez</div>
                     <div x-show="revisao.carregando" class="text-sm text-base-content/60">
                         <span class="loading loading-spinner loading-xs"></span> Conferindo com o SIS-DPU 2.0 (nada é gravado agora)…
                     </div>
                     <template x-if="!revisao.carregando">
                         <div class="flex flex-col gap-2">
+                            <!-- 1. Cadastro do processo: só nº informado e instância -->
                             <div class="border border-success/30 bg-base-100 rounded px-3 py-2">
                                 <div class="text-xs font-semibold mb-1">1. Processo judicial no PAJ</div>
                                 <template x-for="(f, i) in revisao.cadastro" :key="'c' + i">
-                                    <div class="text-xs" x-html="fichaHtml(f)"></div>
+                                    <table class="text-xs"><tbody>
+                                        <template x-for="(c, ci) in cadastroCampos(f)" :key="ci">
+                                            <tr><td class="pr-4 py-0.5 text-base-content/70 whitespace-nowrap" x-text="c[0]"></td>
+                                                <td class="py-0.5 font-mono" x-text="c[1]"></td></tr>
+                                        </template>
+                                    </tbody></table>
                                 </template>
                                 <div class="text-xs text-base-content/60" x-show="!revisao.cadastro.length && revisao.jaVinculado">
                                     O processo já está vinculado ao PAJ — não há cadastro a gravar.</div>
-                                <div class="text-xs text-base-content/70 mt-1">
-                                    + Sincronização com o tribunal (juízo, autuação, classe, valor e partes) — mera atualização,
-                                    autorizada junto com esta confirmação.</div>
                             </div>
-                            <template x-for="(f, i) in revisao.mov" :key="'m' + i">
-                                <div class="border border-success/30 bg-base-100 rounded px-3 py-2">
-                                    <div class="text-xs font-semibold mb-1"
-                                         x-text="(i + 2) + '. ' + (window.fichaMcp ? window.fichaMcp.rotulo(f.tipo) : f.tipo)"></div>
-                                    <div class="text-xs" x-html="fichaHtml(f)"></div>
+                            <!-- 2. Movimentação | 3. Tramitação lado a lado (padrão da movimentação conjunta) -->
+                            <div class="grid grid-cols-2 gap-2 items-stretch revisao-compacta" x-show="revisao.mov.length">
+                                <template x-for="[n, tipo, rot] in [[2, 'movimentacao', 'Movimentação'], [3, 'tramitacao', 'Tramitação']]" :key="tipo">
+                                    <div class="border border-success/30 bg-base-100 rounded px-2 py-1.5 min-w-0">
+                                        <div class="text-xs font-semibold mb-0.5" x-text="n + '. ' + rot"></div>
+                                        <div class="text-xs" x-show="fichaDoTipo(tipo)" x-html="fichaHtml(fichaDoTipo(tipo))"></div>
+                                        <div class="text-xs text-base-content/40" x-show="!fichaDoTipo(tipo)"
+                                             x-text="tipo === 'tramitacao' ? 'Sem tramitação' : 'Sem movimentação'"></div>
+                                    </div>
+                                </template>
+                                <div class="col-span-2 border border-success/30 bg-base-100 rounded px-2 py-1.5" x-show="fichaDoTipo('etapa')">
+                                    <div class="text-xs font-semibold mb-0.5">Etapa do PAJ</div>
+                                    <div class="text-xs" x-html="fichaDoTipo('etapa') ? fichaHtml(fichaDoTipo('etapa')) : ''"></div>
                                 </div>
-                            </template>
+                            </div>
                             <template x-for="(e, i) in revisao.erros" :key="'e' + i">
                                 <div class="text-error text-sm font-medium" x-text="'⚠ ' + e"></div>
                             </template>
@@ -278,16 +291,28 @@
                     </template>
                     <div x-show="posErro" class="alert alert-error text-sm"><span x-text="posErro"></span></div>
 
+                    <!-- Mesmo card da revisão: nº + chave e, dentro dele, o andamento
+                         (gerenciamento, cadastro, movimentação) — 16/10/2026. -->
                     <template x-if="resultado">
                         <div class="border border-success/40 rounded p-3 text-sm">
                             <div class="font-semibold mb-1">Processo distribuído</div>
                             <div>Nº <span class="font-mono font-semibold" x-text="resultado.numero"></span>
                                  · Chave <span class="font-mono font-semibold" x-text="resultado.chave"></span></div>
                             <div class="text-xs text-base-content/60" x-text="(resultado.classe || '') + (resultado.magistrado ? ' · ' + resultado.magistrado : '')"></div>
+                            <ul class="text-xs flex flex-col gap-1 mt-2" x-show="posLog.length">
+                                <template x-for="(l, i) in posLog" :key="i">
+                                    <li class="flex gap-1.5 items-start">
+                                        <span x-show="l.ok === null" class="loading loading-spinner loading-xs"></span>
+                                        <span x-show="l.ok === true" class="text-success">✓</span>
+                                        <span x-show="l.ok === false" class="text-warning">⚠</span>
+                                        <span x-text="l.msg"></span>
+                                    </li>
+                                </template>
+                            </ul>
                         </div>
                     </template>
-
-                    <template x-if="posLog.length">
+                    <!-- sem resultado (ex.: falha antes da distribuição): log solto -->
+                    <template x-if="!resultado && posLog.length">
                         <ul class="text-xs flex flex-col gap-1">
                             <template x-for="(l, i) in posLog" :key="i">
                                 <li class="flex gap-1.5 items-start">
