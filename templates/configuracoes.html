@@ -629,6 +629,7 @@
     <div class="card bg-base-200 shadow" x-show="subaba==='mcp'"
          x-data="{
             st: {conectado: false}, fonte: 'sisdpu', carregando: true, msg: '', consumo: null,
+            ultimasMovs: 5, ultimasMovsSalvo: false,
             async init() {
                 await this.atualizar();
                 window.addEventListener('message', (e) => {
@@ -641,6 +642,7 @@
                     this.st = await (await fetch('/api/sisdpu2/status')).json();
                     this.fonte = (await (await fetch('/api/sisdpu2/fonte')).json()).fonte;
                     this.consumo = await (await fetch('/api/sisdpu2/consumo')).json();
+                    this.ultimasMovs = (await (await fetch('/api/sisdpu2/download-ultimas-movs')).json()).n;
                 } catch (e) { this.msg = 'Falha ao consultar o estado: ' + e; }
                 this.carregando = false;
             },
@@ -652,6 +654,12 @@
             async desconectar() {
                 await fetch('/api/sisdpu2/desconectar', {method: 'POST'});
                 await this.atualizar();
+            },
+            async salvarUltimasMovs() {
+                const r = await (await fetch('/api/sisdpu2/download-ultimas-movs', {method: 'POST',
+                    headers: {'Content-Type': 'application/json'}, body: JSON.stringify({n: this.ultimasMovs})})).json();
+                if (r.ok) { this.ultimasMovs = r.n; this.ultimasMovsSalvo = true; this.msg = ''; setTimeout(() => this.ultimasMovsSalvo = false, 2000); }
+                else this.msg = r.erro;
             },
             async escolher(f) {
                 const r = await (await fetch('/api/sisdpu2/fonte', {method: 'POST',
@@ -699,22 +707,35 @@
                     <button class="btn btn-sm" x-show="st.conectado" @click="desconectar()">Desconectar</button>
                 </div>
             </div>
-            <!-- Consumo do teto diário do servidor (estatística + freio do automático) -->
+            <!-- Download automático dos anexos ao abrir o PAJ: só as N últimas movimentações -->
+            <div class="rounded-lg border border-base-300 p-3 text-sm flex items-center gap-3 flex-wrap">
+                <span>Ao abrir o PAJ, baixar sozinho os anexos das últimas</span>
+                <input type="number" min="0" max="999" class="input input-bordered input-sm w-20 tnum"
+                       x-model.number="ultimasMovs" @change="salvarUltimasMovs()">
+                <span>movimentações</span>
+                <span class="text-success text-xs" x-show="ultimasMovsSalvo">salvo ✓</span>
+                <p class="text-xs text-base-content/60 w-full">
+                    Cada pedaço de arquivo baixado conta no limite diário de leitura do SIS-DPU 2.0.
+                    Os anexos mais antigos continuam disponíveis em "Baixar PAJ Completo". 0 = não baixar nada sozinho.
+                </p>
+            </div>
+            <!-- Consumo do teto diário do servidor (estatística) -->
             <template x-if="consumo">
                 <div class="rounded-lg border border-base-300 p-3 text-sm flex flex-col gap-2">
                     <div class="flex items-center justify-between flex-wrap gap-2">
                         <strong>Leituras no SIS-DPU 2.0 hoje</strong>
                         <span class="font-mono tnum"
-                              x-text="consumo.hoje.registros + ' de ' + consumo.hoje.teto + ' registros · ' + consumo.hoje.chamadas + ' chamadas'"></span>
+                              x-text="'~' + consumo.hoje.registros_calibrados + ' de ' + consumo.hoje.teto + ' registros · ' + consumo.hoje.chamadas + ' chamadas'"></span>
                     </div>
                     <progress class="progress w-full"
-                              :class="consumo.hoje.teto_atingido || consumo.hoje.registros >= 0.7*consumo.hoje.teto ? 'progress-error' : 'progress-info'"
-                              :value="Math.min(consumo.hoje.registros, consumo.hoje.teto)" :max="consumo.hoje.teto"></progress>
+                              :class="consumo.hoje.teto_atingido || consumo.hoje.registros_calibrados >= 0.7*consumo.hoje.teto ? 'progress-error' : 'progress-info'"
+                              :value="Math.min(consumo.hoje.registros_calibrados, consumo.hoje.teto)" :max="consumo.hoje.teto"></progress>
                     <p class="text-xs text-base-content/60">
                         O servidor limita cada pessoa a <span x-text="consumo.teto"></span> registros lidos por dia,
-                        somando o painel e o uso do MCP pelo Claude. A conta acima é uma estimativa do painel
-                        (o uso pelo chat não aparece aqui). Acima de 70% a atualização automática da caixa pausa;
-                        acima de 95%, o painel para de ler.
+                        somando o painel e o uso do MCP pelo Claude (o uso pelo chat não aparece aqui).
+                        <span x-show="consumo.hoje.fator !== 1"
+                              x-text="'Conta calibrada pelas recusas do servidor (fator ' + consumo.hoje.fator + (consumo.hoje.amostras_calibracao ? ', ' + consumo.hoje.amostras_calibracao + ' medição(ões) exata(s)' : ', provisório — a próxima recusa mede o fator exato') + '); estimativa bruta do painel: ' + consumo.hoje.registros + '.'"></span>
+                        <span x-show="consumo.hoje.fator === 1">Estimativa do painel — ainda sem calibração: a 1ª recusa do servidor por teto diário mede a diferença entre as contas.</span>
                     </p>
                     <p class="text-xs text-error" x-show="consumo.hoje.teto_atingido"
                        x-text="'O servidor recusou hoje: limite diário atingido' + (consumo.hoje.registros_servidor ? ' (' + consumo.hoje.registros_servidor + ' registros pela conta dele)' : '') + '. Volta amanhã, ou com liberação do Master.'"></p>

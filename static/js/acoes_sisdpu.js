@@ -575,6 +575,70 @@ function acoesSisdpuBlock(cfg) {
         },
         // Ids marcados no modelo NOVO (lista de checkboxes) — vazio se
         // `tramitacoesCaixa` não foi passado (modelo legado não usa isto).
+        // Revisão ÚNICA antes de executar (fonte SIS-DPU 2.0, 16/10/2026): fichas
+        // de movimentação, tramitação e etapa (de cada item da fila) num só modal,
+        // como na movimentação conjunta — confirmadas de uma vez (aprovação
+        // antecipada); a execução segue sem outras janelas.
+        revisaoMcp: { aberto: false, carregando: false, fichas: [], erros: [], conclusoes: [] },
+        _resolverRevisao: null,
+        _conclusoesParaRevisao() {
+            const desc = (id) => {
+                const t = (this.tramitacoesCaixa || []).find((x) => x.id_tramite === id);
+                return t ? { descricao: t.descricao || '—', remetente: t.remetente || '', data_envio: t.data_envio || '' }
+                         : { descricao: 'Trâmite ' + id, remetente: '', data_envio: '' };
+            };
+            if (this.fila.length) return this.fila.map((it) => (it.id_tramites || []).map(desc));
+            if (!this.concluirEfetivo()) return [[]];
+            if (this.tramitacoesCaixa !== null) return [this.idsTramiteSelecionadosArr().map(desc)];
+            return [[{ descricao: 'Concluir o trâmite da caixa de entrada', remetente: '', data_envio: '' }]];
+        },
+        async _revisarMcp() {
+            this.revisaoMcp = { aberto: true, carregando: true, fichas: [], erros: [],
+                                conclusoes: this._conclusoesParaRevisao() };
+            try {
+                const r = await (await fetch('/api/sisdpu2/escrita/fichas-resumo', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(this.corpoExecucaoMcp()),
+                })).json();
+                this.revisaoMcp.fichas = r.fichas || [];
+                this.revisaoMcp.erros = r.erros || [];
+            } catch (e) {
+                this.revisaoMcp.erros = ['Não foi possível conferir com o SIS-DPU 2.0: ' + e];
+            }
+            this.revisaoMcp.carregando = false;
+            const ok = await new Promise((res) => { this._resolverRevisao = res; });
+            this._resolverRevisao = null;
+            this.revisaoMcp.aberto = false;
+            if (!ok) return false;
+            if (this.revisaoMcp.fichas.length) {
+                try {
+                    await fetch('/api/sisdpu2/aprovacoes-antecipadas', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ fichas: this.revisaoMcp.fichas }),
+                    });
+                } catch (e) { /* sem a antecipação, cada ficha volta a pedir confirmação — não perde nada */ }
+            }
+            return true;
+        },
+        decidirRevisaoMcp(sim) { if (this._resolverRevisao) this._resolverRevisao(!!sim); },
+        // Um bloco por registro (item da fila; sem fila, um só).
+        blocosRevisaoMcp() {
+            const n = Math.max(this.revisaoMcp.conclusoes.length || 1,
+                               ...this.revisaoMcp.fichas.map((f) => (f.item || 0) + 1));
+            const blocos = [];
+            for (let i = 0; i < n; i++) {
+                blocos.push({ movimentacao: null, tramitacao: null, etapa: null,
+                              conclusoes: this.revisaoMcp.conclusoes[i] || [] });
+            }
+            this.revisaoMcp.fichas.forEach((f) => {
+                const b = blocos[f.item || 0];
+                if (b) b[f.tipo === 'tramitacao' ? 'tramitacao' : f.tipo === 'etapa' ? 'etapa' : 'movimentacao'] = f;
+            });
+            return blocos;
+        },
+        fichaRevisaoHtml(f) {
+            return f && window.fichaMcp ? window.fichaMcp.htmlFicha(f.ficha, f.paj, f.contexto, { essencial: true }) : '';
+        },
         idsTramiteSelecionadosArr() {
             if (!this.tramitacoesCaixa) return [];
             return this.tramitacoesCaixa.map((t) => t.id_tramite).filter((id) => this.idsTramiteSelecionados[id]);
@@ -906,7 +970,7 @@ function acoesSisdpuBlock(cfg) {
             if (this._bloqueiaDescricaoCurta()) return;
             const prazoTxt = this.grupo
                 ? (this.urgenteSelecionado() ? ' (URGENTE — mesmo dia da movimentação)'
-                   : this.prazoData ? ' (prazo ' + this.prazoData + ')'
+                   : this.prazoData ? ' (prazo ' + this.prazoData.split('-').reverse().join('/') + ')'
                    : this.prazo > 0 ? ' (prazo ' + this.prazo + ' dias)' : '')
                 : '';
             const anexosSel = this.fase ? this.anexosStagedParaEnviar() : [];
@@ -914,12 +978,16 @@ function acoesSisdpuBlock(cfg) {
                 : this.tramitacoesCaixa !== null
                     ? '\nConcluir ' + idsSelecionados.length + ' trâmite(s) selecionado(s) (retira(m) da caixa)'
                     : '\nConcluir o trâmite (retira da caixa)';
-            if (!pularConfirmacao && !confirm('Executar no SISDPU — ' + (this.paj || this.idProcesso) + '?\n\n'
-                + (this.fase ? 'Movimentar (fase: ' + this.fase + ')' : 'Sem movimentação')
-                + (anexosSel.length ? '\n+ ' + anexosSel.length + ' anexo(s)' : '')
-                + (this.grupo ? '\nTramitar para: ' + this.grupo + prazoTxt : '\nSem tramitação')
-                + (this.etapa ? '\nEtapa do PAJ: ' + this.rotuloEtapa(this.etapa) : '')
-                + concluirTxt)) return;
+            if (!pularConfirmacao) {
+                if (window.PAINEL_FONTE_SISDPU_MCP) {
+                    if (!(await this._revisarMcp())) return;
+                } else if (!confirm('Executar no SISDPU — ' + (this.paj || this.idProcesso) + '?\n\n'
+                    + (this.fase ? 'Movimentar (fase: ' + this.fase + ')' : 'Sem movimentação')
+                    + (anexosSel.length ? '\n+ ' + anexosSel.length + ' anexo(s)' : '')
+                    + (this.grupo ? '\nTramitar para: ' + this.grupo + prazoTxt : '\nSem tramitação')
+                    + (this.etapa ? '\nEtapa do PAJ: ' + this.rotuloEtapa(this.etapa) : '')
+                    + concluirTxt)) return;
+            }
             // Garante o cofre desbloqueado ANTES de acionar o SISDPU — com a fonte
             // SIS-DPU 2.0 (MCP) só quando há conclusão (vedada no MCP, vai pelo legado).
             const precisaCofre = !window.PAINEL_FONTE_SISDPU_MCP || concluirEfetivo;
@@ -1031,8 +1099,12 @@ function acoesSisdpuBlock(cfg) {
                 + (it.grupo ? ' → ' + it.grupo : '')
                 + (it.etapa ? ' · Etapa: ' + this.rotuloEtapa(it.etapa) : '')
                 + (it.id_tramites.length ? ' (conclui ' + it.id_tramites.length + ' trâmite(s))' : '')).join('\n');
-            if (!pularConfirmacao && !confirm('Executar a fila (' + lote.length + ' movimentação(ões)) no SISDPU — '
-                + (this.paj || this.idProcesso) + '?\n\n' + resumo)) return;
+            if (!pularConfirmacao) {
+                if (window.PAINEL_FONTE_SISDPU_MCP) {
+                    if (!(await this._revisarMcp())) return;
+                } else if (!confirm('Executar a fila (' + lote.length + ' movimentação(ões)) no SISDPU — '
+                    + (this.paj || this.idProcesso) + '?\n\n' + resumo)) return;
+            }
             // Fonte SIS-DPU 2.0 (MCP): o cofre só é pedido se algum item conclui trâmite.
             const precisaCofre = !window.PAINEL_FONTE_SISDPU_MCP || lote.some((it) => (it.id_tramites || []).length);
             if (precisaCofre && typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;

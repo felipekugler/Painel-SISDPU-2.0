@@ -784,8 +784,8 @@ async def status(url: str = EPROC_INTERNO) -> dict:
     browser, page = await _connect(url)
     try:
         with contextlib.suppress(Exception):
-            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(1200)
+            # Painel do Procurador sem passar pela tela "Ação não reconhecida…"
+            await _ir_para_inicio(page, 1200)
         return _status_dict(page.url)
     finally:
         with contextlib.suppress(Exception):

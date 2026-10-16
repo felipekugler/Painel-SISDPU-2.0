@@ -67,7 +67,7 @@
         if (el) el.remove();
     }
 
-    function avisar(texto, tom) {
+    function avisar(texto, tom, semReconectar) {
         const container = document.getElementById('toast-container');
         if (!container) return;
         let el = document.getElementById('sessao-mcp-aviso');
@@ -83,6 +83,7 @@
         el.firstChild.textContent = texto;
         const [btnRec, btnX] = el.querySelectorAll('button');
         btnRec.onclick = function () { reconectar(); };
+        if (semReconectar) btnRec.remove();
         btnX.onclick = fecharAviso;
     }
 
@@ -91,6 +92,13 @@
         if (!ativo()) return;
         const s = await status();
         if (!s) return;
+        if (s.teto) {  // limite diário de leitura: a sessão continua válida
+            if (ultimoAviso !== 'teto') {
+                ultimoAviso = 'teto';
+                avisar('Limite diário de leitura do SIS-DPU 2.0 atingido — o painel volta a ler amanhã (a sessão continua ativa).', 'aviso', true);
+            }
+            return;
+        }
         if (!s.ok || s.minutos === 0) {
             if (ultimoAviso !== 0) {
                 ultimoAviso = 0;
@@ -142,6 +150,9 @@
         minimo = minimo || MINIMO_PARA_GRAVAR;
         const s = await status();
         if (s && s.ok && (s.minutos == null || s.minutos >= minimo)) return true;
+        // Limite diário de leitura não é sessão vencida: as gravações seguiram
+        // aceitas depois do teto (15/10/2026) — não pede reconexão.
+        if (s && s.teto && (s.minutos == null || s.minutos >= minimo)) return true;
         const texto = !s || !s.ok
             ? 'A sessão do SIS-DPU 2.0 terminou. Reconecte antes de executar: o e-proc é protocolado '
               + 'primeiro (irreversível) e o SISDPU precisa gravar em seguida.'

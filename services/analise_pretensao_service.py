@@ -217,6 +217,10 @@ def _persistir(
         _arquivo_estado(paj_norm).write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+    # Scripts auxiliares que a IA deixou na pasta do PAJ (16/10/2026).
+    with contextlib.suppress(Exception):
+        from services.limpeza_scripts_ia import limpar_scripts_auxiliares
+        limpar_scripts_auxiliares(paj_norm)
 
     # Atividade pro "Histórico de Análises" (templates/historico.html, aba
     # "Análises (IA)"): esta MESMA sessão pode terminar em diagnóstico
@@ -465,7 +469,11 @@ _INSTRUCAO_PIPELINE_E_ESTILO_PECA = (
     "(`criar_peticao_padrao()` para petição inicial) — nunca com um script "
     "python-docx improvisado.\n"
     "   d. Rode a `checagem-final` (`teses-dpu/comum/skills/checagem-final/"
-    "CHECKLIST.md`) antes de dar a peça por pronta.\n\n"
+    "CHECKLIST.md`) antes de dar a peça por pronta.\n"
+    "   e. Script auxiliar (.py) que precisar escrever (ex.: para chamar o "
+    "engine de formatação): crie-o na pasta TEMPORÁRIA do sistema (%TEMP%), "
+    "NUNCA na pasta do PAJ, e apague-o ao terminar — na pasta do PAJ ficam só "
+    "a peça (.txt/.docx/.pdf) e os arquivos de dados que o painel pede.\n\n"
     "2. " + INSTRUCAO_ESTILO_PECA_DPU +
     "Se o modelo do teses-dpu ou o engine de formatação conflitarem com as "
     "regras do item 2, as regras do item 2 prevalecem — são o padrão pessoal "

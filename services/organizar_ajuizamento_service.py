@@ -219,7 +219,9 @@ def _montar_instrucao_organizar(paj_norm: str, forcar: bool) -> str:
         f"`{SKILL_DIR / 'organizar_ajuizamento.py'}` "
         f"(`sys.path.insert(0, r'{SKILL_DIR}')` antes do import) e escreva "
         "você mesmo um script Python específico para este PAJ, chamando-as "
-        "uma a uma — exatamente como a skill descreve.\n\n"
+        "uma a uma — exatamente como a skill descreve. Salve esse script na "
+        "pasta TEMPORÁRIA do sistema (%TEMP%), NUNCA na pasta do PAJ, e "
+        "apague-o ao terminar.\n\n"
         "## Passos obrigatórios, nesta ordem\n\n"
         + passo_recriar
         + "1. **Leia a petição inicial ANTES de classificar qualquer "
@@ -367,6 +369,10 @@ def _persistir(paj_norm: str, session: ChatSession) -> None:
         _arquivo_estado(paj_norm).write_text(
             json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8"
         )
+    # Script auxiliar que a IA deixou na pasta do PAJ (16/10/2026).
+    with contextlib.suppress(Exception):
+        from services.limpeza_scripts_ia import limpar_scripts_auxiliares
+        limpar_scripts_auxiliares(paj_norm)
     with contextlib.suppress(Exception):
         historico.registrar(
             paj_norm,

@@ -120,6 +120,23 @@ function watchlistToggle(pajNorm) {
     };
 }
 
+/* Garante a sessão do e-proc NO NAVEGADOR do painel antes de uma ação que
+ * depende dela (ex.: "Preparar petição inicial no e-proc"): confere a sessão
+ * de verdade e, se caiu, tenta a reconexão automática (login com as
+ * credenciais do MCP do e-proc / cofre + 2FA). Promise<bool> — false = não
+ * conectou; quem chama NÃO prossegue e avisa (pedido do Defensor 16/10/2026). */
+window.garantirEproc = async function () {
+    const logado = async (url) => {
+        try { return !!((await (await fetch(url)).json()) || {}).logado; } catch (e) { return false; }
+    };
+    if (await logado('/api/prazos/sessao')) return true;
+    showToast('e-proc desconectado — tentando reconectar automaticamente…', 'info');
+    const ok = await logado('/api/prazos/abrir');
+    if (typeof window.atualizarSelos === 'function') window.atualizarSelos();
+    if (ok) showToast('e-proc reconectado.', 'success');
+    return ok;
+};
+
 function showToast(msg, type) {
     type = type || 'info';
     const container = document.getElementById('toast-container');
@@ -1704,11 +1721,12 @@ async function melhorarOcr(pajNorm, btn) {
 }
 
 /* Abre a pasta do PAJ no Explorer — so' funciona na maquina onde o painel roda. */
-async function abrirPastaPaj(pajNorm, btn) {
+async function abrirPastaPaj(pajNorm, btn, sub) {
     const original = btn ? btn.innerHTML : '';
     if (btn) { btn.disabled = true; }
     try {
-        const r = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/abrir-pasta', { method: 'POST' });
+        const r = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/abrir-pasta'
+                              + (sub ? '?sub=' + encodeURIComponent(sub) : ''), { method: 'POST' });
         const d = await r.json();
         if (!r.ok || !d.ok) {
             showToast(d.erro || 'Erro ao abrir a pasta.', 'error');

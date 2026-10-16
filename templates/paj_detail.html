@@ -884,13 +884,114 @@
 </div>
 {% endif %}
 
-<!-- Narrativa (seção própria, retrátil, aberta por padrão) — destacada de
+<!-- PAJs relacionados (16/10/2026): outros PAJs do assistido (busca por CPF no
+     SIS-DPU 2.0) e apensos nos dois sentidos — services/pajs_relacionados_service.
+     FECHADA por padrão; só consulta o SIS-DPU 2.0 quando aberta (cada leitura
+     conta no limite diário). -->
+<div class="bg-base-200 border border-base-300 rounded-lg mb-4"
+     x-data="{
+        aberto: false, carregando: false, carregado: false, erro: '', d: null,
+        async alternar() {
+            this.aberto = !this.aberto;
+            if (this.aberto && !this.carregado) await this.carregar();
+        },
+        async carregar() {
+            this.carregando = true; this.erro = '';
+            try {
+                const j = await (await fetch('/api/paj/{{ paj_norm }}/relacionados', { cache: 'no-store' })).json();
+                if (!j.ok) { this.erro = j.erro || 'Não foi possível consultar o SIS-DPU 2.0.'; }
+                else { this.d = j; this.carregado = true; }
+            } catch (e) { this.erro = 'Falha de conexão: ' + e; }
+            this.carregando = false;
+        },
+        total() { return this.d ? this.d.outros.length + this.d.apensados.length + this.d.apensado_a.length : null; },
+        proc(n) { const s = String(n || '').replace(/\D/g, ''); return s.length === 20
+            ? s.slice(0,7) + '-' + s.slice(7,9) + '.' + s.slice(9,13) + '.' + s.slice(13,14) + '.' + s.slice(14,16) + '.' + s.slice(16) : (n || ''); },
+        data(iso) { return iso ? iso.split('-').reverse().join('/') : ''; },
+     }">
+    <div class="flex items-center gap-2 px-4 py-3">
+        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="alternar()">
+            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
+                 fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+            </svg>
+            <span class="text-lg font-semibold">PAJs relacionados</span>
+            <span class="badge badge-ghost badge-sm" x-show="total() !== null" x-text="total()"></span>
+        </button>
+        <button type="button" class="btn btn-ghost btn-xs" x-show="aberto && !carregando" @click="carregar()"
+                title="Consultar de novo no SIS-DPU 2.0">↻</button>
+    </div>
+    <div x-show="aberto" x-cloak class="px-4 pb-4 flex flex-col gap-4">
+        <div x-show="carregando" class="text-sm text-base-content/60">
+            <span class="loading loading-spinner loading-xs"></span> Consultando o SIS-DPU 2.0…
+        </div>
+        <div x-show="erro" class="text-sm text-warning" x-text="erro"></div>
+        <template x-if="d && !carregando">
+            <div class="flex flex-col gap-4">
+                <!-- Apensos -->
+                <div>
+                    <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1.5">Apensos</div>
+                    <template x-if="d.apensados.length || d.apensado_a.length">
+                        <div class="overflow-x-auto rounded-lg border border-base-300">
+                            <table class="table table-sm">
+                                <thead><tr class="bg-base-300/50"><th>Relação</th><th>PAJ</th><th>Motivo</th><th>Data</th><th>Responsável</th></tr></thead>
+                                <tbody>
+                                    <template x-for="a in d.apensado_a.map((x) => ({...x, rel: 'Este PAJ está apensado ao'}))
+                                                         .concat(d.apensados.map((x) => ({...x, rel: 'Apensado a este PAJ'})))" :key="a.rel + a.numero">
+                                        <tr class="hover:bg-base-300/30">
+                                            <td class="text-xs whitespace-nowrap" x-text="a.rel"></td>
+                                            <td class="whitespace-nowrap">
+                                                <a class="link link-primary font-mono font-semibold" :href="'/paj/' + a.paj_norm" x-text="a.numero"></a>
+                                            </td>
+                                            <td class="text-xs" x-text="a.motivo || '—'"></td>
+                                            <td class="text-xs whitespace-nowrap" x-text="data(a.data) || '—'"></td>
+                                            <td class="text-xs" x-text="a.responsavel || '—'"></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </template>
+                    <div class="text-sm text-base-content/50 italic" x-show="!d.apensados.length && !d.apensado_a.length">Nenhum apenso.</div>
+                </div>
+                <!-- Outros PAJs do assistido -->
+                <div>
+                    <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1.5">Outros PAJs do assistido</div>
+                    <template x-if="d.outros.length">
+                        <div class="overflow-x-auto rounded-lg border border-base-300">
+                            <table class="table table-sm">
+                                <thead><tr class="bg-base-300/50"><th>PAJ</th><th>Ofício</th><th>Pretensão</th><th>Processo judicial</th><th></th></tr></thead>
+                                <tbody>
+                                    <template x-for="o in d.outros" :key="o.numero">
+                                        <tr class="hover:bg-base-300/30">
+                                            <td class="whitespace-nowrap">
+                                                <a class="link link-primary font-mono font-semibold" :href="'/paj/' + o.paj_norm" x-text="o.numero"></a>
+                                                <div class="text-[11px] text-base-content/50" x-show="d.outros.some((x) => x.assistido !== o.assistido)" x-text="o.assistido"></div>
+                                            </td>
+                                            <td class="text-xs" x-text="o.oficio" :title="o.unidade"></td>
+                                            <td class="text-xs" x-text="o.pretensao"></td>
+                                            <td class="text-xs font-mono whitespace-nowrap" x-text="proc(o.processo_judicial) || '—'"></td>
+                                            <td><span class="badge badge-sm badge-error badge-outline" x-show="o.arquivado">Arquivado</span></td>
+                                        </tr>
+                                    </template>
+                                </tbody>
+                            </table>
+                        </div>
+                    </template>
+                    <div class="text-sm text-base-content/50 italic" x-show="!d.outros.length">Nenhum outro PAJ deste assistido.</div>
+                </div>
+            </div>
+        </template>
+    </div>
+</div>
+
+<!-- Narrativa (seção própria, retrátil, FECHADA por padrão — pedido do Defensor 16/10/2026) — destacada de
      dentro da seção com abas em 2026-09-21 (pedido do usuário), posicionada
      logo após Lembretes/Processo Judicial e antes de "Movimentar
      Sistemas"/"Ações com IA". Puro Jinja, sem nenhuma dependência do
      x-data da antiga seção com abas — só um toggle abrir/fechar local,
      mesmo padrão do cabeçalho de Lembretes acima. -->
-<div class="bg-base-200 border border-base-300 rounded-lg mb-4" x-data="{ aberto: true }">
+<div class="bg-base-200 border border-base-300 rounded-lg mb-4" x-data="{ aberto: false }">
     <div class="flex items-center gap-2 px-4 py-3">
         <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
             <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
@@ -1942,14 +2043,23 @@ document.addEventListener('alpine:init', () => {
         <div class="contents"
              x-data="organizarAjuizamentoApp('{{ paj_norm }}')" x-init="init()">
             <template x-if="status !== 'running'">
-                <button type="button"
-                        x-show="$store.acoesIaMenu.aberto === 'ajuizamento'"
-                        @click="organizar(); $store.acoesIaMenu.aberto = null"
-                        class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
-                        {% if not dados.tem_peticao_inicial %}disabled{% endif %}
-                        title="{% if dados.tem_peticao_inicial %}{% if dados.tem_pasta_ajuizamento %}Reorganiza{% else %}Organiza{% endif %} os documentos deste PAJ numa subpasta 'Ajuizamento', prontos para peticionamento (skill /SISDPU-OrganizarArquivos){% else %}Disponível depois que uma petição inicial for gerada para este PAJ{% endif %}">
-                    Organizar Pasta para Ajuizamento
-                </button>
+                <div class="flex items-center gap-1 w-full" x-show="$store.acoesIaMenu.aberto === 'ajuizamento'">
+                    <button type="button"
+                            @click="organizar(); $store.acoesIaMenu.aberto = null"
+                            class="btn btn-ghost btn-sm justify-start flex-1 normal-case font-normal whitespace-nowrap text-left"
+                            {% if not dados.tem_peticao_inicial %}disabled{% endif %}
+                            title="{% if dados.tem_peticao_inicial %}{% if dados.tem_pasta_ajuizamento %}Reorganiza{% else %}Organiza{% endif %} os documentos deste PAJ numa subpasta 'Ajuizamento', prontos para peticionamento (skill /SISDPU-OrganizarArquivos){% else %}Disponível depois que uma petição inicial for gerada para este PAJ{% endif %}">
+                        Organizar pasta de documentos para ajuizamento
+                    </button>
+                    <!-- Pasta organizada: selo que abre "Ajuizamento" no Explorer (16/10/2026) -->
+                    <button type="button" x-show="status === 'done' || {{ 'true' if dados.tem_pasta_ajuizamento else 'false' }}"
+                            @click.stop="abrirPastaPaj(pajNorm, $el, 'Ajuizamento')"
+                            class="badge badge-sm badge-ghost gap-1 whitespace-nowrap cursor-pointer shrink-0" style="border-radius:4px"
+                            title="Abre a pasta &quot;Ajuizamento&quot; deste PAJ no Windows Explorer">
+                        <svg class="w-3 h-3" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z"/></svg>
+                        Abrir Pasta no Explorer
+                    </button>
+                </div>
             </template>
 
             <button class="btn btn-sm btn-warning" x-show="status === 'running'" disabled>
@@ -2032,36 +2142,30 @@ document.addEventListener('alpine:init', () => {
                     </tr>
                 </thead>
                 <tbody>
+                    {# Abre clicando no NOME ou no TIPO (pedido do Defensor 16/10/2026): txt/md no
+                       leitor do painel (verTxt), demais numa aba nova. Saíram "Abrir"/"Ler"/
+                       "Baixar" (redundantes) e "DOCX"/"PDF" (runDocgen — os scripts gerar_docx.py/
+                       gerar_peticao.py não existem nesta instalação). #}
                     {% for p in dados.pecas_judiciais %}
+                    {% set _abrir = 'verTxt(this.dataset.paj, this.dataset.caminho, this.dataset.nome)' if p.tipo in ('txt', 'md')
+                                    else "window.open('/files/' + this.dataset.paj + '/' + this.dataset.caminho, '_blank')" %}
                     <tr class="hover:bg-base-300/30">
-                        <td class="font-mono text-sm">{{ p.nome }}</td>
+                        <td class="font-mono text-sm">
+                            <button type="button" class="link link-hover text-left font-mono" onclick="{{ _abrir }}"
+                                    data-paj="{{ paj_norm }}" data-caminho="{{ p.caminho }}" data-nome="{{ p.nome }}"
+                                    title="Abrir {{ p.nome }}">{{ p.nome }}</button>
+                        </td>
                         <td>
-                            <span class="badge badge-sm {% if p.tipo == 'pdf' %}badge-error{% elif p.tipo == 'docx' %}badge-info{% elif p.tipo == 'txt' %}badge-ghost{% else %}badge-ghost{% endif %}">
+                            <button type="button" onclick="{{ _abrir }}" title="Abrir {{ p.nome }}"
+                                    data-paj="{{ paj_norm }}" data-caminho="{{ p.caminho }}" data-nome="{{ p.nome }}"
+                                    class="badge badge-sm cursor-pointer {% if p.tipo == 'pdf' %}badge-error{% elif p.tipo == 'docx' %}badge-info{% elif p.tipo == 'txt' %}badge-ghost{% else %}badge-ghost{% endif %}">
                                 {{ p.tipo|upper or 'FILE' }}
-                            </span>
+                            </button>
                         </td>
                         <td class="text-sm">{{ (p.tamanho / 1024)|round(1) }} KB</td>
                         <td class="text-xs text-base-content/60 whitespace-nowrap">{{ p.modificado | data_hora_arquivo }}</td>
                         <td>
                             <div class="flex flex-wrap gap-1">
-                                {% if p.tipo in ('pdf', 'docx', 'doc') %}
-                                <a href="/files/{{ paj_norm }}/{{ p.caminho }}" target="_blank"
-                                   class="btn btn-primary btn-xs">Abrir</a>
-                                {% elif p.tipo in ('txt', 'md') %}
-                                <button class="btn btn-ghost btn-xs"
-                                        @click="verTxt('{{ paj_norm }}', '{{ p.caminho }}', '{{ p.nome|e }}')">Ler</button>
-                                <button class="btn btn-info btn-xs btn-outline"
-                                        onclick="runDocgen('{{ paj_norm }}', '{{ p.caminho }}', 'docx', 'Gerar DOCX — {{ p.nome|e }}')">
-                                    DOCX
-                                </button>
-                                <button class="btn btn-error btn-xs btn-outline"
-                                        onclick="runDocgen('{{ paj_norm }}', '{{ p.caminho }}', 'pdf', 'Gerar PDF — {{ p.nome|e }}')">
-                                    PDF
-                                </button>
-                                {% else %}
-                                <a href="/files/{{ paj_norm }}/{{ p.caminho }}" target="_blank"
-                                   class="btn btn-ghost btn-xs">Baixar</a>
-                                {% endif %}
                                 <button type="button" class="btn btn-ghost btn-xs text-error"
                                         onclick="excluirArquivoPaj('{{ paj_norm }}', '{{ p.caminho|e }}', '{{ p.nome|e }}', this, 'badge-pecas-count')"
                                         title="Excluir arquivo">
@@ -2300,7 +2404,7 @@ document.addEventListener('alpine:init', () => {
 </div>
 {% endif %}
 
-<!-- Anexos SISDPU (seção própria, retrátil, aberta por padrão) — antes era
+<!-- Anexos SISDPU (seção própria, retrátil, FECHADA por padrão — pedido do Defensor 16/10/2026) — antes era
      uma aba dentro da seção "Análise IA + Peças"; destacada sozinha, ao
      final da página (pedido do usuário, 2026-09-29) — "Análise IA" e
      "Peças" foram pro lado oposto, como subseção de "Ações com IA" (ver
@@ -2309,7 +2413,7 @@ document.addEventListener('alpine:init', () => {
      comentário lá). Mesmo padrão de toggle local das demais seções
      retráteis desta página. Todo o conteúdo é o mesmo de antes, ipsis
      litteris — nenhuma função/endpoint mudou, só a casca. -->
-<div class="bg-base-200 border border-base-300 rounded-lg mb-6" x-data="{ aberto: true }">
+<div class="bg-base-200 border border-base-300 rounded-lg mb-6" x-data="{ aberto: false }">
     <div class="flex items-center gap-2 px-4 py-3">
         <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
             <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"

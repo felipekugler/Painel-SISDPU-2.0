@@ -467,6 +467,65 @@
         </div>
     </div>
 
+    <!-- Revisão ÚNICA (fonte SIS-DPU 2.0): todas as fichas — movimentação,
+         tramitação e etapa de cada registro — num só modal; um clique confirma
+         tudo e a execução segue sem outras janelas (16/10/2026). -->
+    <div class="modal" :class="{'modal-open': revisaoMcp.aberto}">
+        <div class="modal-box max-w-[70vw] max-h-[85vh] flex flex-col">
+            <h3 class="font-bold text-lg mb-2" x-text="'Confirmar gravações no SISDPU — ' + (paj || idProcesso)"></h3>
+            <div class="flex-1 overflow-y-auto flex flex-col gap-3 pr-1">
+                <div x-show="revisaoMcp.carregando" class="text-sm text-base-content/60">
+                    <span class="loading loading-spinner loading-xs"></span> Conferindo com o SIS-DPU 2.0 (nada é gravado agora)…
+                </div>
+                <template x-if="!revisaoMcp.carregando">
+                    <div class="flex flex-col gap-3">
+                        <template x-for="(bloco, bi) in blocosRevisaoMcp()" :key="bi">
+                            <div class="grid grid-cols-2 gap-2 items-stretch">
+                                <div class="col-span-2 bg-success/25 rounded px-2 py-0.5 text-xs font-semibold"
+                                     x-text="'Registro ' + (bi + 1)"></div>
+                                <template x-for="lado in ['movimentacao', 'tramitacao']" :key="lado">
+                                    <div class="border border-success/30 bg-base-100 rounded px-2 py-1.5 min-w-0">
+                                        <div class="text-xs font-semibold mb-0.5" x-text="lado === 'tramitacao' ? 'Tramitação' : 'Movimentação'"></div>
+                                        <div class="text-xs" x-show="bloco[lado]" x-html="fichaRevisaoHtml(bloco[lado])"></div>
+                                        <div class="text-xs text-base-content/40" x-show="!bloco[lado]"
+                                             x-text="lado === 'tramitacao' ? 'Sem tramitação' : 'Sem movimentação'"></div>
+                                    </div>
+                                </template>
+                                <div class="col-span-2 border border-success/30 bg-base-100 rounded px-2 py-1.5" x-show="bloco.etapa">
+                                    <div class="text-xs font-semibold mb-0.5">Etapa do PAJ</div>
+                                    <div class="text-xs" x-html="fichaRevisaoHtml(bloco.etapa)"></div>
+                                </div>
+                                <div class="col-span-2 border border-success/30 bg-base-100 rounded px-2 py-1.5">
+                                    <div class="text-xs font-semibold mb-0.5">Conclusão de trâmite</div>
+                                    <template x-for="(t, ti) in bloco.conclusoes" :key="ti">
+                                        <div class="text-[11px] leading-tight">
+                                            <span x-text="t.descricao"></span>
+                                            <span class="text-base-content/50" x-show="t.remetente || t.data_envio"
+                                                  x-text="' — ' + (t.remetente || '') + (t.remetente && t.data_envio ? ' · ' : '') + (t.data_envio || '')"></span>
+                                        </div>
+                                    </template>
+                                    <div class="text-[11px] text-base-content/50 mt-0.5" x-show="bloco.conclusoes.length">
+                                        Concluído por último, pelo SISDPU antigo (navegador) — pode pedir o cofre.</div>
+                                    <div class="text-[11px] text-base-content/40" x-show="!bloco.conclusoes.length">Nenhum trâmite será concluído</div>
+                                </div>
+                            </div>
+                        </template>
+                        <template x-for="(e, ei) in revisaoMcp.erros" :key="'e' + ei">
+                            <div class="text-error text-sm font-medium" x-text="'⚠ ' + e"></div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+            <div class="modal-action">
+                <button type="button" class="btn btn-sm btn-ghost" :disabled="revisaoMcp.carregando"
+                        @click="decidirRevisaoMcp(false)">Cancelar</button>
+                <button type="button" class="btn btn-sm btn-success" :disabled="revisaoMcp.carregando || revisaoMcp.erros.length > 0"
+                        :title="revisaoMcp.erros.length ? 'Corrija o que o SIS-DPU 2.0 apontou antes de executar' : ''"
+                        @click="decidirRevisaoMcp(true)">Confirmar e executar</button>
+            </div>
+        </div>
+    </div>
+
     <!-- Modal de progresso (SSE) próprio deste bloco -->
     <div class="modal" :class="{'modal-open': sseAberto}">
         <div class="modal-box max-w-[50vw]">

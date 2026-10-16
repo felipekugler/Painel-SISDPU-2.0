@@ -64,6 +64,10 @@ _TOOLS_LEITURA = {
     # Arquivo original em base64, em partes de ~240 KB (TI, versão 1.23.0 de
     # 11/10/2026). Conta no teto diário — estimativa: 1 registro por parte.
     "documento_baixar",
+    # Outros PAJs do assistido, pelo CPF (seção "PAJs relacionados", 16/10/2026):
+    # `pajs_da_pessoa` devolve vazio mesmo com PAJs existentes. Consulta a dado
+    # pessoal — fica na trilha do SIS 2 com o nome do Defensor.
+    "pessoa_pesquisar",
     # domínios para montar gravações (só leitura)
     "movimentacao_opcoes", "tramite_destinos",
 }
@@ -139,6 +143,12 @@ def _registrar_consumo(nome: str, registros: int, teto_servidor: Optional[tuple[
         f["chamadas"] += 1
         f["registros"] += registros
         if teto_servidor:
+            # Calibração: na 1ª recusa do dia, guarda quanto o PAINEL estimava
+            # naquele instante — a razão servidor/estimativa corrige a conta
+            # dos dias seguintes (a estimativa contava ~1,7x o servidor em
+            # 15/10/2026). Não sobrescreve: depois da 1ª recusa nada mais conta.
+            if "estimado_na_recusa" not in dia:
+                dia["estimado_na_recusa"] = dia["registros"]
             dia["teto_atingido"] = True
             dia["registros_servidor"], dia["teto_servidor"] = teto_servidor
         for velho in sorted(dados)[:-90]:  # guarda ~3 meses
@@ -150,16 +160,52 @@ def _registrar_consumo(nome: str, registros: int, teto_servidor: Optional[tuple[
             pass
 
 
+def fator_calibracao(dados: Optional[dict] = None) -> tuple[float, int]:
+    """Razão (registros pela conta do SERVIDOR) / (estimativa do painel),
+    medida no instante de cada recusa por teto diário — média dos últimos dias
+    com essa medida. (1.0, 0) enquanto não houver nenhuma. Devolve (fator, n)."""
+    dados = dados if dados is not None else _ler_consumo()
+    razoes = []
+    for _d, v in sorted(dados.items(), reverse=True):
+        est, srv = v.get("estimado_na_recusa"), v.get("registros_servidor")
+        if est and srv and est > 0:
+            razoes.append(float(srv) / float(est))
+        if len(razoes) >= 5:
+            break
+    if not razoes:
+        # Sem medição no instante da recusa (dias anteriores a 16/10/2026): usa,
+        # provisoriamente, o total do dia em que houve recusa — a estimativa do
+        # fim do dia é >= a do instante da recusa, então o fator sai um pouco
+        # baixo. A 1ª medição exata substitui estes.
+        for _d, v in sorted(dados.items(), reverse=True):
+            srv, tot = v.get("registros_servidor"), v.get("registros")
+            sintetico = any("estimado" in k for k in (v.get("por_ferramenta") or {}))
+            if v.get("teto_atingido") and srv and tot and tot >= srv and not sintetico:
+                razoes.append(float(srv) / float(tot))
+        if not razoes:
+            return 1.0, 0
+        return round(sum(razoes[:5]) / len(razoes[:5]), 3), 0
+    return round(sum(razoes) / len(razoes), 3), len(razoes)
+
+
 def consumo_hoje() -> dict:
-    dia = _ler_consumo().get(_hoje(), {})
-    return {"data": _hoje(), "chamadas": dia.get("chamadas", 0), "registros": dia.get("registros", 0),
+    dados = _ler_consumo()
+    dia = dados.get(_hoje(), {})
+    fator, amostras = fator_calibracao(dados)
+    registros = dia.get("registros", 0)
+    return {"data": _hoje(), "chamadas": dia.get("chamadas", 0), "registros": registros,
+            # conta corrigida pela razão medida nas recusas (o que o servidor deve estar contando)
+            "registros_calibrados": round(registros * fator), "fator": fator, "amostras_calibracao": amostras,
             "teto": dia.get("teto_servidor", TETO_DIARIO), "teto_atingido": bool(dia.get("teto_atingido")),
             "registros_servidor": dia.get("registros_servidor"), "por_ferramenta": dia.get("por_ferramenta", {})}
 
 
 def historico_consumo(dias: int = 30) -> list[dict]:
     dados = _ler_consumo()
+    fator, _n = fator_calibracao(dados)
     return [{"data": d, "chamadas": v.get("chamadas", 0), "registros": v.get("registros", 0),
+             "registros_calibrados": round(v.get("registros", 0) * fator),
+             "estimado_na_recusa": v.get("estimado_na_recusa"), "registros_servidor": v.get("registros_servidor"),
              "teto_atingido": bool(v.get("teto_atingido"))} for d, v in sorted(dados.items(), reverse=True)[:dias]]
 
 

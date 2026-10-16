@@ -810,6 +810,18 @@
                       </button>
                     </div>
                   </template>
+                  <!-- Concluir TODOS os trâmites pendentes do PAJ de uma vez (16/10/2026) -->
+                  <div class="flex items-center gap-2 text-xs rounded-lg px-3 py-1.5 border border-error/30 bg-error/5">
+                    <span class="flex-1 min-w-0 font-medium"
+                          x-text="'Todos os ' + (paj.tramitacoes_caixa || []).length + ' trâmites deste PAJ'"></span>
+                    <button type="button" class="btn btn-error btn-xs"
+                            :disabled="concluindoTodos[paj.paj_norm] || (paj.tramitacoes_caixa || []).some((t) => concluindoTramite[t.id_tramite])"
+                            @click="concluirTodosTramites(paj)"
+                            title="Conclui de uma vez todos os trâmites pendentes deste PAJ na caixa de entrada (retira o PAJ da caixa)">
+                      <span x-show="concluindoTodos[paj.paj_norm]" class="loading loading-spinner loading-xs"></span>
+                      Concluir todos
+                    </button>
+                  </div>
                 </div>
               </td>
             </tr>
@@ -890,6 +902,7 @@ function dashboardApp() {
         // do mesmo PAJ na caixa — comum no SISDPU) — ver toggleTramites().
         expandidoTramites: {},
         concluindoTramite: {},
+        concluindoTodos: {},
 
         // Estado do modal "Elaborar todos" (lote)
         loteSkills: [],
@@ -929,6 +942,7 @@ function dashboardApp() {
             // 2026/029-03696 — todos os botões "Concluir" apareciam desabilitados
             // mesmo em PAJs recém-carregados, sem nenhum clique prévio).
             for (const paj of this.pajs) {
+                if (!(paj.paj_norm in this.concluindoTodos)) this.concluindoTodos[paj.paj_norm] = false;
                 for (const t of (paj.tramitacoes_caixa || [])) {
                     if (!(t.id_tramite in this.concluindoTramite)) {
                         this.concluindoTramite[t.id_tramite] = false;
@@ -965,6 +979,42 @@ function dashboardApp() {
         toggleTramites(paj) {
             this.expandidoTramites[paj.paj_norm] = !this.expandidoTramites[paj.paj_norm];
         },
+        // "Concluir todos": todos os trâmites pendentes do PAJ numa chamada só
+        // (mesma rota do "Concluir" individual, com a lista inteira de ids).
+        async concluirTodosTramites(paj) {
+            const ids = (paj.tramitacoes_caixa || []).map((t) => t.id_tramite).filter(Boolean);
+            if (!ids.length) return;
+            if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
+            this.concluindoTodos[paj.paj_norm] = true;
+            ids.forEach((i) => { this.concluindoTramite[i] = true; });
+            try {
+                const r = await fetch('/api/paj/' + encodeURIComponent(paj.paj_norm) + '/concluir-tramites', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ id_tramites: ids }),
+                });
+                const data = await r.json();
+                const feitos = data.concluidos || [];
+                if (!data.ok && !feitos.length) {
+                    showToast(data.detalhe || 'Falha ao concluir os trâmites', 'error');
+                    return;
+                }
+                paj.tramitacoes_caixa = (paj.tramitacoes_caixa || []).filter((t) => !feitos.includes(t.id_tramite));
+                if (paj.tramitacoes_caixa.length) {
+                    showToast(feitos.length + ' de ' + ids.length + ' trâmites concluídos — '
+                              + paj.tramitacoes_caixa.length + ' continua(m) na caixa', 'warning');
+                } else {
+                    showToast('Todos os ' + feitos.length + ' trâmites concluídos', 'success');
+                    this.pajs = this.pajs.filter((p) => p.paj_norm !== paj.paj_norm);
+                    this.aplicarFiltros();
+                }
+            } catch (e) {
+                showToast('Falha ao concluir os trâmites', 'error');
+            } finally {
+                this.concluindoTodos[paj.paj_norm] = false;
+                ids.forEach((i) => { this.concluindoTramite[i] = false; });
+            }
+        },
+
         async concluirTramite(paj, tramite) {
             if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
             this.concluindoTramite[tramite.id_tramite] = true;

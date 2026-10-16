@@ -43,6 +43,14 @@ async def paj_detail(request: Request, paj_norm: PajNorm):
     return HTMLResponse(html)
 
 
+@router.get("/api/paj/{paj_norm}/relacionados", response_class=JSONResponse)
+async def api_pajs_relacionados(paj_norm: PajNorm):
+    """Seção "PAJs relacionados": outros PAJs do assistido (busca por CPF) e
+    apensos nos dois sentidos — lidos do SIS-DPU 2.0 ao abrir a seção."""
+    from services import pajs_relacionados_service
+    return await pajs_relacionados_service.pajs_relacionados(paj_norm)
+
+
 @router.get("/api/paj/{paj_norm}/etapa", response_class=JSONResponse)
 async def api_etapa(paj_norm: PajNorm):
     """Etapa atual do PAJ (manual = última movimentação "Etapa: …"; automática =
@@ -223,9 +231,10 @@ def api_melhorar_ocr(paj_norm: PajNorm):
 
 
 @router.post("/api/paj/{paj_norm}/abrir-pasta", response_class=JSONResponse)
-async def api_abrir_pasta(paj_norm: PajNorm):
-    """Abre a pasta do PAJ no Explorer da maquina onde o painel roda (uso local)."""
-    resultado = abrir_pasta_paj(paj_norm)
+async def api_abrir_pasta(paj_norm: PajNorm, sub: str = ""):
+    """Abre a pasta do PAJ (ou a subpasta `sub`, ex. "Ajuizamento") no Explorer
+    da maquina onde o painel roda (uso local)."""
+    resultado = abrir_pasta_paj(paj_norm, sub)
     if not resultado.get("ok"):
         return JSONResponse(resultado, status_code=404)
     return resultado

@@ -274,6 +274,28 @@ def set_fonte_dados(valor: str) -> str:
     return valor
 
 
+MCP_DOWNLOAD_ULTIMAS_MOVS_PADRAO = 5
+
+
+def get_mcp_download_ultimas_movs() -> int:
+    """Download AUTOMÁTICO dos anexos ao abrir o PAJ (fonte SIS-DPU 2.0): só os
+    das N movimentações mais recentes (Configurações › Fonte de dados). Cada
+    pedaço de arquivo conta no teto diário de leitura do servidor (16/10/2026)."""
+    try:
+        n = int(_ler_raw().get("mcp_download_ultimas_movs", MCP_DOWNLOAD_ULTIMAS_MOVS_PADRAO))
+    except (TypeError, ValueError):
+        n = MCP_DOWNLOAD_ULTIMAS_MOVS_PADRAO
+    return max(0, min(n, 999))
+
+
+def set_mcp_download_ultimas_movs(valor) -> int:
+    n = max(0, min(int(valor), 999))
+    raw = _ler_raw()
+    raw["mcp_download_ultimas_movs"] = n
+    _salvar_raw(raw)
+    return n
+
+
 def get_sisdpu_prefs() -> dict:
     """Todas as listas SISDPU (importadas + favoritas + frequentes)."""
     raw = _ler_raw()

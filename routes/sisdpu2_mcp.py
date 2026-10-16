@@ -41,10 +41,13 @@ async def api_sisdpu2_status_selo():
         return {"ok": False, "erro": "Painel não conectado ao MCP do SIS-DPU 2.0 "
                                      "(Configurações › SISDPU › Fonte de dados)."}
     c = sis2.consumo_hoje()
-    if c["teto_atingido"]:
-        return {"ok": False, "erro": "Limite diário de leitura do MCP atingido hoje."}
-    from services import config_painel_service
     mins = sis2.minutos_restantes()
+    if c["teto_atingido"]:
+        # NÃO é sessão vencida (a sessão segue válida) — a tela não pode mandar
+        # "reconectar", que não resolve: o limite volta no dia seguinte.
+        return {"ok": False, "teto": True, "minutos": mins,
+                "erro": "Limite diário de leitura do SIS-DPU 2.0 atingido hoje — volta amanhã."}
+    from services import config_painel_service
     return {"ok": True, "fonte": config_painel_service.get_fonte_dados(), "minutos": mins}
 
 
@@ -62,6 +65,22 @@ async def api_sisdpu2_fonte_salvar(request: Request):
         return {"ok": True, "fonte": config_painel_service.set_fonte_dados(str(body.get("fonte") or ""))}
     except ValueError as e:
         return {"ok": False, "erro": str(e)}
+
+
+@router.get("/api/sisdpu2/download-ultimas-movs", response_class=JSONResponse)
+async def api_download_ultimas_movs():
+    from services import config_painel_service
+    return {"n": config_painel_service.get_mcp_download_ultimas_movs()}
+
+
+@router.post("/api/sisdpu2/download-ultimas-movs", response_class=JSONResponse)
+async def api_download_ultimas_movs_salvar(request: Request):
+    from services import config_painel_service
+    body = await request.json()
+    try:
+        return {"ok": True, "n": config_painel_service.set_mcp_download_ultimas_movs(body.get("n"))}
+    except (TypeError, ValueError):
+        return {"ok": False, "erro": "Informe um número inteiro (0 = não baixar nada sozinho)."}
 
 
 @router.get("/api/sisdpu2/consumo", response_class=JSONResponse)
@@ -96,6 +115,25 @@ async def api_sisdpu2_processo_judicial_cadastrar(request: Request):
     b = await request.json()
     return await sisdpu2_movtram.cadastrar_processo_judicial(b.get("paj_label") or "", b.get("numero") or "",
                                                              int(b.get("instancia") or 1))
+
+
+@router.post("/api/sisdpu2/processo-judicial/ficha", response_class=JSONResponse)
+async def api_sisdpu2_processo_judicial_ficha(request: Request):
+    """Dry-run do cadastro do processo judicial (NADA é gravado): devolve a
+    ficha que o SIS-DPU 2.0 montaria — para o modal unificado pós-ajuizamento.
+    Corpo: {paj_label, numero, instancia?}. Já vinculado: sem ficha (só a
+    sincronização, que é autorizada sem modal)."""
+    from ingestao import sisdpu2_movtram
+    b = await request.json()
+    coleta: list = []
+    t = sisdpu2_movtram.COLETA_FICHAS.set(coleta)
+    try:
+        r = await sisdpu2_movtram.cadastrar_processo_judicial(b.get("paj_label") or "", b.get("numero") or "",
+                                                              int(b.get("instancia") or 1))
+    finally:
+        sisdpu2_movtram.COLETA_FICHAS.reset(t)
+    return {"ok": bool(r.get("ok")), "fichas": coleta, "ja_vinculado": bool(r.get("ja_vinculado")),
+            "erros": [] if r.get("ok") else [r.get("detalhe") or "Falha ao preparar o cadastro."]}
 
 
 @router.post("/api/sisdpu2/ao-vivo/paj/{paj_norm}/anexos/interromper", response_class=JSONResponse)

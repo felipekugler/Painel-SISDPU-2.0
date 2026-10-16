@@ -191,6 +191,8 @@ async def cadastrar_processo_judicial(paj_num: str, numero: str, instancia: int 
                 return {**base, "ok": False,
                         "detalhe": f"O SIS-DPU 2.0 recusou o cadastro: {aprov.ficha_para_exibir(ficha_txt)[:600]}"}
             resposta = await _aprovar("processo_judicial", paj_num, ficha_txt, {})
+            if COLETA_FICHAS.get() is not None:  # resumo (dry-run): só a ficha do cadastro
+                return {**base, "ok": True, "status": "dry_run", "detalhe": "Ficha do cadastro preparada (nada gravado)."}
             if not resposta:
                 return {**base, "ok": False, "detalhe": "Cadastro do processo judicial NÃO confirmado pelo Defensor."}
             await asyncio.to_thread(sis2.chamar_escrita, "processo_judicial_cadastrar_confirmar",
@@ -200,6 +202,9 @@ async def cadastrar_processo_judicial(paj_num: str, numero: str, instancia: int 
             if not vinc:
                 return {**base, "ok": False, "detalhe": "Cadastro confirmado, mas o vínculo não apareceu no PAJ — confira."}
 
+        if COLETA_FICHAS.get() is not None:  # resumo (dry-run): já vinculado, nada a mostrar
+            return {**base, "ok": True, "status": "dry_run", "ja_vinculado": True,
+                    "detalhe": "Processo já vinculado ao PAJ — só será sincronizado."}
         ficha = await asyncio.to_thread(sis2.chamar_escrita, "processo_judicial_sincronizar_preparar",
                                         {"idVinculo": int(vinc["id"])})
         ficha_txt = ficha if isinstance(ficha, str) else str(ficha)
@@ -207,9 +212,10 @@ async def cadastrar_processo_judicial(paj_num: str, numero: str, instancia: int 
         if not token:
             return {**base, "ok": False,
                     "detalhe": f"O SIS-DPU 2.0 recusou a sincronização: {aprov.ficha_para_exibir(ficha_txt)[:600]}"}
-        resposta = await _aprovar("sincronizacao", paj_num, ficha_txt, {})
-        if not resposta:
-            return {**base, "ok": False, "detalhe": "Sincronização com o tribunal NÃO confirmada pelo Defensor."}
+        # Sincronização = mera atualização dos dados do processo vindos do
+        # tribunal: autorizada SEMPRE, sem modal — a confirmação do cadastro
+        # vale para ela (decisão do Defensor, 16/10/2026).
+        resposta = aprov.RESPOSTA_CLIQUE
         r = await asyncio.to_thread(sis2.chamar_escrita, "processo_judicial_sincronizar_confirmar",
                                     {"idVinculo": int(vinc["id"]), "token": token.group(1), "confirmacao": resposta})
         _invalidar_caches(idp)

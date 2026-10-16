@@ -181,18 +181,36 @@ async def atualizar_paj(paj_norm: str, forcar: bool = False) -> dict:
 _downloads: dict[str, dict] = {}  # paj_norm -> {rodando, inicio, resultado}
 
 
+def _movs_para_download(paj_norm: str) -> list[dict]:
+    """As N movimentações mais recentes do PAJ (N = Configurações › Fonte de
+    dados; padrão 5), lidas do metadata que a leitura ao abrir o PAJ acabou de
+    gravar — o download não relê o PAJ no SIS-DPU 2.0."""
+    try:
+        m = json.loads((PAJS_DIR / paj_norm / "metadata.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return []
+    n = config_painel_service.get_mcp_download_ultimas_movs()
+    if n <= 0:
+        return []
+    movs = (m.get("detalhes_sisdpu") or {}).get("movimentacoes") or []
+
+    def _seq(mv):
+        try:
+            return int(str(mv.get("seq") or 0))
+        except ValueError:
+            return 0
+    return sorted(movs, key=_seq, reverse=True)[:n]
+
+
 def _anexos_faltando(paj_norm: str) -> int:
-    """Quantos anexos com id direto ainda não estão na pasta Arquivos (local, sem MCP)."""
+    """Quantos anexos (com id direto) das últimas N movimentações ainda não
+    estão na pasta Arquivos (local, sem MCP)."""
     import re
     pasta = PAJS_DIR / paj_norm
-    try:
-        m = json.loads((pasta / "metadata.json").read_text(encoding="utf-8"))
-    except Exception:  # noqa: BLE001
-        return 0
     existentes = {p.name for p in (pasta / "Arquivos").glob("*")} if (pasta / "Arquivos").exists() else set()
     ids_locais = {re.match(r"seq\d+ - (\d+) - ", n).group(1) for n in existentes if re.match(r"seq\d+ - (\d+) - ", n)}
     faltam = 0
-    for mv in (m.get("detalhes_sisdpu") or {}).get("movimentacoes") or []:
+    for mv in _movs_para_download(paj_norm):
         for d in mv.get("documentos") or []:
             achado = re.search(r"/pdf/(\d+)/", d.get("urlDownload") or "")
             if achado and achado.group(1) not in ids_locais:
@@ -201,11 +219,13 @@ def _anexos_faltando(paj_norm: str) -> int:
 
 
 async def baixar_anexos_paj(paj_norm: str) -> dict:
-    """Dispara, em segundo plano, o download dos anexos que faltam do PAJ —
-    o mesmo caminho da sincronização completa (nomes, limite de anexos por PAJ,
-    contagem no metadata), lendo os arquivos pelo MCP. Sem freio de consumo:
-    baixar o que vai usar é trabalho do Defensor (decisão de 11/10/2026); só
-    para se o próprio servidor recusar."""
+    """Dispara, em segundo plano, o download dos anexos que faltam das ÚLTIMAS
+    N movimentações do PAJ (Configurações › Fonte de dados; padrão 5), pelo
+    MCP. Usa a lista de documentos que a leitura ao abrir o PAJ acabou de
+    gravar no metadata — até 16/10/2026 esta rotina relia o PAJ INTEIRO
+    (capa + histórico + arquivos de cada movimentação) só para montar a lista,
+    dobrando o custo de cada abertura no teto diário do servidor. O PAJ
+    completo continua disponível em "Baixar PAJ Completo"/sincronização."""
     if config_painel_service.get_fonte_dados() != "mcp" or not sis2.conectado():
         return {"ok": False, "motivo": "inativo"}
     atual = _downloads.get(paj_norm)
@@ -222,14 +242,12 @@ async def baixar_anexos_paj(paj_norm: str) -> dict:
 
         async def _rodar():
             t1 = fonte.MODO.set("paj")
-            t2 = fonte.CAIXA_EM_CACHE_SERVE.set(True)
             try:
-                return await sincronizador.rodar_paj_via_busca_global(
-                    _paj_de(paj_norm), linhas.append, deve_cancelar=lambda: False,
-                    baixar_anexos=True, rodar_ocr=False, forcar_sessao=False, extrair_documentos=True,
-                    esperas_curtas=True, fora_da_caixa_confirmado=False)
+                r = await sincronizador._baixar_anexos_sisdpu(
+                    PAJS_DIR / paj_norm / "Arquivos", linhas.append, limite=0,
+                    movs=_movs_para_download(paj_norm), rodar_ocr=False)
+                return {"baixados": r.get("baixados", 0), "erros": []}
             finally:
-                fonte.CAIXA_EM_CACHE_SERVE.reset(t2)
                 fonte.MODO.reset(t1)
 
         res = None

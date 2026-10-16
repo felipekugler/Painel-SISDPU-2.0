@@ -20,6 +20,9 @@ function peticaoInicialApp(pajNorm, pajLabel) {
         aberto: false, fase: 'plano', carregando: false, erro: '',
         arquivos: [], dados: null, tiposTodos: [], estadosCivis: [], especialidadesConhecidas: [],
         localidades: [], jaAjuizada: null, novoAjuizamento: false, passos: [], etapaFinal: '', resultado: null, posLog: [], posErro: '',
+        // Revisão UNIFICADA pós-ajuizamento (16/10/2026): todas as fichas do
+        // SIS-DPU 2.0 num só modal, uma confirmação para tudo.
+        revisao: { carregando: false, cadastro: [], jaVinculado: false, mov: [], erros: [] }, _decidir: null,
 
         init() {
             if (this._iniciado) return;
@@ -58,7 +61,7 @@ function peticaoInicialApp(pajNorm, pajLabel) {
             }
         },
         fechar() {
-            if (this.fase === 'preparando' || this.fase === 'pos') return;
+            if (this.fase === 'preparando' || this.fase === 'pos' || this.fase === 'revisao') return;
             this.aberto = false;
         },
         linkArquivo(a) { return '/files/' + pajNorm + '/' + a.caminho; },
@@ -80,7 +83,18 @@ function peticaoInicialApp(pajNorm, pajLabel) {
 
         async preparar() {
             if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
-            this.erro = ''; this.passos = []; this.fase = 'preparando';
+            this.erro = ''; this.passos = [];
+            // Sessão do e-proc no navegador ATIVA antes de começar (reconexão
+            // automática se caiu); sem ela, não prossegue (16/10/2026).
+            this.fase = 'conectando';
+            if (!(await window.garantirEproc())) {
+                this.fase = 'plano';
+                this.erro = 'Não foi possível conectar ao e-proc pelo navegador (a reconexão automática falhou). '
+                    + 'Entre pelo selo do e-proc, no topo do painel (login na janela do e-proc), e clique em preparar de novo.';
+                showToast('e-proc não conectado — a petição não foi preparada.', 'error');
+                return;
+            }
+            this.fase = 'preparando';
             try {
                 const resp = await fetch('/api/peticao-inicial/preparar/' + encodeURIComponent(pajNorm), {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -101,7 +115,8 @@ function peticaoInicialApp(pajNorm, pajLabel) {
 
         async prosseguir() {
             if (!confirm('Distribuir o processo agora no e-proc?\n\n"Finalizar" + "Confirmar ajuizamento" — irreversível.\n'
-                + 'Depois: gerenciamento do processo e movimentação "Petição inicial" no SISDPU (tramita para AJUIZADOS).')) return;
+                + 'Depois: gerenciamento do processo e, no SISDPU, UM resumo para conferir e confirmar de uma vez '
+                + 'o cadastro do processo, a movimentação "Petição inicial" e a tramitação para AJUIZADOS.')) return;
             this.fase = 'pos'; this.posLog = []; this.posErro = '';
             // 1) ajuizamento
             let r;
@@ -138,12 +153,63 @@ function peticaoInicialApp(pajNorm, pajLabel) {
                 this.posLog.push({ ok: false, msg: 'Gerenciamento falhou (rede): ' + e });
             }
 
-            // 3) processo judicial no PAJ (SIS-DPU 2.0): cadastro + sincronização com o
-            //    tribunal, cada um com a sua ficha no modal de confirmação.
-            if (window.PAINEL_FONTE_SISDPU_MCP) await this._cadastrarProcessoJudicial(r);
+            // 3) movimentação preparada no console "Ações no SISDPU" (rascunho)
+            const prep = await this._prepararConsole(r);
 
-            // 4) movimentação no SISDPU pelo console "Ações no SISDPU" da página
-            await this._movimentarSisdpu(r);
+            // 4) SIS-DPU 2.0: revisão UNIFICADA — fichas do cadastro do processo,
+            //    da movimentação e da tramitação num só modal; uma confirmação
+            //    vale para todas (a sincronização com o tribunal é autorizada
+            //    junto com o cadastro). Depois grava tudo sem outras janelas.
+            if (window.PAINEL_FONTE_SISDPU_MCP) {
+                const ok = await this._revisarTudo(r, prep);
+                if (!ok) return;
+                await this._cadastrarProcessoJudicial(r);
+            }
+            if (prep) await this._executarConsole(prep);
+            else this.fase = 'fim';  // movimentação não preparada — o log já explica
+        },
+
+        // Dry-run de tudo o que será gravado no SIS-DPU 2.0 e espera a decisão do
+        // Defensor no próprio modal. true = confirmou (aprovações registradas).
+        async _revisarTudo(r, prep) {
+            this.revisao = { carregando: true, cadastro: [], jaVinculado: false, mov: [], erros: [] };
+            this.fase = 'revisao';
+            const post = async (url, corpo) => (await fetch(url, {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo),
+            })).json();
+            try {
+                const cad = await post('/api/sisdpu2/processo-judicial/ficha',
+                                       { paj_label: pajLabel, numero: r.numero, instancia: 1 });
+                this.revisao.cadastro = cad.fichas || [];
+                this.revisao.jaVinculado = !!cad.ja_vinculado;
+                this.revisao.erros.push(...(cad.erros || []));
+            } catch (e) { this.revisao.erros.push('Cadastro do processo: ' + e); }
+            if (prep) {
+                try {
+                    const mov = await post('/api/sisdpu2/escrita/fichas-resumo', prep.c.corpoExecucaoMcp());
+                    this.revisao.mov = mov.fichas || [];
+                    this.revisao.erros.push(...(mov.erros || []));
+                } catch (e) { this.revisao.erros.push('Movimentação: ' + e); }
+            }
+            this.revisao.carregando = false;
+            const confirmou = await new Promise((resolve) => { this._decidir = resolve; });
+            this._decidir = null;
+            if (!confirmou) {
+                this.posLog.push({ ok: false, msg: 'Gravações no SIS-DPU 2.0 canceladas — nada foi gravado no SISDPU. '
+                                                   + 'A movimentação ficou como rascunho no "Ações no SISDPU".' });
+                this.fase = 'fim';
+                return false;
+            }
+            const todas = [...this.revisao.cadastro, ...this.revisao.mov];
+            if (todas.length) {
+                try { await post('/api/sisdpu2/aprovacoes-antecipadas', { fichas: todas }); } catch (e) {}
+            }
+            this.fase = 'pos';
+            return true;
+        },
+        decidirRevisao(sim) { if (this._decidir) this._decidir(!!sim); },
+        fichaHtml(f) {
+            return window.fichaMcp ? window.fichaMcp.htmlFicha(f.ficha, f.paj, f.contexto, { essencial: true }) : '';
         },
 
         async _cadastrarProcessoJudicial(r) {
@@ -162,7 +228,9 @@ function peticaoInicialApp(pajNorm, pajLabel) {
                           : 'Processo judicial no PAJ: ' + (c.detalhe || 'falhou') + ' — dá para cadastrar pela tela do SISDPU.' });
         },
 
-        async _movimentarSisdpu(r) {
+        // Grava o rascunho da movimentação "Petição inicial" no console "Ações no
+        // SISDPU" e o deixa pronto (editor montado) — sem executar.
+        async _prepararConsole(r) {
             const d = this.dados;
             const texto = (d.descricao_sisdpu || '').replace('[PROCESSO]', r.numero).replace('[CHAVE]', r.chave);
             const esc = (s) => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -182,25 +250,33 @@ function peticaoInicialApp(pajNorm, pajLabel) {
                 const g = await (await fetch('/api/acoes-sisdpu/rascunho/' + encodeURIComponent(pajNorm), {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ paj_label: pajLabel, fase, grupo, prazo: 0, prazo_data: '', concluir: true,
-                                           descricao_mov_html: html, descricao_tram: '', anexos, fila: [] }),
+                                           descricao_mov_html: html,
+                                           // descrição padrão da tramitação para AJUIZADOS (Defensor, 16/10/2026)
+                                           descricao_tram: 'Processo ajuizado. Cadastrar chave. Comunicar assistido',
+                                           anexos, fila: [] }),
                 })).json();
                 if (!g.ok) throw new Error(g.erro || 'falha ao gravar');
             } catch (e) {
                 this.posLog.push({ ok: false, msg: 'Não consegui preparar a movimentação no SISDPU (' + e + ') — lance pelo "Ações no SISDPU".' });
-                this.fase = 'fim'; return;
+                return null;
             }
             const el = document.getElementById('acoesSisdpuPaj');
             const c = el ? Alpine.$data(el) : null;
             if (!c || typeof c.executar !== 'function') {
                 this.posLog.push({ ok: false, msg: 'Movimentação gravada como rascunho no "Ações no SISDPU" — execute por lá (console não encontrado nesta página).' });
-                this.fase = 'fim'; return;
+                this.fase = 'fim'; return null;
             }
-            this.posLog.push({ ok: null, msg: 'Lançando a movimentação "' + fase + '" no SISDPU (tramita para ' + grupo + ')…' });
-            try { sessionStorage.setItem(CHAVE_FIM, JSON.stringify({ resultado: r, posLog: this.posLog.filter((x) => x.ok !== null) })); } catch (e) {}
             await c.carregarRascunho(true);
             if (!c.aberto) await c.abrir();
             else if (c._editorMov) c._editorMov.setHTML(c._descMovHtmlRascunho || '');
             await new Promise((res) => setTimeout(res, 600));
+            return { c, fase, grupo, r };
+        },
+
+        async _executarConsole(prep) {
+            const { c, fase, grupo, r } = prep;
+            this.posLog.push({ ok: null, msg: 'Lançando a movimentação "' + fase + '" no SISDPU (tramita para ' + grupo + ')…' });
+            try { sessionStorage.setItem(CHAVE_FIM, JSON.stringify({ resultado: r, posLog: this.posLog.filter((x) => x.ok !== null) })); } catch (e) {}
             this.aberto = false;  // deixa o modal de execução do SISDPU visível
             await c.executar(true);
             // executar() só DISPARA o SSE — espera a execução de fato terminar.

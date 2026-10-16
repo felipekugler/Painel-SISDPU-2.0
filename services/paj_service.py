@@ -1107,7 +1107,10 @@ def ler_arquivo(paj_norm: str, caminho_relativo: str) -> tuple[Path | None, str]
     return arquivo, content_types.get(ext, "application/octet-stream")
 
 
-def abrir_pasta_paj(paj_norm: str) -> dict:
+_SUBPASTAS_ABRIVEIS = {"Ajuizamento", "Peças IA", "Arquivos"}
+
+
+def abrir_pasta_paj(paj_norm: str, sub: str = "") -> dict:
     """Abre a pasta do PAJ no Explorer da maquina onde o painel esta rodando.
 
     So funciona porque o painel roda localmente, na mesma maquina do usuario
@@ -1117,6 +1120,14 @@ def abrir_pasta_paj(paj_norm: str) -> dict:
     pasta = PAJS_DIR / paj_norm
     if not pasta.exists() or not _e_pasta_paj(pasta):
         return {"ok": False, "erro": "Pasta do PAJ não encontrada"}
+    # `sub`: abre direto uma subpasta conhecida (ex.: "Ajuizamento", 16/10/2026) —
+    # só nomes da lista, nunca caminho livre.
+    if sub:
+        if sub not in _SUBPASTAS_ABRIVEIS:
+            return {"ok": False, "erro": f"Subpasta inválida: {sub}"}
+        pasta = pasta / sub
+        if not pasta.is_dir():
+            return {"ok": False, "erro": f'A pasta "{sub}" ainda não existe neste PAJ.'}
 
     try:
         os.startfile(str(pasta))  # noqa: S606 — Windows-only, uso local/desktop intencional

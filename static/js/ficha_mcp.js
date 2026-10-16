@@ -115,6 +115,12 @@
             // Só o padrão do servidor ("NÃO." / "SIM." + explicação) — "Não informado" fica como está.
             if (/^\s*N[ÃA]O\s*(\.|$)/.test(valor) && !/^descri/i.test(rotuloCampo)) valor = 'Não';
             else if (/^\s*SIM\s*(\.|$)/.test(valor) && !/^descri/i.test(rotuloCampo)) valor = 'Sim';
+            // Datas (prazo etc.) no formato padrão DD/MM/AAAA — o servidor manda
+            // AAAA-MM-DD (pedido do Defensor, 16/10/2026). A descrição fica como foi escrita.
+            if (!/^descri/i.test(rotuloCampo)) {
+                valor = valor.replace(/\b(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::\d{2}(?:\.\d+)?)?)?\b/g,
+                    function (_m, a, mes, d, h, min) { return d + '/' + mes + '/' + a + (h ? ' ' + h + ':' + min : ''); });
+            }
             campos.push([rotuloCampo, valor, /descri/i.test(rotuloCampo) && /<\w/.test(valor)]);
         });
         return { campos: campos, anexos: anexos, faseAnexos: faseAnexos };
