@@ -25,36 +25,10 @@
         </ul>
     </div>
 
-    <!-- Sessão SAT -->
-    <div class="card bg-base-200 shadow mb-4">
-        <div class="card-body py-3 flex-row items-center gap-3 flex-wrap">
-            <span class="text-sm font-medium">Sessão SAT:</span>
-            <span class="badge" :class="sessaoOk ? 'badge-success' : 'badge-warning'"
-                  x-text="sessaoOk ? 'Conectado' : 'Não conectado'"></span>
-            <button class="btn btn-sm btn-primary" @click="abrirSat()" :disabled="sessaoBusy">
-                <span x-show="sessaoBusy" class="loading loading-spinner loading-xs"></span>
-                Abrir SAT / Login
-            </button>
-            <button class="btn btn-sm btn-ghost" @click="verificarSessao()" :disabled="sessaoBusy">Verificar sessão</button>
-            <span class="text-xs text-base-content/60" x-text="sessaoMsg"></span>
-            <label class="flex items-center gap-1.5 text-sm cursor-pointer ml-auto"
-                   title="Pausa preventiva entre cada consulta ao SAT, para reduzir o bloqueio anti-robô.">
-                <span class="font-medium">Tempo entre consultas:</span>
-                <input type="number" min="0" max="60" step="1"
-                       class="input input-bordered input-xs w-16" x-model.number="tempoEntre">
-                <span class="text-xs text-base-content/50">s</span>
-            </label>
-            <label class="flex items-center gap-1.5 text-sm cursor-pointer"
-                   title="Quanto esperar ao detectar a proteção antirobô, antes de re-tentar o documento.">
-                <span class="font-medium">Espera após bloqueio:</span>
-                <input type="number" min="0" max="300" step="5"
-                       class="input input-bordered input-xs w-16" x-model.number="esperaBloqueio">
-                <span class="text-xs text-base-content/50">s</span>
-            </label>
-        </div>
-    </div>
+    <!-- Status/login do SAT: selo "SAT" do topo (a barra "Sessão SAT" saiu em
+         17/10/2026). A sessão é conferida na hora de baixar (`sessaoAtiva`). -->
 
-    <!-- O que baixar (barra inteira, logo abaixo da Sessão SAT) -->
+    <!-- O que baixar (barra inteira) + tempos do download -->
     <div class="card bg-base-200 shadow mb-4">
         <div class="card-body py-3">
             <div class="flex items-center gap-2 flex-wrap">
@@ -62,6 +36,20 @@
                 <button class="btn btn-xs btn-outline" @click="abrirTipos()">Escolher documentos</button>
                 <button class="btn btn-xs btn-outline" @click="abrirPatIgnorar()"
                         title="Espécies de processo administrativo (PAT) que não devem ser baixadas">Ignorar</button>
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer ml-auto"
+                       title="Pausa preventiva entre cada consulta ao SAT, para reduzir o bloqueio anti-robô.">
+                    <span class="font-medium">Tempo entre consultas:</span>
+                    <input type="number" min="0" max="60" step="1"
+                           class="input input-bordered input-xs w-16" x-model.number="tempoEntre">
+                    <span class="text-xs text-base-content/50">s</span>
+                </label>
+                <label class="flex items-center gap-1.5 text-sm cursor-pointer"
+                       title="Quanto esperar ao detectar a proteção antirobô, antes de re-tentar o documento.">
+                    <span class="font-medium">Espera após bloqueio:</span>
+                    <input type="number" min="0" max="300" step="5"
+                           class="input input-bordered input-xs w-16" x-model.number="esperaBloqueio">
+                    <span class="text-xs text-base-content/50">s</span>
+                </label>
             </div>
         </div>
     </div>
@@ -800,7 +788,7 @@ function satPage() {
         sseAberto: false, sseLog: [], sseStatus: '', sseFechavel: false, _es: null, sseTipo: '',
         logAberto: false, logAtual: [],
         baixarModal: false, baixarLista: [], copiado: false,
-        sessaoOk: false, sessaoBusy: false, sessaoMsg: '', naoLogadoModal: false,
+        sessaoOk: false, sessaoBusy: false, naoLogadoModal: false,
         tempoEntre: 5, esperaBloqueio: 45,
         logsDownload: {}, logDlAberto: false, logDlItens: [], logDlTitulo: '',
         docsAbertos: {}, docsArquivos: {},
@@ -817,9 +805,8 @@ function satPage() {
         posMenu: { top: 0, left: 0 },
 
         async init() {
-            // NÃO abrir o navegador ao carregar a aba: checagem LEVE (peek) só LÊ o estado
-            // (não lança o Chromium). O navegador só abre pelo botão "Abrir SAT / Login".
-            this.verificarSessao();
+            // Sessão do SAT: conferida só na hora de baixar (`sessaoAtiva`) — o selo
+            // "SAT" do topo já mostra o estado e reconecta (17/10/2026).
             await this.carregarPrefs();
             this.carregarTipos();
             // A busca na CAIXA não é automática (só pelo botão "Verificar PAJs pendentes").
@@ -827,8 +814,6 @@ function satPage() {
             // sem tocar o SISDPU) para persistirem visíveis ao reabrir a aba.
             this.carregarManuais();
             this.carregarHistorico();
-            // atualização automática do selo de sessão (checagem LEVE, não navega)
-            setInterval(() => this.verificarSessaoLeve(), 5000);
         },
         async carregarManuais() {
             try {
@@ -862,10 +847,10 @@ function satPage() {
             const p = (pret || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
             return p.includes('pensao por morte') || p.includes('reclusao');
         },
-        baixarInstituidor() {
+        async baixarInstituidor() {
             const p = this.instAlvo;
             if (!p || !this.instCpf) return;
-            if (!this.sessaoOk) { this.instModal = false; this.naoLogadoModal = true; return; }
+            if (!(await this.sessaoAtiva())) { this.instModal = false; this.naoLogadoModal = true; return; }
             this.instModal = false;
             const cpf = this.instCpf, nome = this.instNome;
             this.rodando = true; this.sseTipo = 'download';
@@ -1082,7 +1067,7 @@ function satPage() {
             const cpfI = (this.bmCpfPorEscopo.instituidor || '').trim();
             if (temA && !cpfA) { alert('Informe o CPF do assistido.'); return; }
             if (temI && !cpfI) { alert('Informe o CPF do instituidor.'); return; }
-            if (!this.sessaoOk) { this.baixarMaisModal = false; this.naoLogadoModal = true; return; }
+            if (!(await this.sessaoAtiva())) { this.baixarMaisModal = false; this.naoLogadoModal = true; return; }
             this.baixarMaisModal = false;
             this.rodando = true; this.sseTipo = 'download';
             this.sseLog = []; this.sseStatus = '— baixando (complementar)'; this.sseFechavel = false; this.sseAberto = true;
@@ -1198,30 +1183,28 @@ function satPage() {
             clearTimeout(this._patIgnMsgT);
             this._patIgnMsgT = setTimeout(() => { this.patIgnorarMsg = ''; }, 2500);
         },
-        async verificarSessao() {
-            // usa a checagem LEVE (/sessao-leve → peek): NÃO lança o navegador.
-            this.sessaoBusy = true;
+        // Sessão do SAT conferida NA HORA de baixar (checagem LEVE, não abre o
+        // navegador) — antes um polling de 5 s mantinha `sessaoOk` (17/10/2026).
+        async sessaoAtiva() {
             try {
                 const r = await (await fetch('/api/sat/sessao-leve')).json();
-                this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || '';
-            } catch (e) { this.sessaoMsg = 'Erro ao verificar a sessão.'; }
-            finally { this.sessaoBusy = false; }
-        },
-        async verificarSessaoLeve() {
-            // não interfere durante um download nem numa checagem manual em curso
-            if (this.rodando || this.sessaoBusy) return;
-            try {
-                const r = await (await fetch('/api/sat/sessao-leve')).json();
-                this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || '';
-            } catch (e) { /* silencioso — é polling de fundo */ }
+                this.sessaoOk = !!r.logado;
+            } catch (e) { this.sessaoOk = false; }
+            return this.sessaoOk;
         },
         async abrirSat() {
-            this.sessaoBusy = true; this.sessaoMsg = 'Abrindo a janela do SAT…';
+            this.sessaoBusy = true;
+            if (typeof showToast === 'function') showToast('Abrindo a janela do SAT…', 'info');
             try {
                 const r = await (await fetch('/api/sat/abrir')).json();
-                this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || '';
-            } catch (e) { this.sessaoMsg = 'Erro ao abrir a janela.'; }
-            finally { this.sessaoBusy = false; }
+                this.sessaoOk = !!r.logado;
+                if (typeof window.atualizarSelos === 'function') window.atualizarSelos();
+                if (typeof showToast === 'function')
+                    showToast(r.logado ? 'SAT conectado.' : (r.msg || 'Janela do SAT aberta — faça o login.'),
+                              r.logado ? 'success' : 'info');
+            } catch (e) {
+                if (typeof showToast === 'function') showToast('Erro ao abrir a janela do SAT.', 'error');
+            } finally { this.sessaoBusy = false; }
         },
         caixasRapidas() {
             // Badges de clique rápido: caixa padrão + caixas FREQUENTES (curadas em
@@ -1423,15 +1406,16 @@ function satPage() {
                 if (typeof j.n_instituidor === 'number') p.n_instituidor = j.n_instituidor;
             } catch (e) {}
         },
-        baixar(p) {
-            if (this.rodando) return Promise.resolve();
+        async baixar(p) {
+            if (this.rodando) return;
             if (!p.cpf) {
-                this.sessaoMsg = `Sem CPF do assistido no PAJ ${p.paj} — sincronize a caixa do SISDPU antes de baixar.`;
-                return Promise.resolve();
+                if (typeof showToast === 'function')
+                    showToast(`Sem CPF do assistido no PAJ ${p.paj} — sincronize a caixa do SISDPU antes de baixar.`, 'warning');
+                return;
             }
-            if (!this.sessaoOk) {
+            if (!(await this.sessaoAtiva())) {
                 this.naoLogadoModal = true;
-                return Promise.resolve();
+                return;
             }
             return new Promise((resolve) => {
                 this.rodando = true; this.sseTipo = 'download';
