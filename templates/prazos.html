@@ -89,33 +89,6 @@
     </div>
   </div>
 
-  <!-- Sessão e-proc -->
-  <div class="px-8 py-3">
-    <div class="bg-base-200 rounded-lg border border-base-300 px-4 py-3">
-      <div class="flex items-center gap-3 flex-wrap">
-        <span class="text-sm font-medium">Sessão via navegador:</span>
-        <span class="badge" :class="sessaoOk ? 'badge-success' : 'badge-warning'"
-              x-text="sessaoOk ? 'Conectado' : 'Não conectado'"></span>
-        <button class="btn btn-sm btn-primary" @click="abrirEproc()" :disabled="sessaoBusy">
-          <span x-show="sessaoBusy" class="loading loading-spinner loading-xs"></span>
-          Abrir e-proc / Login
-        </button>
-        <button class="btn btn-sm btn-ghost" @click="verificarSessao()" :disabled="sessaoBusy">Verificar sessão</button>
-
-        <div class="divider divider-horizontal mx-0"></div>
-
-        <span class="text-sm font-medium">Sessão via MCP:</span>
-        <span class="badge" :class="mcpOk ? 'badge-success' : 'badge-warning'"
-              x-text="mcpOk ? 'Conectado' : 'Não conectado'"></span>
-        <button class="btn btn-sm btn-ghost" @click="verificarMcp()" :disabled="mcpBusy">
-          <span x-show="mcpBusy" class="loading loading-spinner loading-xs"></span>
-          Verificar MCP
-        </button>
-        <span class="text-xs text-base-content/60" x-text="mcpMsg"></span>
-      </div>
-    </div>
-  </div>
-
   <!-- Ações -->
   <div class="px-8 pb-2 flex items-center gap-3 flex-wrap">
     <span class="text-xs" x-show="!sincronizando && diff && (diff.novas || diff.removidas)">
@@ -125,8 +98,8 @@
     </span>
     <span class="text-xs text-error" x-show="syncErro" x-text="syncErro"></span>
     <span class="text-xs text-base-content/50" x-show="sincronizando">Lendo o Painel do Procurador… (percorrendo as categorias)</span>
-    <!-- Filtro por tribunal (17/10/2026): uma tabela só, TRF4 + JMU -->
-    <div class="join ml-auto" x-show="tribunais.length > 1">
+    <!-- Filtro por tribunal (17/10/2026): uma tabela só, TRF4 + JMU — centralizado -->
+    <div class="join w-full justify-center" x-show="tribunais.length > 1">
       <template x-for="f in [['todos', 'Todos'], ...tribunais.map((t) => [t.chave, t.rotulo])]" :key="f[0]">
         <button type="button" class="btn btn-xs join-item"
                 :class="filtroTribunal === f[0] ? 'btn-primary' : 'btn-ghost border border-base-300'"
@@ -368,8 +341,6 @@
 <script>
 function prazosEprocApp() {
   return {
-    sessaoOk: false, sessaoBusy: false, sessaoMsg: '',
-    mcpOk: false, mcpBusy: false, mcpMsg: '',
     resumo: [], secoes: {}, sincronizadoEm: '',
     // JMU (17/10/2026): filtro da tabela e contadores por tribunal.
     filtroTribunal: 'todos', resumoTribunal: {}, jmu: {}, tribunais: [],
@@ -388,41 +359,12 @@ function prazosEprocApp() {
     atoRef: {},
     baixandoAto: {},
 
+    // Status/login do e-proc ficam no selo "e-proc" do topo (navegador + pílula
+    // MCP + reconectar) — a barra própria desta página saiu (17/10/2026).
     async init() {
-      this.verificarSessao();
-      this.verificarMcp();
       this.carregarIntimacoes();
-      setInterval(() => this.verificarSessaoLeve(), 5000);
     },
 
-    // Sessão
-    async abrirEproc() {
-      this.sessaoBusy = true; this.sessaoMsg = 'Abrindo a janela do e-proc…';
-      try { const r = await (await fetch('/api/prazos/abrir')).json();
-        this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || ''; }
-      catch (e) { this.sessaoMsg = 'Erro ao abrir a janela.'; }
-      finally { this.sessaoBusy = false; }
-    },
-    async verificarSessao() {
-      this.sessaoBusy = true;
-      try { const r = await (await fetch('/api/prazos/sessao-leve')).json();
-        this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || ''; }
-      catch (e) { this.sessaoMsg = 'Erro ao verificar a sessão.'; }
-      finally { this.sessaoBusy = false; }
-    },
-    async verificarSessaoLeve() {
-      if (this.sessaoBusy || this.sincronizando) return;
-      try { const r = await (await fetch('/api/prazos/sessao-leve')).json();
-        this.sessaoOk = !!r.logado; this.sessaoMsg = r.msg || ''; } catch (e) {}
-    },
-    // Sessão via MCP (headless, sem navegador) — só verificação/renovação; não abre janela.
-    async verificarMcp() {
-      this.mcpBusy = true;
-      try { const r = await (await fetch('/api/eproc-mcp/status?instancia=1')).json();
-        this.mcpOk = !!r.ok; this.mcpMsg = r.ok ? '' : (r.erro || 'Não foi possível conectar.'); }
-      catch (e) { this.mcpOk = false; this.mcpMsg = 'Erro ao verificar a conexão MCP.'; }
-      finally { this.mcpBusy = false; }
-    },
     // Intimações
     async carregarIntimacoes() {
       try { const r = await (await fetch('/api/prazos/intimacoes')).json(); this.aplicar(r); } catch (e) {}
