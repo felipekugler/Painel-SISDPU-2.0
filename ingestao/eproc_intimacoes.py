@@ -530,8 +530,12 @@ def caso_e_prazos_mesclados(numero: str) -> dict:
     que faz o bloqueio de Gerenciamento de Processo por prazo residual
     (`acoes_eproc_service._prazo_residual_no_meu_painel`, que usa esta
     função via `prazos_processo`) liberar sozinho assim que o(s) prazo(s)
-    forem fechados dentro do painel, sem esperar nova sincronização."""
-    dados = carregar_visivel()
+    forem fechados dentro do painel, sem esperar nova sincronização.
+
+    Processo da JMU (segmento 7): os prazos vêm do cache PRÓPRIO da JMU
+    (`ingestao.eproc_jmu`, 17/10/2026)."""
+    from ingestao import eproc_jmu
+    dados = eproc_jmu.carregar() if eproc_jmu.eh_processo_jmu(numero) else carregar_visivel()
     alvo = re.sub(r"\D", "", numero or "")
     if not alvo:
         return {"encontrado": False, "caso": None, "prazos": []}
@@ -593,7 +597,8 @@ def prazos_processo(numero: str) -> dict:
     ainda, ou sem prazo atual no Painel) — o chamador deve tratar como "sem
     informação" e NÃO filtrar (fail-open: melhor mostrar demais do que omitir
     uma intimação real)."""
-    dados = carregar()
+    from ingestao import eproc_jmu
+    dados = eproc_jmu.carregar() if eproc_jmu.eh_processo_jmu(numero) else carregar()
     m = caso_e_prazos_mesclados(numero)
     return {
         "encontrado": m["encontrado"],

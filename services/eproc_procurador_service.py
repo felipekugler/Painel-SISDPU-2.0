@@ -26,7 +26,7 @@ import contextlib
 import re
 
 
-def meu_identificador() -> str:
+def meu_identificador(numero_processo: str = "") -> str:
     """Identificador do procurador logado no e-proc — reaproveita a própria
     credencial de LOGIN já cadastrada no cofre unificado (mesmo valor que
     aparece em Configurações como "cadastrado · <usuario>"), confirmado
@@ -42,8 +42,18 @@ def meu_identificador() -> str:
     Vazio quando nenhuma das duas fontes tem o usuário — nesse caso NÃO há
     como saber a quais partes o procurador está associado. Os chamadores
     devem tratar isso como identidade indisponível e NUNCA arriscar
-    mostrar/agir sobre uma parte adivinhada."""
+    mostrar/agir sobre uma parte adivinhada.
+
+    Processo da Justiça Militar da União (segmento 7 do número CNJ): o
+    identificador é o login do MCP da JMU (ex.: "DPUKUGLER"), não o do TRF4
+    (17/10/2026) — passe `numero_processo` sempre que souber de qual processo
+    se trata. Sem o login da JMU configurado, devolve vazio (nunca o do TRF4)."""
     from services import cofre_service
+
+    if numero_processo:
+        from ingestao import eproc_jmu
+        if eproc_jmu.eh_processo_jmu(numero_processo):
+            return eproc_jmu.meu_identificador()
 
     return (_usuario_mcp_eproc()
             or (cofre_service.get_usuario("eproc") or "").strip())

@@ -45,13 +45,19 @@
   stop            — (opcional, default true) usa "@click.stop" em vez de
                     "@click" — false onde o clique não precisa impedir a
                     propagação.
+  expr_numero     — (opcional) expressão JS com o NÚMERO do processo: se for da
+                    JMU (segmento 7, `ehProcessoJmu` em static/js/app.js), some
+                    com Movimentar/Conjunto/Gerenciar, que ainda são só do e-proc
+                    do TRF4 (17/10/2026). Sem ele os itens ficam e as próprias
+                    funções avisam.
 #}
-{% macro itens_minimenu_processo(expr_consultar, expr_abrir, expr_movimentar, expr_conjunto, expr_gerenciar, after='', stop=true) %}
+{% macro itens_minimenu_processo(expr_consultar, expr_abrir, expr_movimentar, expr_conjunto, expr_gerenciar, after='', stop=true, expr_numero='') %}
 {%- set mod = '.stop' if stop else '' -%}
 {%- set suf = ('; ' + after) if after else '' -%}
+{%- set so_trf4 = (' x-show="!ehProcessoJmu(' + expr_numero + ')"') if expr_numero else '' -%}
 <li><a @click{{ mod }}="{{ expr_consultar }}{{ suf }}">Consultar processo (MCP)</a></li>
 <li><a @click{{ mod }}="{{ expr_abrir }}{{ suf }}">Abrir no navegador</a></li>
-<li><a @click{{ mod }}="{{ expr_movimentar }}{{ suf }}">Movimentar no eproc</a></li>
-<li><a @click{{ mod }}="{{ expr_conjunto }}{{ suf }}">Movimentar Eproc + Sisdpu</a></li>
-<li><a @click{{ mod }}="{{ expr_gerenciar }}{{ suf }}">Gerenciar processo</a></li>
+<li{{ so_trf4 | safe }}><a @click{{ mod }}="{{ expr_movimentar }}{{ suf }}">Movimentar no eproc</a></li>
+<li{{ so_trf4 | safe }}><a @click{{ mod }}="{{ expr_conjunto }}{{ suf }}">Movimentar Eproc + Sisdpu</a></li>
+<li{{ so_trf4 | safe }}><a @click{{ mod }}="{{ expr_gerenciar }}{{ suf }}">Gerenciar processo</a></li>
 {%- endmacro %}

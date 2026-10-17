@@ -122,8 +122,9 @@
         <input type="text" x-model="numero"
                class="input input-sm input-bordered w-96 font-mono" />
         <select x-model.number="instancia" class="select select-sm select-bordered">
-          <option :value="1">1ª instância (JFPR)</option>
-          <option :value="2">2ª instância (TRF4)</option>
+          <!-- JMU (segmento 7 do número): mesma consulta, pelo MCP da JMU (17/10/2026) -->
+          <option :value="1" x-text="ehProcessoJmu(numero) ? '1ª instância (JMU)' : '1ª instância (JFPR)'"></option>
+          <option :value="2" x-text="ehProcessoJmu(numero) ? '2ª instância (STM)' : '2ª instância (TRF4)'"></option>
         </select>
         <label class="label cursor-pointer gap-2 py-0">
           <input type="checkbox" x-model="todosEventos" class="checkbox checkbox-sm" />

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import html
 import logging
 import re
@@ -44,6 +45,9 @@ _PROFILE = Path(config.OFICIO_GERAL) / "_eproc_profile"
 # pela JANELA do navegador — mesma conta, mesmo segredo.
 _TOTP_CRED_KEY = "mcp-eproc-trf4"
 _TOTP_ITEM_KEY = "totp_seed"
+# Chave da seed em uso — o login na JMU (`_abrir_processo_jmu`) troca para a do
+# MCP da JMU só durante o próprio login (17/10/2026).
+_totp_chave = contextvars.ContextVar("eproc_totp_chave", default=_TOTP_CRED_KEY)
 
 
 def _gerar_codigo_totp() -> str | None:
@@ -56,7 +60,7 @@ def _gerar_codigo_totp() -> str | None:
     except ImportError:
         return None
     try:
-        seed = keyring.get_password(_TOTP_CRED_KEY, _TOTP_ITEM_KEY)
+        seed = keyring.get_password(_totp_chave.get(), _TOTP_ITEM_KEY)
         if not seed:
             return None
         return pyotp.TOTP(seed).now()
@@ -81,7 +85,7 @@ EPROC_INTERNO = EPROC_JFPR + "controlador.php"
 EPROC_LOGIN = EPROC_JFPR + "externo_controlador.php?acao=principal"
 
 
-async def _link_painel_procurador(ctx) -> str | None:
+async def _link_painel_procurador(ctx, controlador: str = "") -> str | None:
     """Link assinado do Painel do Procurador (`acao=painel_advogado_listar&hash=…`)
     lido de `controlador.php` por uma requisição da PRÓPRIA sessão do navegador
     (mesmos cookies), SEM renderizar a página — `controlador.php` puro é a tela
@@ -89,7 +93,7 @@ async def _link_painel_procurador(ctx) -> str | None:
     ação do painel (relato do Defensor, 16/10/2026). None sem sessão (a
     requisição cai no SSO) ou se o link não vier."""
     with contextlib.suppress(Exception):
-        r = await ctx.request.get(EPROC_INTERNO, timeout=30000)
+        r = await ctx.request.get(controlador or EPROC_INTERNO, timeout=30000)
         if not _status_dict(r.url)["logado"]:
             return None
         texto = (await r.body()).decode("latin-1")  # o e-proc serve ISO-8859-1
@@ -479,7 +483,7 @@ def _em_sso(u: str) -> bool:
     checagem de "logado" precisa excluir explicitamente a área externa — senão a
     tela de seleção de perfil seria confundida com sessão ativa."""
     return (("externo_controlador" in u) or ("entrar_sso" in u)
-            or ("eproc-sso" in u) or ("/login" in u))
+            or ("eproc-sso" in u) or ("eproc-auth" in u) or ("/login" in u))
 
 
 def _status_dict(url: str) -> dict:
@@ -1623,6 +1627,9 @@ async def abrir_processo_por_numero(numero: str) -> dict:
     numero_limpo = re.sub(r"\D", "", numero or "")
     if not numero_limpo:
         return {"ok": False, "erro": "Número de processo vazio."}
+    from ingestao import eproc_jmu
+    if eproc_jmu.eh_processo_jmu(numero_limpo):
+        return await _abrir_processo_jmu(numero_limpo)
     browser, pagina_ref = await _connect()
     ctx = pagina_ref.context
     try:
@@ -1644,6 +1651,74 @@ async def abrir_processo_por_numero(numero: str) -> dict:
         return {"ok": True, "url": page.url}
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:300]}
+    finally:
+        with contextlib.suppress(Exception):
+            await browser.close()
+
+
+# --- Justiça Militar da União (JMU) ------------------------------------------
+# "Abrir no navegador" de processo da JMU (segmento 7 do número, 17/10/2026):
+# na MESMA janela do e-proc do painel, numa aba própria do e-proc da JMU — login
+# próprio (Keycloak eproc-auth.stm.jus.br, mesmo tipo de tela do TRF4) com as
+# credenciais e a seed do MCP da JMU (chave `mcp-eproc-jmu`). A sessão do TRF4
+# segue intacta nas outras abas.
+
+JMU_BASE = "https://eproc1g.stm.jus.br/eproc_1g_prod/"
+JMU_ENTRAR = JMU_BASE + "externo_controlador.php?acao=principal"
+
+
+def _na_jmu_logado(url: str) -> bool:
+    return "stm.jus.br" in (url or "") and _status_dict(url)["logado"]
+
+
+async def _abrir_processo_jmu(numero_limpo: str) -> dict:
+    from ingestao import eproc_jmu
+    import keyring
+
+    browser, pagina_ref = await _connect()
+    ctx = pagina_ref.context
+    try:
+        abas = [p for p in ctx.pages if "eproc1g.stm.jus.br" in (p.url or "")]
+        page = (next((p for p in abas if numero_limpo in (p.url or "")), None)
+                or (abas[0] if abas else await ctx.new_page()))
+        await page.bring_to_front()
+        href = await _link_painel_procurador(ctx, JMU_BASE + "controlador.php")
+        await page.goto(href or JMU_ENTRAR, wait_until="domcontentloaded", timeout=30000)
+        await page.wait_for_timeout(1200)
+        if not _na_jmu_logado(page.url):
+            usuario = (keyring.get_password(eproc_jmu.CREDENCIAL, "usuario") or "").strip()
+            senha = keyring.get_password(eproc_jmu.CREDENCIAL, "senha") or ""
+            if not (usuario and senha):
+                return {"ok": False, "erro": "Credenciais do e-proc da JMU não cadastradas."}
+            _passo("── JMU: login na janela do e-proc", page)
+            tok = _totp_chave.set(eproc_jmu.CREDENCIAL)
+            try:
+                await _entrar(page, usuario, senha)
+            finally:
+                _totp_chave.reset(tok)
+            for _ in range(20):
+                if _na_jmu_logado(page.url):
+                    break
+                await page.wait_for_timeout(500)
+            if _na_jmu_logado(page.url) and "painel_advogado_listar" not in (page.url or ""):
+                href = await _link_painel_procurador(ctx, JMU_BASE + "controlador.php")
+                if href:
+                    await page.goto(href, wait_until="domcontentloaded", timeout=30000)
+                    await page.wait_for_timeout(800)
+            _passo("JMU: fim do login: " + ("LOGADO" if _na_jmu_logado(page.url) else "não logado"), page)
+        if not _na_jmu_logado(page.url):
+            return {"ok": False, "erro": "Não foi possível entrar no e-proc da JMU — confira a janela do e-proc."}
+        campo = page.locator("#txtNumProcessoPesquisaRapida:visible")
+        await campo.click()
+        await campo.fill(numero_limpo)
+        await campo.press("Enter")
+        await page.wait_for_load_state("domcontentloaded", timeout=20000)
+        await page.wait_for_timeout(600)
+        await page.bring_to_front()
+        await _maximizar_janela(page)
+        return {"ok": True, "url": page.url}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"JMU: {type(e).__name__}: {e}"[:300]}
     finally:
         with contextlib.suppress(Exception):
             await browser.close()

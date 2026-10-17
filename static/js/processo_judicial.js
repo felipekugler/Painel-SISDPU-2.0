@@ -34,6 +34,7 @@ function processoJudicialBlock(cfg) {
         // associado, sem adivinhar por polo. Vazio quando o cofre está
         // trancado/sem credencial "eproc" salva: ver `temPrazosSemIdentidade`.
         meuIdentificador: '',
+        meuIdentificadorJmu: '',
         atosPorProcesso: {},     // idx -> [{chave_caso, ato, paj_norm, prazos:[...]}] | null (ainda não carregado)
         meraCienciaBusy: {},     // chave (idx + ':' + evento) -> bool
         // Mesma lista estática de `static/js/acoes_eproc.js:tiposGerenciamento`
@@ -104,9 +105,19 @@ function processoJudicialBlock(cfg) {
                 const r = await fetch('/api/eproc-mcp/meu-identificador');
                 const d = await r.json();
                 this.meuIdentificador = (d && d.usuario) || '';
+                this.meuIdentificadorJmu = (d && d.usuario_jmu) || '';
             } catch (e) {
                 this.meuIdentificador = '';
+                this.meuIdentificadorJmu = '';
             }
+        },
+        // Identificador do procurador conforme o tribunal do processo: na JMU
+        // (segmento 7 do número) é o login do e-proc da JMU (17/10/2026).
+        _meuIdDo(idx) {
+            const p = this.processos[idx];
+            const numero = (p && p.processo_judicial) || '';
+            return (typeof ehProcessoJmu === 'function' && ehProcessoJmu(numero))
+                ? this.meuIdentificadorJmu : this.meuIdentificador;
         },
 
         async carregarIntimacoes(idx) {
@@ -190,7 +201,7 @@ function processoJudicialBlock(cfg) {
             return (s || '').replace(/\s+/g, ' ').trim().toUpperCase();
         },
         _partesDoProcurador(idx) {
-            const alvo = this._normalizarNome(this.meuIdentificador);
+            const alvo = this._normalizarNome(this._meuIdDo(idx));
             const nomes = new Set();
             if (!alvo) return nomes;
             const r = this.resultados[idx];
@@ -222,7 +233,7 @@ function processoJudicialBlock(cfg) {
         // dado (ver `temPrazosSemIdentidade`/x-show no partial).
         intimacoesAtivas(idx) {
             const lista = this.prazosProcurador[idx];
-            if (!lista || !lista.length || !this.meuIdentificador) return [];
+            if (!lista || !lista.length || !this._meuIdDo(idx)) return [];
 
             const r = this.resultados[idx];
             // TODAS as intimações da triagem (ativas E já fechadas) — precisamos
@@ -315,7 +326,7 @@ function processoJudicialBlock(cfg) {
         // arriscar mostrar intimação de outra parte só pra não ficar vazio).
         temPrazosSemIdentidade(idx) {
             const lista = this.prazosProcurador[idx];
-            return !this.meuIdentificador && !!(lista && lista.length);
+            return !this._meuIdDo(idx) && !!(lista && lista.length);
         },
 
         // --- "Dar mera ciência" / atalho de petição — badges na coluna ao lado

@@ -1948,8 +1948,22 @@ function adicionarMovimentacaoPendente(pajDisplay) {
    um vínculo óbvio na tela de origem, e ficava sem trazer essa informação pra
    uma eventual movimentação no SISDPU (bug real 2026-09-11, PAJ 2026/029-00897,
    processo 5014914-73.2026.4.04.7000). */
+/* Processo da Justiça Militar da União: segmento J = 7 do número CNJ
+   (NNNNNNN-DD.AAAA.J.TR.OOOO). Consulta (MCP) e "Abrir no navegador" já valem
+   para a JMU (17/10/2026); movimentar/gerenciar ainda são só do e-proc do TRF4. */
+function ehProcessoJmu(numero) {
+    const d = (numero || '').replace(/\D/g, '');
+    return d.length === 20 && d[13] === '7';
+}
+function _avisarSoTrf4(numero) {
+    if (!ehProcessoJmu(numero)) return false;
+    showToast('Ainda não disponível para processos da JMU — use "Consultar processo (MCP)" ou "Abrir no navegador".', 'warning');
+    return true;
+}
+
 function movimentarNoEproc(numeroProcesso, pajNorm, pajLabel) {
     if (!numeroProcesso) return;
+    if (_avisarSoTrf4(numeroProcesso)) return;
     const qs = new URLSearchParams({ novo_processo: numeroProcesso });
     if (pajNorm) qs.set('paj_norm', pajNorm);
     if (pajLabel) qs.set('paj_label', pajLabel);
@@ -1969,6 +1983,7 @@ function movimentarNoEproc(numeroProcesso, pajNorm, pajLabel) {
    `paj` aceita tanto "AAAA/UUU-NNNNN" quanto "PAJ-AAAA-UUU-NNNNN". */
 function movimentarConjunto(numeroProcesso, paj) {
     if (!numeroProcesso && !paj) return;
+    if (_avisarSoTrf4(numeroProcesso)) return;
     const qs = new URLSearchParams();
     if (numeroProcesso) qs.set('processo', numeroProcesso);
     if (paj) qs.set('paj', paj);
@@ -2083,6 +2098,7 @@ function pajCarregandoApp(pajNorm) {
    isolado pro mesmo processo já peticionado. */
 function abrirGerenciarProcesso(numeroProcesso) {
     if (!numeroProcesso) return;
+    if (_avisarSoTrf4(numeroProcesso)) return;
     window.dispatchEvent(new CustomEvent('abrir-gerenciar-processo', { detail: { processo: numeroProcesso } }));
 }
 

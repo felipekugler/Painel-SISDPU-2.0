@@ -131,7 +131,7 @@ async def _candidatos_do_ato(processo: str, prazos_do_ato: list[dict]) -> tuple[
     if not intimacoes:
         return [], instancia
     minhas_partes = eproc_procurador_service.partes_do_procurador(
-        cabecalho, eproc_procurador_service.meu_identificador())
+        cabecalho, eproc_procurador_service.meu_identificador(processo))
     dia_p = _so_data(prazo.get("data_envio", ""))
     if not dia_p:
         return [], instancia
@@ -3412,7 +3412,7 @@ async def gerar_conferencia_sentenca_merito(processo: str, ato: str, paj_norm: s
     # arriscado de errar desta análise inteira.
     from services import eproc_procurador_service
 
-    identificador = eproc_procurador_service.meu_identificador()
+    identificador = eproc_procurador_service.meu_identificador(processo)
     minhas_partes = eproc_procurador_service.partes_do_procurador(cabecalho, identificador)
     if minhas_partes:
         log_cb("info", f"DPU representa (cadastro oficial de partes): {', '.join(sorted(minhas_partes))}.")

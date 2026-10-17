@@ -40,9 +40,13 @@ router = APIRouter()
 async def api_eproc_meu_identificador():
     """Quem é o procurador logado no e-proc (ex.: "DPU551") — usuário do login
     do MCP do e-proc em 1º lugar, cofre como reserva (ver
-    services.eproc_procurador_service.meu_identificador). Nunca a senha."""
+    services.eproc_procurador_service.meu_identificador). Nunca a senha.
+    `usuario_jmu`: o do e-proc da JMU (ex.: "DPUKUGLER") — vale para processos
+    com segmento 7 no número (17/10/2026)."""
+    from ingestao import eproc_jmu
     from services import eproc_procurador_service
-    return {"ok": True, "usuario": eproc_procurador_service.meu_identificador()}
+    return {"ok": True, "usuario": eproc_procurador_service.meu_identificador(),
+            "usuario_jmu": eproc_jmu.meu_identificador()}
 
 
 @router.get("/api/eproc-mcp/status", response_class=JSONResponse)

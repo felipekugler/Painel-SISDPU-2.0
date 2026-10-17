@@ -175,17 +175,23 @@ def _linhas(html: str, cores: dict, base: str, lembretes: list) -> list[dict]:
 # Leitura completa
 # ---------------------------------------------------------------------------
 
-async def _ler_todos_corpo() -> dict:
-    import client as mcp_client  # type: ignore  # MCP eproc-trf4
-    import parsers  # type: ignore
-    import server  # type: ignore
+async def _ler_todos_corpo(server=None, mcp_client=None, parsers=None, estado: str = ESTADO,
+                           secoes_anteriores: dict | None = None) -> dict:
+    """`server`/`mcp_client`/`parsers`: módulos do MCP a usar — por padrão os do
+    eproc-trf4. A leitura da JMU (`ingestao/eproc_jmu_leitor.py`, num processo
+    à parte) passa os da cópia eproc-jmu, a seção "JMU" e as seções anteriores
+    DELA (17/10/2026)."""
+    if server is None:
+        import client as mcp_client  # type: ignore  # MCP eproc-trf4
+        import parsers  # type: ignore
+        import server  # type: ignore
 
     cli = await server._get_client(1)
     base = mcp_client.base_url(1)
     estados = dict(await server._intimacao_estados(cli))
-    if ESTADO not in estados:
-        return {"ok": False, "erro": f"O painel do e-proc não trouxe a seção {ESTADO} (estados: {list(estados)})."}
-    data = json.loads((await cli.get(estados[ESTADO])).text)
+    if estado not in estados:
+        return {"ok": False, "erro": f"O painel do e-proc não trouxe a seção {estado} (estados: {list(estados)})."}
+    data = json.loads((await cli.get(estados[estado])).text)
     contadores = parsers.resumo_intimacoes(data)
 
     resumo = [{"chave": c["chave"], "label": c["label"],
@@ -195,7 +201,8 @@ async def _ler_todos_corpo() -> dict:
 
     # Mesma defesa da leitura pelo navegador: categoria com contador > 0 e
     # detalhe vazio NÃO vira "todos saíram da caixa" — mantém a sincronização anterior.
-    secoes_anteriores = (ei.carregar().get("secoes") or {})
+    if secoes_anteriores is None:
+        secoes_anteriores = (ei.carregar().get("secoes") or {})
     secoes: dict[str, list] = {}
     falhas: list[str] = []
     for cat in ei.CATEGORIAS:

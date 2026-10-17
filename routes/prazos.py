@@ -88,8 +88,17 @@ async def api_prazos_sincronizar():
     MANUAL no botão "Atualizar lista" da página Intimações
     (`routes.intimacoes.api_listar_casos`) — clique explícito do Defensor, bem
     mais espaçado que uma sincronização automática."""
-    from ingestao import eproc_intimacoes
+    from ingestao import eproc_intimacoes, eproc_jmu
     res = await eproc_intimacoes.sincronizar()
+    # JMU (17/10/2026): lida em seguida pelo MCP próprio; falha dela não
+    # derruba a do TRF4 — vira aviso e a tabela mantém a última leitura da JMU.
+    erro_jmu = ""
+    if eproc_jmu.configurado():
+        rj = await eproc_jmu.sincronizar()
+        if not rj.get("ok"):
+            erro_jmu = rj.get("erro") or "falha desconhecida"
+    if res.get("ok"):
+        res = eproc_jmu.mesclar(res, erro_jmu=erro_jmu)
     return JSONResponse(res, status_code=200 if res.get("ok") else 400)
 
 
@@ -128,7 +137,8 @@ async def api_prazos_intimacoes():
                     c["paj"] = vinc["paj"]
     except Exception:
         pass
-    return JSONResponse(dados)
+    from ingestao import eproc_jmu
+    return JSONResponse(eproc_jmu.mesclar(dados))
 
 
 @router.get("/api/prazos/count", response_class=JSONResponse)
@@ -145,8 +155,8 @@ async def api_prazos_count():
     só que sem o cruzamento com o índice de análise (não é o que a página
     Prazos usa). Usa a leitura visível (baixa local aplicada) — mesmo
     espírito de `api_prazos_intimacoes`."""
-    from ingestao import eproc_intimacoes
-    dados = eproc_intimacoes.carregar_visivel()
+    from ingestao import eproc_intimacoes, eproc_jmu
+    dados = eproc_jmu.mesclar(eproc_intimacoes.carregar_visivel())
     processos = {
         caso.get("processo")
         for secao in (dados.get("secoes") or {}).values()

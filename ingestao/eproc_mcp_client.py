@@ -32,6 +32,9 @@ from __future__ import annotations
 import asyncio
 import base64
 import contextlib
+import functools
+import inspect
+import os
 import re
 import shutil
 import sys
@@ -76,6 +79,34 @@ def _mcp_mni_mod():
 
 def _normalizar_numero(numero: str) -> str:
     return re.sub(r"\D", "", numero or "")
+
+
+# ---------------------------------------------------------------------------
+# Justiça Militar da União (17/10/2026): mesmas funções, MCP da JMU.
+# Processo com segmento 7 no número CNJ → a função roda com o MCP da JMU
+# (`C:\Claude\MCP\eproc-jmu`), num processo à parte (os dois MCPs têm módulos
+# de mesmo nome — ver `ingestao/eproc_jmu_exec.py`). Mesmo formato de retorno:
+# a consulta processual, triagem, documentos, acesso à íntegra e lembretes
+# valem igual para os dois tribunais, sem mudar quem chama.
+# ---------------------------------------------------------------------------
+
+_FILHO_JMU = os.getenv("PAINEL_MCP_JMU_FILHO") == "1"
+
+
+def _roteia_jmu(fn):
+    assinatura = inspect.signature(fn)
+
+    @functools.wraps(fn)
+    async def roteada(*args, **kwargs):
+        if not _FILHO_JMU:
+            ba = assinatura.bind(*args, **kwargs)
+            ba.apply_defaults()
+            from ingestao import eproc_jmu
+            if eproc_jmu.eh_processo_jmu(str(ba.arguments.get("numero") or "")):
+                return await eproc_jmu.executar_mcp(fn.__name__, dict(ba.arguments))
+        return await fn(*args, **kwargs)
+
+    return roteada
 
 
 def _pasta_docs(numero: str) -> Path:
@@ -255,6 +286,7 @@ async def status(instancia: int = 1) -> dict[str, Any]:
         return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:400], "instancia": instancia}
 
 
+@_roteia_jmu
 async def consultar_processo(
     numero: str, instancia: int = 1, chave: Optional[str] = None
 ) -> dict[str, Any]:
@@ -267,6 +299,7 @@ async def consultar_processo(
     return await _mcp_server().consultar_processo(numero, instancia=instancia, chave=chave)
 
 
+@_roteia_jmu
 async def cabecalho_completo(
     numero: str, instancia: int = 1, chave: Optional[str] = None
 ) -> dict[str, Any]:
@@ -325,6 +358,10 @@ async def _completar_classe_relacionados(res: dict[str, Any]) -> None:
     await asyncio.gather(*(_buscar(rel) for rel in alvos))
 
 
+_RE_COR_HEX = re.compile(r"#[0-9a-fA-F]{6}")
+
+
+@_roteia_jmu
 async def triagem_processo(
     numero: str,
     instancia: int = 1,
@@ -419,6 +456,7 @@ def decode_html_documento(conteudo: bytes) -> str:
     return _mcp_server()._decode_html_documento(conteudo)
 
 
+@_roteia_jmu
 async def baixar_documentos_evento(
     numero: str, instancia: int, evento_ids: list[str], chave: Optional[str] = None
 ) -> dict[str, Any]:
@@ -469,6 +507,7 @@ def buscar_chave_paj(numero_processo: str) -> Optional[dict[str, Any]]:
     return paj_service.buscar_chave_por_processo(numero_processo)
 
 
+@_roteia_jmu
 async def resolver_acesso_integra(
     numero: str,
     instancia: int = 1,
