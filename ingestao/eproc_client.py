@@ -24,6 +24,7 @@ import socket
 import subprocess
 import sys
 import time
+from datetime import datetime
 from pathlib import Path
 from urllib.parse import urljoin
 
@@ -75,6 +76,9 @@ EPROC_HOME = EPROC_JFPR
 # login do SSO como a raiz. NUNCA usar `acao=` sem o hash do servidor: o e-proc
 # ENCERRA a sessão (visto em teste, 11/10/2026).
 EPROC_INTERNO = EPROC_JFPR + "controlador.php"
+# Tela "Entrar no sistema" — onde a janela do Chromium nasce (pedido do
+# Defensor, 16/10/2026: uma única aba, já nesta página).
+EPROC_LOGIN = EPROC_JFPR + "externo_controlador.php?acao=principal"
 
 
 async def _link_painel_procurador(ctx) -> str | None:
@@ -109,6 +113,14 @@ async def _ir_para_inicio(page, espera_ms: int = 800) -> None:
             await page.wait_for_timeout(espera_ms)
         if _status_dict(page.url)["logado"]:
             return
+    if not href and not _status_dict(page.url)["logado"]:
+        # Sem sessão (o link assinado não veio): direto à tela de entrar — se a
+        # aba já está no login/SSO, não recarrega (perdia o que estava digitado).
+        if _em_sso((page.url or "").lower()):
+            return
+        await page.goto(EPROC_LOGIN, wait_until="domcontentloaded", timeout=30000)
+        await page.wait_for_timeout(espera_ms)
+        return
     await page.goto(EPROC_INTERNO, wait_until="domcontentloaded", timeout=30000)
     await page.wait_for_timeout(espera_ms)
     if not _status_dict(page.url)["logado"]:
@@ -127,6 +139,8 @@ async def _ir_para_inicio(page, espera_ms: int = 800) -> None:
 # prazos do defensor é o "Painel do Procurador" → perfil PROCURADOR (não o de
 # gestão "GERENTE PROCURADORIA"). Comparação por texto EXATO normalizado.
 PERFIL_PADRAO = "PROCURADOR"
+
+_JS_TEM_PERFIL = r"""()=>[...document.querySelectorAll('[id^="tr"]')].some(e=>/^tr\d+$/.test(e.id))"""
 
 # Clica o botão de perfil cujo texto casa EXATAMENTE (normalizado) o alvo. Restringe
 # aos itens da lista de perfis (id "tr0", "tr1", …) para não pegar outros controles.
@@ -202,15 +216,35 @@ async def _pw_reiniciar() -> None:
         _pw = None
 
 
-async def _ensure_chromium(url: str = EPROC_INTERNO) -> None:
+def _sem_restaurar_abas() -> None:
+    """O painel encerra o Chromium à força (shutdown), e o perfil fica marcado
+    como "Crashed": na abertura seguinte o Chrome RESTAURAVA a aba anterior além
+    da pedida — duas abas fazendo o SSO juntas, uma derrubando a sessão da outra
+    (16/10/2026). Marca a saída como normal e apaga a sessão salva antes de abrir."""
+    import json as _json
+    import shutil
+    pref = _PROFILE / "Default" / "Preferences"
+    with contextlib.suppress(Exception):
+        d = _json.loads(pref.read_text(encoding="utf-8"))
+        perfil = d.setdefault("profile", {})
+        perfil["exit_type"] = "Normal"
+        perfil["exited_cleanly"] = True
+        d.setdefault("session", {})["restore_on_startup"] = 5  # não restaurar
+        pref.write_text(_json.dumps(d), encoding="utf-8")
+    with contextlib.suppress(Exception):
+        shutil.rmtree(_PROFILE / "Default" / "Sessions", ignore_errors=True)
+
+
+async def _ensure_chromium(url: str = EPROC_LOGIN) -> bool:
     """Garante um Chromium persistente rodando com remote-debugging (processo
-    separado). Lança-o apontando já para o e-proc (o usuário loga na janela)."""
+    separado). Lança-o já na tela de entrar do e-proc. True se acabou de lançar."""
     global _eproc_pid
     if _porta_aberta(_CDP_PORT):
-        return
+        return False
     pw = await _pw_start()
     exe = pw.chromium.executable_path
     _PROFILE.mkdir(parents=True, exist_ok=True)
+    _sem_restaurar_abas()
     flags = 0
     if sys.platform == "win32":
         # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP → sobrevive ao painel
@@ -221,6 +255,11 @@ async def _ensure_chromium(url: str = EPROC_INTERNO) -> None:
          f"--user-data-dir={_PROFILE}",
          "--no-first-run", "--no-default-browser-check",
          "--disable-features=PDFViewerUpdate,PdfUnseasoned",
+         # não restaura abas da sessão anterior: abre SÓ a tela de entrar
+         "--disable-session-crashed-bubble", "--hide-crash-restore-bubble",
+         # já nasce maximizada — redimensionar depois parecia uma 2ª janela
+         # se sobrepondo à primeira (relato do Defensor, 16/10/2026)
+         "--start-maximized",
          url],
         creationflags=flags, close_fds=True,
     )
@@ -228,15 +267,28 @@ async def _ensure_chromium(url: str = EPROC_INTERNO) -> None:
     for _ in range(60):
         if _porta_aberta(_CDP_PORT):
             time.sleep(1.0)  # respiro para o CDP subir de fato
-            return
+            return True
         time.sleep(0.5)
+    return True
 
+
+
+def _aba_sem_destino(url: str) -> bool:
+    """Aba em branco ou parada na tela de erro de `controlador.php` puro
+    ("Ação '' não reconhecida pelo controlador")."""
+    u = (url or "").split("#")[0].rstrip("/")
+    return (u in ("", "about:blank") or u.startswith("chrome://")
+            or (u.endswith("controlador.php") and "externo_" not in u))
 
 
 async def _connect(url: str = EPROC_INTERNO):
     """Conecta ao Chromium persistente e devolve (browser, page). Chame
-    `browser.close()` ao fim — fecha só a CONEXÃO CDP, não o Chromium."""
-    await _ensure_chromium(url)
+    `browser.close()` ao fim — fecha só a CONEXÃO CDP, não o Chromium.
+
+    A janela é aberta em branco (16/10/2026: abrir já em `controlador.php`
+    deixava a 1ª aba parada na tela de erro); a aba principal em branco ou no
+    erro é levada ao Painel do Procurador (ou ao login, sem sessão)."""
+    lancou = await _ensure_chromium()
     try:
         pw = await _pw_start()
         browser = await pw.chromium.connect_over_cdp(f"http://127.0.0.1:{_CDP_PORT}")
@@ -252,8 +304,22 @@ async def _connect(url: str = EPROC_INTERNO):
         pw = await _pw_start()
         browser = await pw.chromium.connect_over_cdp(f"http://127.0.0.1:{_CDP_PORT}")
     ctx = browser.contexts[0] if browser.contexts else await browser.new_context()
-    page = ctx.pages[0] if ctx.pages else await ctx.new_page()
+    paginas = list(ctx.pages)
+    # aba principal: a primeira que está no e-proc (não a "nova guia" do Chrome)
+    page = next((p for p in paginas if not _aba_sem_destino(p.url)), None)         or (paginas[0] if paginas else await ctx.new_page())
     _garantir_hook_dialogo(ctx)
+    if lancou:
+        # janela recém-aberta: fica UMA aba só (qualquer outra é restauração
+        # ou a "nova guia" do Chrome)
+        for p in paginas:
+            if p is not page:
+                with contextlib.suppress(Exception):
+                    await p.close()
+        with contextlib.suppress(Exception):
+            await page.wait_for_load_state("domcontentloaded", timeout=15000)
+    if _aba_sem_destino(page.url):
+        with contextlib.suppress(Exception):
+            await _ir_para_inicio(page, 800)
     return browser, page
 
 
@@ -394,7 +460,11 @@ async def _maximizar_janela(page) -> None:
         cdp = await page.context.new_cdp_session(page)
         info = await cdp.send("Browser.getWindowForTarget")
         window_id = info.get("windowId")
-        if window_id is not None:
+        estado = (info.get("bounds") or {}).get("windowState")
+        # Só mexe se estiver MINIMIZADA: "normal → maximizada" numa janela que
+        # já está à vista faz um salto de tamanho que parece outra janela
+        # abrindo por cima (16/10/2026).
+        if window_id is not None and estado == "minimized":
             with contextlib.suppress(Exception):
                 await cdp.send("Browser.setWindowBounds",
                                 {"windowId": window_id, "bounds": {"windowState": "normal"}})
@@ -493,6 +563,33 @@ _JS_SUBMIT_LOGIN = r"""()=>{
 }"""
 
 
+def _passo(msg: str, page=None) -> None:
+    """Trilha do login automático (sem senha nem código) em
+    `_eproc_profile/login_passos.log` — para depurar com o Defensor onde o
+    login parou (16/10/2026)."""
+    with contextlib.suppress(Exception):
+        url = (page.url or "")[:140] if page is not None else ""
+        linha = f"{datetime.now():%d/%m %H:%M:%S}  {msg}" + (f"  [{url}]" if url else "")
+        arq = _PROFILE / "login_passos.log"
+        if arq.exists() and arq.stat().st_size > 300_000:
+            arq.unlink()
+        with open(arq, "a", encoding="utf-8") as f:
+            f.write(linha + "\n")
+
+
+# mensagem de erro que o SSO/e-proc mostra na tela (código inválido etc.)
+_JS_ERRO_TELA = r"""()=>{
+  const el=document.querySelector('#input-error, .kc-feedback-text, .alert-error, .pf-c-alert__title, #divInfraMsg0, .infraMensagem');
+  return el ? (el.innerText||'').trim().slice(0,200) : '';
+}"""
+
+
+async def _erro_tela(page) -> str:
+    with contextlib.suppress(Exception):
+        return await page.evaluate(_JS_ERRO_TELA) or ""
+    return ""
+
+
 async def _preencher_login(page, usuario: str, senha: str) -> bool:
     """Se a tela de login (Keycloak ou nativa do eproc) está presente, preenche e
     envia. Retorna True se enviou. No-op (False) se não houver campo de usuário."""
@@ -585,8 +682,33 @@ async def _preencher_2fa(page) -> bool:
         tem = await page.evaluate(_JS_TEM_2FA)
     if not tem:
         return False
+    for tentativa in (1, 2):
+        enviado = await _enviar_2fa(page, tentativa)
+        if not enviado:
+            return False
+        ainda = False
+        with contextlib.suppress(Exception):
+            ainda = await page.evaluate(_JS_TEM_2FA)
+        if not ainda:
+            _passo("2FA aceito", page)
+            return True
+        _passo(f"2FA continua na tela após o envio (tentativa {tentativa}) — erro: "
+               f"{await _erro_tela(page) or '(nenhum texto)'}", page)
+    return True
+
+
+async def _enviar_2fa(page, tentativa: int) -> bool:
+    """Gera e envia UM código. Se faltam menos de 5s para o código virar, espera
+    o próximo — código gerado no fim da janela de 30s vencia antes de o SSO
+    conferir e o login voltava para o início (16/10/2026). Na 2ª tentativa
+    espera sempre o código seguinte (o anterior pode ter sido recusado)."""
+    restam = 30 - (time.time() % 30)
+    if restam < 5 or tentativa > 1:
+        _passo(f"2FA: aguardando o próximo código ({restam:.0f}s para virar)", page)
+        await page.wait_for_timeout(int((restam + 0.8) * 1000))
     codigo = _gerar_codigo_totp()
     if not codigo:
+        _passo("2FA: sem a seed TOTP cadastrada — 2FA fica manual", page)
         return False
 
     ok = False
@@ -603,9 +725,11 @@ async def _preencher_2fa(page) -> bool:
         # gera de novo antes de reenviar, pra não submeter um código expirado.
         codigo = _gerar_codigo_totp() or codigo
     if not ok:
+        _passo("2FA: não consegui preencher o campo do código", page)
         return False
     with contextlib.suppress(Exception):
         await page.evaluate(_JS_SUBMIT_2FA)
+    _passo(f"2FA: código enviado (tentativa {tentativa})", page)
     for _ in range(20):  # ~10s aguardando sair da tela de 2FA
         await page.wait_for_timeout(500)
         with contextlib.suppress(Exception):
@@ -624,9 +748,24 @@ async def _selecionar_perfil(page, perfil: str = PERFIL_PADRAO) -> bool:
     há botão de perfil — retorna False e o usuário loga manualmente na janela."""
     if not _em_sso((page.url or "").lower()):
         return _status_dict(page.url)["logado"]
+    # A lista de perfis demora a montar (e a tela "entrar_sso" pode recarregar
+    # uma vez): tenta por ~15s em vez de uma única olhada — antes, uma tentativa
+    # cedo demais deixava a janela parada na seleção de perfil.
     clicou = False
-    with contextlib.suppress(Exception):
-        clicou = await page.evaluate(_JS_CLICAR_PERFIL, perfil)
+    for _ in range(30):
+        u = (page.url or "").lower()
+        if _status_dict(page.url)["logado"]:
+            return True
+        with contextlib.suppress(Exception):
+            if await page.evaluate(_JS_TEM_LOGIN) or await page.evaluate(_JS_TEM_2FA):
+                return False  # ainda falta senha/2FA — não é a tela de perfil
+        if "entrar_sso" in u or "externo_controlador" in u:
+            with contextlib.suppress(Exception):
+                clicou = await page.evaluate(_JS_CLICAR_PERFIL, perfil)
+            if clicou:
+                break
+        await page.wait_for_timeout(500)
+    _passo(f"perfil {perfil}: {'clicado' if clicou else 'lista de perfis não apareceu'}", page)
     if not clicou:
         return False
     for _ in range(20):  # ~10s aguardando a navegação p/ a área interna
@@ -665,28 +804,53 @@ async def abrir(url: str = EPROC_INTERNO, usuario: str = "", senha: str = "") ->
     mesmo com uma sincronização em andamento; espera a vez.
 
     Retorna o status final (logado?/url/msg)."""
-    async with _browser_lock:
-        return await _abrir_impl(url, usuario, senha)
+    global _abrir_tarefa
+    # Vários pontos do painel pedem a reconexão quase juntos (selo, "garantir
+    # e-proc", inicialização) — cada um refazia o login e recarregava a página
+    # no meio do anterior. Agora quem chega durante um login espera o MESMO.
+    if _abrir_tarefa is None or _abrir_tarefa.done():
+        async def _rodar():
+            async with _browser_lock:
+                return await _abrir_impl(url, usuario, senha)
+        _abrir_tarefa = asyncio.ensure_future(_rodar())
+    return await asyncio.shield(_abrir_tarefa)
+
+
+_abrir_tarefa: "asyncio.Future | None" = None
 
 
 async def _abrir_impl(url: str, usuario: str, senha: str) -> dict:
     """Corpo real de `abrir()` — chamado também por `eproc_intimacoes.
     sincronizar()`, que já segura `_browser_lock` (evita deadlock de tentar
     adquirir a mesma trava não-reentrante duas vezes)."""
+    _passo("── reconectar e-proc: início")
     browser, page = await _connect(url)
+    _passo("janela conectada", page)
     try:
         with contextlib.suppress(Exception):
             await page.bring_to_front()
         await _maximizar_janela(page)
-        with contextlib.suppress(Exception):
-            await page.goto(url, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(1500)
+        # Com sessão: direto ao Painel do Procurador pelo link assinado; sem
+        # sessão: a tela de entrar. Se a aba JÁ está no login/SSO (o `_connect`
+        # acabou de levá-la, ou a janela nasceu nela), não recarrega — a página
+        # abrindo duas vezes fazia o preenchimento se perder.
+        if not _em_sso((page.url or "").lower()) and "painel_advogado_listar" not in (page.url or ""):
+            with contextlib.suppress(Exception):
+                await _ir_para_inicio(page, 1500)
 
         await _entrar(page, usuario, senha)
-        if _status_dict(page.url)["logado"] and "acao=" not in (page.url or ""):
+        # Depois de escolher o perfil PROCURADOR o e-proc leva ao Painel do
+        # Procurador — espera a navegação terminar e, se parou em outra tela
+        # (inclusive a de erro), vai ao painel pelo link assinado.
+        for _ in range(20):
+            if "painel_advogado_listar" in (page.url or "") or not _em_sso((page.url or "").lower()):
+                break
+            await page.wait_for_timeout(500)
+        if _status_dict(page.url)["logado"] and "painel_advogado_listar" not in (page.url or ""):
             with contextlib.suppress(Exception):
                 await _ir_para_inicio(page)
         status_final = _status_dict(page.url)
+        _passo("fim: " + ("LOGADO" if status_final["logado"] else "não logado"), page)
         # Fecha qualquer aba extra (ex.: popup de SSO/2FA que ficou aberto) —
         # o usuário só quer ver a aba principal, já autenticada, na janela.
         with contextlib.suppress(Exception):
@@ -727,23 +891,34 @@ async def _entrar(page, usuario: str, senha: str) -> None:
     (3) seleção de perfil PROCURADOR."""
     # 1) login Keycloak (se a sessão SSO expirou) — credenciais do MCP do e-proc (ou do cofre)
     if usuario and senha:
-        for _ in range(16):  # ~8s aguardando o form de login aparecer/estabilizar
+        # ~15s aguardando o form de login: a tela "Entrar no sistema"
+        # (externo_controlador.php?acao=principal) redireciona sozinha ao SSO.
+        # O form é conferido ANTES de olhar a URL — antes, qualquer URL
+        # "externo_controlador" encerrava a espera e a senha não era digitada.
+        for _ in range(30):
             if _status_dict(page.url)["logado"]:
                 break
-            u = (page.url or "").lower()
-            if ("externo_controlador" in u) or ("entrar_sso" in u):
-                break  # já passou o login → é seleção de perfil
-            tem_login = False
+            tem_login = tem_perfil = False
             with contextlib.suppress(Exception):
                 tem_login = await page.evaluate(_JS_TEM_LOGIN)
             if tem_login:
-                await _preencher_login(page, usuario, senha)
+                with contextlib.suppress(Exception):
+                    await page.wait_for_load_state("domcontentloaded", timeout=5000)
+                _passo("tela de login encontrada — preenchendo usuário e senha", page)
+                enviado = await _preencher_login(page, usuario, senha)
+                _passo(f"login {'enviado' if enviado else 'NÃO enviado'}"
+                       + (f" — erro: {e}" if (e := await _erro_tela(page)) else ""), page)
                 break
+            with contextlib.suppress(Exception):
+                tem_perfil = await page.evaluate(_JS_TEM_PERFIL)
+            if tem_perfil or "entrar_sso" in (page.url or "").lower():
+                break  # já passou o login → é seleção de perfil
             await page.wait_for_timeout(500)
 
     # 2) 2FA — resolve sozinho se a tela aparecer e a seed estiver cadastrada.
     # Espera a tela do código carregar depois do envio da senha (~8s); sem isso a
     # checagem rodava cedo demais e o login parava no 2FA.
+    tem_2fa = False
     for _ in range(16):
         u = (page.url or "").lower()
         if _status_dict(page.url)["logado"] or "externo_controlador" in u or "entrar_sso" in u:
@@ -754,6 +929,8 @@ async def _entrar(page, usuario: str, senha: str) -> None:
         if tem_2fa:
             break
         await page.wait_for_timeout(500)
+    if tem_2fa:
+        _passo("tela do 2FA encontrada", page)
     with contextlib.suppress(Exception):
         await _preencher_2fa(page)
 

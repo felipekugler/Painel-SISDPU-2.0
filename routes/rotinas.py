@@ -30,7 +30,7 @@ async def api_rotina_dossie_sd_historico(limite: int = 200):
 async def api_rotina_dossie_sd_executar():
     if not rotina.get_config()["ativa"]:
         return {"ok": False, "erro": "Ative a rotina antes de executar."}
-    rotina.disparar()
+    rotina.disparar(forcar=True)  # pedido explícito: roda mesmo em fim de semana
     return {"ok": True}
 
 

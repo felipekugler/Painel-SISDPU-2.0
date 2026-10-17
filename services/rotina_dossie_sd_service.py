@@ -40,9 +40,11 @@ INTERVALO_SEG = 300
 TEMPO_MAX_DOSSIE = 900
 TEMPO_MAX_JUNTADA = 900
 
-PADRAO = {"ativa": False, "pre_aprovar": True, "incluir_pretensoes": [], "ativada_em": None}
+PADRAO = {"ativa": False, "pre_aprovar": True, "incluir_pretensoes": [], "ativada_em": None,
+          "intervalo_min": INTERVALO_SEG // 60, "apenas_dias_uteis": True}
 _execucao: dict = {"rodando": False, "paj": "", "etapa": "", "ultimo_ciclo": None, "aguardando": ""}
 _gatilho = asyncio.Event()
+_forcar = {"proximo": False}  # "Executar agora": roda mesmo em fim de semana
 
 
 def _norm(s: str) -> str:
@@ -77,6 +79,15 @@ def set_config(novo: dict) -> dict:
         cfg["ativa"] = bool(novo["ativa"])
     if "pre_aprovar" in novo:
         cfg["pre_aprovar"] = bool(novo["pre_aprovar"])
+    if "apenas_dias_uteis" in novo:
+        # só segunda a sexta (sem monitorar a caixa nos fins de semana)
+        cfg["apenas_dias_uteis"] = bool(novo["apenas_dias_uteis"])
+    if "intervalo_min" in novo:
+        # periodicidade da conferência do gatilho (Configurações; 1 min a 24 h)
+        try:
+            cfg["intervalo_min"] = max(1, min(int(novo["intervalo_min"]), 1440))
+        except (TypeError, ValueError):
+            pass
     if "incluir_pretensoes" in novo:
         termos = novo["incluir_pretensoes"] or []
         if isinstance(termos, str):
@@ -95,8 +106,8 @@ def set_config(novo: dict) -> dict:
     raw = config_painel_service._ler_raw()
     raw["rotina_dossie_sd"] = cfg
     config_painel_service._salvar_raw(raw)
-    if cfg["ativa"]:
-        _gatilho.set()
+    if cfg["ativa"] or "intervalo_min" in novo:
+        _gatilho.set()  # aplica já (novo intervalo conta a partir de agora)
     return cfg
 
 
@@ -302,21 +313,35 @@ async def ciclo() -> dict:
 
 def estado() -> dict:
     cfg = get_config()
-    return {**cfg, **{k: v for k, v in _execucao.items()}, "fila": len(candidatos()) if cfg["ativa"] else 0}
+    return {**cfg, **{k: v for k, v in _execucao.items()}, "fila": len(candidatos()) if cfg["ativa"] else 0,
+            "pausada_fim_de_semana": bool(cfg.get("apenas_dias_uteis") and _fim_de_semana())}
 
 
-def disparar() -> None:
+def disparar(forcar: bool = False) -> None:
+    if forcar:
+        _forcar["proximo"] = True
     _gatilho.set()
 
 
+def _fim_de_semana() -> bool:
+    return datetime.now().weekday() >= 5  # 5 = sábado, 6 = domingo
+
+
 async def laco() -> None:
-    """Laço de fundo (startup do app): um ciclo a cada INTERVALO_SEG, ou na hora
+    """Laço de fundo (startup do app): um ciclo a cada `intervalo_min` (Configurações;
+    padrão INTERVALO_SEG), ou na hora
     em que for disparado (ativação, "Executar agora", reprocessar)."""
     await asyncio.sleep(30)
     while True:
         with contextlib.suppress(Exception):
-            if get_config()["ativa"]:
+            cfg = get_config()
+            forcar, _forcar["proximo"] = _forcar["proximo"], False
+            if cfg["ativa"] and (forcar or not (cfg.get("apenas_dias_uteis") and _fim_de_semana())):
                 await ciclo()
         _gatilho.clear()
+        try:
+            espera = max(1, int(get_config().get("intervalo_min") or 5)) * 60
+        except (TypeError, ValueError):
+            espera = INTERVALO_SEG
         with contextlib.suppress(asyncio.TimeoutError):
-            await asyncio.wait_for(_gatilho.wait(), timeout=INTERVALO_SEG)
+            await asyncio.wait_for(_gatilho.wait(), timeout=espera)

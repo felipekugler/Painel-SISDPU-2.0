@@ -648,9 +648,8 @@ async def _ler_categoria(ctx, painel, cat: dict) -> list[dict]:
     # com quantidade > 0 no resumo, ficavam ausentes de `secoes`).
     with contextlib.suppress(Exception):
         if "painel_advogado_listar" not in (painel.url or ""):
-            await painel.goto(ec.EPROC_HOME + "controlador.php?acao=painel_advogado_listar",
-                              wait_until="domcontentloaded", timeout=30000)
-            await painel.wait_for_timeout(1000)
+            # pelo link ASSINADO (acao= sem o hash pode encerrar a sessão)
+            await ec._ir_para_inicio(painel, 1000)
 
     clicou = None
     with contextlib.suppress(Exception):
@@ -728,9 +727,8 @@ async def _ler_todos_corpo() -> dict:
         if painel is None:
             painel = page
             with contextlib.suppress(Exception):
-                await painel.goto(ec.EPROC_HOME + "controlador.php?acao=painel_advogado_listar",
-                                  wait_until="domcontentloaded", timeout=60000)
-                await painel.wait_for_timeout(2000)
+                # pelo link ASSINADO (acao= sem o hash pode encerrar a sessão)
+                await ec._ir_para_inicio(painel, 2000)
             if not sessao_ativa:
                 sessao_ativa = ec._status_dict(painel.url)["logado"]
 
