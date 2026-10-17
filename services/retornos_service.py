@@ -133,7 +133,7 @@ def _mapa_intimacoes_eproc() -> dict[str, dict]:
     localmente dentro do painel (ver `services.prazo_baixa_service`) some
     do badge na hora, sem esperar nova sincronização."""
     from ingestao import eproc_intimacoes
-    dados = eproc_intimacoes.carregar_visivel()
+    dados = eproc_intimacoes.carregar_visivel_todos()  # TRF4 + JMU
     idx: dict[str, dict] = {}
     for categoria, casos in (dados.get("secoes") or {}).items():
         for caso in casos:

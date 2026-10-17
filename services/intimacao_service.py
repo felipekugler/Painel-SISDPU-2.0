@@ -391,7 +391,7 @@ def listar_casos() -> list[dict]:
     hora, sem esperar nova sincronização."""
     from ingestao import eproc_intimacoes
 
-    cache = eproc_intimacoes.carregar_visivel()
+    cache = eproc_intimacoes.carregar_visivel_todos()  # TRF4 + JMU
     raw = _ler_raw()
     vistos_processo: set[str] = set()
     itens: list[dict] = []
@@ -629,7 +629,7 @@ def tentar_vincular_pajs_pendentes() -> dict:
     from ingestao import eproc_intimacoes
     from services import paj_processo_link_service
 
-    cache = eproc_intimacoes.carregar()
+    cache = eproc_intimacoes.carregar_todos()  # TRF4 + JMU
     if not cache.get("sincronizado_em"):
         return {"verificados": 0, "vinculados": 0}
 
@@ -745,7 +745,7 @@ async def purgar_casos_resolvidos() -> dict:
     sempre (não há mais critério de "confirmar antes")."""
     from ingestao import eproc_intimacoes
 
-    cache = eproc_intimacoes.carregar()
+    cache = eproc_intimacoes.carregar_todos()  # TRF4 + JMU
     if not cache.get("sincronizado_em"):
         return {"verificados": 0, "purgados": 0, "mantidos_por_seguranca": 0}
 

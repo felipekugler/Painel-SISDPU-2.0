@@ -173,7 +173,7 @@ def _listar_prazos() -> list[dict]:
     from ingestao import eproc_intimacoes
 
     brutos: list[dict] = []
-    dados = eproc_intimacoes.carregar_visivel()
+    dados = eproc_intimacoes.carregar_visivel_todos()  # TRF4 + JMU
     contador = 0  # desempate de chave — um mesmo processo pode aparecer em
     # mais de uma categoria do e-proc ao mesmo tempo (ex.: "prazo em aberto" e
     # "decurso de prazo"); sem isso, prazos sem PAJ/processo resolvido
@@ -197,6 +197,8 @@ def _listar_prazos() -> list[dict]:
                     "urgente": urgente,
                     "estimado": not final_real,
                     "evento": p.get("evento") or "Prazo final",
+                    "selo": caso.get("selo") or "",  # JFPR / TRF4 / JMU — ver ingestao/tribunais.py
+                    "selo_cor": caso.get("selo_cor") or "",
                     "seq": contador,
                 })
     return _agrupar_prazos_por_dia(brutos)
@@ -222,12 +224,15 @@ def _agrupar_prazos_por_dia(brutos: list[dict]) -> list[dict]:
         # Título curto pra exibir no calendário/tabela — o texto crú do e-proc
         # (`evento`, ex.: "Expedida/certificada a intimação eletrônica...") é
         # jurídico-processual, não serve de rótulo visual.
-        if paj:
-            titulo = f"Prazo judicial - PAJ {paj}"
-        elif processo:
-            titulo = f"Prazo judicial - {processo}"
-        else:
-            titulo = "Prazo judicial"
+        # Origem no título pelo mesmo selo da tabela de Prazos (pedido do
+        # Defensor, 17/10/2026): "Prazo JFPR - PAJ …", "Prazo JMU - PAJ …",
+        # "Prazo TRF4 - PAJ …". Grupo com prazos de origens diferentes (mesmo
+        # PAJ, mesmo dia) ou sem selo: "Prazo judicial".
+        selos = {(i.get("selo"), i.get("selo_cor")) for i in itens if i.get("selo")}
+        selo, selo_cor = next(iter(selos)) if len(selos) == 1 else ("", "")
+        rotulo = f"Prazo {selo}" if selo else "Prazo judicial"
+        resto = f" - PAJ {paj}" if paj else (f" - {processo}" if processo else "")
+        titulo = rotulo + resto
         # Estimado (prazo ainda não aberto oficialmente no e-proc — só uma
         # projeção pela regra de ciência tácita) marca com "*" no título, sem
         # parênteses (ver legenda da página). Quantidade de prazos agrupados
@@ -235,6 +240,7 @@ def _agrupar_prazos_por_dia(brutos: list[dict]) -> list[dict]:
         # calendário; fica só na descrição (tooltip), ver abaixo.
         if estimado:
             titulo += " *"
+            resto += " *"
 
         if len(itens) > 1:
             descricao = (
@@ -251,6 +257,9 @@ def _agrupar_prazos_por_dia(brutos: list[dict]) -> list[dict]:
             "data_fim": data_iso,
             "hora_inicio": None,
             "titulo": titulo,
+            # A tela desenha "Prazo [selo colorido] - PAJ …" com estes campos;
+            # `titulo` (texto) segue para dica/busca.
+            "selo": selo, "selo_cor": selo_cor, "titulo_resto": resto,
             "descricao": descricao,
             "local": "",
             "paj_norm": paj,

@@ -459,6 +459,39 @@ def carregar_visivel() -> dict:
     return {**dados, "secoes": secoes}
 
 
+def _com_jmu(dados: dict) -> dict:
+    """`dados` (cache do TRF4) com os casos da JMU somados às mesmas categorias
+    (cache próprio, ver `ingestao.eproc_jmu`) — cada caso da JMU marcado com
+    tribunal/selo. Só para LEITURA: nunca passar a `salvar()` (gravaria a JMU no
+    cache do TRF4 e a próxima sincronização a daria como "saiu da caixa")."""
+    from ingestao import eproc_jmu
+    jmu = eproc_jmu.carregar()
+    # Os do TRF4 também levam tribunal/selo (painel da 1ª instância → "JFPR"),
+    # para quem mostra a origem do prazo (ex.: título na Agenda).
+    secoes = {k: list(v or []) for k, v in eproc_jmu._marcar(dados.get("secoes") or {}, "TRF4", 1).items()}
+    for chave, casos in eproc_jmu._marcar(jmu.get("secoes") or {}).items():
+        secoes.setdefault(chave, []).extend(casos)
+    return {**dados, "secoes": secoes}
+
+
+def carregar_todos() -> dict:
+    """Como `carregar()`, com os casos da JMU incluídos (17/10/2026) — para quem
+    lê intimações de qualquer tribunal: triagem de intimações, agenda, vínculo
+    processo-PAJ, badges, purga de casos resolvidos."""
+    return _com_jmu(carregar())
+
+
+def carregar_visivel_todos() -> dict:
+    """Como `carregar_visivel()`, com os casos da JMU incluídos."""
+    return _com_jmu(carregar_visivel())
+
+
+def _cache_do_numero(numero: str) -> dict:
+    """Cache do tribunal do processo: o da JMU (segmento 7) ou o do TRF4."""
+    from ingestao import eproc_jmu
+    return eproc_jmu.carregar() if eproc_jmu.eh_processo_jmu(numero) else carregar()
+
+
 def buscar_lembretes(numero: str) -> dict:
     """Lembretes NATIVOS do e-proc (ícone/tooltip da listagem de intimações) de
     um processo, lidos do cache já sincronizado por "Sincronizar intimações"
@@ -469,7 +502,7 @@ def buscar_lembretes(numero: str) -> dict:
 
     Retorna {"encontrado": bool, "lembrete_itens": [{seq,texto}, ...],
     "sincronizado_em": "..."}."""
-    dados = carregar()
+    dados = _cache_do_numero(numero)
     alvo = re.sub(r"\D", "", numero or "")
     if alvo:
         for casos in (dados.get("secoes") or {}).values():
@@ -491,7 +524,7 @@ def paj_do_processo(numero: str) -> dict:
     aquela sincronização E tiver lembrete com o PAJ no texto.
 
     Retorna {"encontrado": bool, "paj": "AAAA/UUU-NNNNN" | ""}."""
-    dados = carregar()
+    dados = _cache_do_numero(numero)
     alvo = re.sub(r"\D", "", numero or "")
     if alvo:
         for casos in (dados.get("secoes") or {}).values():

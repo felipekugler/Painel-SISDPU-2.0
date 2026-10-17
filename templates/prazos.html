@@ -476,8 +476,7 @@ function prazosEprocApp() {
       const porProcesso = {};
       for (const casos of Object.values(this.secoes || {})) {
         for (const c of casos || []) {
-          // JMU: atos referenciados usam o MCP do TRF4 — fora por ora.
-          if (!c.processo || c.tribunal === 'JMU') continue;
+          if (!c.processo) continue;
           const chaves = porProcesso[c.processo] || (porProcesso[c.processo] = new Set());
           for (const p of c.prazos || []) chaves.add(this._chaveAto(p));
         }

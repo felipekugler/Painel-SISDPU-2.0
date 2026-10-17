@@ -100,7 +100,7 @@ def resolver_pajs_de_processo(numero_processo: str) -> list[dict]:
     # diferente pro MESMO processo, o que é em si um sinal de ambiguidade).
     from ingestao import eproc_intimacoes
 
-    dados = eproc_intimacoes.carregar()
+    dados = eproc_intimacoes.carregar_todos()  # TRF4 + JMU
     for casos in (dados.get("secoes") or {}).values():
         for c in casos:
             if _normalizar(c.get("processo") or "") != chave:
@@ -140,7 +140,7 @@ def resolver_processos_de_paj(paj_norm: str) -> list[dict]:
 
     from ingestao import eproc_intimacoes
 
-    dados = eproc_intimacoes.carregar()
+    dados = eproc_intimacoes.carregar_todos()  # TRF4 + JMU
     for casos in (dados.get("secoes") or {}).values():
         for c in casos:
             if intimacao_service.paj_para_norm(c.get("paj")) != paj_norm:

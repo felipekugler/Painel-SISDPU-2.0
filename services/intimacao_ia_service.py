@@ -654,6 +654,25 @@ documentos de apoio — não o ato em si."""
 _MARCADOR_PRECISA_ANEXOS = "PRECISA_ANEXOS"
 
 
+def _contexto_tribunal(processo: str) -> list[str]:
+    """Linhas de contexto para os prompts quando o processo é da Justiça Militar
+    da União (segmento 7 do número, 17/10/2026): sem isso a IA partia do
+    contexto previdenciário do TRF4 (INSS, JEF, RPV)."""
+    from ingestao import eproc_jmu
+    if not eproc_jmu.eh_processo_jmu(processo):
+        return []
+    return [
+        "",
+        "CONTEXTO DO TRIBUNAL: este processo tramita na JUSTIÇA MILITAR DA UNIÃO (e-proc da "
+        "JMU — Auditorias das Circunscrições Judiciárias Militares, 2º grau no STM). É processo "
+        "PENAL MILITAR (Código Penal Militar — Decreto-Lei 1.001/69; Código de Processo Penal "
+        "Militar — Decreto-Lei 1.002/69), com o Ministério Público Militar como acusação e a "
+        "Defensoria Pública da União, em regra, na DEFESA do acusado. Prazos, recursos e "
+        "providências seguem o CPPM (e o CPP subsidiariamente) — NÃO trate como processo "
+        "previdenciário/assistencial nem cite INSS, JEF ou RPV.",
+    ]
+
+
 def _montar_prompt_resumo(processo: str, evento_ref: dict | None, documentos: list[dict],
                            so_principal: bool = False, andamentos_posteriores: str = "") -> str:
     """Monta o prompt do resumo apresentando CADA documento SEPARADAMENTE
@@ -695,6 +714,7 @@ def _montar_prompt_resumo(processo: str, evento_ref: dict | None, documentos: li
         "Você vai resumir uma intimação judicial recebida pela Defensoria "
         f"Pública da União no processo {processo}, em linguagem simples e "
         "objetiva, para um Defensor Público decidir rapidamente o que fazer.",
+        *_contexto_tribunal(processo),
     ]
     if evento_ref:
         desc_evento = evento_ref.get("evento_descricao") or ""
@@ -1088,6 +1108,7 @@ def _montar_prompt_confronto(processo: str, resumo_intimacao: str) -> str:
         "e classifique como REQUER_ANALISE_HUMANA.",
         "",
         f"PROCESSO JUDICIAL: {processo}",
+        *_contexto_tribunal(processo),
         "",
         "RESUMO DA INTIMAÇÃO (já cobre o(s) ato(s) referenciado(s) e qualquer "
         "andamento posterior relevante do processo):",
@@ -1202,6 +1223,7 @@ def _montar_prompt_peticao(processo: str, caso: dict) -> str:
     return "\n".join([
         "Redija uma MANIFESTAÇÃO/PETIÇÃO simples e objetiva da Defensoria Pública da "
         f"União em resposta à intimação abaixo, no processo {processo}.",
+        *_contexto_tribunal(processo),
         "",
         "RESUMO DA INTIMAÇÃO:",
         caso.get("resumo_intimacao") or "",
@@ -1230,6 +1252,7 @@ def _montar_prompt_despacho(processo: str, caso: dict) -> str:
         "intimação.",
         "",
         f"DESTINATÁRIO: {destinatario} (cartório / assessoria / DIVCOM / assistido)",
+        *_contexto_tribunal(processo),
         "",
         "RESUMO DA INTIMAÇÃO:",
         caso.get("resumo_intimacao") or "",
@@ -3501,6 +3524,15 @@ async def rodar_pipeline(processo: str, ato: str, log_cb: LogCb) -> dict:
     # confronto/minuta genéricos — não sincroniza o PAJ, só os documentos do
     # processo judicial (ver `gerar_impugnacao_laudo_pericial`).
     sigla_principal = (caso.get("evento_referenciado") or {}).get("sigla_principal") or ""
+    # JMU (processo penal militar, 17/10/2026): os fluxos especializados abaixo
+    # (laudo médico pericial, RPV, sentença homologatória de acordo com o INSS,
+    # sentença de mérito previdenciária) são do TRF4 — na JMU vai direto ao
+    # caminho geral (confronto → minuta), com o contexto penal militar nos prompts.
+    from ingestao import eproc_jmu
+    if eproc_jmu.eh_processo_jmu(processo):
+        log_cb("info", "Processo da Justiça Militar da União — análise pelo caminho geral "
+                       "(sem os fluxos especializados previdenciários).")
+        sigla_principal = ""
     if _eh_sigla_laudo_pericial(sigla_principal):
         log_cb("novo", f"Ato principal é um laudo pericial ({sigla_principal}) — usando o fluxo "
                        "especializado de impugnação de laudo, não o confronto genérico.")
@@ -3545,6 +3577,8 @@ async def rodar_pipeline(processo: str, ato: str, log_cb: LogCb) -> dict:
     # gera minuta, só classifica e explica (ver `gerar_conferencia_
     # sentenca_homologatoria`). Também não sincroniza o PAJ.
     evento_descricao = (caso.get("evento_referenciado") or {}).get("evento_descricao") or ""
+    if eproc_jmu.eh_processo_jmu(processo):
+        evento_descricao = ""
     if _eh_sentenca_homologatoria(sigla_principal, evento_descricao):
         log_cb("novo", f"Ato principal é uma sentença homologatória ({sigla_principal}) — usando "
                        "o fluxo especializado de conferência, não o confronto genérico.")

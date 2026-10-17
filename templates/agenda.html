@@ -10,6 +10,11 @@
   .tnum { font-variant-numeric: tabular-nums; }
   .legenda-dot { display:inline-block; width:10px; height:10px; border-radius:2px; margin-right:6px; vertical-align:-1px; }
   .filtro-chip { cursor:pointer; }
+  /* Selo do tribunal no título do prazo ("Prazo [JMU] - PAJ …") — mesmo selo da
+     tabela de Prazos; cor vem do evento (`selo_cor`, ver ingestao/tribunais.py). */
+  .selo-tribunal { display:inline-block; font-size:9px; font-weight:700; letter-spacing:.04em;
+                   padding:0 4px; border-radius:4px; vertical-align:1px; line-height:1.5;
+                   color:#fff; background:#6b7280; }
   /* FullCalendar — harmoniza com o tema Fluent do painel (ver base.html) em vez
      do visual padrão da lib. */
   #fc-agenda { background: var(--card); border: 1px solid var(--stroke); border-radius: 10px; padding: 12px; }
@@ -128,7 +133,7 @@
                 <td class="text-xs tnum whitespace-nowrap" x-text="formatarData(e)"></td>
                 <td><span class="badge badge-sm" :class="badgeTipo(e.tipo)" :style="estiloBadgeTipo(e)" x-text="rotuloTipo(e)"></span></td>
                 <td class="text-sm max-w-md">
-                  <div class="truncate" :title="e.descricao || e.titulo" x-text="e.titulo"></div>
+                  <div class="truncate" :title="e.descricao || e.titulo" x-html="tituloHtml(e)"></div>
                 </td>
                 <td class="text-xs whitespace-nowrap">
                   <template x-if="e.paj_norm">
@@ -399,6 +404,13 @@ function agendaApp() {
         headerToolbar: { left: 'prev,next today', center: 'title', right: 'dayGridMonth,timeGridWeek,listMonth' },
         buttonText: { today: 'hoje', month: 'mês', week: 'semana', list: 'lista' },
         events: [],
+        // Prazo com selo de tribunal: "Prazo [selo colorido] - PAJ …" (17/10/2026).
+        eventContent: (arg) => {
+          const raw = arg.event.extendedProps.raw;
+          if (!raw || !raw.selo) return undefined;  // demais: desenho padrão
+          return { html: '<div class="fc-event-title" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap">'
+                         + this.tituloHtml(raw) + '</div>' };
+        },
         eventClick: (info) => {
           const raw = info.event.extendedProps.raw;
           if (!raw) return;
@@ -441,6 +453,17 @@ function agendaApp() {
           extendedProps: { raw: e },
         };
       });
+    },
+
+    _esc(t) {
+      return String(t ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    },
+    // Título com o selo do tribunal colorido no lugar do texto (prazos do e-proc).
+    tituloHtml(e) {
+      if (!e.selo) return this._esc(e.titulo);
+      const cor = /^#[0-9a-fA-F]{3,8}$/.test(e.selo_cor || '') ? e.selo_cor : '#6b7280';
+      return 'Prazo <span class="selo-tribunal" style="background:' + cor + '">' + this._esc(e.selo)
+             + '</span>' + this._esc(e.titulo_resto || '');
     },
 
     corEvento(e) {

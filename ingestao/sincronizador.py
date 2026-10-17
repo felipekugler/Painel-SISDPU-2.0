@@ -3059,7 +3059,7 @@ async def rodar_prazos_abertos(
     # Leitura VISÍVEL (baixa local aplicada, ver `services.prazo_baixa_
     # service`) — um PAJ cujo único prazo já foi fechado dentro do painel
     # não entra mais nesta lista sem precisar de nova sincronização.
-    dados_intimacoes = eproc_intimacoes.carregar_visivel()
+    dados_intimacoes = eproc_intimacoes.carregar_visivel_todos()  # TRF4 + JMU
     casos = (dados_intimacoes.get("secoes") or {}).get("prazo_aberto") or []
 
     # Dedupe por paj_norm preservando ordem — o mesmo PAJ pode ter varios
