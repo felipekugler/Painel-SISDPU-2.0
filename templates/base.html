@@ -875,6 +875,30 @@
         .ql-snow .ql-tooltip input[type="text"] {
             background: var(--surface, rgba(0, 0, 0, 0.02)); color: var(--text); border: 1px solid var(--stroke);
         }
+        /* Modo escuro: os modelos (Usar modelo) trazem o PRETO gravado no HTML
+           (windowtext, black, rgb(26,26,26), rgb(51,51,51)…) e ficavam ilegíveis
+           sobre o fundo escuro (17/10/2026). Só a EXIBIÇÃO no editor vira a cor
+           do texto do tema; o HTML enviado ao SISDPU/e-proc mantém o preto. */
+        :root[data-theme="dark"] .ql-editor :is(
+            [style*="color: windowtext"], [style*="color:windowtext"],
+            [style*="color: black"], [style*="color:black"],
+            [style*="color: rgb(0, 0, 0)"], [style*="color: #000"],
+            [style*="color: rgb(26, 26, 26)"], [style*="color: #1a1a1a"],
+            [style*="color: rgb(33, 33, 33)"], [style*="color: #212121"],
+            [style*="color: rgb(51, 51, 51)"], [style*="color: #333"]) {
+            color: var(--text) !important;
+        }
+        @media (prefers-color-scheme: dark) {
+            :root:not([data-theme="light"]):not([data-theme="dark"]) .ql-editor :is(
+                [style*="color: windowtext"], [style*="color:windowtext"],
+                [style*="color: black"], [style*="color:black"],
+                [style*="color: rgb(0, 0, 0)"], [style*="color: #000"],
+                [style*="color: rgb(26, 26, 26)"], [style*="color: #1a1a1a"],
+                [style*="color: rgb(33, 33, 33)"], [style*="color: #212121"],
+                [style*="color: rgb(51, 51, 51)"], [style*="color: #333"]) {
+                color: var(--text) !important;
+            }
+        }
     </style>
 
     {% block head %}{% endblock %}
