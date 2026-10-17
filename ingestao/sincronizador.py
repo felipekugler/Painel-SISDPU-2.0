@@ -878,6 +878,25 @@ async def _processar_paj(
     )
 
 
+def _linha_caixa_das_tramitacoes(meta: dict, tramitacoes: list[dict]) -> None:
+    """Descrição e data da coluna da caixa a partir do trâmite MAIS RECENTE
+    pendente. Quem atualiza só a lista de trâmites (releitura dos trâmites
+    do PAJ) precisa levar junto a linha da caixa — senão o PAJ aparecia na
+    caixa sem descrição e com a data de uma movimentação antiga (16/10/2026,
+    PAJ 2026/029-03459: trâmite "Minuta de inicial." de 13/10)."""
+    def _quando(t: dict) -> str:
+        d = parser.parse_data_br(t.get("data_envio") or "")
+        h = re.search(r"\d{2}:\d{2}(:\d{2})?", t.get("data_envio") or "")
+        return d + (h.group(0) if h else "")
+    if not tramitacoes:
+        return
+    ult = max(tramitacoes, key=_quando)
+    meta["desc_mov_caixa"] = (ult.get("descricao") or "").strip()[:500]
+    data_iso = parser.parse_data_br(ult.get("data_envio") or "")
+    if data_iso:
+        meta["data_mov_caixa"] = data_iso
+
+
 def _atualizar_linha_caixa(meta_path, item: dict) -> None:
     """PAJ pulado na sync da caixa (sem trâmite novo): mesmo assim grava a
     descrição e a data do trâmite exatamente como vieram na linha da caixa do
@@ -1566,6 +1585,7 @@ async def _atualizar_tramitacoes_caixa(
         if meta.get("tramitacoes_caixa") == novas:
             continue  # sem mudança
         meta["tramitacoes_caixa"] = novas
+        _linha_caixa_das_tramitacoes(meta, novas)
         meta.pop("tem_pendencia_submenu", None)  # campo antigo, superado por subtipo
         try:
             meta_path.write_text(
@@ -1662,6 +1682,7 @@ async def atualizar_tramitacoes_paj_mcp(
     if not paj_ja_lido and any(t.get("id_tramite") not in ids_antes for t in novas):
         meta["tramitacao_nao_lida"] = True
     meta["tramitacoes_caixa"] = novas
+    _linha_caixa_das_tramitacoes(meta, novas)
     if novas:
         if meta.get("em_caixa_atual") is not True:
             log(f"  [tramitacoes] {paj_norm}: trâmite pendente na caixa — volta ao dashboard")

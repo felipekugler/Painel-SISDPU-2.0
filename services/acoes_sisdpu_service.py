@@ -15,7 +15,9 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import json
+import logging
 import re
+import time
 import subprocess
 import unicodedata
 import uuid
@@ -27,6 +29,8 @@ from config import PAJS_DIR
 from ingestao import sisdpu_client
 from ingestao import sisdpu_movtram as movtram
 from services import paj_service
+
+_log = logging.getLogger("acoes_sisdpu")
 
 # Mesma lista que o SISDPU aceita nos anexos de MOVIMENTAÇÃO (sisdpu_movtram.
 # _TIPOS_ANEXO_OK) — fora disso, o anexo seria silenciosamente pulado lá dentro;
@@ -283,6 +287,7 @@ async def com_auto_reconexao(chamada):
     RECONECTA automaticamente (login fresco no SISDPU) e tenta a MESMA ação mais uma
     vez. Retorna (resultado, excecao, eventos_sse) — eventos_sse já prontos para `yield`."""
     eventos: list[dict] = []
+    inicio = time.monotonic()
     try:
         resultado = await chamada()
         excecao = None
@@ -290,6 +295,12 @@ async def com_auto_reconexao(chamada):
         resultado, excecao = None, e
 
     if _parece_problema_sessao(resultado, excecao):
+        # Registra O QUE falhou e quanto tempo levou: 17/10/2026 a conclusão do
+        # PAJ 2026/029-03411 ficou ~2 min na 1ª tentativa sem nada no log.
+        _log.warning("SISDPU: 1ª tentativa falhou após %.0fs — reconectando. Erro: %s | resultado: %s",
+                     time.monotonic() - inicio,
+                     f"{type(excecao).__name__}: {excecao}"[:400] if excecao else "—",
+                     str(resultado)[:300] if resultado is not None else "—")
         eventos.append(_ev("muted", "Sessão do SISDPU indisponível — reconectando automaticamente…"))
         try:
             rec_conn = await sisdpu_client.reconectar()

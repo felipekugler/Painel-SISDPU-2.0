@@ -16,6 +16,7 @@ Funções públicas:
 
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import mimetypes
 import re
@@ -795,6 +796,40 @@ async def tramitar_paj(
 # ---------------------------------------------------------------------------
 # CONCLUIR (admitir na caixa de grupo + concluir na caixa do usuário)
 # ---------------------------------------------------------------------------
+_JS_CAIXA_CARREGADA = r"""() => !!document.querySelector('[id="tabView:caixaEntradaTab1Form:tramites"], [id^="tabView"]')"""
+
+
+async def _sessao_pronta(limite_seg: float = 20) -> bool:
+    """Conferência RÁPIDA da sessão do SISDPU antigo: abre a caixa de entrada
+    com prazo curto e confere que não caiu no login e que a caixa carregou.
+    Qualquer erro ou demora além de `limite_seg` = sessão não pronta."""
+    async def _conferir() -> bool:
+        page = await _get_page()
+        await page.goto(f"{SISDPU_URL}/pages/caixaentrada/caixaEntrada.xhtml",
+                        wait_until="domcontentloaded", timeout=12000)
+        await page.wait_for_timeout(400)
+        if "login" in (page.url or "").lower():
+            return False
+        return bool(await page.evaluate(_JS_CAIXA_CARREGADA))
+    try:
+        return await asyncio.wait_for(_conferir(), timeout=limite_seg)
+    except Exception:  # noqa: BLE001 — timeout, navegador morto, página travada
+        return False
+
+
+async def garantir_sessao_rapida() -> None:
+    """Antes de concluir: confere a sessão em segundos e, se expirou ou travou,
+    RECONECTA na hora (login novo). Antes, uma sessão vencida só era percebida
+    depois de várias esperas de página esgotarem — ~2 min parado na conclusão
+    (PAJ 2026/029-03411, 17/10/2026). Levanta RuntimeError se não reconectar."""
+    if await _sessao_pronta():
+        return
+    _log.info("SISDPU: sessão expirada ou travada — reconectando antes de concluir.")
+    rec = await _sc.reconectar()
+    if not rec.get("ok"):
+        raise RuntimeError(f"Sessão do SISDPU indisponível: {rec.get('detalhe') or 'falha ao reconectar'}")
+
+
 async def concluir_paj(id_tramites: list[str], dry_run: bool = False) -> dict:
     """ADMITE (retira da caixa de grupo) e CONCLUI (baixa) o(s) trâmite(s) ORIGINÁRIO(S)
     pelo `id_tramite` (data-rk; não muda ao admitir). Retorna
@@ -816,7 +851,7 @@ async def concluir_paj(id_tramites: list[str], dry_run: bool = False) -> dict:
         return {"ok": True, "status": "dry_run",
                 "detalhe": f"[dry_run] Admitiria+concluiria os trâmites {ids}.", "resultados": res}
 
-    await _ensure_logged_in()
+    await garantir_sessao_rapida()
     page = await _get_page()
     cx_url = f"{SISDPU_URL}/pages/caixaentrada/caixaEntrada.xhtml"
 

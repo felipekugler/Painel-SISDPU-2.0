@@ -389,9 +389,14 @@ def _extras(id_processo: int, capa: dict, paj: str) -> dict:
     except Exception:  # noqa: BLE001
         pass
     try:
+        # O MCP devolve o nome em "representante" e o id em
+        # "idPessoaRepresentante" (16/10/2026: lendo só "nome"/"idPessoa", a
+        # linha do representante chegava sem nome — PAJ 2026/029-03459).
         out["representantes_legais"] = [
-            {"idPessoa": str(r.get("idPessoa") or ""), "nome": r.get("nome") or "",
-             "cpf": _cpf(r.get("cpf") or r.get("cpfCnpj"))}
+            {"idPessoa": str(r.get("idPessoaRepresentante") or r.get("idPessoa") or ""),
+             "nome": r.get("representante") or r.get("nome") or "",
+             "cpf": _cpf(r.get("cpfCnpj") or r.get("cpf")),
+             "representado": r.get("representado") or ""}
             for r in sis2.chamar("paj_representantes", {"idProcesso": id_processo}) or []]
     except Exception:  # noqa: BLE001
         pass
