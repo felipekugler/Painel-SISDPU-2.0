@@ -1108,11 +1108,14 @@ function dashboardApp() {
             const e = (p && p.etapa) || {};
             if (e.arquivado) return e;
             const rodando = this.analiseEmAndamento(p.paj_norm);
+            // "Em análise": amarelo do selo "Em andamento" (badge-warning do tema).
             if (e.chave === 'aguardando_analise' && rodando) {
-                return { ...e, chave: 'em_analise', rotulo: 'Em análise', icone: 'spinner' };
+                return { ...e, chave: 'em_analise', rotulo: 'Em análise', icone: 'spinner',
+                         cor_fundo: 'oklch(var(--wa))', cor_texto: 'oklch(var(--wac))' };
             }
             if (e.chave === 'em_analise' && this._analiseStatusLido && !rodando) {
-                return { ...e, chave: 'aguardando_analise', rotulo: 'Aguardando análise', icone: 'inbox' };
+                return { ...e, chave: 'aguardando_analise', rotulo: 'Aguardando análise', icone: 'inbox',
+                         cor_fundo: '#D3D1C7', cor_texto: '#2C2C2A' };
             }
             return e;
         },

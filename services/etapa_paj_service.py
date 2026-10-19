@@ -36,9 +36,11 @@ MARCADOR_MINUTA = "etapa_minuta_solicitada.json"
 ETAPAS = [
     ("aguardando_analise", "Aguardando análise", 0, False, "#D3D1C7", "#2C2C2A", "inbox"),
     # Automática e passageira: análise por IA rodando num PAJ que ainda estava
-    # "Aguardando análise" (16/10/2026). Mesma cor, com spinner. Terminada a
-    # análise, volta a "Aguardando análise" até o Defensor marcar a etapa.
-    ("em_analise", "Em análise", 0, False, "#D3D1C7", "#2C2C2A", "spinner"),
+    # "Aguardando análise" (16/10/2026), com spinner. Terminada a análise, volta a
+    # "Aguardando análise" até o Defensor marcar a etapa. Cor: o MESMO amarelo do
+    # selo "Em andamento" de Análises e Iniciais (`badge-warning` do tema —
+    # variáveis do DaisyUI, acompanham claro/escuro; 17/10/2026).
+    ("em_analise", "Em análise", 0, False, "oklch(var(--wa))", "oklch(var(--wac))", "spinner"),
     ("inviavel", "Analisado – Inviável", 1, True, "#F7C1C1", "#791F1F", "ban"),
     ("diligencia", "Analisado – Em diligência", 1, True, "#FDF0B8", "#633806", "hourglass"),
     ("viavel", "Analisado – Viável", 2, True, "#C0DD97", "#173404", "circle-check"),

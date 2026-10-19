@@ -249,6 +249,9 @@
         página avisa quando começa/termina (evento analise-ia-status, 16/10/2026) #}
      x-data="{ emAnalise: {{ 'true' if etapa.chave == 'em_analise' else 'false' }} }"
      @analise-ia-status.window="if ($event.detail.paj === '{{ paj_norm }}') emAnalise = $event.detail.running"
+     {# "Em análise" no amarelo do selo "Em andamento" (badge-warning do tema) #}
+     :style="emAnalise ? { background: 'oklch(var(--wa))', color: 'oklch(var(--wac))' }
+                       : { background: '#D3D1C7', color: '#2C2C2A' }"
      {% endif %}>
     {% if etapa.chave in ('aguardando_analise', 'em_analise') %}
     <span class="loading loading-spinner loading-sm shrink-0" x-show="emAnalise"></span>
@@ -1087,6 +1090,7 @@
              cabeçalho de rich_editor.js). `display:contents` tira este <div>
              do layout — os filhos entram direto como itens do grid do pai. -->
         <div style="display: contents;" id="acoesSisdpuPaj"
+             @fechar-consoles-isolados.window="aberto = false"
              x-data="acoesSisdpuBlock({
                          idProcesso: '{{ dados.id_processo }}', paj: '{{ meta.paj }}', pajNorm: '{{ paj_norm }}',
                          idTramite: '{{ dados.id_tramite }}', tramitacoesCaixa: window._paj_tramitacoes_caixa,
@@ -1101,7 +1105,7 @@
                  seção (mesma classe `justify-end` valendo pros dois casos)
                  — pedido do usuário 2026-09-18 (2ª parte). -->
             <div class="flex {% if dados.processos_judiciais %}justify-end{% else %}justify-center{% endif %}" style="grid-column: 1; grid-row: 1;">
-                <button type="button" @click="abrir()"
+                <button type="button" @click="abrir(); if (aberto) $dispatch('fechar-conjunta')"
                         class="btn btn-sm btn-outline btn-success gap-1.5"
                         title="Movimentar, tramitar ou concluir este PAJ diretamente no SISDPU">
                     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5"></path></svg>
@@ -1131,8 +1135,8 @@
         <button type="button"
                 class="btn btn-sm btn-circle border-none shrink-0 self-center"
                 style="background: linear-gradient(90deg, #16a34a, #2563eb); grid-column: 2; grid-row: 1;"
-                @click="movimentarConjunto('', '{{ paj_norm }}')"
-                title="Movimentar Sisdpu e Eproc simultaneamente">
+                @click="$dispatch('alternar-conjunta')"
+                title="Movimentar Sisdpu e Eproc simultaneamente (abre aqui, abaixo)">
             <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
             </svg>
@@ -1141,13 +1145,14 @@
         <!-- x-data no MESMO elemento que o x-show do console — mesmo motivo
              do bloco SISDPU acima. -->
         <div style="display: contents;"
+             @fechar-consoles-isolados.window="aberto = false"
              x-data="acoesEprocBlock({
                          processos: window._paj_processos_judiciais || [],
                          paj: '{{ meta.paj }}', pajNorm: '{{ paj_norm }}',
                      })" x-init="init()">
             <!-- justify-start (mesmo motivo do bloco SISDPU acima, espelhado). -->
             <div class="flex justify-start" style="grid-column: 3; grid-row: 1;">
-                <button type="button" @click="abrir()"
+                <button type="button" @click="abrir(); if (aberto) $dispatch('fechar-conjunta')"
                         class="btn btn-sm btn-outline btn-info gap-1.5"
                         title="Peticionar ou lançar evento no processo judicial (e-proc) vinculado a este PAJ">
                     <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="currentColor">
@@ -1166,6 +1171,35 @@
         </div>
         {% endif %}
     </div>
+
+    {% if dados.processos_judiciais %}
+    <!-- Movimentação conjunta Eproc + SISDPU EMBUTIDA (19/10/2026, pedido do
+         Defensor): a seta dupla abre os dois cards aqui, abaixo dos botões, em
+         vez de levar a /movimentar-conjunto — dá para rolar a página do PAJ
+         enquanto minuta a petição e o despacho. Um console por vez: abrir a
+         conjunta fecha os isolados (evento fechar-consoles-isolados) e vice-versa
+         (fechar-conjunta). Montada só no 1º clique (x-if) e depois só
+         escondida/mostrada (x-show) — fechar não perde o que já foi preenchido. -->
+    <div x-data="{ conjuntaAberta: false, conjuntaMontada: false }"
+         @alternar-conjunta.window="conjuntaAberta = !conjuntaAberta;
+                                    if (conjuntaAberta) { conjuntaMontada = true; $dispatch('fechar-consoles-isolados'); }"
+         @fechar-conjunta.window="conjuntaAberta = false">
+        <template x-if="conjuntaMontada">
+            <div x-show="conjuntaAberta" x-transition class="mt-3 pt-3 border-t border-base-300">
+                <div class="flex items-center justify-between mb-2">
+                    <span class="text-sm font-semibold">Movimentar Eproc + SISDPU</span>
+                    <button type="button" class="btn btn-ghost btn-xs" @click="conjuntaAberta = false"
+                            title="Fechar a movimentação conjunta (o que foi preenchido continua aqui)">✕ Fechar</button>
+                </div>
+                <div x-data="movimentarConjuntoApp({ pajNorm: '{{ paj_norm }}', pajLabel: '{{ meta.paj }}' })" x-init="init()"
+                     @processo-eproc-selecionado.window="if ($event.detail.pajNorm === pajNorm) processoConfirmado = $event.detail.numero">
+                    {% set mc_px = '' %}
+                    {% include "partials/movimentar_conjunto_painel.html" %}
+                </div>
+            </div>
+        </template>
+    </div>
+    {% endif %}
 </div>
 
 <!-- Ações com IA (estilo e-proc) — reorganizada em menu de categorias
