@@ -524,7 +524,7 @@
                     <input type="text" class="input input-bordered input-sm w-64" x-model="caixa"
                            placeholder="Ex.: 01 - PREV_DIVPREV">
                     <div class="flex items-center gap-2">
-                        <select class="select select-bordered select-sm w-64" x-model="caixa" x-show="grupos.length">
+                        <select data-busca class="select select-bordered select-sm w-64" x-model="caixa" x-show="grupos.length">
                             <template x-for="g in grupos" :key="g"><option :value="g" x-text="g"></option></template>
                         </select>
                         <button class="btn btn-sm btn-ghost" @click="carregarGrupos()" :disabled="carregando" title="Consulta o SISDPU">
@@ -615,14 +615,14 @@
     </div><!-- /cfg-panel sat -->
 
     <!-- ===================== Aba: SISDPU ===================== -->
-    <div class="cfg-panel" data-panel="sisdpu" x-data="{ subaba: 'fases' }">
+    <div class="cfg-panel" data-panel="sisdpu" x-data="{ subaba: 'despachos' }">
 
     <!-- Subabas do SISDPU -->
     <div class="cfg-subtabs">
+        <button type="button" :class="subaba==='despachos' && 'ativa'" @click="subaba='despachos'">Despachos padrão</button>
         <button type="button" :class="subaba==='fases' && 'ativa'" @click="subaba='fases'">Fases do SISDPU</button>
         <button type="button" :class="subaba==='caixas' && 'ativa'" @click="subaba='caixas'">Caixas do SISDPU</button>
         <button type="button" :class="subaba==='oficios' && 'ativa'" @click="subaba='oficios'">Tabela de Ofícios</button>
-        <button type="button" :class="subaba==='despachos' && 'ativa'" @click="subaba='despachos'">Despachos padrão</button>
         <button type="button" :class="subaba==='mcp' && 'ativa'" @click="subaba='mcp'">Fonte de dados (SIS-DPU 2.0)</button>
     </div>
 
@@ -908,16 +908,7 @@
             <p class="text-sm text-base-content/60">
                 Textos padrão pra despachos de movimentação reiterados — disponíveis no módulo
                 <strong>"Ações no SISDPU"</strong> pra inserir na caixa de Movimentação com um clique, com a MESMA
-                formatação rica (negrito, itálico, listas etc.) daquela caixa. Use os placeholders
-                <code class="text-xs">[NOME]</code>, <code class="text-xs">[CPF]</code>,
-                <code class="text-xs">[PROCESSO]</code>, <code class="text-xs">[PAJ]</code>, <code class="text-xs">[DATA]</code>,
-                <code class="text-xs">[OFICIO]</code>, <code class="text-xs">[UNIDADE]</code>,
-                <code class="text-xs">[DEFENSOR]</code> e <code class="text-xs">[CARGO]</code> no texto — são
-                substituídos pelos dados do PAJ em uso na hora de inserir (nome e CPF são do assistido
-                <strong>principal</strong>; <strong>[PROCESSO]</strong> só resolve quando há exatamente 1 processo
-                judicial vinculado ao PAJ — com 0 ou 2+, fica em branco, sem escolher um arbitrariamente; data é
-                sempre a data de hoje; ofício/unidade/defensor/cargo vêm da aba <strong>Geral</strong> destas
-                Configurações; sem PAJ vinculado, só PAJ/data/ofício/unidade/defensor/cargo resolvem).
+                formatação rica (negrito, itálico, listas etc.) daquela caixa. Use os <strong>placeholders</strong> (botões acima do texto, agrupados por categoria — passe o mouse para ver o que cada um traz): são substituídos pelos dados do PAJ/processo na hora de inserir. Dado que o PAJ não tiver fica com o placeholder escrito no texto, para completar à mão. Os da ficha do assistido (nascimento, idade, mãe, RG, nacionalidade, qualificação) e os lidos no e-proc (vara, classe, autor, réu) só são consultados quando o modelo os usa.
             </p>
             <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
 
@@ -967,10 +958,17 @@
                     <div class="form-control">
                         <div class="flex items-center justify-between mb-1 flex-wrap gap-1">
                             <label class="label-text text-xs">Texto do despacho</label>
-                            <div class="flex gap-1 flex-wrap">
-                                <template x-for="p in placeholders" :key="p.token">
-                                    <button type="button" class="btn btn-xs btn-outline" :title="p.legenda"
-                                            @click="inserirPlaceholder(p.token)" x-text="p.token"></button>
+                            <!-- Placeholders por categoria (catálogo único: static/js/rich_editor.js,
+                                 PLACEHOLDERS_CATALOGO — 19/10/2026). Passe o mouse para ver o que cada um traz. -->
+                            <div class="flex flex-col gap-1 w-full">
+                                <template x-for="g in gruposPlaceholders" :key="g.categoria">
+                                    <div class="flex items-start gap-1 flex-wrap">
+                                        <span class="text-[11px] font-semibold text-base-content/50 w-36 shrink-0 pt-0.5" x-text="g.categoria"></span>
+                                        <template x-for="p in g.itens" :key="p.token">
+                                            <button type="button" class="btn btn-xs btn-outline" :title="p.legenda"
+                                                    @click="inserirPlaceholder(p.token)" x-text="p.token"></button>
+                                        </template>
+                                    </div>
                                 </template>
                             </div>
                         </div>
@@ -1260,14 +1258,7 @@
                 Textos padrão pra petições reiteradas (aceitação de acordo, juntada de documento, ciência de
                 RPV/precatório etc.) — disponíveis no módulo <strong>"Ações no Eproc"</strong> pra inserir na caixa
                 de Petição com um clique, com a MESMA formatação rica (negrito, itálico, listas etc.) daquela caixa.
-                Use os placeholders <code class="text-xs">[NOME]</code>, <code class="text-xs">[CPF]</code>,
-                <code class="text-xs">[PROCESSO]</code>, <code class="text-xs">[PAJ]</code>,
-                <code class="text-xs">[DATA]</code>, <code class="text-xs">[OFICIO]</code>,
-                <code class="text-xs">[UNIDADE]</code>, <code class="text-xs">[DEFENSOR]</code> e
-                <code class="text-xs">[CARGO]</code> no texto — são substituídos pelos dados do PAJ/processo em uso
-                na hora de inserir (nome e CPF são do assistido <strong>principal</strong>; data é sempre a data de
-                hoje; ofício/unidade/defensor/cargo vêm da aba <strong>Geral</strong> destas Configurações; sem PAJ
-                vinculado — petição avulsa — processo/PAJ/data/ofício/unidade/defensor/cargo resolvem do mesmo jeito).
+                Use os <strong>placeholders</strong> (botões acima do texto, agrupados por categoria — passe o mouse para ver o que cada um traz): são substituídos pelos dados do PAJ/processo na hora de inserir. Dado que o PAJ não tiver fica com o placeholder escrito no texto, para completar à mão. Os da ficha do assistido (nascimento, idade, mãe, RG, nacionalidade, qualificação) e os lidos no e-proc (vara, classe, autor, réu) só são consultados quando o modelo os usa.
             </p>
             <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
 
@@ -1329,10 +1320,17 @@
                     <div class="form-control">
                         <div class="flex items-center justify-between mb-1 flex-wrap gap-1">
                             <label class="label-text text-xs">Texto da petição</label>
-                            <div class="flex gap-1 flex-wrap">
-                                <template x-for="p in placeholders" :key="p.token">
-                                    <button type="button" class="btn btn-xs btn-outline" :title="p.legenda"
-                                            @click="inserirPlaceholder(p.token)" x-text="p.token"></button>
+                            <!-- Placeholders por categoria (catálogo único: static/js/rich_editor.js,
+                                 PLACEHOLDERS_CATALOGO — 19/10/2026). Passe o mouse para ver o que cada um traz. -->
+                            <div class="flex flex-col gap-1 w-full">
+                                <template x-for="g in gruposPlaceholders" :key="g.categoria">
+                                    <div class="flex items-start gap-1 flex-wrap">
+                                        <span class="text-[11px] font-semibold text-base-content/50 w-36 shrink-0 pt-0.5" x-text="g.categoria"></span>
+                                        <template x-for="p in g.itens" :key="p.token">
+                                            <button type="button" class="btn btn-xs btn-outline" :title="p.legenda"
+                                                    @click="inserirPlaceholder(p.token)" x-text="p.token"></button>
+                                        </template>
+                                    </div>
                                 </template>
                             </div>
                         </div>
@@ -2231,7 +2229,8 @@ function modelosTextoPrefs(cfg) {
         // ativos e quebrariam com objeto nulo.
         modeloEmEdicao: { id: '', nome: '', texto: '' },
         editandoIndex: -1,
-        placeholders: cfg.placeholders,
+        placeholders: cfg.placeholders || PLACEHOLDERS_LISTA,
+        gruposPlaceholders: cfg.gruposPlaceholders || PLACEHOLDERS_CATALOGO,
         // Editor rico (Quill) do texto do modelo — mesma fábrica compartilhada
         // usada pela caixa de destino (static/js/rich_editor.js). Montado uma
         // vez só (o modal é reaproveitado pra novo/editar); cada abertura só
@@ -2361,20 +2360,9 @@ function eprocModelosPeticaoPrefs() {
         endpoint: '/api/config/eproc-modelos-peticao',
         rotuloItem: 'modelo',
         placeholderEditor: 'Texto padrão da petição — clique nos botões acima pra inserir um placeholder na posição do cursor.',
-        placeholders: [
-            { token: '[NOME]', legenda: 'Nome do assistido principal do PAJ' },
-            { token: '[CPF]', legenda: 'CPF do assistido principal do PAJ' },
-            { token: '[TELEFONES]', legenda: 'TODOS os telefones sincronizados do PAJ (card Contatos), sem distinguir de quem é cada um' },
-            { token: '[EMAILS]', legenda: 'TODOS os e-mails sincronizados do PAJ (card Contatos)' },
-            { token: '[ENDERECOS]', legenda: 'TODOS os endereços sincronizados do PAJ (card Contatos)' },
-            { token: '[PROCESSO]', legenda: 'Número do processo judicial' },
-            { token: '[PAJ]', legenda: 'Número do PAJ' },
-            { token: '[DATA]', legenda: 'Data de hoje, por extenso' },
-            { token: '[OFICIO]', legenda: 'Ofício (Configurações › Geral)' },
-            { token: '[UNIDADE]', legenda: 'Unidade da DPU (Configurações › Geral)' },
-            { token: '[DEFENSOR]', legenda: 'Nome do defensor (Configurações › Geral)' },
-            { token: '[CARGO]', legenda: 'Cargo do defensor (Configurações › Geral)' },
-        ],
+        // Catálogo único, agrupado por categoria (static/js/rich_editor.js).
+        placeholders: PLACEHOLDERS_LISTA,
+        gruposPlaceholders: PLACEHOLDERS_CATALOGO,
     });
 }
 
@@ -2534,20 +2522,9 @@ function sisdpuDespachosPadraoPrefs() {
         endpoint: '/api/config/sisdpu-modelos-despacho',
         rotuloItem: 'despacho',
         placeholderEditor: 'Texto padrão do despacho — clique nos botões acima pra inserir um placeholder na posição do cursor.',
-        placeholders: [
-            { token: '[NOME]', legenda: 'Nome do assistido principal do PAJ' },
-            { token: '[CPF]', legenda: 'CPF do assistido principal do PAJ' },
-            { token: '[TELEFONES]', legenda: 'TODOS os telefones sincronizados do PAJ (card Contatos), sem distinguir de quem é cada um' },
-            { token: '[EMAILS]', legenda: 'TODOS os e-mails sincronizados do PAJ (card Contatos)' },
-            { token: '[ENDERECOS]', legenda: 'TODOS os endereços sincronizados do PAJ (card Contatos)' },
-            { token: '[PROCESSO]', legenda: 'Número do processo judicial (só quando há exatamente 1 vinculado ao PAJ)' },
-            { token: '[PAJ]', legenda: 'Número do PAJ' },
-            { token: '[DATA]', legenda: 'Data de hoje, por extenso' },
-            { token: '[OFICIO]', legenda: 'Ofício (Configurações › Geral)' },
-            { token: '[UNIDADE]', legenda: 'Unidade da DPU (Configurações › Geral)' },
-            { token: '[DEFENSOR]', legenda: 'Nome do defensor (Configurações › Geral)' },
-            { token: '[CARGO]', legenda: 'Cargo do defensor (Configurações › Geral)' },
-        ],
+        // Catálogo único, agrupado por categoria (static/js/rich_editor.js).
+        placeholders: PLACEHOLDERS_LISTA,
+        gruposPlaceholders: PLACEHOLDERS_CATALOGO,
     });
 }
 

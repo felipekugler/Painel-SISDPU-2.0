@@ -70,7 +70,7 @@
                     <span x-show="carregandoGrupos" class="loading loading-spinner loading-xs"></span>
                     outra caixa…
                 </button>
-                <select x-show="grupos.length" class="select select-bordered select-xs" x-model="grupoSel">
+                <select data-busca x-show="grupos.length" class="select select-bordered select-xs" x-model="grupoSel">
                     <template x-for="g in grupos" :key="g"><option :value="g" x-text="g"></option></template>
                 </select>
                 <template x-if="grupoSel!==NAO_TRAMITAR">
@@ -573,7 +573,7 @@
             <h3 class="font-bold text-lg mb-2">Tipos de documentos a baixar</h3>
             <div class="flex items-center gap-2 mb-3 flex-wrap">
                 <span class="text-sm font-medium">Pretensão:</span>
-                <select class="select select-bordered select-sm" x-model="tiposPretSel" @change="onTiposPretChange()">
+                <select data-busca class="select select-bordered select-sm" x-model="tiposPretSel" @change="onTiposPretChange()">
                     <option value="__padrao__">Padrão (todas as outras)</option>
                     <option value="__instituidor__">◆ Instituidor (pensão por morte / auxílio-reclusão)</option>
                     <template x-for="pr in tiposPretensoes" :key="pr"><option :value="pr" x-text="pr"></option></template>

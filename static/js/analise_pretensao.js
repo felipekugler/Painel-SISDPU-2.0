@@ -30,6 +30,8 @@
 function analiseIaApp(pajNorm, tipoPadrao) {
     return {
         pajNorm: pajNorm,
+        // "Usar banco de teses" (19/10/2026) — ver services/banco_teses_service.py.
+        usarTeses: false,
         tipo: tipoPadrao || '',
         status: 'idle',
         lastAction: '',
@@ -174,7 +176,7 @@ function analiseIaApp(pajNorm, tipoPadrao) {
                 const r = await fetch('/api/analise-pretensao/reenviar/' + this.pajNorm, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ mensagem: msg }),
+                    body: JSON.stringify({ mensagem: msg, usar_teses: !!this.usarTeses }),
                 });
                 const d = await r.json();
                 if (!d.ok) {

@@ -1,0 +1,350 @@
+{% extends "base.html" %}
+{% block title %}Banco de teses{% endblock %}
+
+{% block content_class %}flex flex-col flex-1 p-0{% endblock %}
+
+{% block content %}
+{#
+  Banco de teses (19/10/2026) — tópicos genéricos de petição que a IA insere,
+  quando cabem no caso, nas petições geradas com "Usar banco de teses"
+  marcado. O trecho inserido aparece em AZUL no editor da minuta. Ver
+  services/banco_teses_service.py.
+#}
+<div x-data="bancoTesesApp()" x-init="init()" x-cloak class="flex flex-col flex-1">
+
+  <div class="px-8 pt-6 pb-2 flex items-start justify-between flex-wrap gap-3">
+    <div>
+      <h1 class="text-3xl font-semibold tracking-tight">Banco de teses</h1>
+      <div class="text-xs text-base-content/50 mt-1 max-w-3xl">
+        Tópicos genéricos de petição, com teses aplicáveis a casos concretos. Nas petições geradas por IA com
+        <strong>"Usar banco de teses"</strong> marcado, a IA confere se cada tese ativa se aplica ao caso e, se sim,
+        insere o tópico adaptado — em <span class="font-semibold" style="color:#0066cc">azul</span> no editor, para você
+        saber que veio daqui (troque a cor ao revisar).
+      </div>
+    </div>
+    <div class="flex items-center gap-2">
+      <button type="button" class="btn btn-sm btn-ghost" @click="importar()" :disabled="importando"
+              title="Traz os blocos reutilizáveis do projeto teses-dpu como teses INATIVAS, para revisar e ativar">
+        <span x-show="importando" class="loading loading-spinner loading-xs"></span>
+        Importar blocos do teses-dpu
+      </button>
+      <!-- "+ Nova tese": cadastro manual, ou importação de .docx/.pdf — um arquivo
+           (abre o formulário já preenchido) ou uma pasta inteira (cada arquivo vira
+           uma tese INATIVA para revisar e ativar) — 19/10/2026. -->
+      <div class="dropdown dropdown-end">
+        <button type="button" tabindex="0" class="btn btn-sm btn-primary" :disabled="lendoArquivo">
+          <span x-show="lendoArquivo" class="loading loading-spinner loading-xs"></span>
+          + Nova tese ▾
+        </button>
+        <ul tabindex="0" class="dropdown-content menu menu-sm bg-base-100 rounded-box z-20 w-72 p-1 shadow border border-base-300">
+          <li><a @click="nova(); $el.blur()">Cadastrar manualmente</a></li>
+          <li><a @click="$refs.arqUnico.click()">Importar de um arquivo (.docx / .pdf)…</a></li>
+          <li><a @click="$refs.arqPasta.click()">Importar uma pasta (vários arquivos)…</a></li>
+        </ul>
+        <input type="file" class="hidden" x-ref="arqUnico" accept=".docx,.pdf" @change="importarArquivo($event)">
+        <input type="file" class="hidden" x-ref="arqPasta" webkitdirectory multiple @change="importarPasta($event)">
+      </div>
+    </div>
+  </div>
+
+  <!-- Filtros -->
+  <div class="px-8 py-2 flex items-center gap-3 flex-wrap">
+    <input type="text" class="input input-bordered input-sm w-72" placeholder="Buscar no título, texto ou quando se aplica…"
+           x-model="busca">
+    <select class="select select-bordered select-sm" x-model="filtroArea">
+      <option value="">Todas as áreas</option>
+      <template x-for="a in areas" :key="a.chave"><option :value="a.chave" x-text="a.rotulo"></option></template>
+    </select>
+    <select class="select select-bordered select-sm" x-model="filtroSituacao">
+      <option value="">Ativas e inativas</option>
+      <option value="ativa">Só ativas</option>
+      <option value="inativa">Só inativas</option>
+    </select>
+    <span class="text-xs text-base-content/50"
+          x-text="filtradas().length + ' de ' + teses.length + ' tese(s) · ' + teses.filter(t => t.ativa).length + ' ativa(s)'"></span>
+    <span class="text-xs text-success" x-show="msg" x-text="msg"></span>
+  </div>
+
+  <!-- Seleção para excluir várias de uma vez -->
+  <div class="px-8 pb-2 flex items-center gap-3 flex-wrap" x-show="filtradas().length">
+    <label class="flex items-center gap-2 text-sm cursor-pointer" title="Marca/desmarca todas as teses da lista abaixo (respeita a busca e os filtros)">
+      <input type="checkbox" class="checkbox checkbox-sm"
+             :checked="todasMarcadas()" :indeterminate.prop="algumaMarcada() && !todasMarcadas()"
+             @change="marcarTodas($event.target.checked)">
+      <span>Selecionar todas</span>
+    </label>
+    <button type="button" class="btn btn-ghost btn-xs" x-show="qtdMarcadas()" @click="marcarTodas(false)">Nenhuma</button>
+    <span class="text-xs text-base-content/50" x-show="qtdMarcadas()" x-text="qtdMarcadas() + ' selecionada(s)'"></span>
+    <button type="button" class="btn btn-sm btn-error btn-outline ml-auto" x-show="qtdMarcadas()"
+            @click="excluirSelecionadas()" :disabled="excluindo">
+      <span x-show="excluindo" class="loading loading-spinner loading-xs"></span>
+      <span x-text="'Excluir selecionadas (' + qtdMarcadas() + ')'"></span>
+    </button>
+  </div>
+
+  <!-- Lista -->
+  <div class="px-8 pb-8 flex flex-col gap-3">
+    <template x-for="t in filtradas()" :key="t.id">
+      <div class="bg-base-200 rounded-lg border p-4" :class="(t.ativa ? '' : 'opacity-60 ') + (marcadas[t.id] ? 'border-error/60' : 'border-base-300')">
+        <div class="flex items-start justify-between gap-3">
+          <input type="checkbox" class="checkbox checkbox-sm mt-0.5 shrink-0" :checked="!!marcadas[t.id]"
+                 @change="marcadas[t.id] = $event.target.checked" title="Selecionar para excluir">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2 flex-wrap">
+              <span class="font-semibold" x-text="t.titulo"></span>
+              <span class="badge badge-sm" :class="t.ativa ? 'badge-success' : 'badge-ghost'" style="border-radius:4px"
+                    x-text="t.ativa ? 'Ativa' : 'Inativa'"></span>
+              <template x-for="a in (t.areas || [])" :key="a">
+                <span class="badge badge-sm badge-outline" style="border-radius:4px" x-text="rotuloArea(a)"></span>
+              </template>
+            </div>
+            <div class="text-xs mt-1" :class="t.quando_aplica ? 'text-base-content/70' : 'text-warning'">
+              <strong>Quando se aplica:</strong>
+              <span x-text="t.quando_aplica || 'não informado — preencha antes de ativar'"></span>
+            </div>
+            <div class="text-xs text-base-content/50 mt-0.5" x-show="t.fundamentos">
+              <strong>Fundamentos:</strong> <span x-text="t.fundamentos"></span>
+            </div>
+          </div>
+          <div class="flex items-center gap-1 shrink-0">
+            <label class="flex items-center gap-1 text-xs cursor-pointer" title="Só as teses ativas vão para a IA">
+              <input type="checkbox" class="toggle toggle-success toggle-xs" :checked="t.ativa" @change="alternarAtiva(t, $event.target.checked)">
+            </label>
+            <button type="button" class="btn btn-ghost btn-xs" @click="expandida = (expandida === t.id ? null : t.id)"
+                    x-text="expandida === t.id ? 'Ocultar texto' : 'Ver texto'"></button>
+            <button type="button" class="btn btn-ghost btn-xs" @click="editar(t)">Editar</button>
+            <button type="button" class="btn btn-ghost btn-xs text-error" @click="excluir(t)">Excluir</button>
+          </div>
+        </div>
+        <div x-show="expandida === t.id" class="mt-3 bg-base-100 rounded p-3 text-sm prose max-w-none" x-html="t.texto_html"></div>
+      </div>
+    </template>
+    <div x-show="!teses.length" class="bg-base-200 rounded-lg border border-base-300 p-10 text-center text-base-content/50">
+      Nenhuma tese cadastrada. Use <strong>+ Nova tese</strong> ou <strong>Importar blocos do teses-dpu</strong>.
+    </div>
+  </div>
+
+  <!-- Modal: cadastro/edição -->
+  <div class="modal" :class="{ 'modal-open': modal }">
+    <div class="modal-box w-11/12 max-w-4xl">
+      <h3 class="font-bold text-lg mb-3" x-text="form.id ? 'Editar tese' : 'Nova tese'"></h3>
+      <div class="flex flex-col gap-3">
+        <label class="flex flex-col gap-1">
+          <span class="text-sm font-medium">Título</span>
+          <input type="text" class="input input-bordered input-sm" x-model="form.titulo" maxlength="200"
+                 placeholder="ex.: Fungibilidade entre benefícios por incapacidade">
+        </label>
+        <div class="flex flex-col gap-1">
+          <span class="text-sm font-medium">Área(s)</span>
+          <div class="flex flex-wrap gap-2">
+            <template x-for="a in areas" :key="a.chave">
+              <label class="flex items-center gap-1 text-sm cursor-pointer">
+                <input type="checkbox" class="checkbox checkbox-xs" :value="a.chave"
+                       :checked="form.areas.includes(a.chave)" @change="alternarArea(a.chave, $event.target.checked)">
+                <span x-text="a.rotulo"></span>
+              </label>
+            </template>
+          </div>
+        </div>
+        <label class="flex flex-col gap-1">
+          <span class="text-sm font-medium">Quando se aplica</span>
+          <textarea class="textarea textarea-bordered textarea-sm" rows="3" x-model="form.quando_aplica"
+                    placeholder="Fatos do caso que tornam a tese cabível — é o que a IA confere antes de inserir o tópico. ex.: laudo reconhece sequela consolidada de acidente, mas nega incapacidade."></textarea>
+        </label>
+        <div class="flex flex-col gap-1">
+          <span class="text-sm font-medium">Texto do tópico <span class="text-xs font-normal text-base-content/50">(genérico — use [ ] onde a IA deve adaptar ao caso)</span></span>
+          <div :id="uidEditor" class="bg-base-100"></div>
+        </div>
+        <label class="flex flex-col gap-1">
+          <span class="text-sm font-medium">Fundamentos <span class="text-xs font-normal text-base-content/50">(lei, súmula, tema, precedente — opcional)</span></span>
+          <textarea class="textarea textarea-bordered textarea-sm" rows="2" x-model="form.fundamentos"></textarea>
+        </label>
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" class="toggle toggle-success toggle-sm" x-model="form.ativa">
+          <span class="text-sm">Ativa (vai para a IA nas petições com "Usar banco de teses")</span>
+        </label>
+        <span class="text-sm text-error" x-show="erro" x-text="erro"></span>
+      </div>
+      <div class="modal-action">
+        <button type="button" class="btn btn-sm" @click="modal = false">Cancelar</button>
+        <button type="button" class="btn btn-sm btn-primary" @click="salvar()" :disabled="salvando">
+          <span x-show="salvando" class="loading loading-spinner loading-xs"></span> Salvar
+        </button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<script>
+function bancoTesesApp() {
+  return {
+    teses: [], areas: [], busca: '', filtroArea: '', filtroSituacao: '', expandida: null,
+    modal: false, salvando: false, importando: false, excluindo: false, erro: '', msg: '',
+    marcadas: {},  // { [id]: true } — teses selecionadas para excluir
+    lendoArquivo: false,
+    form: { id: '', titulo: '', areas: ['geral'], quando_aplica: '', texto_html: '', fundamentos: '', ativa: true },
+    uidEditor: 'qtese-' + Math.random().toString(36).slice(2, 9),
+    _editor: null,
+
+    async init() { await this.carregar(); },
+    async carregar() {
+      try {
+        const j = await (await fetch('/api/banco-teses')).json();
+        this.teses = j.teses || []; this.areas = j.areas || [];
+      } catch (e) {}
+    },
+    rotuloArea(c) { return (this.areas.find((a) => a.chave === c) || {}).rotulo || c; },
+    _norm(s) { return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); },
+    filtradas() {
+      const q = this._norm(this.busca);
+      return this.teses.filter((t) => {
+        if (this.filtroArea && !(t.areas || []).includes(this.filtroArea)) return false;
+        if (this.filtroSituacao === 'ativa' && !t.ativa) return false;
+        if (this.filtroSituacao === 'inativa' && t.ativa) return false;
+        if (!q) return true;
+        const texto = (t.texto_html || '').replace(/<[^>]+>/g, ' ');
+        return [t.titulo, t.quando_aplica, t.fundamentos, texto].some((x) => this._norm(x).includes(q));
+      });
+    },
+    _flash(m) { this.msg = m; setTimeout(() => { this.msg = ''; }, 2500); },
+
+    _abrirModal(t) {
+      this.erro = '';
+      this.form = t ? { id: t.id, titulo: t.titulo, areas: [...(t.areas || [])], quando_aplica: t.quando_aplica || '',
+                        texto_html: t.texto_html || '', fundamentos: t.fundamentos || '', ativa: !!t.ativa }
+                    : { id: '', titulo: '', areas: ['geral'], quando_aplica: '', texto_html: '', fundamentos: '', ativa: true };
+      this.modal = true;
+      // O editor (Quill) precisa do container visível — monta depois do modal abrir.
+      this.$nextTick(() => {
+        if (!this._editor) {
+          this._editor = criarEditorRico(this.uidEditor, { placeholder: 'Texto do tópico…' });
+        }
+        if (this._editor) this._editor.setHTML(this.form.texto_html);
+      });
+    },
+    nova() { this._abrirModal(null); },
+    editar(t) { this._abrirModal(t); },
+    alternarArea(chave, marcado) {
+      const s = new Set(this.form.areas);
+      marcado ? s.add(chave) : s.delete(chave);
+      this.form.areas = [...s];
+    },
+    async salvar() {
+      this.erro = '';
+      if (this._editor) this.form.texto_html = this._editor.getHTML();
+      if (this.form.ativa && !this.form.quando_aplica.trim()) {
+        this.erro = 'Preencha "Quando se aplica" para ativar a tese — é o que a IA confere no caso.';
+        return;
+      }
+      this.salvando = true;
+      try {
+        const r = await fetch('/api/banco-teses', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                                   body: JSON.stringify(this.form) });
+        const j = await r.json();
+        if (!j.ok) { this.erro = j.erro || 'Falha ao salvar.'; return; }
+        this.modal = false; await this.carregar(); this._flash('Tese salva ✓');
+      } catch (e) { this.erro = 'Falha de rede: ' + e; }
+      finally { this.salvando = false; }
+    },
+    async alternarAtiva(t, ativa) {
+      if (ativa && !(t.quando_aplica || '').trim()) {
+        showToast('Preencha "Quando se aplica" antes de ativar — é o que a IA confere no caso.', 'warning');
+        await this.carregar(); return;
+      }
+      await fetch('/api/banco-teses', { method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({ ...t, ativa }) });
+      await this.carregar();
+    },
+    async excluir(t) {
+      if (!confirm('Excluir a tese "' + t.titulo + '"?')) return;
+      await fetch('/api/banco-teses/' + encodeURIComponent(t.id), { method: 'DELETE' });
+      await this.carregar(); this._flash('Tese excluída');
+    },
+    // Seleção para excluir várias (checkbox por tese + "Selecionar todas" da lista filtrada).
+    _idsMarcados() { return this.filtradas().filter((t) => this.marcadas[t.id]).map((t) => t.id); },
+    qtdMarcadas() { return this._idsMarcados().length; },
+    algumaMarcada() { return this.qtdMarcadas() > 0; },
+    todasMarcadas() { const l = this.filtradas(); return l.length > 0 && l.every((t) => this.marcadas[t.id]); },
+    marcarTodas(sim) {
+      const m = { ...this.marcadas };
+      this.filtradas().forEach((t) => { m[t.id] = !!sim; });
+      this.marcadas = m;
+    },
+    async excluirSelecionadas() {
+      const ids = this._idsMarcados();
+      if (!ids.length) return;
+      if (!confirm('Excluir ' + ids.length + ' tese(s) selecionada(s)?\n\nNão há como desfazer.')) return;
+      this.excluindo = true;
+      try {
+        const resp = await fetch('/api/banco-teses/excluir-varias', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ ids }) });
+        // Sem a rota (painel rodando código antigo) a resposta é 404/405 — avisa
+        // em vez de mostrar "0 excluídas" como se tivesse dado certo.
+        if (!resp.ok) {
+          showToast('Não foi possível excluir (o painel precisa ser reiniciado para esta função).', 'error');
+          return;
+        }
+        const j = await resp.json();
+        this.marcadas = {};
+        await this.carregar();
+        showToast((j.excluidas || 0) + ' tese(s) excluída(s).', 'success');
+      } catch (e) { showToast('Falha ao excluir: ' + e, 'error'); }
+      finally { this.excluindo = false; }
+    },
+    // Importação individual: lê o arquivo e abre o formulário já preenchido
+    // (título + texto) para revisar, completar "Quando se aplica" e salvar.
+    async importarArquivo(ev) {
+      const arq = ev.target.files && ev.target.files[0];
+      ev.target.value = '';
+      if (!arq) return;
+      this.lendoArquivo = true;
+      try {
+        const fd = new FormData(); fd.append('arquivo', arq);
+        const j = await (await fetch('/api/banco-teses/ler-arquivo', { method: 'POST', body: fd })).json();
+        if (!j.ok) { showToast(j.erro || 'Não foi possível ler o arquivo.', 'error'); return; }
+        this._abrirModal(null);
+        this.form.titulo = j.titulo || '';
+        this.form.texto_html = j.texto_html || '';
+        this.form.origem = j.origem || '';
+        this.form.ativa = false;  // ativa depois de preencher "Quando se aplica"
+        this.$nextTick(() => { if (this._editor) this._editor.setHTML(this.form.texto_html); });
+      } catch (e) { showToast('Falha ao ler o arquivo: ' + e, 'error'); }
+      finally { this.lendoArquivo = false; }
+    },
+    // Importação em bloco: todos os .docx/.pdf da pasta escolhida viram teses INATIVAS.
+    async importarPasta(ev) {
+      const arqs = [...(ev.target.files || [])].filter((f) => /\.(docx|pdf)$/i.test(f.name) && !f.name.startsWith('~$'));
+      ev.target.value = '';
+      if (!arqs.length) { showToast('Nenhum arquivo .docx ou .pdf nessa pasta.', 'warning'); return; }
+      if (!confirm('Importar ' + arqs.length + ' arquivo(s) como teses INATIVAS?\n\nDepois, revise cada uma, preencha "Quando se aplica" e ative.')) return;
+      this.lendoArquivo = true;
+      try {
+        const fd = new FormData();
+        arqs.forEach((f) => fd.append('arquivos', f, f.name));
+        const resp = await fetch('/api/banco-teses/importar-arquivos', { method: 'POST', body: fd });
+        if (!resp.ok) { showToast('Não foi possível importar (o painel precisa ser reiniciado para esta função).', 'error'); return; }
+        const j = await resp.json();
+        await this.carregar();
+        const ign = j.ignoradas || [];
+        showToast((j.importadas || 0) + ' tese(s) importada(s) como INATIVAS'
+                  + (ign.length ? ' · ' + ign.length + ' arquivo(s) ignorado(s): '
+                     + ign.slice(0, 3).map((x) => x.arquivo + ' (' + x.motivo + ')').join('; ') + (ign.length > 3 ? '…' : '') : ''),
+                  j.importadas ? 'success' : 'warning');
+      } catch (e) { showToast('Falha ao importar a pasta: ' + e, 'error'); }
+      finally { this.lendoArquivo = false; }
+    },
+    async importar() {
+      this.importando = true;
+      try {
+        const j = await (await fetch('/api/banco-teses/importar-teses-dpu', { method: 'POST' })).json();
+        await this.carregar();
+        showToast(j.importadas ? (j.importadas + ' bloco(s) importado(s) como INATIVOS — revise, preencha "Quando se aplica" e ative.')
+                               : 'Nenhum bloco novo para importar.', j.importadas ? 'success' : 'info');
+      } catch (e) { showToast('Falha ao importar: ' + e, 'error'); }
+      finally { this.importando = false; }
+    },
+  };
+}
+</script>
+{% endblock %}

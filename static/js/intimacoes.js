@@ -23,6 +23,9 @@
 
 function intimacoesPage() {
     return {
+        // "Usar banco de teses" (19/10/2026): vale para a petição gerada nas
+        // análises disparadas daqui — ver services/banco_teses_service.py.
+        usarTeses: false,
         itens: [],
         carregando: false,
         expandido: {},
@@ -923,7 +926,7 @@ function intimacoesPage() {
         analisar(it) {
             if (this.jobRodando(it.chave_caso)) return;
             const ato = it.chave_caso.split(':')[1];
-            const qs = new URLSearchParams({ ato });
+            const qs = new URLSearchParams({ ato, teses: this.usarTeses ? 1 : 0 });
             this._criarJob(`/api/intimacoes/${encodeURIComponent(it.processo)}/analisar?${qs}`,
                 `Analisando ${it.processo}`, it.chave_caso);
         },
@@ -939,7 +942,7 @@ function intimacoesPage() {
                 ['novo', 'erro'].includes(it.status_geral));
             if (!pendentes.length) return;
             const casosSel = pendentes.map(it => it.chave_caso);
-            const qs = new URLSearchParams({ casos_sel: casosSel.join(',') });
+            const qs = new URLSearchParams({ casos_sel: casosSel.join(','), teses: this.usarTeses ? 1 : 0 });
             const rotulo = this.tipoFiltro.length ? ` (${this.tipoFiltro.join(', ')})` : '';
             this._criarJob(`/api/intimacoes/analisar-selecionados?${qs}`,
                 `Analisando ${casosSel.length} pendente(s)${rotulo}`);
@@ -949,7 +952,7 @@ function intimacoesPage() {
             if (this.filaRodando()) return;
             const casosSel = Object.keys(this.selecionados).filter(k => this.selecionados[k]);
             if (!casosSel.length) return;
-            const qs = new URLSearchParams({ casos_sel: casosSel.join(',') });
+            const qs = new URLSearchParams({ casos_sel: casosSel.join(','), teses: this.usarTeses ? 1 : 0 });
             this._criarJob(`/api/intimacoes/analisar-selecionados?${qs}`,
                 `Analisando ${casosSel.length} selecionado(s)`);
             this.limparSelecao();

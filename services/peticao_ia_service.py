@@ -103,7 +103,7 @@ def _nome_peticao_hoje() -> str:
     return f"Petição-{datetime.now().strftime('%d-%m-%Y')}"
 
 
-def iniciar(paj_norm: str, processo: str, prazo_ids: list[str]) -> dict:
+def iniciar(paj_norm: str, processo: str, prazo_ids: list[str], usar_teses: bool = False) -> dict:
     """Valida e dispara a geração em background. Retorna {ok, status, erro?}."""
     prazo_ids = [p for p in (prazo_ids or []) if p]
     if not prazo_ids:
@@ -116,12 +116,12 @@ def iniciar(paj_norm: str, processo: str, prazo_ids: list[str]) -> dict:
     with _lock:
         _status[paj_norm] = {"status": "running", "erro": "", "iniciado_em": datetime.now().isoformat(timespec="seconds")}
 
-    t = threading.Thread(target=_gerar_worker, args=(paj_norm, processo, prazo_ids), daemon=True)
+    t = threading.Thread(target=_gerar_worker, args=(paj_norm, processo, prazo_ids, usar_teses), daemon=True)
     t.start()
     return {"ok": True, "status": "running"}
 
 
-def _gerar_worker(paj_norm: str, processo: str, prazo_ids: list[str]) -> None:
+def _gerar_worker(paj_norm: str, processo: str, prazo_ids: list[str], usar_teses: bool = False) -> None:
     from config import PAJS_DIR
 
     try:
@@ -152,6 +152,13 @@ def _gerar_worker(paj_norm: str, processo: str, prazo_ids: list[str]) -> None:
                 pdf_path.unlink()
 
         prompt = _montar_prompt(paj_norm, atos, docx_path)
+        # "Usar banco de teses" (19/10/2026): teses ativas no prompt; aqui a IA
+        # gera o .docx, então o texto cadastrado de cada tese entra NO ARQUIVO,
+        # no lugar da marca (inserir_teses_docx), antes do PDF — e o azul segue
+        # para a caixa de texto (_docx_para_html).
+        if usar_teses:
+            from services import banco_teses_service
+            prompt += banco_teses_service.bloco_prompt()
 
         # Prompt vai por STDIN, não como argumento de linha de comando: o
         # texto do ato referenciado facilmente passa de alguns KB, e o Windows
@@ -166,6 +173,11 @@ def _gerar_worker(paj_norm: str, processo: str, prazo_ids: list[str]) -> None:
             saida = ((proc.stdout or "") + "\n" + (proc.stderr or "")).strip()
             _falhar(paj_norm, f"A IA não gerou o arquivo .docx esperado. Saída: {saida[-1200:] or '(vazia)'}")
             return
+
+        if usar_teses:
+            from services import banco_teses_service
+            with contextlib.suppress(Exception):
+                banco_teses_service.inserir_teses_docx(docx_path)
 
         _docx_para_pdf(docx_path, pdf_path)
         if not pdf_path.exists():
@@ -204,6 +216,8 @@ def _docx_para_html(docx_path: Path) -> str:
 
     import docx as _docx
 
+    from services import banco_teses_service
+
     doc = _docx.Document(str(docx_path))
     partes = []
     for p in doc.paragraphs:
@@ -218,6 +232,8 @@ def _docx_para_html(docx_path: Path) -> str:
                 txt = f"<em>{txt}</em>"
             if run.underline:
                 txt = f"<u>{txt}</u>"
+            if banco_teses_service.run_eh_tese(run):  # trecho do Banco de teses → azul no editor
+                txt = f'<span style="color: {banco_teses_service.COR_TESE_HEX};">{txt}</span>'
             texto_runs.append(txt)
         linha = "".join(texto_runs).strip()
         if linha:
@@ -641,11 +657,18 @@ _RE_LINHA_ASSINATURA = re.compile(
 # branco) — sem isso, "Gerar arquivo (DOC/PDF)" reconstruía essas linhas com
 # o recuo padrão de `par()` e sem as quebras em branco antes delas, igual ao
 # resto do corpo (bug real, 18/08/2026).
-_RE_LINHA_ENDERECO = re.compile(r"^EXCELENT[ÍI]SSIMO.*$", re.IGNORECASE)
-_RE_LINHA_AUTOS = re.compile(r"^Autos n[ºo°]\s.*$", re.IGNORECASE)
+# Endereçamento: "EXCELENTÍSSIMO(A)…" e as abreviações "EXMO.", "EXMA.", "EXMO(A)."
+# (19/10/2026, pedido do Defensor) — sem recuo e SEMPRE em caixa alta.
+_RE_LINHA_ENDERECO = re.compile(r"^(EXCELENT[ÍI]SSIM[OA]|EXM[OA]\b).*$", re.IGNORECASE)
+# Linha do número do processo: "Autos nº …" e, desde 19/10/2026 (pedido do
+# Defensor — modelo "TESTE" com "PROCESSO [PROCESSO]" saía com recuo de corpo),
+# também "Processo …", "Processo nº …", "Processo: …" seguido do NÚMERO (ou de um
+# placeholder "[…]") — "Processo administrativo…" no corpo não casa. Mesmo
+# tratamento: sem recuo e com as 3 linhas em branco antes.
+_RE_LINHA_AUTOS = re.compile(r"^(Autos\s+n[ºo°]\s.*|Processo(\s+n[ºo°.]*)?\s*:?\s*[\d\[].*)$", re.IGNORECASE)
 _RE_LINHA_PAJ = re.compile(r"^PAJ[:\s].*$", re.IGNORECASE)
 _RE_LINHA_SEM_RECUO = re.compile(
-    r"^(EXCELENT[ÍI]SSIMO.*|Autos n[ºo°]\s.*|PAJ[:\s].*)$",
+    r"^(EXCELENT[ÍI]SSIM[OA].*|EXM[OA]\b.*|Autos\s+n[ºo°]\s.*|Processo(\s+n[ºo°.]*)?\s*:?\s*[\d\[].*|PAJ[:\s].*)$",
     re.IGNORECASE,
 )
 
@@ -691,7 +714,8 @@ def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, da
     sys.path.insert(0, str(MODELOS_DIR))
     from bs4 import BeautifulSoup, NavigableString
 
-    from peticao_base import Cm, FI, assinatura, blank, novo_documento, par, r as escrever_run, salvar
+    from peticao_base import Cm, FI, RGBColor, assinatura, blank, novo_documento, par, r as escrever_run, salvar
+    from services.banco_teses_service import COR_TESE_RGB
 
     soup = BeautifulSoup(peticao_html or "", "html.parser")
     blocos = soup.find_all(["p", "li", "blockquote"])
@@ -707,7 +731,7 @@ def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, da
     contadores_lista: dict[int, int] = {}  # id(<ol>/<ul>) -> próximo número/marcador já emitido
     for bloco in blocos:
         runs = _extrair_runs(bloco, NavigableString)
-        texto_puro = "".join(t for t, _b, _i, _u in runs).strip()
+        texto_puro = "".join(run[0] for run in runs).strip()
         if not texto_puro:
             continue
         if _RE_LINHA_ASSINATURA.match(texto_puro):
@@ -775,10 +799,13 @@ def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, da
         else:
             p = par(doc, fi=FI)
 
-        runs_para_escrever = ([(marcador, False, False, False)] if marcador else []) + runs
-        for texto, bold, italic, underline in runs_para_escrever:
+        if eh_enderecamento:  # endereçamento sempre em caixa alta (19/10/2026)
+            runs = [(t.upper(), b, i, u, a) for t, b, i, u, a in runs]
+        runs_para_escrever = ([(marcador, False, False, False, False)] if marcador else []) + runs
+        for texto, bold, italic, underline, azul in runs_para_escrever:
             if texto:
-                escrever_run(p, texto, bold=bold, italic=italic, underline=underline, small=eh_citacao)
+                escrever_run(p, texto, bold=bold, italic=italic, underline=underline, small=eh_citacao,
+                             color=RGBColor(*COR_TESE_RGB) if azul else None)
     assinatura(doc, termos=termos, data=data, blanks_apos_data=quebras_assinatura)
     salvar(doc, str(docx_path))
 
@@ -892,28 +919,34 @@ def _gerar_docx_sem_viuva(peticao_html: str, docx_path: Path, termos: bool = Fal
     # docx_path) — segue mesmo assim, sem travar a geração por causa disso.
 
 
-def _extrair_runs(bloco, navigable_string_cls) -> list[tuple[str, bool, bool, bool]]:
+def _extrair_runs(bloco, navigable_string_cls) -> list[tuple[str, bool, bool, bool, bool]]:
     """Percorre os filhos de um `<p>`/`<li>` e devolve [(texto, bold, italic,
-    underline), ...] — um item por trecho de formatação uniforme. Tags de
-    formatação aninhadas (ex.: `<strong><em>x</em></strong>`) combinam os
-    estilos; qualquer outra tag (span de cor, etc.) é tratada como texto puro
-    (peticao_base não suporta cor arbitrária nas regras de estilo da DPU)."""
-    runs: list[tuple[str, bool, bool, bool]] = []
+    underline, azul_tese), ...] — um item por trecho de formatação uniforme.
+    Tags de formatação aninhadas (ex.: `<strong><em>x</em></strong>`) combinam
+    os estilos; qualquer outra tag (span de cor, etc.) é tratada como texto puro
+    (peticao_base não suporta cor arbitrária nas regras de estilo da DPU) — com
+    UMA exceção: o azul do Banco de teses (19/10/2026, `azul_tese`), que marca
+    o trecho vindo do banco e só sai do .docx se o Defensor trocar a cor no
+    editor (services/banco_teses_service.py)."""
+    from services.banco_teses_service import eh_cor_tese
+    runs: list[tuple[str, bool, bool, bool, bool]] = []
 
-    def visitar(no, bold, italic, underline):
+    def visitar(no, bold, italic, underline, azul):
         if isinstance(no, navigable_string_cls):
             if str(no):
-                runs.append((str(no), bold, italic, underline))
+                runs.append((str(no), bold, italic, underline, azul))
             return
         nome = getattr(no, "name", "") or ""
         b = bold or nome in ("strong", "b")
         i = italic or nome in ("em", "i")
         u = underline or nome == "u"
+        estilo = no.get("style") if hasattr(no, "get") else ""
+        a = (eh_cor_tese(estilo) if estilo and "color" in estilo.lower() else azul)
         for filho in getattr(no, "children", []):
-            visitar(filho, b, i, u)
+            visitar(filho, b, i, u, a)
 
     for filho in getattr(bloco, "children", []):
-        visitar(filho, False, False, False)
+        visitar(filho, False, False, False, False)
     return runs
 
 

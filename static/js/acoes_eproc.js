@@ -116,6 +116,11 @@ function acoesEprocBlock(cfg) {
         // "Gerar petição com IA" — responde ao(s) ato(s) referenciado(s) do(s)
         // prazo(s) marcados em "Selecione o(s) prazo(s)..." (ver peticao_ia_service).
         gerandoIA: false, erroGerarIA: '', _pollGerarIA: null,
+        // "Usar banco de teses" (19/10/2026) — ver services/banco_teses_service.py.
+        usarTeses: false,
+        // "Inserir Tese" (20/10/2026): texto INTEGRAL de uma tese do Banco de
+        // teses no cursor, em azul — mesmo gesto de "Usar modelo".
+        tesesBanco: [], carregandoTeses: false,
         // "Incluir petição nos anexos" — formata o texto ATUAL da caixa (sem IA)
         // e (re)anexa como PDF. Útil depois de ajustar manualmente o texto gerado.
         incluindoAnexo: false, erroIncluirAnexo: '',
@@ -381,39 +386,15 @@ function acoesEprocBlock(cfg) {
             this.erroUsarModelo = '';
             this.usandoModelo = true;
             try {
-                const org = window._identificacaoOrgao || {};
-                const subs = {
-                    '[PROCESSO]': this.processoSelecionado
-                        || (this.processos[0] && this.processos[0].numero) || '',
-                    '[PAJ]': this.paj || '',
-                    // Não dependem de PAJ nenhum — sempre resolvem, mesmo em
-                    // petição avulsa (ver Configurações › Geral).
-                    '[DATA]': dataPorExtenso(),
-                    '[OFICIO]': org.oficio || '',
-                    '[UNIDADE]': org.unidade || '',
-                    '[DEFENSOR]': org.defensor_nome || '',
-                    '[CARGO]': org.defensor_cargo || '',
-                };
-                if (this.pajNorm) {
-                    try {
-                        const j = await (await fetch('/api/acoes-eproc/qualificacao/' + encodeURIComponent(this.pajNorm))).json();
-                        if (j.nome) subs['[NOME]'] = j.nome;
-                        if (j.cpf) subs['[CPF]'] = j.cpf;
-                        // Plural de propósito — TODOS os itens sincronizados do
-                        // PAJ, sem religar a um assistido específico (pedido do
-                        // usuário 2026-10-06: a sincronização não faz essa
-                        // ligação, então expõe a lista inteira em vez de
-                        // arriscar escolher o item errado).
-                        if (j.telefones) subs['[TELEFONES]'] = j.telefones;
-                        if (j.emails) subs['[EMAILS]'] = j.emails;
-                        if (j.enderecos) subs['[ENDERECOS]'] = j.enderecos;
-                    } catch (e) {}
-                }
-                // Modelos cadastrados no editor rico (Configurações › e-proc) já
-                // vêm em HTML — se algum modelo mais antigo ainda estiver em texto
-                // puro (sem tags), embrulha em <p> igual antes, pra não perder as
-                // quebras de linha ao inserir no Quill.
+                // Placeholders: catálogo único em static/js/rich_editor.js
+                // (PLACEHOLDERS_CATALOGO / subsDoPaj — 19/10/2026). Modelo em texto
+                // puro (mais antigo) é embrulhado em <p> para não perder as quebras.
                 const htmlModelo = paraHtmlSeTextoPuro(modelo.texto);
+                const subs = { ...subsFixos(), '[PAJ]': this.paj || '',
+                               ...(await subsDoPaj(this.pajNorm, htmlModelo)) };
+                // Aqui há um processo escolhido no console — ele vale para [PROCESSO].
+                const procSel = this.processoSelecionado || (this.processos[0] && this.processos[0].numero) || '';
+                if (procSel) subs['[PROCESSO]'] = formatarCnj(procSel);
                 const textoResolvido = resolverPlaceholders(htmlModelo, subs);
                 if (this._editorPeticao) {
                     this._editorPeticao.insertHTML(textoResolvido);
@@ -426,6 +407,22 @@ function acoesEprocBlock(cfg) {
             } finally {
                 this.usandoModelo = false;
             }
+        },
+        // "Inserir Tese" — lista relida a cada abertura do menu (listarTesesBanco
+        // e htmlTeseAzul em static/js/rich_editor.js).
+        async carregarTesesBanco() {
+            this.carregandoTeses = true;
+            try { this.tesesBanco = await listarTesesBanco(); } finally { this.carregandoTeses = false; }
+        },
+        inserirTese(tese) {
+            if (!tese) return;
+            const html = htmlTeseAzul(tese.texto_html || '');
+            if (this._editorPeticao) {
+                this._editorPeticao.insertHTML(html);
+            } else {
+                this.peticaoTexto = (this.peticaoTexto ? this.peticaoTexto + '\n\n' : '') + htmlParaTextoSimples(html);
+            }
+            if (document.activeElement) document.activeElement.blur();  // fecha o dropdown
         },
         // dataPorExtenso()/paraHtmlSeTextoPuro()/resolverPlaceholders() — ver
         // static/js/rich_editor.js (compartilhados com "Despachos padrão" de
@@ -450,6 +447,7 @@ function acoesEprocBlock(cfg) {
                     body: JSON.stringify({
                         processo: this.processoSelecionado || (this.processos[0] && this.processos[0].numero) || '',
                         prazo_ids: prazoIds,
+                        usar_teses: !!this.usarTeses,
                     }),
                 });
                 const j = await resp.json();

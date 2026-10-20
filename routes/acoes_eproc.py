@@ -37,7 +37,7 @@ async def api_preferencias():
 
 
 @router.get("/api/acoes-eproc/qualificacao/{paj_norm}", response_class=JSONResponse)
-async def api_qualificacao_principal(paj_norm: str):
+async def api_qualificacao_principal(paj_norm: str, extras: str = ""):
     """Nome + CPF do assistido PRINCIPAL do PAJ, telefones/e-mails/endereços
     SINCRONIZADOS (todos, sem religar a pessoa nenhuma — ver docstring de
     peticao_ia_service.obter_qualificacao_principal) + o número do processo
@@ -54,7 +54,12 @@ async def api_qualificacao_principal(paj_norm: str):
     peticao_ia_service.obter_qualificacao_principal."""
     if not paj_norm:
         return JSONResponse({"nome": "", "cpf": "", "telefones": "", "emails": "", "enderecos": "", "processo": ""})
-    return JSONResponse(peticao_ia_service.obter_qualificacao_principal(paj_norm))
+    # 19/10/2026: todos os placeholders de dados do PAJ (services/placeholders_service.py).
+    # `extras` ("pessoa", "processo") — consultas sob demanda, só quando o modelo
+    # usa algum placeholder que dependa delas (o front decide pelos tokens).
+    from services import placeholders_service
+    pedidos = {x.strip() for x in (extras or "").split(",") if x.strip()} & {"pessoa", "processo"}
+    return JSONResponse(await placeholders_service.dados(paj_norm, pedidos))
 
 
 @router.post("/api/acoes-eproc/importar-procuradores", response_class=JSONResponse)
@@ -177,7 +182,7 @@ async def api_gerar_peticao_ia(paj_norm: str, request: Request):
     body = await request.json()
     processo = (body.get("processo") or "").strip()
     prazo_ids = body.get("prazo_ids") or []
-    res = peticao_ia_service.iniciar(paj_norm, processo, prazo_ids)
+    res = peticao_ia_service.iniciar(paj_norm, processo, prazo_ids, usar_teses=bool(body.get("usar_teses")))
     return JSONResponse(res, status_code=200 if res.get("ok") else 400)
 
 

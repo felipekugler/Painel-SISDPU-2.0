@@ -134,6 +134,12 @@
                 <svg x-show="!carregando" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99"></path></svg>
                 Atualizar lista
             </button>
+            <!-- Banco de teses (19/10/2026): vale para a petição gerada nas análises -->
+            <label class="flex items-center gap-1.5 text-sm cursor-pointer"
+                   title="Na petição gerada pela análise, insere em azul os tópicos do Banco de teses que se aplicarem ao caso">
+                <input type="checkbox" class="checkbox checkbox-sm checkbox-primary" x-model="usarTeses">
+                Usar banco de teses
+            </label>
             <button class="btn btn-sm btn-outline" @click="analisarSelecionados()" :disabled="filaRodando() || !qtdSelecionados()">
                 Analisar selecionados <span x-show="qtdSelecionados()" x-text="'(' + qtdSelecionados() + ')'"></span>
             </button>
@@ -673,7 +679,7 @@
                                  x-for race"): setar x-model ANTES das <option> existirem faz o
                                  <select> nativo ignorar silenciosamente e mostrar o placeholder,
                                  mesmo com o dado certo por trás. -->
-                            <select id="mc-select-procurador" class="select select-bordered select-sm min-w-[18rem]" x-show="confirmDialog.gerenciamentoTipo !== 'D'"
+                            <select data-busca id="mc-select-procurador" class="select select-bordered select-sm min-w-[18rem]" x-show="confirmDialog.gerenciamentoTipo !== 'D'"
                                     x-model="confirmDialog.gerenciamentoProcuradorValor" @change="_onTrocarGerenciamentoProcurador()">
                                 <option value="">Escolha um Procurador</option>
                                 <template x-for="p in confirmDialog.procuradoresDropdown" :key="p.valor">
@@ -773,5 +779,5 @@
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/intimacoes.js?v={{ app_version }}"></script>
+<script src="/static/js/intimacoes.js?v={{ app_version }}-bt1"></script>
 {% endblock %}

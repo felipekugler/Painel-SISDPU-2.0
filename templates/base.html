@@ -293,6 +293,22 @@
                 border-color: #4cc2ff !important;
             }
         }
+        /* checkbox-/radio-primary (20/10/2026): o daisyUI pinta o "marcado" com
+           oklch(var(--p)), mas aqui --p/--pc são HEX (overrides acima) — a cor
+           virava inválida e a caixa marcada continuava parecendo vazia (caso
+           real: "Usar banco de teses"). Usa as próprias --p/--pc, já por tema. */
+        .checkbox-primary {
+            --chkbg: var(--p) !important;
+            --chkfg: var(--pc) !important;
+        }
+        .checkbox-primary:checked, .checkbox-primary[aria-checked="true"] {
+            background-color: var(--p) !important;
+            border-color: var(--p) !important;
+        }
+        .radio-primary:checked, .radio-primary[aria-checked="true"] {
+            background-color: var(--p) !important;
+            border-color: var(--p) !important;
+        }
 
         /* Sidebar com transição suave */
         .sidebar {
@@ -1074,6 +1090,15 @@
                 </svg>
                 <span>Agenda</span>
             </a>
+
+            <!-- Banco de teses (19/10/2026): tópicos genéricos que a IA insere, em
+                 azul, nas petições geradas com "Usar banco de teses". -->
+            <a href="/banco-teses" class="nav-item {% if request.url.path == '/banco-teses' %}active{% endif %}">
+                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 0 0 6 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 0 1 6 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 0 1 6-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0 0 18 18a8.967 8.967 0 0 0-6 2.292m0-14.25v14.25" />
+                </svg>
+                <span>Banco de teses</span>
+            </a>
         </nav>
 
         <!-- Footer com Histórico e Configurações — Pipeline removido do menu
@@ -1329,7 +1354,7 @@
                             </div>
                             <div class="flex flex-col gap-1" x-show="tipo !== 'D'">
                                 <label class="text-xs font-semibold text-base-content/60">Procurador destino</label>
-                                <select class="select select-bordered select-sm" x-model="procuradorValor" @change="onTrocarProcurador()">
+                                <select data-busca class="select select-bordered select-sm" x-model="procuradorValor" @change="onTrocarProcurador()">
                                     <option value="">Escolha um Procurador</option>
                                     <template x-for="p in procuradoresDropdown()" :key="p.valor">
                                         <option :value="p.valor" x-text="p.rotulo"></option>
@@ -1451,15 +1476,16 @@
     </script>
     <script src="/static/js/app.js?v={{ app_version }}-mcp11"></script>
     <script src="/static/js/movimentacoes.js?v={{ app_version }}-mcp2"></script>
-    <script src="/static/js/rich_editor.js?v={{ app_version }}"></script>
-    <script src="/static/js/acoes_sisdpu.js?v={{ app_version }}-mcp10"></script>
-    <script src="/static/js/acoes_eproc.js?v={{ app_version }}"></script>
-    <script src="/static/js/movimentar_conjunto.js?v={{ app_version }}-mc1"></script>
+    <script src="/static/js/rich_editor.js?v={{ app_version }}-bt3"></script>
+    <script src="/static/js/select_busca.js?v={{ app_version }}-cbx1"></script>
+    <script src="/static/js/acoes_sisdpu.js?v={{ app_version }}-ph1"></script>
+    <script src="/static/js/acoes_eproc.js?v={{ app_version }}-bt2"></script>
+    <script src="/static/js/movimentar_conjunto.js?v={{ app_version }}-mc2"></script>
     <script src="/static/js/processo_judicial.js?v={{ app_version }}-mcp5"></script>
     <script src="/static/js/eventos_processo.js?v={{ app_version }}"></script>
-    <script src="/static/js/minuta_ia.js?v={{ app_version }}"></script>
+    <script src="/static/js/minuta_ia.js?v={{ app_version }}-bt2"></script>
     <script src="/static/js/oficio_sei.js?v={{ app_version }}-mcp3"></script>
-    <script src="/static/js/analise_pretensao.js?v={{ app_version }}-mcp2"></script>
+    <script src="/static/js/analise_pretensao.js?v={{ app_version }}-bt1"></script>
     <script src="/static/js/calcular_cnis.js?v={{ app_version }}"></script>
     <script src="/static/js/calcular_qs.js?v={{ app_version }}"></script>
     <script src="/static/js/consulta_rpv.js?v={{ app_version }}"></script>

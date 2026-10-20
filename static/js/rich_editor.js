@@ -197,3 +197,124 @@ function resolverPlaceholders(texto, subs) {
     }
     return out;
 }
+
+// ---------------------------------------------------------------------------
+// Placeholders dos modelos (petição padrão, "Usar modelo" de Ações no e-proc e
+// no SISDPU) — catálogo ÚNICO, agrupado por categoria (19/10/2026): usado pelos
+// botões de Configurações e por `subsDoPaj` (quem preenche). Para incluir um
+// novo: uma linha aqui + o valor em services/placeholders_service.py.
+// `campo`: chave da resposta de /api/acoes-eproc/qualificacao/{paj};
+// `extra`: consulta sob demanda que o campo exige ("pessoa" = ficha no SIS-DPU
+// 2.0; "processo" = cabeçalho no e-proc).
+const PLACEHOLDERS_CATALOGO = [
+    { categoria: 'Assistido', itens: [
+        { token: '[NOME]', campo: 'nome', legenda: 'Nome do assistido principal do PAJ' },
+        { token: '[CPF]', campo: 'cpf', legenda: 'CPF do assistido principal' },
+        { token: '[QUALIFICACAO]', campo: 'qualificacao', extra: 'pessoa', legenda: 'Frase de qualificação: nome, nacionalidade, CPF, representante (se houver) e endereço — concordância pelo sexo da ficha do SIS-DPU' },
+        { token: '[ASSISTIDOS]', campo: 'assistidos', legenda: 'Todos os assistidos do PAJ ("A, B e C")' },
+        { token: '[DATA_NASCIMENTO]', campo: 'data_nascimento', extra: 'pessoa', legenda: 'Data de nascimento (ficha do SIS-DPU)' },
+        { token: '[IDADE]', campo: 'idade', extra: 'pessoa', legenda: 'Idade hoje, em anos (ficha do SIS-DPU)' },
+        { token: '[NOME_MAE]', campo: 'nome_mae', extra: 'pessoa', legenda: 'Nome da mãe (ficha do SIS-DPU)' },
+        { token: '[RG]', campo: 'rg', extra: 'pessoa', legenda: 'RG e órgão emissor (ficha do SIS-DPU)' },
+        { token: '[NACIONALIDADE]', campo: 'nacionalidade', extra: 'pessoa', legenda: 'brasileiro(a)/estrangeiro(a) (ficha do SIS-DPU)' },
+    ] },
+    { categoria: 'Representante legal', itens: [
+        { token: '[REPRESENTANTE]', campo: 'representante', legenda: 'Nome do(s) representante(s) legal(is) cadastrado(s) no PAJ' },
+        { token: '[CPF_REPRESENTANTE]', campo: 'cpf_representante', legenda: 'CPF do(s) representante(s) legal(is)' },
+    ] },
+    { categoria: 'Contatos', itens: [
+        { token: '[TELEFONES]', campo: 'telefones', legenda: 'TODOS os telefones sincronizados do PAJ (card Contatos)' },
+        { token: '[EMAILS]', campo: 'emails', legenda: 'TODOS os e-mails sincronizados do PAJ' },
+        { token: '[ENDERECOS]', campo: 'enderecos', legenda: 'TODOS os endereços sincronizados do PAJ' },
+    ] },
+    { categoria: 'PAJ', itens: [
+        { token: '[PAJ]', legenda: 'Número do PAJ' },
+        { token: '[PRETENSAO]', campo: 'pretensao', legenda: 'Pretensão do PAJ' },
+        { token: '[DATA_ABERTURA_PAJ]', campo: 'data_abertura_paj', legenda: 'Data de abertura do PAJ' },
+    ] },
+    { categoria: 'Processo judicial', itens: [
+        { token: '[PROCESSO]', campo: 'processo', legenda: 'Número do processo (formatado; só com exatamente 1 vinculado ao PAJ)' },
+        { token: '[JUIZO]', campo: 'juizo', legenda: 'Juízo cadastrado no PAJ (SISDPU)' },
+        { token: '[VARA]', campo: 'vara', extra: 'processo', legenda: 'Órgão julgador, lido no e-proc (TRF4 ou JMU)' },
+        { token: '[CLASSE]', campo: 'classe', extra: 'processo', legenda: 'Classe processual, lida no e-proc' },
+        { token: '[AUTOR]', campo: 'autor', extra: 'processo', legenda: 'Parte(s) do polo ativo, lidas no e-proc' },
+        { token: '[REU]', campo: 'reu', extra: 'processo', legenda: 'Parte(s) do polo passivo, lidas no e-proc' },
+    ] },
+    { categoria: 'Intimação / prazo', itens: [
+        { token: '[EVENTO_INTIMACAO]', campo: 'evento_intimacao', legenda: 'Evento da intimação com prazo mais próximo (Prazos sincronizados)' },
+        { token: '[PRAZO_FINAL]', campo: 'prazo_final', legenda: 'Data final do prazo mais próximo (marca "estimado" se ainda não aberto)' },
+    ] },
+    { categoria: 'Defensoria / data', itens: [
+        { token: '[DATA]', legenda: 'Data de hoje, por extenso' },
+        { token: '[OFICIO]', legenda: 'Ofício (Configurações › Geral)' },
+        { token: '[UNIDADE]', legenda: 'Unidade da DPU (Configurações › Geral)' },
+        { token: '[DEFENSOR]', legenda: 'Nome do defensor (Configurações › Geral)' },
+        { token: '[CARGO]', legenda: 'Cargo do defensor (Configurações › Geral)' },
+    ] },
+];
+const PLACEHOLDERS_LISTA = PLACEHOLDERS_CATALOGO.flatMap((g) => g.itens);
+
+// Número CNJ com pontuação: 5045930-45.2026.4.04.7000.
+function formatarCnj(n) {
+    const d = String(n || '').replace(/\D/g, '');
+    if (d.length !== 20) return n || '';
+    return d.slice(0, 7) + '-' + d.slice(7, 9) + '.' + d.slice(9, 13) + '.' + d.slice(13, 14)
+        + '.' + d.slice(14, 16) + '.' + d.slice(16);
+}
+
+// Placeholders que não dependem de PAJ (data + Configurações › Geral).
+function subsFixos() {
+    const org = window._identificacaoOrgao || {};
+    return {
+        '[DATA]': dataPorExtenso(),
+        '[OFICIO]': org.oficio || '',
+        '[UNIDADE]': org.unidade || '',
+        '[DEFENSOR]': org.defensor_nome || '',
+        '[CARGO]': org.defensor_cargo || '',
+    };
+}
+
+// Placeholders de DADOS do PAJ usados no modelo `html` — 1 chamada ao servidor,
+// pedindo as consultas sob demanda (ficha/e-proc) só se o modelo as usar.
+// Sem PAJ ou sem dado: o placeholder fica literal no texto.
+async function subsDoPaj(pajNorm, html) {
+    const usados = PLACEHOLDERS_LISTA.filter((p) => p.campo && (html || '').includes(p.token));
+    if (!pajNorm || !usados.length) return {};
+    const extras = [...new Set(usados.map((p) => p.extra).filter(Boolean))];
+    try {
+        const qs = extras.length ? ('?extras=' + encodeURIComponent(extras.join(','))) : '';
+        const j = await (await fetch('/api/acoes-eproc/qualificacao/' + encodeURIComponent(pajNorm) + qs)).json();
+        const subs = {};
+        usados.forEach((p) => { if (j[p.campo]) subs[p.token] = j[p.campo]; });
+        return subs;
+    } catch (e) { return {}; }
+}
+
+// ---- Banco de teses: "Inserir Tese" (20/10/2026) ---------------------------------
+// Mesmo gesto de "Usar modelo": escolhe uma tese do Banco de teses e o texto
+// INTEGRAL cadastrado entra no cursor da caixa, em azul (a mesma cor que marca
+// os trechos do banco nas petições geradas com IA — ver
+// services/banco_teses_service.py). Lista relida a cada abertura do menu, para
+// refletir o que foi cadastrado/editado na página Banco de teses.
+const COR_TESE_HEX = '#0066cc';
+
+async function listarTesesBanco() {
+    try {
+        const j = await (await fetch('/api/banco-teses')).json();
+        return (j.teses || []).slice().sort((a, b) =>
+            (b.ativa ? 1 : 0) - (a.ativa ? 1 : 0)
+            || (a.titulo || '').localeCompare(b.titulo || '', 'pt-BR', { sensitivity: 'base' }));
+    } catch (e) { return []; }
+}
+
+// Pinta de azul o conteúdo de cada parágrafo/citação/item da tese (espelho de
+// `_azul` em banco_teses_service.py) — o texto em si não muda.
+function htmlTeseAzul(html) {
+    // Cores embutidas no cadastro (cinza/branco herdados do Word) sobreporiam o
+    // azul — só a cor sai, o texto não muda.
+    html = (html || '').replace(/(?<![-\w])color\s*:\s*[^;"']+;?\s*/gi, '');
+    const span = (s) => `<span style="color: ${COR_TESE_HEX};">${s}</span>`;
+    const novo = (html || '').replace(/(<(?:p|li|blockquote)\b[^>]*>)([\s\S]*?)(<\/(?:p|li|blockquote)>)/gi,
+        (m, a, meio, f) => a + span(meio) + f);
+    return novo === html && (html || '').replace(/<[^>]+>/g, '').trim() ? span(html) : novo;
+}

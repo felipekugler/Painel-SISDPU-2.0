@@ -70,7 +70,7 @@
                                                     <td><input type="checkbox" class="checkbox checkbox-xs" x-model="a.incluir"></td>
                                                     <td><a :href="linkArquivo(a)" target="_blank" class="link link-hover font-mono text-[11px]" x-text="a.nome"></a></td>
                                                     <td>
-                                                        <select class="select select-bordered select-xs w-full max-w-sm" x-model="a.tipo"
+                                                        <select data-busca class="select select-bordered select-xs w-full max-w-sm" x-model="a.tipo"
                                                                 x-init="$nextTick(() => { $el.value = a.tipo })">
                                                             <template x-for="t in opcoesTipo(a.tipo)" :key="t">
                                                                 <option :value="t" x-text="t"></option>
@@ -92,7 +92,7 @@
                                 </div>
                                 <div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
                                     <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Ajuizar em</span>
-                                        <select class="select select-bordered select-sm" x-model="dados.localidade">
+                                        <select data-busca class="select select-bordered select-sm" x-model="dados.localidade">
                                             <template x-for="l in localidades" :key="l"><option :value="l" x-text="l" :selected="l === dados.localidade"></option></template>
                                         </select></label>
                                     <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Rito (teto JEF: R$ <span x-text="dados.teto_jef"></span>)</span>

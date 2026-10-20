@@ -161,6 +161,12 @@ function movimentarConjuntoApp(cfg) {
     },
     async prepararResumoConjunto() {
       this.resumoErro = '';
+      // JMU (segmento 7): peticionamento automático só no e-proc do TRF4 por ora —
+      // cobre PAJ com processos dos dois tribunais e a página própria (19/10/2026).
+      if (typeof ehProcessoJmu === 'function' && ehProcessoJmu(this.processoConfirmado)) {
+        this.resumoErro = 'Movimentação conjunta ainda não disponível para processos da JMU — use "Ações no SISDPU" para movimentar o PAJ.';
+        return;
+      }
       this.montandoResumo = true;
       try {
         const eprocData = this.eprocDados();

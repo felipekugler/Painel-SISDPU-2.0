@@ -37,7 +37,8 @@ async def analise_pretensao_status_todos():
 @router.post("/api/analise-pretensao/reenviar/{paj_norm}")
 async def analise_pretensao_reenviar(paj_norm: PajNorm, payload: dict = Body(...)):
     mensagem = (payload.get("mensagem") or "").strip()
-    result = analise_pretensao_service.reenviar(paj_norm, mensagem)
+    result = analise_pretensao_service.reenviar(paj_norm, mensagem,
+                                                usar_teses=bool(payload.get("usar_teses")))
     return JSONResponse(result, status_code=200 if result.get("ok") else 400)
 
 

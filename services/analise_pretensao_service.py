@@ -698,7 +698,7 @@ def iniciar(paj_norm: str, tipo: str, orientacao: str = "") -> dict:
     return {"ok": True}
 
 
-def reenviar(paj_norm: str, mensagem: str) -> dict:
+def reenviar(paj_norm: str, mensagem: str, usar_teses: bool = False) -> dict:
     mensagem = (mensagem or "").strip()
     if not mensagem:
         return {"ok": False, "erro": "Mensagem vazia."}
@@ -728,6 +728,19 @@ def reenviar(paj_norm: str, mensagem: str) -> dict:
         "calcule o valor você mesmo.)\n\n"
         + _INSTRUCAO_PIPELINE_E_ESTILO_PECA
     )
+    # "Usar banco de teses" (19/10/2026): teses ativas na mensagem; a IA só
+    # põe a marca de cada tese e, ao terminar, o painel insere no .docx o texto
+    # cadastrado, em azul, e refaz o PDF (banco_teses_service.destacar_em_pecas).
+    if usar_teses:
+        from services import banco_teses_service
+        bloco = banco_teses_service.bloco_prompt()
+        if bloco:
+            mensagem_final += (
+                bloco + "\n(Na peça gerada pelo formatador — o .txt com marcadores —, escreva "
+                "cada marca `[[TESE:<id>]]` numa LINHA SOZINHA, como parágrafo próprio, sem "
+                "cor, título nem outro marcador, e NADA do texto da tese: o painel insere o "
+                "texto cadastrado no lugar da marca depois.)\n")
+    inicio_ts = __import__("time").time()
 
     # Ver comentário em `iniciar()` — mesma checagem ANTES/DEPOIS pra
     # `_persistir` saber se foi ESTE reenvio que produziu a petição inicial.
@@ -753,6 +766,10 @@ def reenviar(paj_norm: str, mensagem: str) -> dict:
         session.accumulated_text = ""
         session.send_message(mensagem_final)
         _aguardar_conclusao(session)
+        if usar_teses:
+            with contextlib.suppress(Exception):
+                from services import banco_teses_service
+                banco_teses_service.destacar_em_pecas(pasta / "Peças IA", inicio_ts - 5)
         _persistir(paj_norm, session, tipo, existia_peticao_antes)
 
     threading.Thread(target=_run, daemon=True).start()

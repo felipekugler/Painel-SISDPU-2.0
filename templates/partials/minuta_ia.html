@@ -26,11 +26,34 @@
         <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Minuta (revise antes de gerar o arquivo)</div>
         <div class="flex items-center gap-2">
             <span class="text-[11px] text-success" x-show="gravado" x-cloak x-transition>Gravado ✓</span>
+            <!-- "Inserir Tese" (20/10/2026): texto INTEGRAL de uma tese do Banco de
+                 teses no cursor, em azul (mesmo gesto de "Usar modelo"). -->
+            <div class="dropdown dropdown-end" @focusin="if (!carregandoTeses) carregarTesesBanco()">
+                <button type="button" tabindex="0" class="btn btn-xs btn-outline gap-1"
+                        title="Insere no cursor o texto completo de uma tese do Banco de teses, sem alteração (em azul).">
+                    📚 Inserir Tese
+                </button>
+                <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-max max-w-[32rem] max-h-80 overflow-y-auto flex-nowrap p-1 shadow border border-base-300">
+                    <li x-show="carregandoTeses && !tesesBanco.length" class="disabled"><span>Carregando…</span></li>
+                    <li x-show="!carregandoTeses && !tesesBanco.length" class="disabled"><span>Nenhuma tese cadastrada — veja o menu Banco de teses.</span></li>
+                    <template x-for="t in tesesBanco" :key="t.id">
+                        <li><a class="whitespace-normal" :class="!t.ativa && 'opacity-60'" @click="inserirTese(t)"
+                               :title="t.quando_aplica ? 'Quando se aplica: ' + t.quando_aplica : ''">
+                            <span x-text="t.titulo"></span><span x-show="!t.ativa" class="text-[10px] italic ml-1">(inativa)</span>
+                        </a></li>
+                    </template>
+                </ul>
+            </div>
             <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="gravando" @click="gravarRascunho()"
                     title="Salva o texto atual da caixa (sem gerar arquivo) — evita perder a edição se a página recarregar.">
                 <span x-show="gravando" class="loading loading-spinner loading-xs"></span>
                 <span x-show="!gravando">Gravar</span>
                 <span x-show="gravando">Gravando…</span>
+            </button>
+            <button type="button" class="btn btn-xs btn-outline btn-error gap-1" :disabled="gravando || gerandoArquivo"
+                    @click="descartarMinuta()"
+                    title="Apaga o texto desta minuta e os arquivos (DOC/PDF) que ela gerou em &quot;Peças IA&quot; — outras peças da pasta não são tocadas.">
+                Descartar
             </button>
             <button type="button" class="btn btn-xs btn-primary gap-1" :disabled="gerandoArquivo" @click="gerarArquivo()">
                 <span x-show="gerandoArquivo" class="loading loading-spinner loading-xs"></span>
@@ -105,6 +128,14 @@
             <textarea x-model="orientacaoDiretiva" rows="2"
                       class="textarea textarea-bordered textarea-sm text-xs"
                       placeholder="Ex.: sustente a tese X; não mencione Y; foque em Z"></textarea>
+        </label>
+
+        <!-- Banco de teses (19/10/2026): a IA insere, em azul, os tópicos cadastrados
+             que se aplicarem ao caso — ver /banco-teses. -->
+        <label class="flex items-center gap-2 mb-3 cursor-pointer w-fit"
+               title="A IA confere as teses ativas do Banco de teses e insere, em azul, as que se aplicarem ao caso">
+            <input type="checkbox" class="checkbox checkbox-sm checkbox-primary" x-model="usarTeses">
+            <span class="text-sm">Usar banco de teses</span>
         </label>
 
         <div role="tablist" class="tabs tabs-boxed tabs-sm mb-3 w-fit">

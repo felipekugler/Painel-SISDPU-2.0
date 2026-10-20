@@ -62,7 +62,7 @@
         <div class="ret-acao-bloco">
             <div class="ret-acao-titulo">Evento a ser lançado</div>
             <div class="flex items-center gap-2 flex-wrap">
-                <select class="select select-bordered select-sm min-w-[18rem]" x-model="evento">
+                <select data-busca class="select select-bordered select-sm min-w-[18rem]" x-model="evento">
                     <option value="">Selecione o evento</option>
                     <template x-for="e in eventosDropdown()" :key="e"><option :value="e" x-text="e"></option></template>
                 </select>
@@ -79,6 +79,38 @@
             <div class="flex items-center justify-between mb-1 flex-wrap gap-2">
                 <div class="ret-acao-titulo mb-0">Petição</div>
                 <div class="flex items-center gap-2">
+                    <!-- Ordem (pedido do Defensor, 20/10/2026): Gerar petição com IA ·
+                         Usar banco de teses · Inserir Tese · Usar modelo · Incluir nos anexos. -->
+                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="gerandoIA || !pajNorm" @click="gerarPeticaoIA()"
+                            :title="!pajNorm ? 'Precisa de um PAJ vinculado (petição avulsa, só pelo número do processo, não tem onde salvar o arquivo gerado) — use Adicionar Externo.' : 'Redige uma petição respondendo ao(s) ato(s) referenciado(s) do(s) prazo(s) marcados acima, e a anexa como 1º documento (tipo Petição, sem sigilo).'">
+                        <span x-show="gerandoIA" class="loading loading-spinner loading-xs"></span>
+                        <span x-show="!gerandoIA">✨ Gerar petição com IA</span>
+                        <span x-show="gerandoIA">Aguardando resposta da IA…</span>
+                    </button>
+                    <!-- Banco de teses (19/10/2026): vale para "Gerar petição com IA" -->
+                    <label class="flex items-center gap-1 text-xs cursor-pointer" x-show="pajNorm"
+                           title="Na petição gerada com IA, insere em azul os tópicos do Banco de teses que se aplicarem ao caso">
+                        <input type="checkbox" class="checkbox checkbox-xs checkbox-primary" x-model="usarTeses">
+                        Usar banco de teses
+                    </label>
+                    <!-- "Inserir Tese" (20/10/2026): texto INTEGRAL de uma tese do Banco de
+                         teses no cursor, em azul (mesmo gesto de "Usar modelo"). -->
+                    <div class="dropdown dropdown-end" @focusin="if (!carregandoTeses) carregarTesesBanco()">
+                        <button type="button" tabindex="0" class="btn btn-xs btn-outline gap-1"
+                                title="Insere no cursor o texto completo de uma tese do Banco de teses, sem alteração (em azul).">
+                            📚 Inserir Tese
+                        </button>
+                        <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-max max-w-[32rem] max-h-80 overflow-y-auto flex-nowrap p-1 shadow border border-base-300">
+                            <li x-show="carregandoTeses && !tesesBanco.length" class="disabled"><span>Carregando…</span></li>
+                            <li x-show="!carregandoTeses && !tesesBanco.length" class="disabled"><span>Nenhuma tese cadastrada — veja o menu Banco de teses.</span></li>
+                            <template x-for="t in tesesBanco" :key="t.id">
+                                <li><a class="whitespace-normal" :class="!t.ativa && 'opacity-60'" @click="inserirTese(t)"
+                                       :title="t.quando_aplica ? 'Quando se aplica: ' + t.quando_aplica : ''">
+                                    <span x-text="t.titulo"></span><span x-show="!t.ativa" class="text-[10px] italic ml-1">(inativa)</span>
+                                </a></li>
+                            </template>
+                        </ul>
+                    </div>
                     <!-- "Usar modelo" — Modelos de petição cadastrados em Configurações ›
                          e-proc (texto padrão + placeholders [NOME]/[CPF]/[PROCESSO]/[PAJ]).
                          Ao contrário de "Gerar petição com IA", INSERE no cursor — não
@@ -97,16 +129,10 @@
                             </template>
                         </ul>
                     </div>
-                    <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="gerandoIA || !pajNorm" @click="gerarPeticaoIA()"
-                            :title="!pajNorm ? 'Precisa de um PAJ vinculado (petição avulsa, só pelo número do processo, não tem onde salvar o arquivo gerado) — use Adicionar Externo.' : 'Redige uma petição respondendo ao(s) ato(s) referenciado(s) do(s) prazo(s) marcados acima, e a anexa como 1º documento (tipo Petição, sem sigilo).'">
-                        <span x-show="gerandoIA" class="loading loading-spinner loading-xs"></span>
-                        <span x-show="!gerandoIA">✨ Gerar petição com IA</span>
-                        <span x-show="gerandoIA">Aguardando resposta da IA…</span>
-                    </button>
                     <button type="button" class="btn btn-xs btn-outline gap-1" :disabled="incluindoAnexo || !pajNorm" @click="incluirPeticaoAnexo()"
                             :title="!pajNorm ? 'Precisa de um PAJ vinculado (petição avulsa, só pelo número do processo, não tem onde salvar o arquivo gerado) — use Adicionar Externo.' : 'Formata o texto ATUAL desta caixa (útil depois de ajustar manualmente) no padrão de petição da DPU, salva em PDF e anexa/atualiza como 1º documento — sem chamar IA.'">
                         <span x-show="incluindoAnexo" class="loading loading-spinner loading-xs"></span>
-                        <span x-show="!incluindoAnexo">Incluir petição nos anexos</span>
+                        <span x-show="!incluindoAnexo">Incluir nos anexos</span>
                         <span x-show="incluindoAnexo">Formatando…</span>
                     </button>
                 </div>
@@ -219,7 +245,7 @@
                                 </td>
                                 <td class="text-xs whitespace-nowrap" x-text="formatarTamanho(tamanhoAnexo(a))"></td>
                                 <td>
-                                    <select class="select select-bordered select-xs w-full" :class="!a.tipo ? 'select-error' : ''" x-model="a.tipo"
+                                    <select data-busca class="select select-bordered select-xs w-full" :class="!a.tipo ? 'select-error' : ''" x-model="a.tipo"
                                             x-init="$nextTick(() => { $el.value = a.tipo; })">
                                         <option value="">Tipo…</option>
                                         <template x-for="t in opcoesTipoPara(a)" :key="t"><option :value="t" x-text="t"></option></template>
@@ -272,7 +298,7 @@
                         <option :value="t.valor" x-text="t.rotulo"></option>
                     </template>
                 </select>
-                <select class="select select-bordered select-sm min-w-[18rem]" x-show="gerenciarTipo !== 'D'"
+                <select data-busca class="select select-bordered select-sm min-w-[18rem]" x-show="gerenciarTipo !== 'D'"
                         x-model="gerenciarProcuradorValor" @change="onTrocarProcuradorDestino()">
                     <option value="">Escolha um Procurador</option>
                     <template x-for="p in procuradoresDropdown()" :key="p.valor">

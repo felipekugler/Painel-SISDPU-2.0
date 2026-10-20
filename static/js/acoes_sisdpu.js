@@ -415,42 +415,13 @@ function acoesSisdpuBlock(cfg) {
             this.erroUsarModeloDespacho = '';
             this.usandoModeloDespacho = true;
             try {
-                const org = window._identificacaoOrgao || {};
-                const subs = {
-                    '[PAJ]': this.paj || '',
-                    // Não dependem de PAJ nenhum — sempre resolvem (ver
-                    // Configurações › Geral).
-                    '[DATA]': dataPorExtenso(),
-                    '[OFICIO]': org.oficio || '',
-                    '[UNIDADE]': org.unidade || '',
-                    '[DEFENSOR]': org.defensor_nome || '',
-                    '[CARGO]': org.defensor_cargo || '',
-                };
-                if (this.pajNorm) {
-                    try {
-                        const j = await (await fetch('/api/acoes-eproc/qualificacao/' + encodeURIComponent(this.pajNorm))).json();
-                        if (j.nome) subs['[NOME]'] = j.nome;
-                        if (j.cpf) subs['[CPF]'] = j.cpf;
-                        // Plural de propósito — TODOS os itens sincronizados do
-                        // PAJ, sem religar a um assistido específico (pedido do
-                        // usuário 2026-10-06: a sincronização não faz essa
-                        // ligação, então expõe a lista inteira em vez de
-                        // arriscar escolher o item errado).
-                        if (j.telefones) subs['[TELEFONES]'] = j.telefones;
-                        if (j.emails) subs['[EMAILS]'] = j.emails;
-                        if (j.enderecos) subs['[ENDERECOS]'] = j.enderecos;
-                        // Só resolve quando há EXATAMENTE 1 processo judicial
-                        // vinculado ao PAJ — com 0 ou 2+, o backend já devolve
-                        // vazio de propósito (nunca escolhe um arbitrariamente
-                        // entre vários); o placeholder fica literal na tela
-                        // pro usuário completar à mão nesse caso (pedido do
-                        // usuário 2026-09-16: manter [PROCESSO] mesmo sem
-                        // "processoSelecionado" próprio, como Ações no Eproc
-                        // tem — aqui não há esse seletor).
-                        if (j.processo) subs['[PROCESSO]'] = j.processo;
-                    } catch (e) {}
-                }
+                // Placeholders: catálogo único em static/js/rich_editor.js
+                // (PLACEHOLDERS_CATALOGO / subsDoPaj — 19/10/2026). [PROCESSO] só
+                // resolve com exatamente 1 processo vinculado ao PAJ (0 ou 2+ fica
+                // literal, nunca escolhe um arbitrariamente).
                 const htmlModelo = paraHtmlSeTextoPuro(modelo.texto);
+                const subs = { ...subsFixos(), '[PAJ]': this.paj || '',
+                               ...(await subsDoPaj(this.pajNorm, htmlModelo)) };
                 const textoResolvido = resolverPlaceholders(htmlModelo, subs);
                 if (this._editorMov) {
                     this._editorMov.insertHTML(textoResolvido);

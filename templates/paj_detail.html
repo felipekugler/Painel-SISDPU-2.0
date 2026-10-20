@@ -1135,7 +1135,16 @@
         <button type="button"
                 class="btn btn-sm btn-circle border-none shrink-0 self-center"
                 style="background: linear-gradient(90deg, #16a34a, #2563eb); grid-column: 2; grid-row: 1;"
-                @click="$dispatch('alternar-conjunta')"
+                @click="(() => {
+                    /* JMU (segmento 7): o painel ainda não peticiona no e-proc da JMU —
+                       com TODOS os processos do PAJ na JMU, só avisa (19/10/2026). */
+                    const ps = window._paj_processos_judiciais || [];
+                    if (ps.length && ps.every((p) => ehProcessoJmu(p.numero))) {
+                        showToast('Movimentação conjunta ainda não disponível para processos da JMU — use &quot;Ações no SISDPU&quot; para movimentar o PAJ.', 'warning');
+                        return;
+                    }
+                    $dispatch('alternar-conjunta');
+                })()"
                 title="Movimentar Sisdpu e Eproc simultaneamente (abre aqui, abaixo)">
             <svg class="w-4 h-4 text-white" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="M7.5 21 3 16.5m0 0L7.5 12M3 16.5h13.5m0-13.5L21 7.5m0 0L16.5 12M21 7.5H7.5" />
@@ -2383,7 +2392,13 @@ document.addEventListener('alpine:init', () => {
                           x-model="mensagemReenvio"
                           placeholder="Ex: reconsidere o cenário C1, o INSS negou por cadastro desatualizado, não por renda. / Redija a petição inicial."
                           :disabled="enviando || status === 'running'"></textarea>
-                <div class="flex justify-end gap-2 mt-2">
+                <div class="flex justify-end items-center gap-2 mt-2">
+                    <!-- Banco de teses (19/10/2026): vale para a petição redigida nesta conversa -->
+                    <label class="flex items-center gap-1.5 text-sm cursor-pointer mr-auto"
+                           title="Na petição redigida pela IA, insere em azul os tópicos do Banco de teses que se aplicarem ao caso">
+                        <input type="checkbox" class="checkbox checkbox-sm checkbox-primary" x-model="usarTeses">
+                        Usar banco de teses
+                    </label>
                     <button type="button" class="btn btn-sm btn-outline btn-info" @click="minutarInicial()"
                             :disabled="enviando || status === 'running'"
                             title="Pede à IA a minuta da petição inicial (o texto digitado acima entra como parâmetros) — a etapa do PAJ passa a &quot;Elaborando minuta de inicial&quot;">

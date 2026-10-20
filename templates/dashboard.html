@@ -134,7 +134,7 @@
 
           <!-- Seletor de skill -->
           <label class="block text-sm font-medium mb-1">Skill a aplicar</label>
-          <select class="select select-bordered select-sm w-full mb-1"
+          <select data-busca class="select select-bordered select-sm w-full mb-1"
                   x-model="loteSkillSlug" :disabled="loteSkillsLoading">
             <option value="__auto__">Automático — triagem inteligente (recomendado)</option>
             <option value="">Claude decide (autônomo)</option>

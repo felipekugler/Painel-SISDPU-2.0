@@ -323,7 +323,7 @@
                                             <option :value="t.valor" x-text="t.rotulo" :selected="t.valor === confirmDialog.gerenciamentoTipo"></option>
                                         </template>
                                     </select>
-                                    <select class="select select-bordered select-xs min-w-[16rem]" x-show="confirmDialog.gerenciamentoTipo !== 'D'"
+                                    <select data-busca class="select select-bordered select-xs min-w-[16rem]" x-show="confirmDialog.gerenciamentoTipo !== 'D'"
                                             x-model="confirmDialog.gerenciamentoProcuradorValor" @change="_onTrocarGerenciamentoProcurador()">
                                         <option value="">Escolha um Procurador</option>
                                         <!-- :selected — o padrão de Configurações › e-proc entra no x-model ANTES

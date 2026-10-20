@@ -55,6 +55,7 @@ from routes.sync import router as sync_router
 from routes.valor_causa import router as valor_causa_router
 from routes.watchlist import router as watchlist_router
 from routes.rotinas import router as rotinas_router
+from routes.banco_teses import router as banco_teses_router
 from services.ambiente_service import verificar_ambiente
 from config import PAINEL_NOME, PAINEL_PORT
 
@@ -313,6 +314,7 @@ app.include_router(oficio_sei_router)
 app.include_router(sisdpu2_mcp_router)
 app.include_router(peticao_inicial_router)
 app.include_router(rotinas_router)
+app.include_router(banco_teses_router)
 
 # Healthcheck de dependencias externas — expoe em app.state.ambiente pra
 # o dashboard renderizar banner quando algo falta.

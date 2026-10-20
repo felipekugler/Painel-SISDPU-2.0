@@ -22,6 +22,8 @@ function minutaIaApp(pajNorm, pajLabel) {
     return {
         pajNorm: pajNorm,
         pajLabel: pajLabel || '',
+        // "Usar banco de teses" (19/10/2026) — ver services/banco_teses_service.py.
+        usarTeses: false,
         tipos: [],
         tipoSlug: '',
         // Submenu "Petição com IA" (pedido do usuário, 2026-10-02 — era 3
@@ -58,6 +60,8 @@ function minutaIaApp(pajNorm, pajLabel) {
         // montar) — mesmo padrão de acoes_eproc.js.
         uidMinuta: 'qminuta-' + Math.random().toString(36).slice(2, 9),
         _editorMinuta: null, quillMinutaOk: true, _montandoEditor: false,
+        // "Inserir Tese" (20/10/2026) — ver inserirTese() abaixo.
+        tesesBanco: [], carregandoTeses: false,
         minutaTexto: '',
 
         // "Gravar" — persiste o texto editado no backend (sem gerar arquivo),
@@ -136,6 +140,23 @@ function minutaIaApp(pajNorm, pajLabel) {
         // JÁ COMPOSTO (não só o fragmento novo) como "done" no backend (ver
         // usar_modelo_padrao em minuta_ia_service.py) — pra sobreviver a um
         // reload igual o rascunho da IA já sobrevive via "Gravar".
+        // "Inserir Tese" (20/10/2026): texto INTEGRAL de uma tese do Banco de
+        // teses no cursor da minuta, em azul — mesmo gesto de "Usar modelo"
+        // (listarTesesBanco/htmlTeseAzul em static/js/rich_editor.js).
+        async carregarTesesBanco() {
+            this.carregandoTeses = true;
+            try { this.tesesBanco = await listarTesesBanco(); } finally { this.carregandoTeses = false; }
+        },
+        inserirTese(tese) {
+            if (!tese) return;
+            const html = htmlTeseAzul(tese.texto_html || '');
+            if (this._editorMinuta) {
+                this._editorMinuta.insertHTML(html);
+            } else {
+                this.minutaTexto = (this.minutaTexto ? this.minutaTexto + '\n\n' : '') + htmlParaTextoSimples(html);
+            }
+            if (document.activeElement) document.activeElement.blur();  // fecha o dropdown
+        },
         async usarModeloPadrao(modeloId) {
             const modelo = this.modelosPadrao.find((m) => m.id === modeloId);
             if (!modelo) return;
@@ -143,23 +164,12 @@ function minutaIaApp(pajNorm, pajLabel) {
             this.usandoModeloPadrao = true;
             this.erro = '';
             try {
-                const org = window._identificacaoOrgao || {};
-                const subs = {
-                    '[PROCESSO]': this.processoSelecionado || '',
-                    '[PAJ]': this.pajLabel || '',
-                    '[DATA]': dataPorExtenso(),
-                    '[OFICIO]': org.oficio || '',
-                    '[UNIDADE]': org.unidade || '',
-                    '[DEFENSOR]': org.defensor_nome || '',
-                    '[CARGO]': org.defensor_cargo || '',
-                };
-                try {
-                    const j = await (await fetch('/api/acoes-eproc/qualificacao/' + encodeURIComponent(this.pajNorm))).json();
-                    if (j.nome) subs['[NOME]'] = j.nome;
-                    if (j.cpf) subs['[CPF]'] = j.cpf;
-                } catch (e) { /* segue sem — modelo fica com [NOME]/[CPF] literais */ }
-
+                // Placeholders: catálogo único em static/js/rich_editor.js
+                // (PLACEHOLDERS_CATALOGO / subsDoPaj — 19/10/2026).
                 const htmlModelo = paraHtmlSeTextoPuro(modelo.texto);
+                const subs = { ...subsFixos(), '[PAJ]': this.pajLabel || '',
+                               ...(await subsDoPaj(this.pajNorm, htmlModelo)) };
+                if (this.processoSelecionado) subs['[PROCESSO]'] = formatarCnj(this.processoSelecionado);
                 const textoResolvido = resolverPlaceholders(htmlModelo, subs);
 
                 this.tipoSlug = 'padrao';
@@ -332,6 +342,7 @@ function minutaIaApp(pajNorm, pajLabel) {
                         tipo_slug: this.tipoSlug,
                         documentos: documentos,
                         orientacao: this._orientacaoDiretiva(),
+                        usar_teses: !!this.usarTeses,
                     }),
                 });
                 const j = await resp.json();
@@ -380,6 +391,33 @@ function minutaIaApp(pajNorm, pajLabel) {
             } finally {
                 this.gravando = false;
             }
+        },
+
+        // "Descartar" (19/10/2026) — apaga o rascunho (servidor + caixa de edição).
+        // Arquivos já gerados em "Peças IA" ficam.
+        async descartarMinuta() {
+            if (!confirm('Descartar esta minuta?\n\nO texto da caixa e os arquivos (DOC/PDF) gerados por ela em "Peças IA" serão apagados.')) return;
+            this.erroGravar = '';
+            try {
+                const resp = await fetch('/api/minutas/descartar/' + encodeURIComponent(this.pajNorm), {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    // Os arquivos mostrados na tela também — cobre um reinício do painel
+                    // entre "Gerar arquivo" e "Descartar".
+                    body: JSON.stringify({ arquivos: (this.arquivos || []).map((a) => (a && a.nome) || a) }),
+                });
+                const j = await resp.json().catch(() => ({}));
+                if (!resp.ok || !j.ok) { this.erroGravar = j.erro || 'Não foi possível descartar (o painel precisa ser reiniciado para esta função).'; return; }
+                if (j.aviso) showToast(j.aviso, 'warning');
+                else if ((j.apagados || []).length) showToast('Minuta descartada — ' + j.apagados.length + ' arquivo(s) apagado(s).', 'success');
+                this.arquivos = [];
+            } catch (e) { this.erroGravar = 'Erro de rede: ' + e; return; }
+            if (this._editorMinuta) this._editorMinuta.setHTML('');
+            this.minutaTexto = '';
+            this.status = 'idle';
+            this.tipoSlug = '';
+            this.labelAtivo = '';
+            this.gravado = false;
+            this.erro = ''; this.erroArquivo = '';
         },
 
         // "Gerar arquivo (DOC/PDF)" — formata o texto ATUAL da caixa (com os

@@ -63,7 +63,7 @@
       <div class="alert alert-error text-xs" x-show="pajCandidatos.length > 1">
         <div class="flex flex-col gap-1 w-full">
           <strong>⚠ Mais de um PAJ relacionado a este processo — confira e escolha o correto:</strong>
-          <select class="select select-bordered select-sm w-full max-w-md" x-model="pajNorm" @change="onEscolherPajCandidato()">
+          <select data-busca class="select select-bordered select-sm w-full max-w-md" x-model="pajNorm" @change="onEscolherPajCandidato()">
             <option value="">Selecione…</option>
             <template x-for="c in pajCandidatos" :key="c.paj_norm">
               <option :value="c.paj_norm" x-text="c.paj_label + (c.juizo ? (' — ' + c.juizo) : '')"></option>

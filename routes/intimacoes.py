@@ -286,8 +286,9 @@ async def _tail_job(job: _Job):
         job.subscribers.discard(fila)
 
 
-async def _worker_individual(job: _Job, processo: str, ato: str) -> None:
+async def _worker_individual(job: _Job, processo: str, ato: str, usar_teses: bool = False) -> None:
     chave = job.chave
+    intimacao_ia_service.USAR_TESES.set(usar_teses)  # vale só para esta tarefa
 
     def log_cb(level: str, msg: str) -> None:
         job.emitir({"level": level, "msg": msg})
@@ -304,7 +305,7 @@ async def _worker_individual(job: _Job, processo: str, ato: str) -> None:
 
 
 @router.get("/api/intimacoes/{processo}/analisar")
-async def api_analisar(processo: str, ato: str):
+async def api_analisar(processo: str, ato: str, teses: int = 0):
     """SSE: roda o pipeline completo (resumo -> confronto -> minuta, se
     aplicável) para este ATO (`ato` — identifica o sub-caso, ver módulo
     `intimacao_service`; um processo com atos autônomos tem 1 pipeline por
@@ -332,7 +333,7 @@ async def api_analisar(processo: str, ato: str):
     _EM_ANDAMENTO.add(chave)
     job = _Job(chave, processo=processo, ato=ato)
     _JOBS[chave] = job
-    job.task = asyncio.create_task(_worker_individual(job, processo, ato))
+    job.task = asyncio.create_task(_worker_individual(job, processo, ato, usar_teses=bool(teses)))
     return EventSourceResponse(_tail_job(job))
 
 
@@ -445,7 +446,7 @@ async def api_jobs_ativos():
     return JSONResponse({"ok": True, "jobs": itens})
 
 
-async def _worker_fila(job: _Job, casos: list[dict], avisos: list[str] | None) -> None:
+async def _worker_fila(job: _Job, casos: list[dict], avisos: list[str] | None, usar_teses: bool = False) -> None:
     """Roda o pipeline em fila SEQUENCIAL (nunca paralelo — respeita o rate
     limit do SISDPU/e-proc já estabelecido no projeto) para a lista de casos
     dada. Reaproveitado tanto por "Analisar todos os pendentes" quanto por
@@ -453,6 +454,7 @@ async def _worker_fila(job: _Job, casos: list[dict], avisos: list[str] | None) -
     def log_cb(level: str, msg: str) -> None:
         job.emitir({"level": level, "msg": msg})
 
+    intimacao_ia_service.USAR_TESES.set(usar_teses)  # vale só para esta fila
     for msg in (avisos or []):
         log_cb("muted", msg)
 
@@ -485,7 +487,7 @@ async def _worker_fila(job: _Job, casos: list[dict], avisos: list[str] | None) -
     _JOBS.pop(job.chave, None)
 
 
-def _iniciar_ou_reatar_fila(casos: list[dict], avisos: list[str] | None = None) -> _Job:
+def _iniciar_ou_reatar_fila(casos: list[dict], avisos: list[str] | None = None, usar_teses: bool = False) -> _Job:
     """Só 1 fila "todos"/"selecionados" por vez — uma 2ª chamada enquanto a
     1ª ainda roda REATA na mesma transmissão (mesmo espírito do "/analisar"
     individual acima), em vez de tentar montar uma 2ª fila concorrente com a
@@ -498,12 +500,12 @@ def _iniciar_ou_reatar_fila(casos: list[dict], avisos: list[str] | None = None) 
         return job
     job = _Job(_FILA_JOB_KEY)
     _JOBS[_FILA_JOB_KEY] = job
-    job.task = asyncio.create_task(_worker_fila(job, casos, avisos))
+    job.task = asyncio.create_task(_worker_fila(job, casos, avisos, usar_teses))
     return job
 
 
 @router.get("/api/intimacoes/analisar-todos")
-async def api_analisar_todos():
+async def api_analisar_todos(teses: int = 0):
     """SSE: roda o pipeline em fila SEQUENCIAL (nunca paralelo) para todos os
     casos com vínculo de PAJ resolvido (auto ou manual) e status "novo" ou
     "erro" — pula descartados, já concluídos e ainda pendentes de vínculo."""
@@ -511,12 +513,12 @@ async def api_analisar_todos():
         c for c in intimacao_service.listar_casos()
         if c.get("vinculo_status") != "pendente" and c.get("status_geral") in ("novo", "erro")
     ]
-    job = _iniciar_ou_reatar_fila(casos)
+    job = _iniciar_ou_reatar_fila(casos, usar_teses=bool(teses))
     return EventSourceResponse(_tail_job(job))
 
 
 @router.get("/api/intimacoes/analisar-selecionados")
-async def api_analisar_selecionados(casos_sel: str = ""):
+async def api_analisar_selecionados(casos_sel: str = "", teses: int = 0):
     """SSE: roda o pipeline em fila SEQUENCIAL só para os ATOS escolhidos
     manualmente pelo Defensor (checkboxes da tabela — `casos_sel` é uma
     lista de `chave_caso` separada por vírgula; NUNCA número de processo —
@@ -547,7 +549,7 @@ async def api_analisar_selecionados(casos_sel: str = ""):
             avisos.append(f"{c.get('processo')}: sem PAJ vinculado — pulado (vincule manualmente antes).")
         else:
             casos.append(c)
-    job = _iniciar_ou_reatar_fila(casos, avisos=avisos)
+    job = _iniciar_ou_reatar_fila(casos, avisos=avisos, usar_teses=bool(teses))
     return EventSourceResponse(_tail_job(job))
 
 

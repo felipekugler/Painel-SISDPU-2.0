@@ -15,7 +15,7 @@
         <div class="ret-acao-bloco">
             <div class="ret-acao-titulo">Movimentar</div>
             <div class="flex items-center gap-2 flex-wrap">
-                <select class="select select-bordered select-sm min-w-[18rem]" x-model="fase"
+                <select data-busca class="select select-bordered select-sm min-w-[18rem]" x-model="fase"
                         x-init="$nextTick(() => { $el.value = fase; })">
                     <option value="">Sem movimentação</option>
                     <template x-for="f in fasesDropdownEfetiva()" :key="f"><option :value="f" x-text="f"></option></template>
@@ -143,7 +143,7 @@
                                         <input type="text" class="input input-bordered input-xs w-full font-mono" x-model="a.descricao">
                                     </td>
                                     <td>
-                                        <select class="select select-bordered select-xs w-full" x-model="a.tipoArquivo"
+                                        <select data-busca class="select select-bordered select-xs w-full" x-model="a.tipoArquivo"
                                                 x-init="$nextTick(() => { $el.value = a.tipoArquivo; })">
                                             <template x-for="t in tiposArquivoAnexo" :key="t"><option :value="t" x-text="t"></option></template>
                                         </select>
@@ -286,7 +286,7 @@
         <div class="ret-acao-bloco">
             <div class="ret-acao-titulo">Tramitar</div>
             <div class="flex items-center gap-2 flex-wrap">
-                <select class="select select-bordered select-sm min-w-[18rem]" x-model="grupo">
+                <select data-busca class="select select-bordered select-sm min-w-[18rem]" x-model="grupo">
                     <option value="">Sem tramitação</option>
                     <template x-for="c in caixasDropdown()" :key="c"><option :value="c" x-text="c"></option></template>
                 </select>
@@ -363,7 +363,7 @@
             <div class="ret-acao-bloco mt-2" x-show="pajNorm">
                 <div class="ret-acao-titulo">Etapa do PAJ</div>
                 <div class="flex items-center gap-2 flex-wrap mt-1">
-                    <select class="select select-bordered select-xs min-w-[18rem]" x-model="etapa">
+                    <select data-busca class="select select-bordered select-xs min-w-[18rem]" x-model="etapa">
                         <option value="">Não alterar</option>
                         <template x-for="o in etapasManuais" :key="o.chave">
                             <option :value="o.chave" x-text="o.rotulo" :selected="o.chave === etapa"></option>

@@ -222,12 +222,49 @@ def salvar_rascunho(paj_norm: str, peticao_html: str) -> dict:
     return {"ok": True}
 
 
+_RE_ARQUIVO_MINUTA = re.compile(r"^minuta-[\w-]+-\d{2}-\d{2}-\d{4}\.(docx|pdf)$", re.I)
+
+
+def descartar(paj_norm: str, arquivos: list[str] | None = None) -> dict:
+    """Botão "Descartar" (19/10/2026): apaga o rascunho da minuta deste PAJ (o
+    texto da caixa de edição) E os arquivos que ELA gerou em "Peças IA"
+    ("Gerar arquivo (DOC/PDF)"), para não ficarem órfãos. Só apaga arquivo no
+    formato `minuta-<tipo>-<dd-mm-aaaa>.docx/.pdf` — os registrados por esta
+    minuta (`arquivos_gerados`) e os que a tela informar (`arquivos`, para
+    depois de um reinício do painel); nenhuma outra peça da pasta. Uma geração
+    em andamento não é interrompida."""
+    with _lock:
+        atual = _status.get(paj_norm) or {}
+        if atual.get("status") == "running":
+            return {"ok": False, "erro": "A IA ainda está gerando a minuta — aguarde terminar."}
+        nomes = set(atual.get("arquivos_gerados") or []) | {Path(a).name for a in (arquivos or []) if a}
+        _status.pop(paj_norm, None)
+    pasta = PAJS_DIR / paj_norm / "Peças IA"
+    apagados, falhas = [], []
+    for nome in sorted(nomes):
+        if not _RE_ARQUIVO_MINUTA.match(nome):
+            continue
+        caminho = pasta / nome
+        if not caminho.is_file():
+            continue
+        try:
+            caminho.unlink()
+            apagados.append(nome)
+        except OSError as e:
+            falhas.append(f"{nome} ({e.__class__.__name__})")
+    res = {"ok": True, "apagados": apagados}
+    if falhas:
+        res["aviso"] = "Não foi possível apagar: " + ", ".join(falhas) + " — o arquivo pode estar aberto no Word."
+    return res
+
+
 def _falhar(paj_norm: str, erro: str) -> None:
     with _lock:
         _status[paj_norm] = {"status": "error", "erro": erro}
 
 
-def iniciar(paj_norm: str, processo: str, tipo_slug: str, documentos: list[dict], orientacao: str = "") -> dict:
+def iniciar(paj_norm: str, processo: str, tipo_slug: str, documentos: list[dict], orientacao: str = "",
+            usar_teses: bool = False) -> dict:
     """Valida e dispara a geração em background. `documentos`: lista de
     {origem: "processo", ...} ou {origem: "paj", caminho: "Arquivos/xxx.pdf"}
     — já resolvida pelo front a partir das 2 abas do modal de seleção.
@@ -254,12 +291,14 @@ def iniciar(paj_norm: str, processo: str, tipo_slug: str, documentos: list[dict]
     with _lock:
         _status[paj_norm] = {"status": "running", "erro": "", "iniciado_em": datetime.now().isoformat(timespec="seconds")}
 
-    t = threading.Thread(target=_gerar_worker, args=(paj_norm, processo, tipo_slug, documentos, orientacao), daemon=True)
+    t = threading.Thread(target=_gerar_worker, args=(paj_norm, processo, tipo_slug, documentos, orientacao, usar_teses),
+                         daemon=True)
     t.start()
     return {"ok": True, "status": "running"}
 
 
-def _gerar_worker(paj_norm: str, processo: str, tipo_slug: str, documentos: list[dict], orientacao: str = "") -> None:
+def _gerar_worker(paj_norm: str, processo: str, tipo_slug: str, documentos: list[dict], orientacao: str = "",
+                  usar_teses: bool = False) -> None:
     try:
         cfg = _tipo_por_id(tipo_slug)
         if not cfg:
@@ -287,6 +326,12 @@ def _gerar_worker(paj_norm: str, processo: str, tipo_slug: str, documentos: list
         paj_exibicao = _paj_exibicao(paj_norm)
         prompt = _montar_prompt(paj_exibicao, processo, criterio_area, caminhos,
                                  orientacao=orientacao, cfg=cfg, caminhos_referencia=caminhos_referencia)
+        # "Usar banco de teses" (19/10/2026): teses ativas no prompt; a IA só
+        # marca onde cada tese entra e o painel insere o texto cadastrado, em
+        # azul, ipsis litteris (banco_teses_service.inserir_teses_html).
+        if usar_teses:
+            from services import banco_teses_service
+            prompt += banco_teses_service.bloco_prompt()
 
         # Resposta direto em HTML (15/10/2026, PAJ 2025/029-04069 estourou os
         # 5 min): antes a IA abria cada documento com a ferramenta de leitura,
@@ -310,6 +355,8 @@ def _gerar_worker(paj_norm: str, processo: str, tipo_slug: str, documentos: list
         if not peticao_html:
             _falhar(paj_norm, f"A IA não devolveu o texto da minuta. Saída: {saida[-1500:].strip() or '(vazia)'}")
             return
+        from services import banco_teses_service
+        peticao_html = banco_teses_service.inserir_teses_html(peticao_html)
 
         with _lock:
             _status[paj_norm] = {
@@ -722,4 +769,8 @@ def formatar_e_salvar(paj_norm: str, tipo_slug: str, peticao_html: str) -> dict:
         return {"ok": False, "erro": "A minuta foi formatada (.docx), mas a conversão pra PDF falhou "
                                       "(verifique se o Microsoft Word está instalado nesta máquina)."}
 
+    # Registra os arquivos desta minuta — "Descartar" os apaga junto (19/10/2026).
+    with _lock:
+        st = _status.setdefault(paj_norm, {"status": "done"})
+        st["arquivos_gerados"] = sorted(set(st.get("arquivos_gerados") or []) | {docx_path.name, pdf_path.name})
     return {"ok": True, "arquivos": [docx_path.name, pdf_path.name]}

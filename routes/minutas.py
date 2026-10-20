@@ -7,6 +7,8 @@ reaproveitam endpoints que já existem (não duplicados aqui):
 
 from __future__ import annotations
 
+import contextlib
+
 from fastapi import APIRouter, File, Request, UploadFile
 from fastapi.responses import FileResponse, JSONResponse
 
@@ -98,7 +100,8 @@ async def api_minutas_gerar(paj_norm: str, request: Request):
     tipo_slug = (body.get("tipo_slug") or "").strip()
     documentos = body.get("documentos") or []
     orientacao = (body.get("orientacao") or "").strip()
-    res = minuta_ia_service.iniciar(paj_norm, processo, tipo_slug, documentos, orientacao)
+    res = minuta_ia_service.iniciar(paj_norm, processo, tipo_slug, documentos, orientacao,
+                                    usar_teses=bool(body.get("usar_teses")))
     return JSONResponse(res, status_code=200 if res.get("ok") else 400)
 
 
@@ -118,6 +121,18 @@ async def api_minutas_salvar_rascunho(paj_norm: str, request: Request):
     body = await request.json()
     peticao_html = body.get("peticao_html") or ""
     res = minuta_ia_service.salvar_rascunho(paj_norm, peticao_html)
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
+
+
+@router.post("/api/minutas/descartar/{paj_norm}", response_class=JSONResponse)
+async def api_minutas_descartar(paj_norm: str, request: Request):
+    """Botão "Descartar" — apaga o rascunho da minuta e os arquivos (DOC/PDF) que
+    ela gerou em "Peças IA". Body opcional: {arquivos: [nomes]} (os que a tela
+    mostra — cobre um reinício do painel entre gerar e descartar)."""
+    body = {}
+    with contextlib.suppress(Exception):
+        body = await request.json()
+    res = minuta_ia_service.descartar(paj_norm, (body or {}).get("arquivos") or [])
     return JSONResponse(res, status_code=200 if res.get("ok") else 400)
 
 

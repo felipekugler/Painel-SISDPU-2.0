@@ -48,6 +48,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import contextvars
 import json
 import re
 import subprocess
@@ -67,6 +68,13 @@ LogCb = Callable[[str, str], None]
 # --------------------------------------------------------------------------
 # Helpers comuns (casamento de evento, chamada ao Claude CLI, formatação)
 # --------------------------------------------------------------------------
+
+# "Usar banco de teses" (19/10/2026): marcado na página Intimações, vale para a
+# petição gerada nesta execução da triagem (análise individual ou em fila) —
+# definido pelas rotas (routes/intimacoes.py) no início da tarefa e lido por
+# `_gerar_peticao`. O despacho interno de diligência não usa teses.
+USAR_TESES: contextvars.ContextVar[bool] = contextvars.ContextVar("intimacao_usar_teses", default=False)
+
 
 def _so_data(s: str) -> str:
     """Só o 'dd/mm/aaaa' dentro da string — mesmo recorte usado em
@@ -1277,13 +1285,17 @@ async def _gerar_peticao(processo: str, paj_norm: str, pasta_paj: Path, caso: di
     chave = caso["chave_caso"]
 
     log_cb("info", "Gerando minuta de manifestação/petição…")
-    saida, erro = await _chamar_claude_texto(_montar_prompt_peticao(processo, caso), timeout=400)
+    prompt = _montar_prompt_peticao(processo, caso)
+    from services import banco_teses_service
+    if USAR_TESES.get():  # "Usar banco de teses" marcado na página Intimações
+        prompt += banco_teses_service.bloco_prompt()
+    saida, erro = await _chamar_claude_texto(prompt, timeout=400)
     if erro:
         log_cb("erro", f"Falha ao gerar a petição: {erro}")
         intimacao_service.salvar_estado(chave, status_geral="erro", erro=erro)
         return {"ok": False, "erro": erro}
 
-    peticao_html = _extrair_bloco_html(saida)
+    peticao_html = banco_teses_service.inserir_teses_html(_extrair_bloco_html(saida))
     evento_ref = caso.get("evento_referenciado") or {}
     sufixo = _sufixo_arquivo_seguro(evento_ref.get("evento_referenciado"))
     nome = f"manifestacao_intimacao_{sufixo}"
