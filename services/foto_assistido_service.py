@@ -25,6 +25,7 @@ from datetime import datetime
 from pathlib import Path
 
 from config import PAJS_DIR
+from services.gravacao_protegida import escrever_texto_com_retry_sync
 
 ARQ_FOTO = "foto_assistido.jpg"
 ARQ_MARCA = "foto_sis2.json"
@@ -82,7 +83,7 @@ def _desfazer_avatares(padroes: dict) -> None:
             meta_path = marca.parent / "metadata.json"
             meta = _ler(meta_path, None)
             if isinstance(meta, dict) and meta.pop("foto_assistido", None):
-                meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+                escrever_texto_com_retry_sync(meta_path, json.dumps(meta, ensure_ascii=False, indent=2, default=str))
 
 
 def garantir_foto(pasta: Path, det: dict, forcar: bool = False) -> dict:
@@ -144,7 +145,7 @@ def ressincronizar_caixa(log=print) -> dict:
         contagem[situacao] = contagem.get(situacao, 0) + 1
         if situacao == "foto" and not meta.get("foto_assistido"):
             meta["foto_assistido"] = ARQ_FOTO
-            (pasta / "metadata.json").write_text(json.dumps(meta, ensure_ascii=False, indent=2, default=str),
-                                                 encoding="utf-8")
+            escrever_texto_com_retry_sync(pasta / "metadata.json",
+                                          json.dumps(meta, ensure_ascii=False, indent=2, default=str))
         log(f"{p['paj']}: {r['situacao']}")
     return contagem

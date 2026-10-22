@@ -22,6 +22,7 @@ from fastapi import Path as FastApiPath
 
 from config import PAJS_DIR, PECAS_FEITAS_DIR
 from services import lembretes_service
+from services.gravacao_protegida import escrever_texto_com_retry, escrever_texto_com_retry_sync
 
 
 # Type alias para parametros de rota — FastAPI valida o pattern e retorna 422
@@ -765,9 +766,8 @@ def definir_whatsapp_numeros(paj_norm: str, numeros: list[str]) -> dict | None:
     contatos["whatsapp"] = bool(numeros_validos)
     metadata["contatos"] = contatos
 
-    meta_path.write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
+    escrever_texto_com_retry_sync(
+        meta_path, json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
     )
     return contatos
 
@@ -909,9 +909,8 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
                     metadata["em_caixa_atual"] = False
                     metadata["concluido_em"] = datetime.now().isoformat(timespec="seconds")
                     saiu_da_caixa = True
-                meta_path.write_text(
-                    json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
-                    encoding="utf-8",
+                await escrever_texto_com_retry(
+                    meta_path, json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
                 )
                 invalidar_cache_listagem()
         else:
@@ -940,9 +939,8 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
 
                 metadata["em_caixa_atual"] = False
                 metadata["concluido_em"] = datetime.now().isoformat(timespec="seconds")
-                meta_path.write_text(
-                    json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
-                    encoding="utf-8",
+                await escrever_texto_com_retry(
+                    meta_path, json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
                 )
                 invalidar_cache_listagem()
                 saiu_da_caixa = True
@@ -1085,9 +1083,8 @@ async def concluir_tramites_caixa(paj_norm: str, id_tramites: list[str]) -> dict
             metadata["em_caixa_atual"] = False
             metadata["concluido_em"] = datetime.now().isoformat(timespec="seconds")
             saiu_da_caixa = True
-        meta_path.write_text(
-            json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
+        await escrever_texto_com_retry(
+            meta_path, json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
         )
         invalidar_cache_listagem()
 
@@ -1334,9 +1331,8 @@ def limpar_anexos_paj(
 
         metadata["anexos_removidos_em"].append(datetime.now().isoformat(timespec="seconds"))
         with contextlib.suppress(Exception):
-            (pasta / "metadata.json").write_text(
-                json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
-                encoding="utf-8",
+            escrever_texto_com_retry_sync(
+                pasta / "metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
             )
 
     return resultado
