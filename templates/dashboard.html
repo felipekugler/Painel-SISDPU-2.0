@@ -9,6 +9,22 @@
 <style>
   .tnum { font-variant-numeric: tabular-nums; font-feature-settings: "tnum", "cv11"; }
 
+  /* Linha pelo prazo do trâmite (21/10/2026) — mesmas cores da caixa de entrada
+     do SISDPU (_estilo_geral.css: epaj_cxentrada_prazo_vencido/_5dias/_60dias).
+     No modo escuro, a mesma cor translúcida, para o texto claro seguir legível. */
+  tr.cx-prazo-vencido > td { background-color: #E75A4D; }
+  tr.cx-prazo-vencido > td, tr.cx-prazo-vencido > td * { color: #fff !important; }
+  tr.cx-prazo-5dias > td { background-color: #F99; }
+  tr.cx-prazo-60dias > td { background-color: #FFE033; }
+  :root[data-theme="dark"] tr.cx-prazo-vencido > td { background-color: rgba(231, 90, 77, .55); }
+  :root[data-theme="dark"] tr.cx-prazo-5dias > td { background-color: rgba(255, 153, 153, .30); }
+  :root[data-theme="dark"] tr.cx-prazo-60dias > td { background-color: rgba(255, 224, 51, .22); }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]):not([data-theme="dark"]) tr.cx-prazo-vencido > td { background-color: rgba(231, 90, 77, .55); }
+    :root:not([data-theme="light"]):not([data-theme="dark"]) tr.cx-prazo-5dias > td { background-color: rgba(255, 153, 153, .30); }
+    :root:not([data-theme="light"]):not([data-theme="dark"]) tr.cx-prazo-60dias > td { background-color: rgba(255, 224, 51, .22); }
+  }
+
   .list-scroll::-webkit-scrollbar { width: 10px; }
   .list-scroll::-webkit-scrollbar-thumb { background: hsl(var(--b3)); border-radius: 8px; border: 2px solid hsl(var(--b2)); }
   .list-scroll::-webkit-scrollbar-thumb:hover { background: hsl(var(--bc) / 0.2); }
@@ -604,6 +620,10 @@
                   </div>
                 </div>
               </th>
+              <!-- Prazo do trâmite no SIS-DPU (21/10/2026) — linha colorida como na caixa do SISDPU -->
+              <th class="px-4 py-2 text-left w-[88px]">
+                <button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('prazo_caixa')">Prazo <span x-text="iconOrdem('prazo_caixa')"></span></button>
+              </th>
               <th class="px-4 py-2 text-left w-[100px]" x-show="!fonteMcp"><button class="flex items-center gap-1 hover:text-base-content/70" @click="ordenarPor('n_documentos_indexados')">Anexos</button></th>
               <th class="px-4 py-2 text-left w-[200px]">
                 <div class="flex items-center gap-1">
@@ -630,6 +650,7 @@
           <template x-for="paj in pajsFiltrados" :key="paj.paj_norm">
             <tbody>
               <tr class="paj-row group cursor-pointer hover:bg-base-200/50 transition-colors"
+                  :class="classePrazo(paj.prazo_caixa)"
                   @click="window.location.href = '/paj/' + paj.paj_norm">
 
               <!-- PAJ -->
@@ -755,6 +776,11 @@
                 <div class="text-[10px] text-base-content/40 mt-0.5" x-text="dataRelativa(paj.data_caixa)"></div>
               </td>
 
+              <!-- Prazo (só a data; vazio sem prazo) -->
+              <td class="px-4 py-3 align-top">
+                <div class="font-mono text-xs tnum" x-show="paj.prazo_caixa" x-text="formatarData(paj.prazo_caixa)"></div>
+              </td>
+
               <!-- Anexos (oculta com a fonte SIS-DPU 2.0: o painel não baixa a caixa toda) -->
               <td class="px-4 py-3 align-top" x-show="!fonteMcp">
                 <div x-show="(paj.n_documentos_indexados || 0) > 0 || paj.n_pecas > 0"
@@ -790,7 +816,7 @@
             </tr><tr x-show="expandidoTramites[paj.paj_norm] && (paj.tramitacoes_caixa || []).length > 1" @click.stop
                 class="bg-base-200/40">
               <td></td>
-              <td colspan="7" class="px-4 py-2">
+              <td colspan="8" class="px-4 py-2">
                 <div class="text-[11px] font-semibold uppercase tracking-wide text-base-content/40 mb-1.5">
                   Tramitações pendentes na caixa de entrada
                 </div>
@@ -1436,6 +1462,10 @@ function dashboardApp() {
             lista = [...lista].sort((a, b) => {
                 let va = a[this.ordemCampo] || '';
                 let vb = b[this.ordemCampo] || '';
+                // Prazo: PAJ sem prazo fica sempre no fim, nas duas direções.
+                if (this.ordemCampo === 'prazo_caixa' && (!va || !vb)) {
+                    return (!va && !vb) ? 0 : (!va ? 1 : -1);
+                }
                 if (typeof va === 'string') va = va.toLowerCase();
                 if (typeof vb === 'string') vb = vb.toLowerCase();
                 if (va < vb) return this.ordemAsc ? -1 : 1;
@@ -1443,6 +1473,20 @@ function dashboardApp() {
                 return 0;
             });
             this.pajsFiltrados = lista;
+        },
+
+        // Cor da linha pelo prazo do trâmite — mesmo esquema da caixa de entrada
+        // do SISDPU (classes epaj_cxentrada_prazo_* do _estilo_geral.css):
+        // vencido = vermelho; até 5 dias = rosa; até 60 dias = amarelo.
+        classePrazo(prazo) {
+            if (!prazo) return '';
+            const hoje = new Date(); hoje.setHours(0, 0, 0, 0);
+            const [a, m, d] = prazo.slice(0, 10).split('-').map(Number);
+            const dias = Math.round((new Date(a, m - 1, d) - hoje) / 86400000);
+            if (dias < 0) return 'cx-prazo-vencido';
+            if (dias <= 5) return 'cx-prazo-5dias';
+            if (dias <= 60) return 'cx-prazo-60dias';
+            return '';
         },
 
         ordenarPor(campo) {

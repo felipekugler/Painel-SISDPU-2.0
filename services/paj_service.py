@@ -204,6 +204,20 @@ def invalidar_cache_listagem() -> None:
     _list_cache["key"] = None
 
 
+def _prazo_mais_proximo(tramitacoes: list[dict]) -> str:
+    """Menor prazo (ISO) entre os trâmites pendentes do PAJ na caixa — o
+    SIS-DPU manda "dd/mm/aaaa" (ou ISO); "" se nenhum tiver prazo."""
+    datas = []
+    for t in tramitacoes:
+        p = str((t or {}).get("prazo") or "").strip()
+        m = re.match(r"(\d{2})/(\d{2})/(\d{4})", p)
+        if m:
+            datas.append(f"{m.group(3)}-{m.group(2)}-{m.group(1)}")
+        elif re.match(r"\d{4}-\d{2}-\d{2}", p):
+            datas.append(p[:10])
+    return min(datas) if datas else ""
+
+
 def _ler_concluido_em(metadata: dict) -> str:
     """Le o timestamp em que o PAJ saiu da caixa (foi 'concluido').
 
@@ -398,6 +412,10 @@ def listar_pajs(incluir_concluidos: bool = False, excluir_submenu: bool = True) 
             # ainda não resincronizado com essa lógica (ver `tramitacoes_caixa`
             # acima) ou realmente sem tramitação geral aberta.
             "tramitacoes_caixa": tramitacoes_caixa or [],
+            # Coluna "Prazo" do dashboard (21/10/2026): prazo do trâmite na caixa
+            # do SIS-DPU (já gravado em cada item de `tramitacoes_caixa`); com
+            # mais de um trâmite, vale o mais próximo. ISO (AAAA-MM-DD) ou "".
+            "prazo_caixa": _prazo_mais_proximo(tramitacoes_caixa or []),
             "processo_judicial": metadata.get("processo_judicial", ""),
             "n_pecas": n_pecas_geradas,
             "n_anexos_sisdpu": n_anexos_sisdpu,

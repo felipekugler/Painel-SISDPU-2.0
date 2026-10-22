@@ -163,13 +163,42 @@ def _invalidar_caches(id_processo: int) -> None:
     sisdpu2_fonte.invalidar_cache_caixa()
 
 
-async def cadastrar_processo_judicial(paj_num: str, numero: str, instancia: int = 1) -> dict:
+async def _gravar_chave(vinc: dict, chave: str) -> dict:
+    """Grava a chave de consulta no campo "Observações (Chave)" do vínculo
+    (liberado no MCP em 20/10/2026 — antes só entrava pela tela, pelo
+    cartório). A chave aparece no cartão do cadastro na revisão unificada do
+    pós-ajuizamento (peticao_inicial_modal.html), e a confirmação do Defensor
+    ali vale para ela — é dado do cadastro, não movimenta o PAJ. Nunca
+    sobrescreve o que já estiver no campo."""
+    chave = (chave or "").strip()
+    if not chave:
+        return {"chave_gravada": False, "chave_detalhe": "Chave de consulta não informada pelo e-proc."}
+    atual = str(vinc.get("observacao") or "").strip()
+    if atual:
+        if re.sub(r"\s", "", atual) == re.sub(r"\s", "", chave):
+            return {"chave_gravada": True, "chave_detalhe": "Chave de consulta já estava cadastrada no PAJ."}
+        return {"chave_gravada": False,
+                "chave_detalhe": f"O campo da chave já tem outro conteúdo ({atual[:60]}) — não sobrescrevi; confira."}
+    args = {"idVinculo": int(vinc["id"]), "chave": chave}
+    ficha = await asyncio.to_thread(sis2.chamar_escrita, "processo_judicial_observacao_preparar", args)
+    ficha_txt = ficha if isinstance(ficha, str) else str(ficha)
+    token = re.search(r"Token de confirma\w*:\s*([0-9a-f]+)", ficha_txt, re.I)
+    if not token:
+        return {"chave_gravada": False,
+                "chave_detalhe": f"O SIS-DPU 2.0 recusou a chave: {aprov.ficha_para_exibir(ficha_txt)[:300]}"}
+    await asyncio.to_thread(sis2.chamar_escrita, "processo_judicial_observacao_confirmar",
+                            {**args, "token": token.group(1), "confirmacao": aprov.RESPOSTA_CLIQUE})
+    return {"chave_gravada": True, "chave_detalhe": f"Chave de consulta {chave} gravada no PAJ."}
+
+
+async def cadastrar_processo_judicial(paj_num: str, numero: str, instancia: int = 1, chave: str = "") -> dict:
     """Depois da petição inicial (pedido do Defensor, 13/10/2026): vincula o
     processo judicial ao PAJ e sincroniza com o tribunal — o SIS-DPU 2.0 grava
     número, órgão julgador (juízo), autuação, classe, valor e partes. Cada passo
     com a SUA ficha no modal de confirmação. Se o processo já estiver vinculado,
-    só sincroniza. A chave de consulta NÃO tem campo no MCP (pedido à TI) e segue
-    só na descrição da movimentação "Petição inicial"."""
+    só sincroniza. Com `chave`, grava também a chave de consulta no campo
+    "Observações (Chave)" do vínculo (20/10/2026 — `_gravar_chave`), o que antes
+    o cartório fazia à mão pela tela."""
     base = {"fonte": "mcp-sisdpu2", "cadastrado": False, "sincronizado": False}
     digitos = re.sub(r"\D", "", numero or "")
     if len(digitos) != 20:
@@ -218,8 +247,12 @@ async def cadastrar_processo_judicial(paj_num: str, numero: str, instancia: int 
         resposta = aprov.RESPOSTA_CLIQUE
         r = await asyncio.to_thread(sis2.chamar_escrita, "processo_judicial_sincronizar_confirmar",
                                     {"idVinculo": int(vinc["id"]), "token": token.group(1), "confirmacao": resposta})
-        _invalidar_caches(idp)
         vinc = await _vinculo() or vinc
+        try:
+            base.update(await _gravar_chave(vinc, chave))
+        except Exception as e:  # noqa: BLE001 — a chave não derruba o cadastro já feito
+            base.update({"chave_gravada": False, "chave_detalhe": f"Falha ao gravar a chave: {type(e).__name__}: {e}"[:300]})
+        _invalidar_caches(idp)
         msg = (r or {}).get("mensagem") if isinstance(r, dict) else str(r)
         return {**base, "ok": True, "sincronizado": bool((r or {}).get("sincronizado", True)) if isinstance(r, dict) else True,
                 "juizo": vinc.get("juizo"), "id_vinculo": vinc.get("id"),

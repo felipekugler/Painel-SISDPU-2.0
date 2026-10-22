@@ -248,6 +248,14 @@
                                 </template>
                                 <div class="text-xs text-base-content/60" x-show="!revisao.cadastro.length && revisao.jaVinculado">
                                     O processo já está vinculado ao PAJ — não há cadastro a gravar.</div>
+                                <!-- Chave de consulta no campo "Observações (Chave)" do PAJ (20/10/2026):
+                                     gravada junto com o cadastro, com esta mesma confirmação. -->
+                                <table class="text-xs" x-show="resultado && resultado.chave"><tbody>
+                                    <tr><td class="pr-4 py-0.5 text-base-content/70 whitespace-nowrap">Chave de consulta</td>
+                                        <td class="py-0.5 font-mono" x-text="resultado && resultado.chave"></td></tr>
+                                </tbody></table>
+                                <div class="text-[11px] text-base-content/50" x-show="resultado && resultado.chave">
+                                    Vai para o campo "Observações (Chave)" do processo no PAJ — o cartório não precisa mais cadastrá-la.</div>
                             </div>
                             <!-- 2. Movimentação | 3. Tramitação lado a lado (padrão da movimentação conjunta) -->
                             <div class="grid grid-cols-2 gap-2 items-stretch revisao-compacta" x-show="revisao.mov.length">

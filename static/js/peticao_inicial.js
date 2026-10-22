@@ -14,6 +14,9 @@
 //                SISDPU (docx anexo, tramita p/ AJUIZADOS) pelo próprio console
 //                "Ações no SISDPU" da página (executar(true) — recarrega a
 //                página ao final; o resumo volta pelo sessionStorage).
+const DESC_TRAM_COM_CHAVE = 'Processo ajuizado. Cadastrar chave. Comunicar assistido';
+const DESC_TRAM_SEM_CHAVE = 'Processo ajuizado. Comunicar assistido';
+
 function peticaoInicialApp(pajNorm, pajLabel) {
     const CHAVE_FIM = 'painel_peticao_inicial_fim_' + pajNorm;
     return {
@@ -230,7 +233,7 @@ function peticaoInicialApp(pajNorm, pajLabel) {
             try {
                 c = await (await fetch('/api/sisdpu2/processo-judicial/cadastrar', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ paj_label: pajLabel, numero: r.numero, instancia: 1 }),
+                    body: JSON.stringify({ paj_label: pajLabel, numero: r.numero, instancia: 1, chave: r.chave || '' }),
                 })).json();
             } catch (e) { c = { ok: false, detalhe: 'Erro de rede: ' + e }; }
             this.posLog.pop();
@@ -238,6 +241,12 @@ function peticaoInicialApp(pajNorm, pajLabel) {
                 msg: c.ok ? 'Processo judicial ' + (c.cadastrado ? 'cadastrado e ' : '') + 'sincronizado no PAJ'
                             + (c.juizo ? ' — ' + c.juizo : '') + '. ' + (c.detalhe || '')
                           : 'Processo judicial no PAJ: ' + (c.detalhe || 'falhou') + ' — dá para cadastrar pela tela do SISDPU.' });
+            // Chave de consulta no campo próprio do PAJ (20/10/2026). A tramitação
+            // já aprovada na revisão não muda (o texto tem de ser idêntico ao
+            // conferido): sem a chave gravada, o aviso diz para cadastrá-la.
+            if (c.ok) this.posLog.push({ ok: !!c.chave_gravada,
+                msg: (c.chave_detalhe || 'Chave de consulta não gravada.')
+                     + (c.chave_gravada ? '' : ' — cadastre a chave pela tela do SISDPU (a tramitação não pede isso ao cartório).') });
         },
 
         // Grava o rascunho da movimentação "Petição inicial" no console "Ações no
@@ -263,8 +272,11 @@ function peticaoInicialApp(pajNorm, pajLabel) {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({ paj_label: pajLabel, fase, grupo, prazo: 0, prazo_data: '', concluir: true,
                                            descricao_mov_html: html,
-                                           // descrição padrão da tramitação para AJUIZADOS (Defensor, 16/10/2026)
-                                           descricao_tram: 'Processo ajuizado. Cadastrar chave. Comunicar assistido',
+                                           // descrição padrão da tramitação para AJUIZADOS (Defensor, 16/10/2026).
+                                           // Com o SIS-DPU 2.0 o painel grava a chave no PAJ (20/10/2026) e o
+                                           // cartório não precisa mais cadastrá-la; se a gravação falhar, o log
+                                           // do pós-ajuizamento avisa para cadastrar pela tela.
+                                           descricao_tram: (window.PAINEL_FONTE_SISDPU_MCP && r.chave) ? DESC_TRAM_SEM_CHAVE : DESC_TRAM_COM_CHAVE,
                                            anexos, fila: [] }),
                 })).json();
                 if (!g.ok) throw new Error(g.erro || 'falha ao gravar');

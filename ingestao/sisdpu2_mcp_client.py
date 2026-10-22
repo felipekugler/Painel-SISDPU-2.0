@@ -452,9 +452,12 @@ _TOOLS_ESCRITA = {
     # processo judicial no PAJ após a petição inicial (13/10/2026)
     "processo_judicial_cadastrar_preparar", "processo_judicial_cadastrar_confirmar",
     "processo_judicial_sincronizar_preparar", "processo_judicial_sincronizar_confirmar",
+    # chave de consulta no campo "Observações (Chave)" do vínculo (20/10/2026)
+    "processo_judicial_observacao_preparar", "processo_judicial_observacao_confirmar",
 }
 _TOOLS_ESCRITA_SEM_REPETIR = {"movimentacao_confirmar", "movimentacao_anexo_guardar", "tramite_interno_confirmar",
-                              "processo_judicial_cadastrar_confirmar", "processo_judicial_sincronizar_confirmar"}
+                              "processo_judicial_cadastrar_confirmar", "processo_judicial_sincronizar_confirmar",
+                              "processo_judicial_observacao_confirmar"}
 
 
 def chamar_escrita(nome: str, args: Optional[dict] = None, timeout: float = 180) -> Any:

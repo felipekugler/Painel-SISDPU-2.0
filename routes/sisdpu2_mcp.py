@@ -109,12 +109,13 @@ async def api_ao_vivo_paj_anexos(paj_norm: str):
 
 @router.post("/api/sisdpu2/processo-judicial/cadastrar", response_class=JSONResponse)
 async def api_sisdpu2_processo_judicial_cadastrar(request: Request):
-    """Corpo: {paj_label, numero, instancia?}. Bloqueia até as fichas serem
-    respondidas no modal de confirmação (cadastro e sincronização)."""
+    """Corpo: {paj_label, numero, instancia?, chave?}. Bloqueia até as fichas
+    serem respondidas no modal de confirmação (cadastro e sincronização); com
+    `chave`, grava também a chave de consulta no vínculo."""
     from ingestao import sisdpu2_movtram
     b = await request.json()
     return await sisdpu2_movtram.cadastrar_processo_judicial(b.get("paj_label") or "", b.get("numero") or "",
-                                                             int(b.get("instancia") or 1))
+                                                             int(b.get("instancia") or 1), b.get("chave") or "")
 
 
 @router.post("/api/sisdpu2/processo-judicial/ficha", response_class=JSONResponse)
