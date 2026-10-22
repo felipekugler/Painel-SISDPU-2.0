@@ -50,7 +50,16 @@ ETAPAS = [
     ("pasta_pronta", "Pasta de ajuizamento pronta", 6, False, "#7F77DD", "#FFFFFF", "folder-check"),
     ("ajuizado", "Ajuizado", 7, True, "#378ADD", "#FFFFFF", "gavel"),
     ("cumprimento_sentenca", "Cumprimento de sentença", 8, True, "rgb(238, 173, 45)", "#412402", "coins"),
+    # Manual e TRAVADA (22/10/2026, pedido do Defensor): PAJ parado à espera de
+    # fato externo. Sai do Sobrestado quando o Defensor escolhe outra etapa ou
+    # com andamento INEQUÍVOCO (ajuizamento da inicial) — minuta gerada ou pasta
+    # organizada não o tiram daqui.
+    ("sobrestado", "Sobrestado", 9, True, "#94A3B8", "#1E293B", "pause"),
 ]
+# Etapas que só saem do lugar pela escolha do Defensor ou por evidência
+# INEQUÍVOCA de andamento (essa segue o fluxo normal a partir dali).
+TRAVADAS = {"sobrestado"}
+INEQUIVOCAS = {"ajuizado"}
 _POR_CHAVE = {e[0]: e for e in ETAPAS}
 
 
@@ -197,9 +206,13 @@ def calcular(paj_norm: str, metadata: dict | None = None) -> dict:
             evid.append(("ajuizado", d, num.group(0) if num else ""))
             break
 
-    # 4) avança só para a frente e só com evidência mais recente que a base
+    # 4) avança só para a frente e só com evidência mais recente que a base —
+    #    exceto etapa TRAVADA (Sobrestado), que só muda pela escolha do Defensor
     atual = (base_chave, base_dt, base_seq, "")
     ordem_base = info(base_chave)["ordem"]
+    if base_chave in TRAVADAS:
+        evid = [e for e in evid if e[0] in INEQUIVOCAS]
+        ordem_base = -1  # a ordem do Sobrestado (fim do trilho) não barra o ajuizamento
     melhor = None
     for chave, d, det in evid:
         if (base_dt is None or d >= base_dt) and info(chave)["ordem"] > ordem_base:

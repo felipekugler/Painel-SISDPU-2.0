@@ -48,6 +48,67 @@ def _dados_locais(paj_norm: str) -> tuple[int | None, list[dict]]:
     return idp, assistidos
 
 
+# Data de instauração e etapa de cada PAJ relacionado (22/10/2026, pedido do
+# Defensor). PAJ com pasta no painel: metadata + etapa_paj_service (com as
+# evidências automáticas). Sem pasta: capa (data) e as últimas movimentações
+# do SIS 2, pela MESMA regra de etapa (movimentação "Etapa: …", arquivamento,
+# "Petição inicial") — sem as evidências que só existem na pasta local.
+_MOVS_ETAPA = 60  # cada movimentação lida conta 1 registro no teto diário
+
+
+def _data_br(valor: str) -> str:
+    m = re.match(r"(\d{4})-(\d{2})-(\d{2})", valor or "")
+    if m:
+        return f"{m.group(1)}-{m.group(2)}-{m.group(3)}"
+    m = re.match(r"(\d{2})/(\d{2})/(\d{4})", valor or "")
+    return f"{m.group(3)}-{m.group(2)}-{m.group(1)}" if m else ""
+
+
+def _etapa_resumo(e: dict) -> dict:
+    return {"chave": e.get("chave"), "rotulo": e.get("rotulo"), "cor_fundo": e.get("cor_fundo"),
+            "cor_texto": e.get("cor_texto"), "icone": e.get("icone"), "arquivado": bool(e.get("arquivado"))}
+
+
+def _detalhes(paj_norm: str, id_processo) -> dict:
+    """{data_abertura (ISO), etapa} de um PAJ relacionado. Falha → vazio."""
+    from services import etapa_paj_service
+
+    pasta = PAJS_DIR / paj_norm if paj_norm else None
+    if pasta and (pasta / "metadata.json").exists():
+        try:
+            meta = json.loads((pasta / "metadata.json").read_text(encoding="utf-8"))
+            data = _data_br(meta.get("data_abertura") or (meta.get("sisdpu_raw") or {}).get("data_abertura") or "")
+            return {"data_abertura": data, "etapa": _etapa_resumo(etapa_paj_service.calcular(paj_norm, meta)),
+                    "local": True}
+        except Exception:  # noqa: BLE001
+            pass
+    if not id_processo:
+        return {"data_abertura": "", "etapa": None}
+    out = {"data_abertura": "", "etapa": None, "local": False}
+    try:
+        capa = sis2.chamar("paj_capa", {"idProcesso": int(id_processo), "comHistorico": False}) or {}
+        out["data_abertura"] = _data_br(str(capa.get("dataAbertura") or ""))
+    except Exception:  # noqa: BLE001
+        pass
+    try:
+        r = sis2.chamar("paj_movimentacoes", {"idProcesso": int(id_processo), "limite": _MOVS_ETAPA}) or {}
+        itens = r.get("itens") or []
+        movs = []
+        for i, mv in enumerate(itens):
+            dh = str(mv.get("dataHora") or "")
+            m = re.match(r"(\d{4})-(\d{2})-(\d{2})T(\d{2}:\d{2}:\d{2})", dh)
+            if not m:
+                continue
+            movs.append({"seq": len(itens) - i, "fases": mv.get("fases") or "",
+                         "descricao": mv.get("descricao") or "",
+                         "data_original": f"{m.group(3)}/{m.group(2)}/{m.group(1)} {m.group(4)}"})
+        meta = {"detalhes_sisdpu": {"movimentacoes": movs}}
+        out["etapa"] = _etapa_resumo(etapa_paj_service.calcular(paj_norm or "PAJ-0000-000-00000", meta))
+    except Exception:  # noqa: BLE001
+        pass
+    return out
+
+
 def _ler(paj_norm: str) -> dict:
     idp, assistidos = _dados_locais(paj_norm)
     if not idp:
@@ -73,6 +134,7 @@ def _ler(paj_norm: str) -> dict:
                 "pretensao": it.get("pretensao") or "",
                 "processo_judicial": it.get("processoJudicial") or "",
                 "arquivado": bool(it.get("arquivado")),
+                "id_processo": pid,
             }
 
     ap = sis2.chamar("paj_apensos", {"idProcesso": idp, "comHistorico": True}) or {}
@@ -83,14 +145,14 @@ def _ler(paj_norm: str) -> dict:
     ultimo: dict = {}
     for h in historico:
         ultimo[h.get("idProcesso")] = h
-    apensados = [{"numero": _numero(x.get("numeroProcessoFormatado")),
+    apensados = [{"numero": _numero(x.get("numeroProcessoFormatado")), "id_processo": x.get("idProcesso"),
                   "paj_norm": _paj_norm_de(x.get("numeroProcessoFormatado")),
                   "motivo": x.get("motivo") or (ultimo.get(x.get("idProcesso")) or {}).get("motivo") or "",
                   # data e responsável do apensamento vêm do histórico
                   "data": ((ultimo.get(x.get("idProcesso")) or {}).get("data") or "")[:10],
                   "responsavel": (ultimo.get(x.get("idProcesso")) or {}).get("nomeResponsavel") or ""}
                  for x in ap.get("apensos") or []]
-    apensado_a = [{"numero": _numero(h.get("numeroProcessoFormatado")),
+    apensado_a = [{"numero": _numero(h.get("numeroProcessoFormatado")), "id_processo": pid,
                    "paj_norm": _paj_norm_de(h.get("numeroProcessoFormatado")),
                    "motivo": h.get("motivo") or "", "data": (h.get("data") or "")[:10],
                    "responsavel": h.get("nomeResponsavel") or ""}
@@ -100,6 +162,13 @@ def _ler(paj_norm: str) -> dict:
     hist = [{"acao": h.get("nomeAcao") or "", "numero": _numero(h.get("numeroProcessoFormatado")),
              "data": (h.get("data") or "")[:10], "motivo": h.get("motivo") or "",
              "responsavel": h.get("nomeResponsavel") or ""} for h in reversed(historico)]
+
+    vistos: dict = {}
+    for item in [*outros.values(), *apensados, *apensado_a]:
+        chave = item.get("paj_norm") or item.get("id_processo")
+        if chave not in vistos:
+            vistos[chave] = _detalhes(item.get("paj_norm"), item.get("id_processo"))
+        item.update(vistos[chave])
 
     # ativos primeiro; dentro de cada grupo, do mais recente para o mais antigo
     ordem = sorted(outros.values(), key=lambda o: o["numero"], reverse=True)
