@@ -110,6 +110,34 @@ function oficioSeiApp(pajNorm) {
             }, 3000);
         },
 
+        // "Abrir no SEI" / "Abrir para assinar" (22/10/2026): abre na janela do
+        // SEI controlada pelo painel, que entra sozinha com o usuário do SISDPU
+        // (cofre). Cofre trancado: pede a senha-mestra; sem ela, a janela abre
+        // no login para o login manual. Falha da janela: abre no navegador.
+        _abrindoSeiId: null,
+        async abrirNoSei(o) {
+            if (!o || !o.link || this._abrindoSeiId) return;
+            this._abrindoSeiId = o.documento_id;
+            try {
+                if (typeof window.garantirCofre === 'function') await window.garantirCofre();
+                const j = await (await fetch('/api/sei/abrir-documento', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ url: o.link }),
+                })).json();
+                if (!j.ok) {
+                    showToast((j.erro || 'Não consegui abrir a janela do SEI') + ' — abrindo no navegador.', 'warning');
+                    window.open(o.link, '_blank', 'noopener');
+                } else if (j.login_manual) {
+                    showToast(j.aviso || 'Janela do SEI aberta na tela de login — entre por lá (cofre trancado).', 'info');
+                } else {
+                    showToast('Documento aberto na janela do SEI.', 'success');
+                }
+            } catch (e) {
+                window.open(o.link, '_blank', 'noopener');
+            } finally {
+                this._abrindoSeiId = null;
+            }
+        },
         async lerOficio(o) {
             this.leitura = { aberta: true, carregando: true, html: '', erro: '', assinaturas: [],
                              titulo: 'Ofício ' + (o.numero_sei || '') + ' — ' + (o.destinatario || '') };

@@ -105,10 +105,16 @@
                     <span x-show="o.juntada === 'running'" class="loading loading-spinner loading-xs"></span>
                     <span x-text="o.juntada === 'running' ? 'Anexando…' : (o.juntada === 'erro' ? 'Anexar de novo' : 'Anexar ao PAJ')"></span>
                 </button>
+                <!-- Abre na janela do SEI controlada pelo painel, já logada com o
+                     usuário do SISDPU (cofre) — 22/10/2026, ver ingestao/sei_web_client.py.
+                     A assinatura continua sendo feita por você, com sua senha. -->
                 <a :href="o.link" target="_blank" rel="noopener" class="btn btn-xs"
                    :class="o.assinado ? 'btn-outline' : 'btn-success'"
-                   :title="o.assinado ? 'Abre o SEI no documento.' : 'Abre o SEI já no documento. A assinatura é feita por você, com sua senha, no SEI.'"
-                   x-text="o.assinado ? 'Abrir no SEI' : 'Abrir para assinar'"></a>
+                   @click.prevent="abrirNoSei(o)"
+                   :title="o.assinado ? 'Abre o documento na janela do SEI (entra sozinho com o usuário do SISDPU).' : 'Abre o documento na janela do SEI (entra sozinho com o usuário do SISDPU). A assinatura é feita por você, com sua senha.'">
+                    <span x-show="_abrindoSeiId === o.documento_id" class="loading loading-spinner loading-xs"></span>
+                    <span x-text="o.assinado ? 'Abrir no SEI' : 'Abrir para assinar'"></span>
+                </a>
             </div>
         </template>
     </div>

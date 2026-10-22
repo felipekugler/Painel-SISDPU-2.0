@@ -45,6 +45,7 @@ from routes.peticao_inicial import router as peticao_inicial_router
 from routes.paj import router as paj_router
 from routes.eproc_consulta import router as eproc_consulta_router
 from routes.esisrec import router as esisrec_router
+from routes.sei_web import router as sei_web_router
 from routes.eproc_mcp import router as eproc_mcp_router
 from routes.pipeline_monitor import router as pipeline_monitor_router
 from routes.prazos import router as prazos_router
@@ -301,6 +302,7 @@ app.include_router(prazos_router)
 app.include_router(eproc_mcp_router)
 app.include_router(eproc_consulta_router)
 app.include_router(esisrec_router)
+app.include_router(sei_web_router)
 app.include_router(watchlist_router)
 app.include_router(pipeline_monitor_router)
 app.include_router(seguranca_router)
@@ -430,6 +432,10 @@ async def _shutdown_fechar_sat() -> None:
         from ingestao import esisrec_client
 
         esisrec_client.fechar_navegador()
+    with contextlib.suppress(Exception):
+        from ingestao import sei_web_client
+
+        sei_web_client.fechar_navegador()
 
 
 def _cleanup_port(port: int) -> None:
@@ -511,3 +517,7 @@ if __name__ == "__main__":
             from ingestao import esisrec_client
 
             esisrec_client.fechar_navegador()
+        with contextlib.suppress(Exception):
+            from ingestao import sei_web_client
+
+            sei_web_client.fechar_navegador()
