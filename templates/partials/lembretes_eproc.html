@@ -13,6 +13,9 @@
     background-color: #efef8f;
     display: flex; flex-direction: column; gap: 6px;
   }
+  .lemb-eproc-card .lemb-eproc-autor {
+    font-size: 10px; line-height: 1.3; opacity: .55; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  }
   .lemb-eproc-card .lemb-eproc-texto {
     font-size: 12.5px; line-height: 1.4; white-space: pre-wrap; word-break: break-word;
     max-height: 6.5rem; overflow-y: auto;
@@ -88,6 +91,10 @@
       <div class="lemb-eproc-card" :class="(excluindoLembrete === l.texto || salvandoLembrete === l.texto) && 'opacity-50'"
            :style="{backgroundColor: (editandoLembrete === l.texto ? corEdicaoLembrete : l.cor) || '#efef8f'}">
         <div class="lemb-eproc-texto" x-show="editandoLembrete !== l.texto" x-text="l.texto"></div>
+        <!-- Autoria (22/10/2026): quem incluiu e quando, discreto; detalhes no tooltip. -->
+        <div class="lemb-eproc-autor" x-show="editandoLembrete !== l.texto && (l.usuario || l.incluido_por || l.data)"
+             :title="[l.incluido_por && ('Incluído por: ' + l.incluido_por), l.data && ('Data de inclusão: ' + l.data), l.destino && ('Destino: ' + l.destino)].filter(Boolean).join('\n')"
+             x-text="[(l.data || '').slice(0, 10), (l.incluido_por || '').replace(/^\([^)]*\)\s*/, '') || l.usuario].filter(Boolean).join(' · ')"></div>
         <template x-if="editandoLembrete === l.texto">
           <div class="flex flex-col gap-2">
             <textarea class="lemb-eproc-campo" rows="4" x-model="textoEdicaoLembrete"

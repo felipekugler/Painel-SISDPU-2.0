@@ -370,8 +370,13 @@ async def lembretes_do_processo(numero: str, instancia: int = 1) -> dict[str, An
     Processual (`div.divLembrete#divLembrete<id>`, cor no `style`, texto em
     `.desLembrete`) — conferido 16/10/2026.
 
-    Retorna {"ok": True, "itens": [{id, texto, cor}, ...]} (ordem da página,
-    mais recente no topo) ou {"ok": False, "erro": "..."}."""
+    Autoria (22/10/2026): o rodapé `.divLembreteData` traz o usuário (sigla) e a
+    data/hora de inclusão; o tooltip da lupa, "Incluído por" (nome completo),
+    "Data de inclusão" e "Destino".
+
+    Retorna {"ok": True, "itens": [{id, texto, cor, usuario, incluido_por,
+    data, destino}, ...]} (ordem da página, mais recente no topo) ou
+    {"ok": False, "erro": "..."}."""
     from bs4 import BeautifulSoup
 
     try:
@@ -391,8 +396,44 @@ async def lembretes_do_processo(numero: str, instancia: int = 1) -> dict[str, An
             "id": (div.get("id") or "").replace("divLembrete", ""),
             "texto": re.sub(r"\s+", " ", des.get_text(" ") if des else "").strip(),
             "cor": m.group(0).lower() if m else "",
+            **_autoria_lembrete(div),
         })
     return {"ok": True, "itens": itens}
+
+
+_RE_DATA_HORA = re.compile(r"\d{2}/\d{2}/\d{4}(?:\s+\d{2}:\d{2}(?::\d{2})?)?")
+
+
+def _autoria_lembrete(div) -> dict[str, str]:
+    """Usuário, data e destino do post-it (rodapé + tooltip da lupa)."""
+    import html as _html
+
+    from bs4 import BeautifulSoup
+
+    out = {"usuario": "", "incluido_por": "", "data": "", "destino": ""}
+    rodape = div.select_one(".divLembreteData")
+    if rodape is not None:
+        partes = [t.strip() for t in rodape.find_all(string=True, recursive=False) if t.strip()]
+        for t in partes:
+            if _RE_DATA_HORA.fullmatch(t):
+                out["data"] = t
+            elif not out["usuario"]:
+                out["usuario"] = t
+        a = rodape.select_one("a[onmouseover]")
+        if a is not None:
+            m = re.search(r"infraTooltipMostrar\('(.*?)','", a.get("onmouseover") or "", re.S)
+            if m:
+                texto = BeautifulSoup(_html.unescape(m.group(1)), "html.parser").get_text("\n")
+                linhas = [re.sub(r"\s+", " ", ln).strip() for ln in texto.splitlines() if ln.strip()]
+                for i, ln in enumerate(linhas[:-1]):
+                    rot = ln.rstrip(":").lower()
+                    if rot == "incluído por":
+                        out["incluido_por"] = linhas[i + 1]
+                    elif rot == "data de inclusão" and not out["data"]:
+                        out["data"] = linhas[i + 1]
+                    elif rot == "destino":
+                        out["destino"] = linhas[i + 1]
+    return out
 
 
 @_roteia_jmu

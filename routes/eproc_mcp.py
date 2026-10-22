@@ -297,7 +297,10 @@ async def api_eproc_mcp_lembretes(numero: str):
     vivo = await emc.lembretes_do_processo(numero)
     if vivo.get("ok"):
         n = len(vivo["itens"])
-        itens = [{"seq": str(n - i), "texto": l["texto"], "cor": l["cor"]} for i, l in enumerate(vivo["itens"])]
+        itens = [{"seq": str(n - i), "texto": l["texto"], "cor": l["cor"],
+                  # autoria (22/10/2026): usuário, data, "incluído por", destino
+                  **{k: l.get(k, "") for k in ("usuario", "incluido_por", "data", "destino")}}
+                 for i, l in enumerate(vivo["itens"])]
         eproc_intimacoes.atualizar_lembretes(numero, itens)
         return JSONResponse({"encontrado": True, "lembrete_itens": itens, "fonte": "eproc"})
     return JSONResponse({**eproc_intimacoes.buscar_lembretes(numero), "fonte": "cache",
