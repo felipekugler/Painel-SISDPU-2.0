@@ -91,10 +91,6 @@
       <div class="lemb-eproc-card" :class="(excluindoLembrete === l.texto || salvandoLembrete === l.texto) && 'opacity-50'"
            :style="{backgroundColor: (editandoLembrete === l.texto ? corEdicaoLembrete : l.cor) || '#efef8f'}">
         <div class="lemb-eproc-texto" x-show="editandoLembrete !== l.texto" x-text="l.texto"></div>
-        <!-- Autoria (22/10/2026): quem incluiu e quando, discreto; detalhes no tooltip. -->
-        <div class="lemb-eproc-autor" x-show="editandoLembrete !== l.texto && (l.usuario || l.incluido_por || l.data)"
-             :title="[l.incluido_por && ('Incluído por: ' + l.incluido_por), l.data && ('Data de inclusão: ' + l.data), l.destino && ('Destino: ' + l.destino)].filter(Boolean).join('\n')"
-             x-text="[(l.data || '').slice(0, 10), (l.incluido_por || '').replace(/^\([^)]*\)\s*/, '') || l.usuario].filter(Boolean).join(' · ')"></div>
         <template x-if="editandoLembrete === l.texto">
           <div class="flex flex-col gap-2">
             <textarea class="lemb-eproc-campo" rows="4" x-model="textoEdicaoLembrete"
@@ -120,7 +116,11 @@
             </div>
           </div>
         </template>
-        <div class="flex justify-end gap-1" x-show="editandoLembrete !== l.texto">
+        <div class="flex items-end gap-1 mt-auto" x-show="editandoLembrete !== l.texto">
+          <!-- Autoria (22/10/2026): data e quem incluiu, discreto, na linha dos ícones; detalhes no tooltip. -->
+          <div class="lemb-eproc-autor flex-1 min-w-0 pb-0.5"
+               :title="[l.incluido_por && ('Incluído por: ' + l.incluido_por), l.data && ('Data de inclusão: ' + l.data), l.destino && ('Destino: ' + l.destino)].filter(Boolean).join('\n')"
+               x-text="[(l.data || '').slice(0, 10), (l.incluido_por || '').replace(/^\([^)]*\)\s*/, '') || l.usuario].filter(Boolean).join(' · ')"></div>
           <button type="button" class="lemb-eproc-botao" title="Editar o texto ou a cor deste lembrete no e-proc"
                   aria-label="Editar lembrete" :disabled="ocupadoLembretes" @click="abrirEdicaoLembrete(l)">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24">
