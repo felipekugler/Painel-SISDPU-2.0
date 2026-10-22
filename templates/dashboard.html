@@ -479,7 +479,7 @@
       <!-- Limpar -->
       <button type="button"
               class="btn btn-ghost btn-sm normal-case text-base-content/60 hover:text-base-content gap-1.5 shrink-0"
-              x-show="filtroOficio || filtroPretensao || filtroDescricao || filtroData || filtroEtapa || busca"
+              x-show="filtroOficio || filtroPretensao || filtroDescricao || filtroData || filtroEtapas.length || busca"
               @click="limparFiltros()" x-transition.opacity>
         <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 18 18 6M6 6l12 12"></path></svg>
         Limpar
@@ -490,10 +490,10 @@
     <div class="flex items-center gap-1.5 mt-2.5 flex-wrap" x-show="contadoresEtapa().length">
       <template x-for="c in contadoresEtapa()" :key="c.chave">
         <button type="button" class="badge badge-sm font-semibold gap-1 border cursor-pointer"
-                :style="'border-radius:4px; background:' + c.cor_fundo + '; color:' + c.cor_texto + '; border-color:' + (filtroEtapa === c.chave ? c.cor_texto : 'transparent')
-                        + (filtroEtapa && filtroEtapa !== c.chave ? '; opacity:.45' : '')"
-                @click="filtroEtapa = (filtroEtapa === c.chave ? '' : c.chave); aplicarFiltros()"
-                :title="'Filtrar: ' + c.rotulo">
+                :style="'border-radius:4px; background:' + c.cor_fundo + '; color:' + c.cor_texto + '; border-color:' + (filtroEtapas.includes(c.chave) ? c.cor_texto : 'transparent')
+                        + (filtroEtapas.length && !filtroEtapas.includes(c.chave) ? '; opacity:.45' : '')"
+                @click="alternarEtapa(c.chave)"
+                :title="(filtroEtapas.includes(c.chave) ? 'Tirar do filtro: ' : 'Incluir no filtro: ') + c.rotulo">
           <span x-text="c.rotulo"></span>
           <span class="opacity-70" x-text="c.n"></span>
         </button>
@@ -502,7 +502,7 @@
 
     <!-- Chips de filtros ativos -->
     <div class="flex items-center gap-2 mt-2.5 text-xs text-base-content/50 min-h-[20px] flex-wrap"
-         x-show="filtroOficio || filtroPretensao || filtroDescricao || filtroData || filtroEtapa || busca"
+         x-show="filtroOficio || filtroPretensao || filtroDescricao || filtroData || filtroEtapas.length || busca"
          x-transition.opacity>
       <span>Filtrando por:</span>
       <template x-if="filtroOficio">
@@ -529,10 +529,10 @@
           <button @click.stop="filtroData = ''; aplicarFiltros()" class="ml-1 opacity-60 hover:opacity-100">×</button>
         </span>
       </template>
-      <template x-if="filtroEtapa">
+      <template x-if="filtroEtapas.length">
         <span class="badge badge-sm badge-ghost gap-1">
-          <span x-text="'Etapa: ' + rotuloEtapaFiltro(filtroEtapa)"></span>
-          <button @click.stop="filtroEtapa = ''; aplicarFiltros()" class="ml-1 opacity-60 hover:opacity-100">×</button>
+          <span x-text="(filtroEtapas.length > 1 ? 'Etapas: ' : 'Etapa: ') + filtroEtapas.map(e => rotuloEtapaFiltro(e)).join(', ')"></span>
+          <button @click.stop="filtroEtapas = []; aplicarFiltros()" class="ml-1 opacity-60 hover:opacity-100">×</button>
         </span>
       </template>
       <template x-if="busca">
@@ -631,13 +631,14 @@
                     Etapa <span x-text="iconOrdem('etapa_ordem')"></span>
                   </button>
                   <div class="dropdown dropdown-end" @click.stop>
-                    <div tabindex="0" role="button" class="p-0.5" :class="filtroEtapa ? 'text-primary' : 'text-base-content/40 hover:text-base-content/70'" title="Filtrar por Etapa">
-                      <svg class="w-3.5 h-3.5" :fill="filtroEtapa ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z"></path></svg>
+                    <div tabindex="0" role="button" class="p-0.5" :class="filtroEtapas.length ? 'text-primary' : 'text-base-content/40 hover:text-base-content/70'" title="Filtrar por Etapa (pode marcar mais de uma)">
+                      <svg class="w-3.5 h-3.5" :fill="filtroEtapas.length ? 'currentColor' : 'none'" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 3c2.755 0 5.455.232 8.083.678.533.09.917.556.917 1.096v1.044a2.25 2.25 0 0 1-.659 1.591l-5.432 5.432a2.25 2.25 0 0 0-.659 1.591v2.927a2.25 2.25 0 0 1-1.244 2.013L9.75 21v-6.568a2.25 2.25 0 0 0-.659-1.591L3.659 7.409A2.25 2.25 0 0 1 3 5.818V4.774c0-.54.384-1.006.917-1.096A48.32 48.32 0 0 1 12 3Z"></path></svg>
                     </div>
                     <ul tabindex="0" class="dropdown-content menu menu-sm bg-base-100 rounded-box z-20 w-72 p-1 shadow border border-base-300 normal-case font-normal">
-                      <li><a :class="!filtroEtapa ? 'active' : ''" @click="filtroEtapa=''; aplicarFiltros()">Todas as etapas</a></li>
+                      <li><a :class="!filtroEtapas.length ? 'active' : ''" @click="filtroEtapas = []; aplicarFiltros()">Todas as etapas</a></li>
                       <template x-for="c in contadoresEtapa()" :key="c.chave">
-                        <li><a :class="filtroEtapa===c.chave ? 'active' : ''" @click="filtroEtapa=c.chave; aplicarFiltros()">
+                        <li><a @click="alternarEtapa(c.chave)">
+                          <input type="checkbox" class="checkbox checkbox-xs pointer-events-none" :checked="filtroEtapas.includes(c.chave)">
                           <span x-text="c.rotulo"></span><span class="opacity-50 ml-auto" x-text="c.n"></span>
                         </a></li>
                       </template>
@@ -803,8 +804,8 @@
                 <template x-if="etapaDe(paj).chave && !etapaDe(paj).arquivado">
                   <button type="button" class="inline-flex items-center gap-1 text-[11px] font-semibold rounded px-1.5 py-0.5 text-left leading-tight"
                           :style="'background:' + etapaDe(paj).cor_fundo + '; color:' + etapaDe(paj).cor_texto"
-                          @click.stop="filtroEtapa = etapaDe(paj).chave; aplicarFiltros()"
-                          title="Etapa do PAJ — clique para filtrar">
+                          @click.stop="alternarEtapa(etapaDe(paj).chave)"
+                          title="Etapa do PAJ — clique para incluir/tirar do filtro">
                     <span x-show="etapaDe(paj).icone === 'spinner'" class="loading loading-spinner shrink-0" style="width:10px"></span>
                     <span x-text="etapaDe(paj).rotulo"></span>
                   </button>
@@ -911,7 +912,9 @@ function dashboardApp() {
         filtroPretensao: '',
         filtroDescricao: '',
         filtroData: '',
-        filtroEtapa: '',
+        // Filtro por etapa: várias ao mesmo tempo (21/10/2026), ex.: Ajuizado +
+        // Cumprimento de sentença.
+        filtroEtapas: [],
         busca: '',
         // Padrão: Descrição crescente (pedido do usuário 2026-09-19) — como a
         // página inteira recarrega tanto ao abrir o painel quanto ao final de
@@ -1090,7 +1093,7 @@ function dashboardApp() {
             this.filtroPretensao = '';
             this.filtroDescricao = '';
             this.filtroData = '';
-            this.filtroEtapa = '';
+            this.filtroEtapas = [];
             this.busca = '';
             this.aplicarFiltros();
         },
@@ -1181,7 +1184,7 @@ function dashboardApp() {
 
         temFiltrosAtivos() {
             return !!(this.filtroOficio || this.filtroPretensao ||
-                      this.filtroDescricao || this.filtroData || this.filtroEtapa || this.busca);
+                      this.filtroDescricao || this.filtroData || this.filtroEtapas.length || this.busca);
         },
 
         fmtPaj(pajNorm) {
@@ -1440,8 +1443,8 @@ function dashboardApp() {
             if (this.filtroData) {
                 lista = lista.filter(p => p.data_caixa === this.filtroData);
             }
-            if (this.filtroEtapa) {
-                lista = lista.filter(p => { const e = this.etapaDe(p); return e.chave && !e.arquivado && e.chave === this.filtroEtapa; });
+            if (this.filtroEtapas.length) {
+                lista = lista.filter(p => { const e = this.etapaDe(p); return e.chave && !e.arquivado && this.filtroEtapas.includes(e.chave); });
             }
             if (this.busca) {
                 const q = this.busca.toLowerCase();
@@ -1487,6 +1490,14 @@ function dashboardApp() {
             if (dias <= 5) return 'cx-prazo-5dias';
             if (dias <= 60) return 'cx-prazo-60dias';
             return '';
+        },
+
+        alternarEtapa(chave) {
+            if (!chave) return;
+            this.filtroEtapas = this.filtroEtapas.includes(chave)
+                ? this.filtroEtapas.filter(e => e !== chave)
+                : [...this.filtroEtapas, chave];
+            this.aplicarFiltros();
         },
 
         ordenarPor(campo) {
