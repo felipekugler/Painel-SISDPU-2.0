@@ -18,6 +18,7 @@ import base64
 import json
 import re
 import subprocess
+import time
 import sys
 from pathlib import Path
 from collections.abc import Callable
@@ -211,6 +212,33 @@ async def _escrever_texto_com_retry(
             if tentativa == tentativas:
                 raise
             await asyncio.sleep(espera)
+            espera *= 2
+
+
+def _escrever_texto_com_retry_sync(
+    caminho: Path, texto: str, tentativas: int = 4, espera_inicial: float = 0.3
+) -> None:
+    """Versão síncrona de `_escrever_texto_com_retry`, para as gravações de
+    metadata.json feitas fora do event loop (funções síncronas). Mesmo caminho:
+    worker sem rede primeiro, depois escrita direta com retentativas. Antes, o
+    metadata.json era gravado direto e o bloqueio do antivírus no processo do
+    servidor derrubava a atualização ao vivo (PAJ 2026/029-04239, 22/10/2026:
+    `[Errno 13] Permission denied: ...metadata.json`).
+
+    Aqui a escrita DIRETA vem primeiro e o worker só entra após o 1º
+    `PermissionError`: `_atualizar_linha_caixa` roda em laço sobre a caixa
+    inteira, e um subprocesso por PAJ travaria o event loop."""
+    espera = espera_inicial
+    for tentativa in range(1, tentativas + 1):
+        try:
+            caminho.write_text(texto, encoding="utf-8")
+            return
+        except PermissionError:
+            if tentativa == 1 and _gravar_via_subprocesso(caminho, texto):
+                return
+            if tentativa == tentativas:
+                raise
+            time.sleep(espera)
             espera *= 2
 
 
@@ -918,7 +946,7 @@ def _atualizar_linha_caixa(meta_path, item: dict) -> None:
         mudou = True
     if mudou:
         try:
-            meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+            _escrever_texto_com_retry_sync(meta_path, json.dumps(meta, ensure_ascii=False, indent=2, default=str))
         except Exception:  # noqa: BLE001
             pass
 
@@ -1268,10 +1296,7 @@ async def _processar_paj_pos_detalhamento(
             if k in meta_antiga and k not in metadata:
                 metadata[k] = meta_antiga[k]
 
-    (pasta / "metadata.json").write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
-    )
+    await _escrever_texto_com_retry(pasta / "metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2, default=str))
 
     # Anexos SISDPU: usa a relacao de documentos JA extraida por sequencial de
     # movimentacao acima (nao reabre mais a aba "Arquivos" — ver docstring de
@@ -1288,10 +1313,7 @@ async def _processar_paj_pos_detalhamento(
 
             metadata["sync_incompleto_em"] = _dt.datetime.now().isoformat()
             metadata["sync_incompleto_motivo"] = "cancelado antes do download de anexos"
-            (pasta / "metadata.json").write_text(
-                json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
-                encoding="utf-8",
-            )
+            await _escrever_texto_com_retry(pasta / "metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2, default=str))
             log(f"  [ok] {paj_norm} {'(novo)' if not ja_existia else '(atualizado parcialmente)'}")
             return (paj_norm, True)
 
@@ -1350,10 +1372,7 @@ async def _processar_paj_pos_detalhamento(
             metadata.pop("sync_incompleto_motivo", None)
 
         # Re-grava metadata.json com a contagem atualizada
-        (pasta / "metadata.json").write_text(
-            json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
-            encoding="utf-8",
-        )
+        await _escrever_texto_com_retry(pasta / "metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2, default=str))
         log(f"  [anexos] total={total_anexos} baixados={baixados} ocr={ocr_ok}")
         if overflow:
             # Usa a data de INSTAURAÇÃO do PAJ (real, vinda do header do SIS),
@@ -1381,10 +1400,7 @@ async def _processar_paj_pos_detalhamento(
             if sync_incompleto_em_anterior:
                 metadata["sync_incompleto_em"] = sync_incompleto_em_anterior
             metadata["sync_incompleto_motivo"] = "anexos pendentes (modo rapido nao baixa anexos)"
-            (pasta / "metadata.json").write_text(
-                json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
-                encoding="utf-8",
-            )
+            await _escrever_texto_com_retry(pasta / "metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2, default=str))
         log("  [anexos] modo rápido — download pulado")
 
     # Forca regeneracao do PROMPT_MAX na proxima visita
@@ -1597,10 +1613,7 @@ async def _atualizar_tramitacoes_caixa(
         _linha_caixa_das_tramitacoes(meta, novas)
         meta.pop("tem_pendencia_submenu", None)  # campo antigo, superado por subtipo
         try:
-            meta_path.write_text(
-                json.dumps(meta, ensure_ascii=False, indent=2, default=str),
-                encoding="utf-8",
-            )
+            await _escrever_texto_com_retry(meta_path, json.dumps(meta, ensure_ascii=False, indent=2, default=str))
             atualizados += 1
         except Exception as e:  # noqa: BLE001
             log(f"  [tramitacoes] falha ao gravar {paj_norm}: {type(e).__name__}: {e}")
@@ -1703,7 +1716,7 @@ async def atualizar_tramitacoes_paj_mcp(
         log(f"  [tramitacoes] {paj_norm}: nenhum trâmite pendente na caixa — sai do dashboard")
         meta["em_caixa_atual"] = False
         meta["concluido_em"] = _dt.now().isoformat(timespec="seconds")
-    meta_path.write_text(json.dumps(meta, ensure_ascii=False, indent=2, default=str), encoding="utf-8")
+    await _escrever_texto_com_retry(meta_path, json.dumps(meta, ensure_ascii=False, indent=2, default=str))
     return novas
 
 
@@ -1778,10 +1791,7 @@ def _reconciliar_concluidos(
             log(f"  [concluido] {pasta.name}")
 
         try:
-            meta_path.write_text(
-                json.dumps(meta, ensure_ascii=False, indent=2, default=str),
-                encoding="utf-8",
-            )
+            _escrever_texto_com_retry_sync(meta_path, json.dumps(meta, ensure_ascii=False, indent=2, default=str))
             concluidos += 1
         except Exception as e:
             log(f"  [warn] falha ao concluir {pasta.name}: {e}")
@@ -2307,10 +2317,7 @@ async def rodar_anexos_desde_data(
                     )
                     overflow_residual = meta["anexos_extras"]
             meta["n_anexos_sisdpu"] = resultado_anexos["total_no_sisdpu"]
-            meta_path.write_text(
-                json.dumps(meta, ensure_ascii=False, indent=2, default=str),
-                encoding="utf-8",
-            )
+            await _escrever_texto_com_retry(meta_path, json.dumps(meta, ensure_ascii=False, indent=2, default=str))
         except Exception as e:
             log(f"  [warn] falha ao atualizar metadata: {type(e).__name__}: {e}")
 
@@ -2585,10 +2592,7 @@ async def rodar_documentos_seq(
             confirmados.add(seq_str)
             metadata["seqs_sem_documento_confirmado"] = sorted(confirmados, key=lambda s: (len(s), s))
         try:
-            meta_path.write_text(
-                json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
-                encoding="utf-8",
-            )
+            await _escrever_texto_com_retry(meta_path, json.dumps(metadata, ensure_ascii=False, indent=2, default=str))
         except Exception as e:  # noqa: BLE001
             log(f"[doc-seq] erro ao salvar metadata: {type(e).__name__}: {e}")
     else:
@@ -3293,10 +3297,7 @@ async def buscar_resumo_via_busca(
     # Nao seta em_caixa_atual — fica ausente. Se uma sync regular encontrar
     # esse PAJ na caixa depois, ela seta True e o dashboard volta a mostrar.
 
-    (pasta / "metadata.json").write_text(
-        json.dumps(metadata, ensure_ascii=False, indent=2, default=str),
-        encoding="utf-8",
-    )
+    await _escrever_texto_com_retry(pasta / "metadata.json", json.dumps(metadata, ensure_ascii=False, indent=2, default=str))
 
     log(f"[busca-paj] OK: {paj_norm} (assistido={metadata.get('assistido_caixa', '?')[:40]})")
     return {
