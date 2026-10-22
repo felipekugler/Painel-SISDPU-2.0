@@ -65,15 +65,20 @@ const TIPOS_ARQUIVO_ANEXO = [
     'Despachos do Defensor', 'Parecer', 'Petições',
 ];
 
-// Etapas do PAJ escolhidas manualmente (rótulos EXATOS — espelham ETAPAS em
-// services/etapa_paj_service.py; o backend valida a chave).
-const ETAPAS_MANUAIS_PAJ = [
-    { chave: 'inviavel', rotulo: 'Analisado – Inviável' },
-    { chave: 'diligencia', rotulo: 'Analisado – Em diligência' },
-    { chave: 'viavel', rotulo: 'Analisado – Viável' },
-    { chave: 'ajuizado', rotulo: 'Ajuizado' },
-    { chave: 'cumprimento_sentenca', rotulo: 'Cumprimento de sentença' },
-];
+// Etapas do PAJ escolhidas manualmente: a lista vem do servidor
+// (window.ETAPAS_MANUAIS_PAJ, em base.html, de services/etapa_paj_service.py —
+// 22/10/2026: a cópia fixa daqui não tinha o "Sobrestado"). A lista abaixo é só
+// a reserva, se a página não trouxer a do servidor.
+const ETAPAS_MANUAIS_PAJ = (Array.isArray(window.ETAPAS_MANUAIS_PAJ) && window.ETAPAS_MANUAIS_PAJ.length)
+    ? window.ETAPAS_MANUAIS_PAJ
+    : [
+        { chave: 'inviavel', rotulo: 'Analisado – Inviável' },
+        { chave: 'diligencia', rotulo: 'Analisado – Em diligência' },
+        { chave: 'viavel', rotulo: 'Analisado – Viável' },
+        { chave: 'ajuizado', rotulo: 'Ajuizado' },
+        { chave: 'cumprimento_sentenca', rotulo: 'Cumprimento de sentença' },
+        { chave: 'sobrestado', rotulo: 'Sobrestado' },
+    ];
 
 function acoesSisdpuBlock(cfg) {
     cfg = cfg || {};

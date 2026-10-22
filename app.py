@@ -135,6 +135,12 @@ app.state.jinja.globals["painel_nome"] = PAINEL_NOME
 app.state.jinja.globals["fonte_mcp_sisdpu"] = lambda: config_painel_service.get_fonte_dados() == "mcp"
 app.state.jinja.globals["eproc_intimacoes_mcp"] = (os.getenv("EPROC_INTIMACOES_FONTE") or "").strip().lower() == "mcp"
 app.state.jinja.globals["identificacao_orgao"] = config_painel_service.get_identificacao_orgao
+# Etapas manuais do PAJ para o JS (window.ETAPAS_MANUAIS_PAJ, em base.html) — a
+# lista vem do servidor; antes era copiada à mão em acoes_sisdpu.js e uma etapa
+# nova (Sobrestado, 22/10/2026) não aparecia em "Ações no SISDPU".
+from services import etapa_paj_service as _etapa_paj_service  # noqa: E402
+
+app.state.jinja.globals["etapas_manuais_paj"] = _etapa_paj_service.opcoes_manuais
 
 # Mapeamento de exibicao para nomes de area (foro). Os valores armazenados em
 # metadata.json vem sem acentos (parser do SISDPU); o front-end formata para

@@ -1473,12 +1473,14 @@
         // Fonte SIS-DPU 2.0 (MCP): movimentar/tramitar vão pelo MCP e NÃO precisam
         // do cofre; só o que depende do SISDPU legado (concluir trâmite) o pede.
         window.PAINEL_FONTE_SISDPU_MCP = {{ 'true' if fonte_mcp_sisdpu() else 'false' }};
+        // Etapas manuais do PAJ (services/etapa_paj_service.py) — "Ações no SISDPU".
+        window.ETAPAS_MANUAIS_PAJ = {{ etapas_manuais_paj() | tojson }};
     </script>
     <script src="/static/js/app.js?v={{ app_version }}-mcp11"></script>
     <script src="/static/js/movimentacoes.js?v={{ app_version }}-mcp2"></script>
     <script src="/static/js/rich_editor.js?v={{ app_version }}-bt3"></script>
     <script src="/static/js/select_busca.js?v={{ app_version }}-cbx1"></script>
-    <script src="/static/js/acoes_sisdpu.js?v={{ app_version }}-ph1"></script>
+    <script src="/static/js/acoes_sisdpu.js?v={{ app_version }}-et1"></script>
     <script src="/static/js/acoes_eproc.js?v={{ app_version }}-bt2"></script>
     <script src="/static/js/movimentar_conjunto.js?v={{ app_version }}-mc2"></script>
     <script src="/static/js/processo_judicial.js?v={{ app_version }}-mcp5"></script>
