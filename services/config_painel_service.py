@@ -88,7 +88,8 @@ def salvar_config(config: dict) -> dict:
 SAT_CAIXA_PADRAO_DEFAULT = "01 - PREV_DIVPREV"
 SAT_PRAZO_MODO_DEFAULT = "sem_prazo"  # "sem_prazo" | "dias"
 SAT_PRAZO_DIAS_DEFAULT = 15           # dias de prazo quando o modo é "dias"
-SAT_TEMPO_ENTRE_DEFAULT = 5           # segundos entre consultas ao SAT
+SAT_TEMPO_ENTRE_DEFAULT = 5           # segundos entre consultas ao SAT (mínimo)
+SAT_TEMPO_ENTRE_MAX_DEFAULT = 15      # máximo — cada pausa é sorteada entre mínimo e máximo
 SAT_ESPERA_BLOQUEIO_DEFAULT = 45      # segundos de espera ao detectar antirobô
 SAT_COMPILAR_DEFAULT = True           # compilar por tipo (CCON/CRER/Laudos) quando > limiar
 SAT_COMPILAR_LIMIAR_DEFAULT = 3       # compilar só quando houver MAIS de N docs do tipo
@@ -109,6 +110,11 @@ def get_sat_central_defaults() -> dict:
         entre = int(raw.get("sat_tempo_entre", SAT_TEMPO_ENTRE_DEFAULT))
     except Exception:
         entre = SAT_TEMPO_ENTRE_DEFAULT
+    entre = min(60, max(0, entre))
+    try:
+        entre_max = int(raw.get("sat_tempo_entre_max", SAT_TEMPO_ENTRE_MAX_DEFAULT))
+    except Exception:
+        entre_max = SAT_TEMPO_ENTRE_MAX_DEFAULT
     try:
         bloqueio = int(raw.get("sat_espera_bloqueio", SAT_ESPERA_BLOQUEIO_DEFAULT))
     except Exception:
@@ -122,7 +128,8 @@ def get_sat_central_defaults() -> dict:
         "caixa": caixa,
         "prazo_modo": modo,
         "prazo_dias": min(365, max(1, dias)),
-        "tempo_entre": min(60, max(0, entre)),
+        "tempo_entre": entre,
+        "tempo_entre_max": min(60, max(entre, entre_max)),
         "espera_bloqueio": min(300, max(0, bloqueio)),
         "compilar": bool(compilar),
         "compilar_limiar": min(50, max(1, limiar)),
@@ -144,6 +151,11 @@ def set_sat_central_defaults(d: dict) -> dict:
     if "tempo_entre" in d:
         try:
             raw["sat_tempo_entre"] = min(60, max(0, int(d.get("tempo_entre"))))
+        except Exception:
+            pass
+    if "tempo_entre_max" in d:
+        try:
+            raw["sat_tempo_entre_max"] = min(60, max(0, int(d.get("tempo_entre_max"))))
         except Exception:
             pass
     if "espera_bloqueio" in d:

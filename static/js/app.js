@@ -592,7 +592,7 @@ function trocarIconePorSpinner(btn) {
    pra ter um sinal real de "terminou" — e' o que permite o spinner do botao
    ficar ligado durante toda a geracao (que pode levar alguns segundos num PAJ
    com muitos anexos) e apagar exatamente quando o PDF estiver pronto. */
-async function baixarPajCompleto(pajNorm, btn) {
+async function baixarPajCompleto(pajNorm, btn, opcoes) {
     let status;
     try {
         const resp = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/sincronizacao-completa');
@@ -616,7 +616,8 @@ async function baixarPajCompleto(pajNorm, btn) {
 
     const restaurarIcone = trocarIconePorSpinner(btn);
     try {
-        const resp = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/download-completo');
+        const resp = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/download-completo'
+            + (opcoes ? '?' + opcoes.replace(/^&/, '') : ''));
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
         const blob = await resp.blob();
         const url = URL.createObjectURL(blob);
@@ -631,6 +632,133 @@ async function baixarPajCompleto(pajNorm, btn) {
         showToast('Não foi possível gerar o PDF completo do PAJ', 'error');
     } finally {
         restaurarIcone();
+    }
+}
+
+/* Modal do "Baixar PAJ Completo" (21/10/2026): PAJ completo (padrão — segue
+   em baixarPajCompleto(), sem mudança) ou recorte com movimentações
+   específicas ("135-142", "120, 135-138"). No recorte, só os anexos das
+   movimentações escolhidas precisam estar baixados; se faltar, oferece baixar
+   só esses (SIS-DPU 2.0) em vez da sincronização completa. */
+const _downloadPaj = { pajNorm: '', btn: null, timer: null, previaOk: false };
+
+function abrirDownloadPaj(pajNorm, btn) {
+    _downloadPaj.pajNorm = pajNorm;
+    _downloadPaj.btn = btn;
+    const modal = document.getElementById('modal-download-paj');
+    if (!modal) { baixarPajCompleto(pajNorm, btn); return; }
+    atualizarModoDownloadPaj();
+    modal.showModal();
+}
+
+// "Ao final do arquivo" (ambos marcados por padrão) -> parâmetros da URL.
+function _opcoesFinaisDownloadPaj() {
+    const fim = document.getElementById('download-paj-fim');
+    const hist = document.getElementById('download-paj-historico');
+    return '&fim=' + (!fim || fim.checked) + '&historico=' + (!hist || hist.checked);
+}
+
+function _modoDownloadPaj() {
+    const r = document.querySelector('input[name="download-paj-modo"]:checked');
+    return r ? r.value : 'completo';
+}
+
+function atualizarModoDownloadPaj() {
+    const recorte = _modoDownloadPaj() === 'recorte';
+    const input = document.getElementById('download-paj-movs');
+    input.disabled = !recorte;
+    if (recorte) { input.focus(); previaDownloadPaj(); }
+    else document.getElementById('download-paj-previa').textContent = '';
+}
+
+function previaDownloadPaj() {
+    clearTimeout(_downloadPaj.timer);
+    _downloadPaj.previaOk = false;
+    const alvo = document.getElementById('download-paj-previa');
+    const movs = document.getElementById('download-paj-movs').value.trim();
+    if (!movs) { alvo.className = 'text-xs mt-1 min-h-[1.25rem] text-base-content/50'; alvo.textContent = 'Informe as movimentações.'; return; }
+    _downloadPaj.timer = setTimeout(async () => {
+        try {
+            const r = await (await fetch('/api/paj/' + encodeURIComponent(_downloadPaj.pajNorm)
+                + '/recorte/previa?movs=' + encodeURIComponent(movs))).json();
+            const avisos = [];
+            if (r.invalidos && r.invalidos.length) avisos.push('não entendi: ' + r.invalidos.join(', '));
+            if (r.inexistentes) avisos.push('não existem neste PAJ: ' + r.inexistentes
+                + (r.seq_max ? ' (vão de ' + r.seq_min + ' a ' + r.seq_max + ')' : ''));
+            _downloadPaj.previaOk = r.movimentacoes > 0 && !(r.invalidos && r.invalidos.length);
+            let txt = r.movimentacoes
+                ? r.movimentacoes + ' movimentaç' + (r.movimentacoes === 1 ? 'ão' : 'ões') + ' (' + r.descricao + ') · '
+                  + r.documentos + ' documento(s) · ' + r.baixados + ' já baixado(s)'
+                : 'Nenhuma movimentação encontrada.';
+            if (avisos.length) txt += ' — ' + avisos.join('; ');
+            alvo.className = 'text-xs mt-1 min-h-[1.25rem] ' + (avisos.length || !r.movimentacoes ? 'text-warning' : 'text-base-content/70');
+            alvo.textContent = txt;
+        } catch (e) {
+            alvo.className = 'text-xs mt-1 min-h-[1.25rem] text-error';
+            alvo.textContent = 'Não foi possível conferir as movimentações.';
+        }
+    }, 300);
+}
+
+async function gerarDownloadPaj() {
+    const modal = document.getElementById('modal-download-paj');
+    const pajNorm = _downloadPaj.pajNorm;
+    if (_modoDownloadPaj() === 'completo') {
+        modal.close();
+        baixarPajCompleto(pajNorm, _downloadPaj.btn, _opcoesFinaisDownloadPaj());
+        return;
+    }
+    const movs = document.getElementById('download-paj-movs').value.trim();
+    if (!movs) { showToast('Informe as movimentações (ex.: 135-142)', 'warning'); return; }
+    const base = '/api/paj/' + encodeURIComponent(pajNorm);
+    const botao = document.getElementById('download-paj-gerar');
+    const textoBotao = botao.textContent;
+    botao.disabled = true;
+    try {
+        let v = await fetch(base + '/recorte/verificar?movs=' + encodeURIComponent(movs));
+        let st = await v.json();
+        if (!v.ok) { showToast(st.erro || 'Movimentações inválidas', 'error'); return; }
+        if (!st.completo) {
+            const baixar = confirm('Faltam ' + st.faltando + ' anexo(s) das movimentações ' + st.faltando_movs.join(', ')
+                + ' que ainda não foram baixados. Baixar só esses agora?\n\n(Cancelar gera o PDF sem eles — '
+                + 'cada um aparece como "não encontrado".)');
+            if (baixar) {
+                botao.textContent = 'Baixando anexos…';
+                const b = await (await fetch(base + '/recorte/baixar-anexos', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ movs }),
+                })).json();
+                if (!b.ok) { showToast(b.erro || 'Falha ao baixar os anexos', 'error'); return; }
+                st = await (await fetch(base + '/recorte/verificar?movs=' + encodeURIComponent(movs))).json();
+                if (!st.completo) showToast('Ainda faltam ' + st.faltando + ' anexo(s) — o PDF sai sem eles', 'warning');
+            }
+        }
+        botao.textContent = 'Gerando PDF…';
+        const resp = await fetch(base + '/download-completo?movs=' + encodeURIComponent(movs) + _opcoesFinaisDownloadPaj());
+        if (!resp.ok) {
+            let erro = 'Não foi possível gerar o PDF';
+            try { erro = (await resp.json()).erro || erro; } catch (e) { /* corpo não-JSON */ }
+            showToast(erro, 'error');
+            return;
+        }
+        const blob = await resp.blob();
+        const cd = resp.headers.get('Content-Disposition') || '';
+        const m = cd.match(/filename\*=UTF-8''([^;]+)/i);
+        const nome = m ? decodeURIComponent(m[1]) : pajNorm + ' - Movimentações.pdf';
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = nome;
+        document.body.appendChild(a);
+        a.click();
+        a.remove();
+        URL.revokeObjectURL(url);
+        modal.close();
+    } catch (e) {
+        showToast('Não foi possível gerar o PDF do recorte', 'error');
+    } finally {
+        botao.disabled = false;
+        botao.textContent = textoBotao;
     }
 }
 

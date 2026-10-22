@@ -37,13 +37,6 @@
                 <button class="btn btn-xs btn-outline" @click="abrirPatIgnorar()"
                         title="Espécies de processo administrativo (PAT) que não devem ser baixadas">Ignorar</button>
                 <label class="flex items-center gap-1.5 text-sm cursor-pointer ml-auto"
-                       title="Pausa preventiva entre cada consulta ao SAT, para reduzir o bloqueio anti-robô.">
-                    <span class="font-medium">Tempo entre consultas:</span>
-                    <input type="number" min="0" max="60" step="1"
-                           class="input input-bordered input-xs w-16" x-model.number="tempoEntre">
-                    <span class="text-xs text-base-content/50">s</span>
-                </label>
-                <label class="flex items-center gap-1.5 text-sm cursor-pointer"
                        title="Quanto esperar ao detectar a proteção antirobô, antes de re-tentar o documento.">
                     <span class="font-medium">Espera após bloqueio:</span>
                     <input type="number" min="0" max="300" step="5"
@@ -789,7 +782,7 @@ function satPage() {
         logAberto: false, logAtual: [],
         baixarModal: false, baixarLista: [], copiado: false,
         sessaoOk: false, sessaoBusy: false, naoLogadoModal: false,
-        tempoEntre: 5, esperaBloqueio: 45,
+        tempoEntre: 5, tempoEntreMax: 15, esperaBloqueio: 45,
         logsDownload: {}, logDlAberto: false, logDlItens: [], logDlTitulo: '',
         docsAbertos: {}, docsArquivos: {},
         narrativaAberta: {}, narrativas: {},
@@ -857,10 +850,11 @@ function satPage() {
             this.sseLog = []; this.sseStatus = '— baixando docs do instituidor';
             this.sseFechavel = false; this.sseAberto = true;
             const delay = Math.max(0, Number(this.tempoEntre) || 0);
+            const delayMax = Math.max(delay, Number(this.tempoEntreMax) || 0);
             const bloqueio = Math.max(0, Number(this.esperaBloqueio) || 0);
             const url = `/api/sat/${encodeURIComponent(p.paj_norm)}/baixar-instituidor`
                 + `?cpf=${encodeURIComponent(cpf)}&nome=${encodeURIComponent(nome)}`
-                + `&delay=${delay}&bloqueio=${bloqueio}`;
+                + `&delay=${delay}&delay_max=${delayMax}&bloqueio=${bloqueio}`;
             const es = new EventSource(url); this._es = es;
             es.addEventListener('log', (ev) => { try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {} });
             es.addEventListener('done', async (ev) => {
@@ -1097,6 +1091,7 @@ function satPage() {
         _baixarComplEscopo(r, escopo, cpf, alvos) {
             return new Promise((resolve, reject) => {
                 const delay = Math.max(0, Number(this.tempoEntre) || 0);
+                const delayMax = Math.max(delay, Number(this.tempoEntreMax) || 0);
                 const bloqueio = Math.max(0, Number(this.esperaBloqueio) || 0);
                 const rot = escopo === 'instituidor' ? 'instituidor' : 'assistido';
                 this.sseTipo = 'download';
@@ -1104,7 +1099,7 @@ function satPage() {
                 this.sseLog.push({ level: 'novo', msg: `Consultando o SAT para baixar documentos do ${rot}…` });
                 const url = `/api/sat/${encodeURIComponent(r.paj_norm)}/baixar-complementar`
                     + `?cpf=${encodeURIComponent(cpf)}&nome=${encodeURIComponent(r.assistido || '')}`
-                    + `&delay=${delay}&bloqueio=${bloqueio}&escopo=${escopo}`
+                    + `&delay=${delay}&delay_max=${delayMax}&bloqueio=${bloqueio}&escopo=${escopo}`
                     + `&alvos=${encodeURIComponent(alvos.join(','))}`;
                 const es = new EventSource(url); this._es = es;
                 es.addEventListener('log', (ev) => { try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {} });
@@ -1232,6 +1227,7 @@ function satPage() {
                 this.comPrazo = (s.prazo_modo === 'dias');
                 if (s.prazo_dias) this.prazoDias = s.prazo_dias;
                 if (typeof s.tempo_entre === 'number') this.tempoEntre = s.tempo_entre;
+                if (typeof s.tempo_entre_max === 'number') this.tempoEntreMax = s.tempo_entre_max;
                 if (typeof s.espera_bloqueio === 'number') this.esperaBloqueio = s.espera_bloqueio;
             } catch (e) {}
         },
@@ -1421,10 +1417,11 @@ function satPage() {
                 this.rodando = true; this.sseTipo = 'download';
                 this.sseLog = []; this.sseStatus = '— baixando do SAT'; this.sseFechavel = false; this.sseAberto = true;
                 const delay = Math.max(0, Number(this.tempoEntre) || 0);
+                const delayMax = Math.max(delay, Number(this.tempoEntreMax) || 0);
                 const bloqueio = Math.max(0, Number(this.esperaBloqueio) || 0);
                 const url = `/api/sat/${encodeURIComponent(p.paj_norm)}/baixar`
                     + `?cpf=${encodeURIComponent(p.cpf)}&nome=${encodeURIComponent(p.assistido)}`
-                    + `&delay=${delay}&bloqueio=${bloqueio}`
+                    + `&delay=${delay}&delay_max=${delayMax}&bloqueio=${bloqueio}`
                     + `&pretensao=${encodeURIComponent(p.pretensao || '')}`
                     + `&nbs=${encodeURIComponent(p.nbFiltro || '')}`
                     + `&protocolos=${encodeURIComponent(p.protocoloFiltro || '')}`

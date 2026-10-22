@@ -516,6 +516,26 @@ def buscar_lembretes(numero: str) -> dict:
     return {"encontrado": False, "lembrete_itens": [], "sincronizado_em": dados.get("sincronizado_em") or ""}
 
 
+def atualizar_lembretes(numero: str, itens: list[dict]) -> dict:
+    """Grava no cache os lembretes ATUAIS do processo (lidos da página do
+    processo no e-proc logo após excluir um — ver `eproc_client.
+    excluir_lembrete`), em todas as categorias em que ele aparece, sem esperar
+    nova sincronização. Não mexe em `paj`: se o lembrete com o PAJ foi o
+    excluído, o vínculo continua valendo até a próxima sincronização."""
+    dados = carregar()
+    alvo = re.sub(r"\D", "", numero or "")
+    achou = False
+    for casos in (dados.get("secoes") or {}).values():
+        for c in casos:
+            if alvo and re.sub(r"\D", "", c.get("processo") or "") == alvo:
+                c["lembrete_itens"] = itens
+                c["lembrete"] = " · ".join(it["texto"] for it in itens)
+                achou = True
+    if achou:
+        _STORE.write_text(json.dumps(dados, ensure_ascii=False, indent=2), encoding="utf-8")
+    return buscar_lembretes(numero)
+
+
 def paj_do_processo(numero: str) -> dict:
     """PAJ associado a este processo, lido do cache já sincronizado pela aba
     Prazos (mesmo cache/critério de `buscar_lembretes` — extraído do texto do

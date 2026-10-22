@@ -4,7 +4,8 @@
 <div class="flex items-center gap-2 flex-wrap">
     <span class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Processo SEI · 08166.000183/2017-39 · COFE CTB</span>
     <span class="loading loading-spinner loading-xs" x-show="status === 'running'"></span>
-    <span class="text-xs text-base-content/50" x-show="status === 'running'">Redigindo ofício com IA…</span>
+    <span class="text-xs text-base-content/50" x-show="status === 'running'"
+          x-text="'Redigindo ofício com IA' + (etapa ? ' — ' + etapa : '…')"></span>
     <span class="ml-auto flex items-center gap-2">
         <span class="badge badge-sm badge-success gap-1" x-show="seiConectado" x-cloak>SEI conectado</span>
         <button type="button" class="btn btn-xs btn-outline" x-show="!seiConectado" x-cloak
@@ -16,11 +17,51 @@
     </span>
 </div>
 
+<!-- Abrir ofício nº (21/10/2026): minuta não assinada → edição no mesmo documento;
+     assinado → Reiterar / Usar como base. Procura nos processos de ofícios da
+     COFE CTB; o processo só precisa ser informado se não for encontrado. -->
+<div class="mt-2 flex items-center gap-2 flex-wrap">
+    <span class="text-xs text-base-content/60">Abrir ofício nº</span>
+    <input type="text" x-model="abrir.numero" placeholder="ex.: 9433745" inputmode="numeric"
+           class="input input-bordered input-xs w-28" @keydown.enter.prevent="abrirOficio()">
+    <input type="text" x-model="abrir.processo" placeholder="processo SEI (opcional)"
+           class="input input-bordered input-xs w-48" @keydown.enter.prevent="abrirOficio()"
+           title="Só se o painel não encontrar sozinho — ele procura nos processos de ofícios da COFE CTB">
+    <button type="button" class="btn btn-xs btn-outline" :disabled="abrir.carregando" @click="abrirOficio()"
+            title="Minuta não assinada: abre para editar (salva no mesmo documento). Assinado: permite Reiterar ou usar como base.">
+        <span x-show="abrir.carregando" class="loading loading-spinner loading-xs"></span>
+        <span x-text="abrir.carregando ? 'Procurando…' : 'Abrir'"></span>
+    </button>
+    <span class="text-xs text-error" x-show="abrir.erro" x-text="abrir.erro"></span>
+</div>
+<div class="mt-2 alert py-2 text-xs flex-wrap" x-show="abrir.assinado" x-cloak>
+    <span x-show="abrir.assinado">
+        <b x-text="'Ofício nº ' + (abrir.assinado && abrir.assinado.numero_sei)"></b>
+        <span x-text="abrir.assinado && (' — ' + abrir.assinado.destinatario + (abrir.assinado.data ? ', de ' + abrir.assinado.data : ''))"></span>
+        — está <b>assinado</b> e não pode ser editado.
+    </span>
+    <span class="flex gap-1 ml-auto">
+        <button type="button" class="btn btn-xs btn-primary" @click="redigirComBase(abrir.assinado, 'reiterar')"
+                title="A IA redige um NOVO ofício reiterando este, ao mesmo destinatário. A Orientação diretiva é opcional.">Reiterar</button>
+        <button type="button" class="btn btn-xs btn-outline" @click="redigirComBase(abrir.assinado, 'base')"
+                title="A IA redige um NOVO ofício usando este como modelo — diga na Orientação diretiva o que muda.">Usar como base</button>
+        <button type="button" class="btn btn-xs btn-ghost" @click="abrir.assinado = null">Fechar</button>
+    </span>
+</div>
+
 <div class="text-xs text-error mt-1" x-show="status === 'error' && erro" x-text="erro"></div>
 
 <div class="mt-2 flex flex-col gap-2" x-show="status === 'done'" x-cloak>
+    <div class="alert alert-info py-2 text-xs" x-show="edicao">
+        <span>Editando a minuta do <b x-text="'Ofício nº ' + (edicao && edicao.numero_sei)"></b>
+            (processo <span x-text="edicao && edicao.processo"></span>). "Salvar no SEI" grava no mesmo documento, como nova versão;
+            "Redigir de novo" revisa este texto conforme a Orientação diretiva.</span>
+    </div>
+    <div class="alert py-2 text-xs" x-show="reiteracaoDe">
+        <span>Novo ofício de <b>reiteração</b> do <b x-text="'Ofício nº ' + reiteracaoDe"></b> — mesmo destinatário do original.</span>
+    </div>
     <div class="alert alert-warning py-2 text-xs" x-show="observacoes">
-        <span><b>Conferir antes de criar:</b> <span x-text="observacoes"></span></span>
+        <span class="whitespace-pre-line"><b>Conferir antes de criar:</b> <span x-text="observacoes"></span></span>
     </div>
 
     <label class="form-control">
@@ -57,18 +98,29 @@
                placeholder="Atenciosamente,">
     </label>
 
+    <!-- Restrito (LGPD): sugerido pela IA quando há dado pessoal sensível;
+         aplicado no SEI logo depois de gravar. -->
+    <label class="flex items-start gap-2 cursor-pointer">
+        <input type="checkbox" class="checkbox checkbox-sm mt-0.5" x-model="restrito" @change="gravado = false">
+        <span class="text-xs">
+            <b>Restrito</b> — hipótese legal "Informação pessoal" (art. 31, § 1º, I, da Lei 12.527/2011)
+            <span class="block text-base-content/60" x-show="motivoRestrito" x-text="'Sugerido pela IA: ' + motivoRestrito"></span>
+        </span>
+    </label>
+
     <div class="flex items-center gap-2 flex-wrap">
         <button type="button" class="btn btn-xs btn-ghost" @click="descartar()">Descartar</button>
         <button type="button" class="btn btn-xs btn-outline" @click="redigir()"
-                title="Redige de novo com a Orientação Diretiva atual">Redigir de novo</button>
+                :title="edicao ? 'Revisa este ofício conforme a Orientação diretiva (continua salvando no mesmo documento)' : 'Redige de novo com a Orientação diretiva atual'"
+                x-text="edicao ? 'Revisar com IA' : 'Redigir de novo'"></button>
         <span class="ml-auto text-[11px] text-success" x-show="gravado" x-cloak>Gravado ✓</span>
         <button type="button" class="btn btn-xs btn-outline" :disabled="gravando" @click="gravar()">
             <span x-show="gravando" class="loading loading-spinner loading-xs"></span>Gravar
         </button>
         <button type="button" class="btn btn-xs btn-primary" :disabled="criando || conectando" @click="pedirConfirmacao()"
-                title="Confere a conexão com o SEI e cria a minuta (não assinada) no processo 08166.000183/2017-39">
+                :title="edicao ? 'Grava as alterações na minuta do Ofício nº ' + edicao.numero_sei + ' (mesmo documento, nova versão)' : 'Confere a conexão com o SEI e cria a minuta (não assinada) no processo 08166.000183/2017-39'">
             <span x-show="criando || conectando" class="loading loading-spinner loading-xs"></span>
-            <span x-text="criando ? 'Criando no SEI…' : (conectando ? 'Conferindo o SEI…' : 'Criar no SEI')"></span>
+            <span x-text="criando ? (edicao ? 'Salvando no SEI…' : 'Criando no SEI…') : (conectando ? 'Conferindo o SEI…' : (edicao ? 'Salvar no SEI' : 'Criar no SEI'))"></span>
         </button>
     </div>
     <div class="text-xs text-error" x-show="erroCriar" x-text="erroCriar"></div>
@@ -84,31 +136,49 @@
             <div class="flex items-center gap-2 flex-wrap text-xs bg-base-100 border border-base-300 rounded px-2 py-1.5">
                 <!-- Clique no nº abre a leitura do ofício no painel (conteúdo atual no SEI) -->
                 <button type="button" class="font-semibold link link-hover" @click="lerOficio(o)"
+                        :class="{ 'line-through opacity-60': !!(o.excluido_no_sei || o.cancelado_no_sei) }"
                         title="Ler o ofício aqui no painel (conteúdo atual no SEI)"
                         x-text="'Ofício ' + (/^\d{5,}\/\d{4}$/.test(o.numero_sei || '') ? 'nº ' + o.numero_sei : '(nº a confirmar)')"></button>
                 <span class="text-base-content/60" x-text="o.destinatario"></span>
                 <span class="text-base-content/40" x-text="dataHora(o.criado_em)"></span>
                 <!-- Assinado (conferido no SEI ao abrir o PAJ): os avisos eram da minuta. -->
-                <span class="badge badge-xs badge-success" x-show="o.assinado"
+                <!-- Excluído/cancelado no SEI (22/10/2026): fica na lista como histórico, sem ações. -->
+                <span class="badge badge-xs badge-error" x-show="o.excluido_no_sei"
+                      :title="'Não está mais no processo de ofícios do SEI' + (o.excluido_visto_em ? ' (visto em ' + dataHora(o.excluido_visto_em) + ')' : '')">Excluído no SEI</span>
+                <span class="badge badge-xs badge-error" x-show="o.cancelado_no_sei" title="Cancelado no SEI">Cancelado no SEI</span>
+                <span class="badge badge-xs badge-warning" x-show="o.assinatura_removida_em && !o.assinado"
+                      title="O ofício estava assinado e a assinatura não consta mais no SEI">assinatura removida</span>
+                <span class="badge badge-xs badge-success" x-show="o.assinado && !o.excluido_no_sei && !o.cancelado_no_sei"
                       :title="'Assinado por ' + (o.assinantes || []).join(', ')">Assinado</span>
                 <span class="badge badge-xs badge-warning" x-show="!o.assinado && o.avisos && o.avisos.length" :title="(o.avisos || []).join(' | ')">conferir</span>
+                <span class="badge badge-xs badge-neutral" x-show="o.nivel_acesso === 'restrito'" title="Restrito no SEI — Informação pessoal">restrito</span>
+                <span class="badge badge-xs badge-ghost" x-show="o.reiteracao_de" x-text="'reitera ' + o.reiteracao_de"></span>
                 <span class="ml-auto"></span>
+                <button type="button" class="btn btn-xs btn-ghost" x-show="o.nivel_acesso && o.nivel_acesso !== 'restrito' && !(o.excluido_no_sei || o.cancelado_no_sei)"
+                        :disabled="_restringindoId === o.documento_id" @click="restringirOficio(o)"
+                        title="Torna o ofício restrito no SEI (hipótese: Informação pessoal)">
+                    <span x-show="_restringindoId === o.documento_id" class="loading loading-spinner loading-xs"></span>Restringir
+                </button>
+                <button type="button" class="btn btn-xs btn-ghost" x-show="o.assinado && !(o.excluido_no_sei || o.cancelado_no_sei)" @click="redigirComBase(o, 'reiterar')"
+                        title="A IA redige um novo ofício reiterando este (sem resposta), ao mesmo destinatário">Reiterar</button>
                 <!-- Anexar ao PAJ: juntada do ofício assinado (PDF) no SISDPU -->
                 <span class="badge badge-xs badge-info" x-show="o.juntada === 'ok'"
                       :title="'Juntado ao PAJ' + (o.juntada_arquivo ? ': ' + o.juntada_arquivo : '')"
                       x-text="'Anexado ao PAJ' + (o.juntada_mov_seq ? ' · Mov ' + o.juntada_mov_seq : '')"></span>
                 <span class="text-error text-[11px]" x-show="o.juntada === 'erro'" :title="o.erro_juntada"
                       x-text="'falha ao anexar: ' + (o.erro_juntada || '')"></span>
-                <button type="button" class="btn btn-xs btn-outline btn-primary" x-show="o.assinado && o.juntada !== 'ok'"
-                        :disabled="o.juntada === 'running'" @click="anexarAoPaj(o)"
-                        title="Juntada no PAJ (fase &quot;Juntada de documento&quot;) com o PDF do ofício e a descrição: nº, data, destinatário e assunto">
-                    <span x-show="o.juntada === 'running'" class="loading loading-spinner loading-xs"></span>
-                    <span x-text="o.juntada === 'running' ? 'Anexando…' : (o.juntada === 'erro' ? 'Anexar de novo' : 'Anexar ao PAJ')"></span>
+                <span class="badge badge-xs badge-ghost" x-show="o.juntada === 'preparada'"
+                      title="O console &quot;Ações no SISDPU&quot; está pré-preenchido com este ofício — acrescente os demais anexos e execute lá.">juntada preparada</span>
+                <button type="button" class="btn btn-xs btn-outline btn-primary" x-show="o.assinado && o.juntada !== 'ok' && !(o.excluido_no_sei || o.cancelado_no_sei)"
+                        :disabled="o.juntada === 'running' || _preparandoId === o.documento_id" @click="anexarAoPaj(o)"
+                        title="Abre &quot;Ações no SISDPU&quot; já com a fase &quot;Juntada de documento&quot;, a descrição (nº, data, destinatário, assunto) e o PDF do ofício nos anexos — você acrescenta os demais anexos (inclusive externos) e executa">
+                    <span x-show="o.juntada === 'running' || _preparandoId === o.documento_id" class="loading loading-spinner loading-xs"></span>
+                    <span x-text="_preparandoId === o.documento_id ? 'Preparando…' : (o.juntada === 'preparada' ? 'Preparar de novo' : 'Anexar ao PAJ')"></span>
                 </button>
                 <!-- Abre na janela do SEI controlada pelo painel, já logada com o
                      usuário do SISDPU (cofre) — 22/10/2026, ver ingestao/sei_web_client.py.
                      A assinatura continua sendo feita por você, com sua senha. -->
-                <a :href="o.link" target="_blank" rel="noopener" class="btn btn-xs"
+                <a :href="o.link" target="_blank" rel="noopener" class="btn btn-xs" x-show="!(o.excluido_no_sei || o.cancelado_no_sei)"
                    :class="o.assinado ? 'btn-outline' : 'btn-success'"
                    @click.prevent="abrirNoSei(o)"
                    :title="o.assinado ? 'Abre o documento na janela do SEI (entra sozinho com o usuário do SISDPU).' : 'Abre o documento na janela do SEI (entra sozinho com o usuário do SISDPU). A assinatura é feita por você, com sua senha.'">
@@ -143,15 +213,18 @@
 <!-- Confirmação de gravação no SEI -->
 <dialog class="modal" :open="confirmando" @close="confirmando = false">
     <div class="modal-box max-w-lg">
-        <h3 class="font-bold text-lg mb-2">Criar ofício no SEI?</h3>
-        <p class="text-sm mb-2">Será criada uma <b>minuta não assinada</b> de Ofício no processo
+        <h3 class="font-bold text-lg mb-2" x-text="edicao ? 'Salvar alterações no SEI?' : 'Criar ofício no SEI?'"></h3>
+        <p class="text-sm mb-2" x-show="!edicao">Será criada uma <b>minuta não assinada</b> de Ofício no processo
             <b>08166.000183/2017-39</b>, unidade <b>COFE CTB</b>:</p>
+        <p class="text-sm mb-2" x-show="edicao">A minuta do <b x-text="'Ofício nº ' + (edicao && edicao.numero_sei)"></b>
+            (processo <span x-text="edicao && edicao.processo"></span>) será <b>substituída por este texto</b> — o SEI guarda a versão anterior no histórico:</p>
+        <p class="text-sm mb-2" x-show="restrito">Depois de gravar, o ofício será marcado como <b>restrito</b> (Informação pessoal).</p>
         <div class="text-xs bg-base-200 rounded p-2 mb-2 whitespace-pre-line"
              x-text="destinatario.split('\n')[0] + '\nAssunto: ' + assunto + (referencia ? '\nReferência: ' + referencia : '') + '\n' + vocativo"></div>
         <p class="text-xs text-base-content/60">Um documento criado só pode ser excluído pelo SEI web. A assinatura é feita por você depois, no SEI.</p>
         <div class="modal-action">
             <button type="button" class="btn btn-sm btn-ghost" @click="confirmando = false">Cancelar</button>
-            <button type="button" class="btn btn-sm btn-primary" @click="criarNoSei()">Criar no SEI</button>
+            <button type="button" class="btn btn-sm btn-primary" @click="criarNoSei()" x-text="edicao ? 'Salvar no SEI' : 'Criar no SEI'"></button>
         </div>
     </div>
     <form method="dialog" class="modal-backdrop"><button type="button" @click="confirmando = false">fechar</button></form>

@@ -5,7 +5,16 @@ from fastapi.responses import HTMLResponse, JSONResponse
 
 from ingestao import sisdpu_movtram
 from services import etapa_paj_service, lembretes_service
-from services.download_completo_service import gerar_pdf_consolidado, verificar_sincronizacao_completa
+from urllib.parse import quote
+
+from services.download_completo_service import (
+    descrever_selecao,
+    gerar_pdf_consolidado,
+    interpretar_selecao,
+    previa_selecao,
+    verificar_selecao,
+    verificar_sincronizacao_completa,
+)
 from services.paj_service import (
     PajNorm,
     abrir_pasta_paj,
@@ -200,20 +209,60 @@ async def api_sincronizacao_completa(paj_norm: PajNorm):
 
 
 @router.get("/api/paj/{paj_norm}/download-completo")
-def api_download_completo(paj_norm: PajNorm):
+def api_download_completo(paj_norm: PajNorm, movs: str = "", fim: bool = True, historico: bool = True):
     """Gera sob demanda (sem persistir em disco) um PDF unico com capa,
     historico de movimentacoes e todos os anexos do PAJ. Sincrono de proposito
     (roda em threadpool) — mesclar PDFs e' CPU-bound e nao deve travar o event
-    loop."""
-    pdf_bytes = gerar_pdf_consolidado(paj_norm)
+    loop.
+
+    `movs` (opcional, ex.: "135-142" ou "120, 135-138"): recorte só com essas
+    movimentações (ver modal do botão "Baixar PAJ Completo")."""
+    seqs = None
+    nome_arquivo = f"{paj_norm} - Download Completo.pdf"
+    if movs.strip():
+        seqs, invalidos = interpretar_selecao(movs)
+        if invalidos or not seqs:
+            return JSONResponse({"erro": f"Movimentações inválidas: {', '.join(invalidos) or movs}"}, status_code=400)
+        nome_arquivo = f"{paj_norm} - Movimentações {descrever_selecao(seqs)}.pdf"
+    pdf_bytes = gerar_pdf_consolidado(paj_norm, seqs, pagina_fim=fim, historico=historico)
     if pdf_bytes is None:
         return JSONResponse({"erro": "PAJ não encontrado"}, status_code=404)
-    nome_arquivo = f"{paj_norm} - Download Completo.pdf"
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="{nome_arquivo}"'},
+        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(nome_arquivo)}"},
     )
+
+
+@router.get("/api/paj/{paj_norm}/recorte/previa", response_class=JSONResponse)
+async def api_recorte_previa(paj_norm: PajNorm, movs: str = ""):
+    """Prévia do modal: movimentações/documentos do recorte e anexos já em disco."""
+    r = previa_selecao(paj_norm, movs)
+    if r is None:
+        return JSONResponse({"erro": "PAJ não encontrado"}, status_code=404)
+    return r
+
+
+@router.get("/api/paj/{paj_norm}/recorte/verificar", response_class=JSONResponse)
+async def api_recorte_verificar(paj_norm: PajNorm, movs: str = ""):
+    seqs, invalidos = interpretar_selecao(movs)
+    if invalidos or not seqs:
+        return JSONResponse({"erro": f"Movimentações inválidas: {', '.join(invalidos) or movs}"}, status_code=400)
+    r = verificar_selecao(paj_norm, seqs)
+    if r is None:
+        return JSONResponse({"erro": "PAJ não encontrado"}, status_code=404)
+    return r
+
+
+@router.post("/api/paj/{paj_norm}/recorte/baixar-anexos", response_class=JSONResponse)
+async def api_recorte_baixar_anexos(paj_norm: PajNorm, payload: dict = Body(...)):
+    """Baixa (SIS-DPU 2.0) só os anexos que faltam das movimentações do recorte."""
+    from services import ao_vivo_service
+
+    seqs, invalidos = interpretar_selecao(str(payload.get("movs") or ""))
+    if invalidos or not seqs:
+        return {"ok": False, "erro": "Movimentações inválidas."}
+    return await ao_vivo_service.baixar_anexos_movs(paj_norm, seqs)
 
 
 @router.post("/api/paj/{paj_norm}/melhorar-ocr", response_class=JSONResponse)

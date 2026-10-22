@@ -286,6 +286,9 @@ function acoesSisdpuBlock(cfg) {
             if (!this._listenerEprocLigado) {
                 this._listenerEprocLigado = true;
                 window.addEventListener('eproc-peticionado', (ev) => this._receberPeticaoEproc(ev.detail || {}));
+                // "Anexar ao PAJ" do Minutar Ofício (21/10/2026): mesmo fluxo — o
+                // rascunho (fase + descrição + PDF do ofício) já está no disco.
+                window.addEventListener('acoes-sisdpu-recarregar', (ev) => this._receberPeticaoEproc(ev.detail || {}));
             }
         },
         // Carrega o rascunho salvo do PAJ (se houver) — fase, despachos, anexos,

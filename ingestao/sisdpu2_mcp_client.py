@@ -478,13 +478,32 @@ def chamar(nome: str, args: Optional[dict] = None, timeout: float = 90) -> Any:
     return _chamar(nome, args, timeout, repetir=True)
 
 
-def _chamar(nome: str, args: Optional[dict], timeout: float, repetir: bool) -> Any:
+def chamar_com_imagens(nome: str, args: Optional[dict] = None, timeout: float = 90) -> tuple[Any, list[bytes]]:
+    """Como `chamar`, devolvendo também as IMAGENS que vêm em blocos próprios
+    da resposta (ex.: a foto do assistido em `assistido_ficha`, liberada no
+    MCP em 22/10/2026) — `chamar` só lê o 1º bloco de texto."""
+    if nome not in _TOOLS_LEITURA:
+        raise Sisdpu2Erro(f"'{nome}' não é ferramenta de leitura liberada nesta fase do painel.")
+    imagens: list[bytes] = []
+    valor = _chamar(nome, args, timeout, repetir=True, imagens=imagens)
+    return valor, imagens
+
+
+def _chamar(nome: str, args: Optional[dict], timeout: float, repetir: bool,
+            imagens: Optional[list] = None) -> Any:
     args = args or {}
     for tentativa in range(4 if repetir else 1):
         msg = _sessao.tools_call(nome, args, timeout=timeout)
         if "error" in msg:
             raise Sisdpu2Erro(f"{nome}: {msg['error'].get('message', msg['error'])}")
         res = msg.get("result") or {}
+        if imagens is not None:
+            for c in res.get("content", []):
+                if c.get("type") == "image" and c.get("data"):
+                    try:
+                        imagens.append(base64.b64decode(c["data"]))
+                    except ValueError:
+                        pass
         blocos = [c.get("text", "") for c in res.get("content", []) if c.get("type") == "text"]
         texto = blocos[0] if blocos else ""
         if res.get("isError"):

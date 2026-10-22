@@ -515,9 +515,9 @@
                      (ver trocarIconePorSpinner() em app.js) — o PDF pode levar alguns segundos
                      num PAJ com muitos anexos, e sem isso nao ha' nenhuma pista visual de
                      que o clique registrou. -->
-                <button onclick="baixarPajCompleto('{{ paj_norm }}', this)"
+                <button onclick="abrirDownloadPaj('{{ paj_norm }}', this)"
                         class="btn btn-sm btn-outline btn-secondary gap-1.5 whitespace-nowrap w-full"
-                        title="Gera um único PDF com capa, narrativa, histórico de movimentações e todos os anexos deste PAJ, em ordem cronológica">
+                        title="Gera um único PDF com capa, histórico de movimentações e anexos — do PAJ inteiro ou só das movimentações que você escolher">
                     <span class="btn-icone">
                         <svg class="w-3.5 h-3.5 shrink-0" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M3 16.5v2.25A2.25 2.25 0 0 0 5.25 21h13.5A2.25 2.25 0 0 0 21 18.75V16.5m-13.5-9L12 12m0 0 4.5-4.5M12 12V3"></path></svg>
                     </span>
@@ -1539,6 +1539,11 @@ document.addEventListener('alpine:init', () => {
                         @click="$store.acoesIaMenu.aberto = null; $store.acoesIaMenu.mostrarOficio = true"
                         title="Mostra o rascunho atual e os ofícios já criados no SEI para este PAJ">
                     Ver rascunho / ofícios criados
+                </button>
+                <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                        @click="$store.acoesIaMenu.aberto = null; $store.acoesIaMenu.mostrarOficio = true; $nextTick(() => { const i = $el.closest('[x-data]').querySelector('input[placeholder^=\'ex.: 94\']'); if (i) i.focus(); })"
+                        title="Abre um ofício que já existe no SEI pelo número: minuta não assinada para editar; assinado para reiterar ou usar como base">
+                    Abrir ofício nº… (editar / reiterar)
                 </button>
             </div>
             <div x-show="$store.acoesIaMenu.mostrarOficio" x-transition x-cloak class="w-full mt-2 pt-2 border-t border-base-300">
@@ -2654,6 +2659,50 @@ document.addEventListener('alpine:init', () => {
         </div>
         <pre id="txt-modal-content"
              class="whitespace-pre-wrap text-sm bg-base-300 p-4 rounded-lg max-h-[70vh] overflow-y-auto"></pre>
+    </div>
+    <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
+</dialog>
+
+<!-- Modal do "Baixar PAJ Completo" (pedido do Defensor, 21/10/2026): PAJ
+     completo (padrão, comportamento de sempre) ou recorte com movimentações
+     específicas ("135-142", "120, 135-138"). Ver abrirDownloadPaj() em app.js
+     e services/download_completo_service.py (gerar_pdf_consolidado(seqs=...)). -->
+<dialog id="modal-download-paj" class="modal">
+    <div class="modal-box max-w-md">
+        <h3 class="font-bold text-lg mb-3">Gerar arquivo do PAJ</h3>
+        <label class="flex items-start gap-2 cursor-pointer mb-2">
+            <input type="radio" name="download-paj-modo" value="completo" class="radio radio-sm mt-0.5" checked
+                   onchange="atualizarModoDownloadPaj()">
+            <span><span class="font-medium">PAJ completo</span>
+                <span class="block text-xs text-base-content/60">Capa, narrativa, todas as movimentações e anexos.</span></span>
+        </label>
+        <label class="flex items-start gap-2 cursor-pointer">
+            <input type="radio" name="download-paj-modo" value="recorte" class="radio radio-sm mt-0.5"
+                   onchange="atualizarModoDownloadPaj()">
+            <span><span class="font-medium">Movimentações específicas</span>
+                <span class="block text-xs text-base-content/60">Só as movimentações informadas, com descrição e anexos.</span></span>
+        </label>
+        <input id="download-paj-movs" type="text" disabled
+               class="input input-bordered input-sm w-full mt-2"
+               placeholder="ex.: 135-142  ou  120, 135-138, 140"
+               oninput="previaDownloadPaj()"
+               onkeydown="if (event.key === 'Enter') { event.preventDefault(); gerarDownloadPaj(); }">
+        <div id="download-paj-previa" class="text-xs mt-1 min-h-[1.25rem]"></div>
+        <div class="mt-3 pt-3 border-t border-base-300">
+            <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1.5">Ao final do arquivo</div>
+            <label class="flex items-center gap-2 cursor-pointer mb-1">
+                <input id="download-paj-fim" type="checkbox" class="checkbox checkbox-sm" checked>
+                <span class="text-sm">Página "Fim das movimentações"</span>
+            </label>
+            <label class="flex items-center gap-2 cursor-pointer">
+                <input id="download-paj-historico" type="checkbox" class="checkbox checkbox-sm" checked>
+                <span class="text-sm">Histórico de movimentações (tabela)</span>
+            </label>
+        </div>
+        <div class="modal-action">
+            <button type="button" class="btn btn-sm btn-ghost" onclick="document.getElementById('modal-download-paj').close()">Cancelar</button>
+            <button type="button" id="download-paj-gerar" class="btn btn-sm btn-primary" onclick="gerarDownloadPaj()">Gerar PDF</button>
+        </div>
     </div>
     <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
 </dialog>

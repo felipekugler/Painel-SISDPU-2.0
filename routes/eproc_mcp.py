@@ -18,7 +18,11 @@ visível) — aqui é tudo sem janela, com login 100% automático via TOTP.
   processo (`ingestao.eproc_mcp_client.EPROC_DOCS_DIR`).
 - `/api/eproc-mcp/arquivo`: serve um documento já baixado dessa pasta.
 - `/api/eproc-mcp/lembretes`: lembretes NATIVOS do e-proc (não os do painel),
-  lidos do cache já sincronizado pela aba Prazos — somente leitura.
+  com a cor, lidos ao vivo da página do processo (cache da aba Prazos como
+  reserva).
+- `/api/eproc-mcp/lembretes/criar`, `/editar` e `/excluir`: criam/alteram/
+  excluem esses lembretes no e-proc — únicas rotas daqui que usam o NAVEGADOR
+  do e-proc (não o MCP headless).
 - `/api/eproc-mcp/chave-paj`: procura, nos PAJs locais, a chave de acesso
   (número + chave) cadastrada para um processo — usada pelo botão "Atualizar
   com chave" da tela de consulta, pra ver documento sigiloso (cálculo/RPV/
@@ -282,14 +286,76 @@ async def api_eproc_mcp_docs_cache_limpar_tudo():
 
 @router.get("/api/eproc-mcp/lembretes", response_class=JSONResponse)
 async def api_eproc_mcp_lembretes(numero: str):
-    """Lembretes NATIVOS do e-proc (post-it da listagem de citações/intimações)
-    para este processo — somente leitura, a partir do cache já sincronizado
-    pela aba "Prazos" ("Sincronizar intimações"). Não há como criar/alterar um
-    lembrete NO e-proc a partir do painel; e só acha algo se o processo já
-    tiver passado por aquela sincronização."""
-    from ingestao import eproc_intimacoes
+    """Lembretes NATIVOS do e-proc deste processo, lidos AO VIVO da página do
+    processo (MCP, sem navegador) — com a cor real de cada post-it, para
+    qualquer processo. Se a leitura ao vivo falhar, cai no cache já
+    sincronizado pela aba "Prazos" (sem cor; só processos que passaram por
+    aquela sincronização). Leitura ao vivo bem-sucedida também atualiza o
+    cache. `fonte`: "eproc" ou "cache"."""
+    from ingestao import eproc_intimacoes, eproc_mcp_client as emc
 
-    return JSONResponse(eproc_intimacoes.buscar_lembretes(numero))
+    vivo = await emc.lembretes_do_processo(numero)
+    if vivo.get("ok"):
+        n = len(vivo["itens"])
+        itens = [{"seq": str(n - i), "texto": l["texto"], "cor": l["cor"]} for i, l in enumerate(vivo["itens"])]
+        eproc_intimacoes.atualizar_lembretes(numero, itens)
+        return JSONResponse({"encontrado": True, "lembrete_itens": itens, "fonte": "eproc"})
+    return JSONResponse({**eproc_intimacoes.buscar_lembretes(numero), "fonte": "cache",
+                         "erro_ao_vivo": vivo.get("erro", "")})
+
+
+@router.post("/api/eproc-mcp/lembretes/excluir", response_class=JSONResponse)
+async def api_eproc_mcp_lembrete_excluir(request: Request):
+    """Exclui (desativa) um lembrete NATIVO do e-proc — ícone de lixeira da
+    página "Consultar processo". Diferente do resto deste módulo, usa o
+    NAVEGADOR do e-proc (janela do usuário): abre o processo e clica em
+    "Desativar Lembrete" no post-it de mesmo texto. Depois grava no cache os
+    lembretes que ficaram na página, para a tela já refletir a exclusão.
+    Body: {numero, texto}."""
+    from ingestao import eproc_client, eproc_intimacoes
+
+    body = await request.json()
+    numero, texto = body.get("numero") or "", body.get("texto") or ""
+    res = await eproc_client.excluir_lembrete(numero, texto)
+    restantes = res.pop("restantes", None)
+    if res.get("ok"):  # só com a exclusão confirmada — página mal carregada não zera o cache
+        res["lembretes"] = eproc_intimacoes.atualizar_lembretes(numero, restantes or [])
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
+
+
+@router.post("/api/eproc-mcp/lembretes/criar", response_class=JSONResponse)
+async def api_eproc_mcp_lembrete_criar(request: Request):
+    """Cria um lembrete NATIVO no e-proc — botão "+ Novo" da seção Lembretes da
+    página "Consultar processo". Mesmo caminho de editar/excluir (navegador do
+    e-proc). Body: {numero, texto, destino: "todos" | "eu", cor: hex | ""}."""
+    from ingestao import eproc_client, eproc_intimacoes
+
+    body = await request.json()
+    numero = body.get("numero") or ""
+    destino = "eu" if body.get("destino") == "eu" else "todos"
+    res = await eproc_client.criar_lembrete(numero, body.get("texto") or "", destino, body.get("cor") or "")
+    restantes = res.pop("restantes", None)
+    if res.get("ok"):
+        res["lembretes"] = eproc_intimacoes.atualizar_lembretes(numero, restantes or [])
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
+
+
+@router.post("/api/eproc-mcp/lembretes/editar", response_class=JSONResponse)
+async def api_eproc_mcp_lembrete_editar(request: Request):
+    """Altera o texto de um lembrete NATIVO do e-proc — ícone de lápis da
+    página "Consultar processo". Mesmo caminho da exclusão (navegador do
+    e-proc, "Alterar Lembrete"); depois grava no cache os lembretes como
+    ficaram na página. Body: {numero, texto, texto_novo, cor: hex | ""}."""
+    from ingestao import eproc_client, eproc_intimacoes
+
+    body = await request.json()
+    numero = body.get("numero") or ""
+    res = await eproc_client.editar_lembrete(numero, body.get("texto") or "", body.get("texto_novo") or "",
+                                             body.get("cor") or "")
+    restantes = res.pop("restantes", None)
+    if res.get("ok"):
+        res["lembretes"] = eproc_intimacoes.atualizar_lembretes(numero, restantes or [])
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
 
 
 @router.get("/api/eproc-mcp/paj-do-processo", response_class=JSONResponse)

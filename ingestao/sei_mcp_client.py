@@ -337,6 +337,16 @@ class _RespostaCruzada(Exception):
     pass
 
 
+def _nao_autenticado(msg: dict) -> bool:
+    """Erro de tool "Não autenticado. Use auth_iniciar…" (sessão SEI vencida no
+    servidor, com o Bearer ainda aceito — não vem como HTTP 401)."""
+    res = (msg or {}).get("result") or {}
+    if not res.get("isError"):
+        return False
+    texto = " ".join(c.get("text", "") for c in res.get("content", []) if c.get("type") == "text")
+    return bool(re.search(r"n[ãa]o autenticad", texto, re.I))
+
+
 def chamar(nome: str, args: Optional[dict] = None, timeout: float = 90) -> Any:
     """Chama uma tool do MCP-SEI e devolve o JSON do 1º bloco (já decodificado).
 
@@ -345,8 +355,23 @@ def chamar(nome: str, args: Optional[dict] = None, timeout: float = 90) -> Any:
     args = args or {}
     escrita = nome in _TOOLS_ESCRITA
     ultima_falha = ""
-    for tentativa in range(1 if escrita else 3):
+    reidratou = False
+    tentativa = 0
+    while tentativa < (1 if escrita else 3):
         msg = _sessao.tools_call(nome, args, timeout=timeout)
+        if _nao_autenticado(msg):
+            # A sessão SEI do servidor (~8 h) venceu, mas o Bearer (~30 dias)
+            # segue válido: uma sessão MCP NOVA re-hidrata pelo Bearer (manual
+            # do MCP-SEI). Seguro mesmo em gravação — o servidor recusou ANTES
+            # de executar. Se nem assim, o login DPU precisa ser refeito.
+            if not reidratou:
+                reidratou = True
+                _sessao.resetar()
+                continue
+            _apagar_segredo("token")
+            _sessao.resetar()
+            raise SeiLoginNecessario("A sessão do SEI expirou — clique em \"Conectar ao SEI\" e entre de novo.")
+        tentativa += 1
         if "error" in msg:
             raise SeiErro(f"{nome}: {msg['error'].get('message', msg['error'])}")
         res = msg.get("result") or {}
@@ -363,7 +388,7 @@ def chamar(nome: str, args: Optional[dict] = None, timeout: float = 90) -> Any:
         texto = blocos[0] if blocos else ""
         if res.get("isError"):
             transitoria = "Falha transitória" in texto or "302" in texto or "corpo VAZIO" in texto
-            if transitoria and not escrita and tentativa < 2:
+            if transitoria and not escrita and tentativa < 3:
                 ultima_falha = texto[:300]
                 time.sleep(2)
                 continue

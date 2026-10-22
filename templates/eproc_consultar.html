@@ -30,21 +30,6 @@
      indevida. `hidden` é não-"visible" (evita o acoplamento) e nunca desenha
      barra — a tabela cresce junto com a página, sem caixa de rolagem própria. */
   .table-scroll-fix { overflow-y: hidden; }
-  /* Lembretes — mesmo cartão post-it da seção "Lembretes" da página do PAJ
-     (que por sua vez copiou a paleta da própria ferramenta "Lembretes" do
-     e-proc). Aqui os dados VÊM do e-proc (lidos do cache da aba Prazos), então
-     não há cor por item — usa o amarelo padrão do post-it. */
-  .lembrete-card {
-    min-width: 230px; max-width: 260px; flex-shrink: 0; border-radius: 4px;
-    padding: 10px 12px 8px; box-shadow: 0 4px 10px rgba(0,0,0,.15), 0 1px 3px rgba(0,0,0,.10);
-    font-family: Roboto, 'Segoe UI', sans-serif; color: #1a1a1a;
-    background-color: #efef8f;
-    display: flex; flex-direction: column; gap: 6px;
-  }
-  .lembrete-card .lembrete-texto {
-    font-size: 12.5px; line-height: 1.4; white-space: pre-wrap; word-break: break-word;
-    max-height: 6.5rem; overflow-y: auto;
-  }
   /* Menu "Ver no Painel/Ver no navegador" no nº do processo — mesma correção
      de contraste da aba Prazos (evita herdar cor de texto/fundo incorreta). */
   .doc-dropdown .dropdown-content { background: var(--card) !important; border-color: var(--stroke-strong) !important; }
@@ -387,39 +372,12 @@
           </span>
         </div>
 
-        <!-- Lembretes (nativos do e-proc — post-it da listagem de citações/
-             intimações, lidos do cache já sincronizado pela aba Prazos). Só
-             leitura: "+ Novo" fica desabilitado — ainda não há como criar um
-             lembrete NO e-proc a partir do painel. -->
-        <div class="bg-base-200 border border-base-300 rounded-lg">
-          <div class="flex items-center gap-2 px-4 py-3">
-            <span class="text-lg font-semibold flex-1">Lembretes</span>
-            <button type="button" class="btn btn-ghost btn-sm gap-1 btn-disabled" disabled
-                    title="Ainda não é possível criar um lembrete no e-proc a partir do painel.">
-              <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
-                <path stroke-linecap="round" stroke-linejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
-              </svg>
-              Novo
-            </button>
-          </div>
-          <div class="px-4 pb-4">
-            <template x-if="carregandoLembretes">
-              <p class="text-sm text-base-content/50">Carregando...</p>
-            </template>
-            <template x-if="!carregandoLembretes && !lembretes.length">
-              <p class="text-sm text-base-content/50 italic">
-                Nenhum lembrete sincronizado para este processo — só aparece aqui depois que ele passar pela
-                <a href="/prazos" class="link">sincronização de intimações</a> da aba Prazos.
-              </p>
-            </template>
-            <div class="flex gap-3 overflow-x-auto pb-1" x-show="!carregandoLembretes && lembretes.length">
-              <template x-for="(l, i) in lembretes" :key="i">
-                <div class="lembrete-card">
-                  <div class="lembrete-texto" x-text="l.texto"></div>
-                </div>
-              </template>
-            </div>
-          </div>
+        <!-- Lembretes NATIVOS do e-proc (ao vivo, com cor; criar/alterar/excluir
+             NO e-proc) — componente compartilhado com o bloco "Processo
+             Judicial" da página do PAJ (partials/lembretes_eproc.html). -->
+        <div class="bg-base-200 border border-base-300 rounded-lg px-4 py-3"
+             x-data="lembretesEprocApp(numero)">
+          {% include "partials/lembretes_eproc.html" %}
         </div>
 
         <!-- Intimações (fechada por padrão nesta tela — pedido do Felipe
@@ -523,7 +481,6 @@ function eprocConsultarApp() {
     // eventos_processo_tabela.html (ver modo de seleção em minuta_ia.html)
     // não referenciar uma variável inexistente.
     modoSelecao: false,
-    lembretes: [], carregandoLembretes: false,
     pajAssociado: '', carregandoPaj: false,
     chaveAtual: null, buscandoChave: false, avisoChave: '',
     // Cabeçalho COMPLETO (classe/competência/juiz/relator + partes com
@@ -687,7 +644,6 @@ function eprocConsultarApp() {
       url.searchParams.set('instancia', this.instancia);
       window.history.replaceState({}, '', url);
 
-      this.carregarLembretes(num);
       this.carregarPajAssociado(num);
       this.carregarCabecalhoCompleto(num);
 
@@ -703,17 +659,6 @@ function eprocConsultarApp() {
         else { this.resultado = r; }
       } catch (e) { this.erro = 'Falha de rede ao consultar o e-proc (MCP).'; }
       finally { this.carregando = false; }
-    },
-
-    // Lembretes NATIVOS do e-proc (cache da aba Prazos) — busca em paralelo à
-    // triagem, sem bloquear/atrasar o resultado principal.
-    async carregarLembretes(numero) {
-      this.carregandoLembretes = true;
-      try {
-        const r = await (await fetch('/api/eproc-mcp/lembretes?numero=' + encodeURIComponent(numero))).json();
-        this.lembretes = r.lembrete_itens || [];
-      } catch (e) { this.lembretes = []; }
-      finally { this.carregandoLembretes = false; }
     },
 
     // PAJ associado (card acima de Lembretes) — mesma fonte/critério dos

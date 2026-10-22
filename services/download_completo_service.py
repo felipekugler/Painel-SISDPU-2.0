@@ -259,7 +259,68 @@ def _campo(page: fitz.Page, y: float, rotulo: str, valor: str) -> None:
     _texto(page, MARGEM + 145, y, A4.width - MARGEM, 20, str(valor or "-"), fontsize=10)
 
 
-def _escrever_capa(doc: fitz.Document, paj_norm: str, meta: dict) -> None:
+def descrever_selecao(seqs) -> str:
+    """{135,136,…,142} -> "135 a 142"; {120,135,136,140} -> "120, 135 a 136, 140"."""
+    nums = sorted(set(seqs))
+    faixas: list[str] = []
+    i = 0
+    while i < len(nums):
+        j = i
+        while j + 1 < len(nums) and nums[j + 1] == nums[j] + 1:
+            j += 1
+        faixas.append(str(nums[i]) if i == j else f"{nums[i]} a {nums[j]}")
+        i = j + 1
+    return ", ".join(faixas)
+
+
+_RE_FAIXA = re.compile(r"^(\d+)\s*(?:-|a|até|ate)\s*(\d+)$", re.I)
+
+
+def interpretar_selecao(texto: str) -> tuple[set[int], list[str]]:
+    """"135-142", "120, 135-138; 140", "135 a 142" -> (conjunto de seqs, trechos
+    inválidos). Separadores aceitos: vírgula, ponto e vírgula, espaço."""
+    seqs: set[int] = set()
+    invalidos: list[str] = []
+    texto = re.sub(r"\s*(-|até|ate)\s*", r"\1", (texto or "").strip(), flags=re.I)
+    texto = re.sub(r"(\d)\s+a\s+(\d)", r"\1a\2", texto, flags=re.I)
+    for parte in re.split(r"[,;\s]+", texto):
+        if not parte:
+            continue
+        if parte.isdigit():
+            seqs.add(int(parte))
+            continue
+        m = _RE_FAIXA.match(parte)
+        if m and int(m.group(1)) <= int(m.group(2)) and int(m.group(2)) - int(m.group(1)) <= 2000:
+            seqs.update(range(int(m.group(1)), int(m.group(2)) + 1))
+        else:
+            invalidos.append(parte)
+    return seqs, invalidos
+
+
+def previa_selecao(paj_norm: str, texto: str) -> dict | None:
+    """Prévia do modal: quantas movimentações/documentos o recorte terá e
+    quantos anexos já estão em disco. None se o PAJ não existir."""
+    dados = ler_paj(paj_norm)
+    if not dados:
+        return None
+    pedidas, invalidos = interpretar_selecao(texto)
+    existentes = {int(m["seq"]) for m in dados["movimentacoes"] if str(m.get("seq", "")).strip().isdigit()}
+    grupos, _orfaos = _montar_grupos(dados["movimentacoes"], dados["anexos_sisdpu"])
+    validas = pedidas & existentes
+    itens = [it for s in validas for it in grupos.get(s, [])]
+    return {
+        "movimentacoes": len(validas),
+        "descricao": descrever_selecao(validas),
+        "inexistentes": descrever_selecao(pedidas - existentes),
+        "invalidos": invalidos,
+        "documentos": len(itens),
+        "baixados": sum(1 for it in itens if it.get("anexo")),
+        "seq_min": min(existentes) if existentes else None,
+        "seq_max": max(existentes) if existentes else None,
+    }
+
+
+def _escrever_capa(doc: fitz.Document, paj_norm: str, meta: dict, recorte: str = "") -> None:
     page = _nova_pagina(doc)
     y = MARGEM
     _texto(
@@ -278,14 +339,19 @@ def _escrever_capa(doc: fitz.Document, paj_norm: str, meta: dict) -> None:
         ("Status no SIS", det.get("status_paj", "")),
         ("Data de abertura", meta.get("data_abertura", "")),
     ]
+    if recorte:
+        campos.append(("Recorte", f"movimentações {recorte}"))
     for rotulo, valor in campos:
         _campo(page, y, rotulo, valor)
         y += 22
     y += 10
     _texto(
         page, MARGEM, y, A4.width - MARGEM, 40,
-        "Documento gerado automaticamente pelo PAINEL SISDPU - consolida capa, "
-        "histórico de movimentações e anexos baixados do SISDPU para este PAJ.",
+        ("Documento gerado automaticamente pelo PAINEL SISDPU - recorte do PAJ com as "
+         f"movimentações {recorte}, suas descrições e anexos baixados do SISDPU."
+         if recorte else
+         "Documento gerado automaticamente pelo PAINEL SISDPU - consolida capa, "
+         "histórico de movimentações e anexos baixados do SISDPU para este PAJ."),
         fontsize=8.5, color=(0.4, 0.4, 0.4),
     )
     _tarja(page, f"{paj_norm}  |  Capa")
@@ -305,7 +371,7 @@ def _escrever_resumo(page: fitz.Page, stats: dict) -> None:
     y = y0 + 16
     _texto(
         page, x0 + 16, y, x0 + largura - 16, 20,
-        "DOCUMENTO COMPLETO GERADO COM SUCESSO.",
+        "RECORTE DO PAJ GERADO COM SUCESSO." if stats.get("recorte") else "DOCUMENTO COMPLETO GERADO COM SUCESSO.",
         fontsize=11, fontname=FONTE_NEGRITO, color=(0.09, 0.45, 0.09),
     )
     y += 30
@@ -956,6 +1022,26 @@ def _anexar_item(doc: fitz.Document, paj_norm: str, rotulo_seq: str, pasta: Path
         return STATUS_ERRO_UNIFICACAO
 
 
+def verificar_selecao(paj_norm: str, seqs: set[int]) -> dict | None:
+    """Recorte: só os anexos das movimentações escolhidas precisam estar em
+    disco (não exige a sincronização completa do PAJ). `faltando_movs` = seqs
+    com documento ainda não baixado — o front oferece baixar só esses."""
+    dados = ler_paj(paj_norm)
+    if not dados:
+        return None
+    grupos, _orfaos = _montar_grupos(dados["movimentacoes"], dados["anexos_sisdpu"])
+    total = faltando = 0
+    faltando_movs: list[int] = []
+    for s in sorted(seqs & set(grupos)):
+        falta = [it for it in grupos[s] if not it.get("anexo")]
+        total += len(grupos[s])
+        faltando += len(falta)
+        if falta:
+            faltando_movs.append(s)
+    return {"completo": faltando == 0, "total_documentos": total, "faltando": faltando,
+            "faltando_movs": faltando_movs}
+
+
 def verificar_sincronizacao_completa(paj_norm: str) -> dict | None:
     """Verifica se da' pra gerar o Download Completo sem faltar anexo.
 
@@ -1002,9 +1088,18 @@ def verificar_sincronizacao_completa(paj_norm: str) -> dict | None:
     }
 
 
-def gerar_pdf_consolidado(paj_norm: str) -> bytes | None:
+def gerar_pdf_consolidado(paj_norm: str, seqs: set[int] | None = None,
+                          pagina_fim: bool = True, historico: bool = True) -> bytes | None:
     """Monta e retorna (em memoria) o PDF consolidado do PAJ. None se o PAJ
-    nao existir."""
+    nao existir.
+
+    `seqs` (recorte, pedido do Defensor 21/10/2026): só essas movimentações —
+    separadora + anexos de cada uma e o histórico em tabela só delas; sem a
+    narrativa e sem anexos órfãos (não pertencem a movimentação escolhida).
+    A capa indica o recorte.
+
+    `pagina_fim` / `historico` (modal, ambos marcados por padrão): incluir ou
+    não, no final, a página "Fim das movimentações" e a tabela do histórico."""
     dados = ler_paj(paj_norm)
     if not dados:
         return None
@@ -1019,12 +1114,19 @@ def gerar_pdf_consolidado(paj_norm: str) -> bytes | None:
         int(m["seq"]): m for m in movs if str(m.get("seq", "")).strip().isdigit()
     }
     grupos, orfaos = _montar_grupos(movs, anexos)
+    recorte = ""
+    if seqs is not None:
+        grupos = {s: itens for s, itens in grupos.items() if s in seqs}
+        orfaos = {}
+        movs = [m for m in movs if str(m.get("seq", "")).strip().isdigit() and int(m["seq"]) in seqs]
+        recorte = descrever_selecao(grupos)
 
     inicio = datetime.now()
 
     doc = fitz.open()
-    _escrever_capa(doc, paj_norm, meta)  # pagina 0 — o resumo e' escrito nela no final
-    _escrever_narrativa(doc, paj_norm, narrativa)  # logo antes da Sequencia 1
+    _escrever_capa(doc, paj_norm, meta, recorte)  # pagina 0 — o resumo e' escrito nela no final
+    if seqs is None:
+        _escrever_narrativa(doc, paj_norm, narrativa)  # logo antes da Sequencia 1
 
     contagem = {
         STATUS_UNIFICADO: 0,
@@ -1051,8 +1153,10 @@ def gerar_pdf_consolidado(paj_norm: str) -> bytes | None:
     # arquivo, precedido por uma pagina separadora — a pedido do usuario,
     # pra quem abre o PDF ir direto aos documentos sem precisar passar pela
     # tabela primeiro.
-    _pagina_fim_movimentacoes(doc, paj_norm)
-    _escrever_movimentacoes(doc, paj_norm, movs)
+    if pagina_fim:
+        _pagina_fim_movimentacoes(doc, paj_norm)
+    if historico:
+        _escrever_movimentacoes(doc, paj_norm, movs)
 
     fim = datetime.now()
     formato_data = "%d/%m/%Y %H:%M:%S"
@@ -1066,6 +1170,7 @@ def gerar_pdf_consolidado(paj_norm: str) -> bytes | None:
         "erros_unificacao": contagem[STATUS_ERRO_UNIFICACAO],
         "inicio": inicio.strftime(formato_data),
         "fim": fim.strftime(formato_data),
+        "recorte": recorte,
     }
     _escrever_resumo(doc[0], stats)
 

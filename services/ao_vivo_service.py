@@ -267,6 +267,39 @@ async def baixar_anexos_paj(paj_norm: str) -> dict:
     return {"ok": True, "iniciado": True, "faltam": faltam}
 
 
+async def baixar_anexos_movs(paj_norm: str, seqs: set[int]) -> dict:
+    """Recorte do "Baixar PAJ Completo" (21/10/2026): baixa pelo MCP só os
+    anexos das movimentações escolhidas, e espera terminar (são poucas). Usa a
+    lista de documentos do metadata — se a movimentação ainda não estiver lá,
+    o PAJ precisa ser atualizado antes."""
+    if config_painel_service.get_fonte_dados() != "mcp" or not sis2.conectado():
+        return {"ok": False, "erro": "O painel não está conectado ao SIS-DPU 2.0 — conecte e tente de novo, "
+                                     "ou use a sincronização do PAJ."}
+    try:
+        m = json.loads((PAJS_DIR / paj_norm / "metadata.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {"ok": False, "erro": "PAJ não encontrado."}
+    movs = [mv for mv in (m.get("detalhes_sisdpu") or {}).get("movimentacoes") or []
+            if str(mv.get("seq") or "").isdigit() and int(mv["seq"]) in seqs and mv.get("documentos")]
+    if not movs:
+        return {"ok": True, "baixados": 0}
+
+    async def _rodar():
+        t1 = fonte.MODO.set("paj")
+        try:
+            return await sincronizador._baixar_anexos_sisdpu(
+                PAJS_DIR / paj_norm / "Arquivos", lambda _l: None, limite=0, movs=movs, rodar_ocr=False)
+        finally:
+            fonte.MODO.reset(t1)
+
+    for _ in range(36):  # espera a vez se houver outra leitura/sync (até ~3 min)
+        res = await _com_lock(_rodar)
+        if res is not None:
+            return {"ok": True, "baixados": (res or {}).get("baixados", 0)}
+        await asyncio.sleep(5)
+    return {"ok": False, "erro": "Há uma sincronização em andamento — tente de novo em instantes."}
+
+
 def interromper_anexos(paj_norm: str) -> dict:
     """Pedido do Defensor (toast "Interromper"): o download em andamento para
     antes do próximo arquivo. Os já baixados ficam."""

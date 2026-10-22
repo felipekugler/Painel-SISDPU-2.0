@@ -16,6 +16,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import os
+import random
 import re
 import socket
 import subprocess
@@ -460,9 +461,10 @@ _MAX_TENT = 3
 _PAUSA_BLOQUEIO_MS = 45000  # 45s fixos ao detectar bloqueio antirobô (era 30s)
 
 # Ritmo entre consultas: delay APÓS cada consulta (campo "Tempo entre consultas", padrão
-# 5s). É este ritmo (e não esperas fixas ad-hoc) que governa as transições entre docs/
+# 5 a 15s — sorteado a cada consulta entre o mínimo e o máximo). É este ritmo (e não esperas fixas ad-hoc) que governa as transições entre docs/
 # grupos/modais. Só há DOIS tempos no sistema: este e a espera após bloqueio antirobô.
-_RITMO_MS = 5000
+_RITMO_MS = 5000       # mínimo
+_RITMO_MAX_MS = 15000  # máximo (== mínimo → intervalo fixo)
 
 # Inventário ESTRUTURADO do download corrente: 1 item por documento REVELADO no SAT.
 # item = {"key": <tipo>, "sub": <NB/protocolo/"">, "nome": <arquivo/"">, "status": ...}
@@ -551,9 +553,11 @@ def _inv_add(key: str, sub: str, nome: str, status: str, rotulo: str = "") -> No
 
 
 async def _ritmo(page) -> None:
-    """Aplica o ritmo entre consultas: delay APÓS cada consulta (Tempo entre consultas)."""
-    if _RITMO_MS > 0:
-        await page.wait_for_timeout(_RITMO_MS)
+    """Aplica o ritmo entre consultas: delay APÓS cada consulta, sorteado entre o mínimo e o
+    máximo do "Tempo entre consultas"."""
+    ms = random.randint(_RITMO_MS, max(_RITMO_MS, _RITMO_MAX_MS))
+    if ms > 0:
+        await page.wait_for_timeout(ms)
 
 
 # Catálogo dos tipos de documentos que a rotina sabe baixar (key estável, rótulo, grupo).
@@ -1402,13 +1406,14 @@ async def _compilar_por_tipo(pasta_destino, salvos, reg):
 
 async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                                 delay_s: float = 5.0, bloqueio_s: float = 45.0,
-                                tipos=None, pretensao="", rotulo="", alvos=None,
+                                delay_max_s: float | None = None, tipos=None, pretensao="", rotulo="", alvos=None,
                                 nbs=None, protocolos=None, compilar=False, compilar_limiar=3,
                                 pat_ignorar=None, pasta_acervo=None):
     """Consulta o CPF no SAT (usuário resolve o CAPTCHA na janela) e baixa o Grupo 1
     (1 clique), o Grupo 2 (modais: CCON, CRER, HISCRE, HISCONSIGNADOS, LAUDO MEDICO) e
     o PAT (2ª Via dos Processos, com deduplicação). `delay_s` = ritmo preventivo entre
-    consultas (padrão 5s; 0 desliga). `bloqueio_s` = espera ao detectar antirobô
+    consultas (padrão 5s; 0 desliga) — mínimo do intervalo; `delay_max_s` = máximo (cada pausa é
+    sorteada entre os dois; None ou ≤ mínimo = intervalo fixo). `bloqueio_s` = espera ao detectar antirobô
     (padrão 45s). `tipos` = coleção de keys de TIPOS_DOCUMENTOS a baixar (None = todos).
     `nbs` = coleção de NBs (qualquer formato) p/ filtrar Grupo 2 + PAT (None/vazio = sem
     filtro). `protocolos` = coleção de protocolos (qualquer formato) p/ filtrar SÓ o PAT
@@ -1419,9 +1424,10 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
     permite RETOMAR downloads interrompidos); None = usa `pasta_destino`. O log é gravado
     INCREMENTALMENTE (a cada documento) — uma interrupção deixa o inventário parcial em disco.
     Gera eventos SSE; termina com {'done':True,'resultado':{...}}."""
-    global _RITMO_MS, _PAUSA_BLOQUEIO_MS, _ROTULO_ARQ, _INVENTARIO, _ALVOS
+    global _RITMO_MS, _RITMO_MAX_MS, _PAUSA_BLOQUEIO_MS, _ROTULO_ARQ, _INVENTARIO, _ALVOS
     global _NB_FILTRO, _PROTOCOLO_FILTRO, _SOMENTE_PAT, _COMPILAR, _COMPILAR_LIMIAR, _PAT_IGNORAR, _PASTA_ACERVO, _LOG_PERSIST
     _RITMO_MS = max(0, int(float(delay_s) * 1000))
+    _RITMO_MAX_MS = max(_RITMO_MS, int(float(delay_max_s if delay_max_s is not None else delay_s) * 1000))
     _PAUSA_BLOQUEIO_MS = max(0, int(float(bloqueio_s) * 1000))
     # filtro de NB: aceita formatado ("726.015.826-4") ou dígitos crus ("7260158264");
     # normaliza para só dígitos. Vazio/None = sem filtro.

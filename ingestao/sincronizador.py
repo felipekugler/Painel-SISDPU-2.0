@@ -1070,6 +1070,15 @@ async def _processar_paj_pos_detalhamento(
                 metadata["foto_assistido"] = "foto_assistido.jpg"
     elif foto_path.exists():
         metadata["foto_assistido"] = "foto_assistido.jpg"
+    else:
+        # Fonte SIS-DPU 2.0: a foto vem da ficha do assistido no MCP (22/10/2026,
+        # services/foto_assistido_service.py) — uma consulta por PAJ, só se a
+        # pasta ainda não tem foto; avatar genérico é descartado.
+        with contextlib.suppress(Exception):
+            from services import foto_assistido_service
+            _rf = await asyncio.to_thread(foto_assistido_service.garantir_foto, pasta, det)
+            if _rf.get("situacao") == "foto":
+                metadata["foto_assistido"] = "foto_assistido.jpg"
 
     # Contatos (App SISDPU/Telefone/WhatsApp/E-mail/Endereço) — extraídos
     # diretamente do SISDPU nesta sincronização (leve ou completa); painel
@@ -3268,6 +3277,15 @@ async def buscar_resumo_via_busca(
                 metadata["foto_assistido"] = "foto_assistido.jpg"
     elif foto_path.exists():
         metadata["foto_assistido"] = "foto_assistido.jpg"
+    else:
+        # Fonte SIS-DPU 2.0: a foto vem da ficha do assistido no MCP (22/10/2026,
+        # services/foto_assistido_service.py) — uma consulta por PAJ, só se a
+        # pasta ainda não tem foto; avatar genérico é descartado.
+        with contextlib.suppress(Exception):
+            from services import foto_assistido_service
+            _rf = await asyncio.to_thread(foto_assistido_service.garantir_foto, pasta, det)
+            if _rf.get("situacao") == "foto":
+                metadata["foto_assistido"] = "foto_assistido.jpg"
 
     # Marca origem: PAJ nao veio da caixa atual, foi puxado por busca explicita
     # do defensor (via watchlist). Dashboard usa essa flag para esconder.

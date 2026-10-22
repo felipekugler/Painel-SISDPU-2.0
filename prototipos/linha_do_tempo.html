@@ -1,0 +1,894 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Linha do Tempo</title>
+<!-- PROTÓTIPO (dados fictícios) — Linha do Tempo do histórico contributivo.
+     Regras de QS simplificadas para validar o desenho: termo final = dia 15
+     do mês M+P+2 (sem ajuste de dia útil); P = 12 (obrigatório/benefício) ou
+     6 (facultativo); +12 por 120 contribuições sem perda; +12 por desemprego. -->
+<style>
+:root{
+  --bg:#f5f6f8;--card:#fff;--ink:#1d2330;--mut:#6b7280;--line:#e2e5ea;--grid:#eceef2;
+  --emp:#1f3b63;--ci:#0f8b8d;--fac:#d99a00;--ben:#7c4dbd;--sd:#f2c94c;--rural:#5b8c3a;
+  --qs:#d4e6f7;--qsc:#5fa8dc;--gap:#f7d4d4;--one:#16181d;--conc:#8d9097;
+  --ok:#1e8e3e;--okbg:#e5f4ea;--no:#c0392b;--nobg:#fbe7e5;--accent:#1f3b63;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  --bg:#13161b;--card:#1b1f26;--ink:#e6e8eb;--mut:#9aa3ad;--line:#2c323b;--grid:#22272f;
+  --emp:#6b9ae0;--qs:#203b55;--qsc:#3e8bc2;--gap:#4a2428;--one:#e6e8eb;--conc:#6f747c;
+  --okbg:#183524;--nobg:#3d1d1d;--accent:#6b9ae0;}}
+:root[data-theme="dark"]{
+  --bg:#13161b;--card:#1b1f26;--ink:#e6e8eb;--mut:#9aa3ad;--line:#2c323b;--grid:#22272f;
+  --emp:#6b9ae0;--qs:#203b55;--qsc:#3e8bc2;--gap:#4a2428;--one:#e6e8eb;--conc:#6f747c;
+  --okbg:#183524;--nobg:#3d1d1d;--accent:#6b9ae0;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:14px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1400px;margin:0 auto;padding:16px}
+h1{font-size:20px;margin:0}
+.sub{color:var(--mut);font-size:13px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:12px 14px;margin-top:12px}
+.hdr{display:flex;flex-wrap:wrap;gap:12px;align-items:flex-end;justify-content:space-between}
+.stats{display:flex;flex-wrap:wrap;gap:8px}
+.stat{border:1px solid var(--line);border-radius:8px;padding:6px 10px;min-width:120px}
+.stat b{display:block;font-size:17px}
+.stat span{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.03em}
+.bar-ctl{display:flex;flex-wrap:wrap;gap:14px;align-items:center}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:8px;overflow:hidden}
+.seg button{border:0;background:transparent;color:var(--ink);padding:6px 12px;cursor:pointer;font:inherit}
+.seg button.on{background:var(--accent);color:#fff}
+label.ck{display:inline-flex;gap:6px;align-items:center;font-size:13px;cursor:pointer}
+select,input{font:inherit;color:var(--ink);background:var(--card);border:1px solid var(--line);border-radius:6px;padding:4px 6px}
+button.btn{font:inherit;border:1px solid var(--line);background:var(--card);color:var(--ink);border-radius:6px;padding:5px 10px;cursor:pointer}
+button.btn.pri{background:var(--accent);border-color:var(--accent);color:#fff}
+.grp{font-size:11px;color:var(--mut);text-transform:uppercase;letter-spacing:.04em;margin-right:4px}
+
+/* gráfico */
+.chart{overflow-x:auto;border:1px solid var(--line);border-radius:10px;background:var(--card);margin-top:12px}
+.inner{position:relative}
+.row{display:flex;border-bottom:1px solid var(--grid)}
+.lab{position:sticky;left:0;z-index:4;background:var(--card);width:270px;min-width:270px;padding:4px 10px;border-right:1px solid var(--line);font-size:12.5px;display:flex;flex-direction:column;justify-content:center}
+.lab .nm{font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.lab .dt{color:var(--mut);font-size:11.5px}
+.lab .tg{display:inline-block;font-size:10px;padding:0 5px;border-radius:4px;color:#fff;margin-left:2px;vertical-align:1px}
+.lab .ind{display:inline-block;font-size:10px;padding:0 4px;border-radius:4px;border:1px solid var(--no);color:var(--no);margin-left:3px}
+.trk{position:relative;flex:none}
+.b{position:absolute;border-radius:3px;z-index:2;cursor:default}
+.b .tx{position:absolute;left:6px;top:50%;transform:translateY(-50%);color:#fff;font-size:11px;white-space:nowrap;pointer-events:none}
+.pend{background-image:repeating-linear-gradient(135deg,rgba(255,255,255,.35) 0 5px,transparent 5px 10px)!important;outline:2px dashed var(--no);outline-offset:1px}
+.man{outline:2px dashed var(--mut);outline-offset:1px}
+.hatch{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(45deg,var(--no) 0 2px,transparent 2px 5px);opacity:.85;pointer-events:none;z-index:3}
+.hatch.simpl{background:repeating-linear-gradient(90deg,#a855f7 0 2px,transparent 2px 5px);opacity:1;box-shadow:inset 0 0 0 1px #a855f7}
+.hatch.tard{background:repeating-linear-gradient(-45deg,#f97316 0 3px,transparent 3px 6px);opacity:1;box-shadow:inset 0 0 0 2px #f97316}
+.hatch.aj{background:repeating-linear-gradient(45deg,#22c55e 0 3px,transparent 3px 6px);opacity:1;box-shadow:inset 0 0 0 2px #22c55e}
+.qsb{position:absolute;background:var(--qs);border-radius:2px;z-index:2}
+.qsg{position:absolute;top:0;bottom:0;background:repeating-linear-gradient(90deg,var(--qsc) 0 1px,transparent 1px 6px);opacity:.55}
+.qlab{position:absolute;font-size:10.5px;color:var(--mut);white-space:nowrap;z-index:2}
+.tick{position:absolute;width:2px;background:var(--ink);z-index:3;opacity:.6}
+.sddot{position:absolute;width:9px;height:9px;border-radius:50%;background:var(--sd);border:2px solid #9c7a00;z-index:3}
+.axis .trk span{position:absolute;top:6px;font-size:11px;color:var(--mut);transform:translateX(-50%)}
+.ov{position:absolute;top:0;bottom:0;pointer-events:none}
+.yl{position:absolute;top:0;bottom:0;width:1px;background:var(--grid);z-index:0}
+.mk{position:absolute;top:0;bottom:0;width:0;border-left:2px solid;z-index:3}
+.mk.leg{border-left-style:dashed;opacity:.6}
+.flag{position:absolute;top:2px;font-size:10.5px;font-weight:700;color:#fff;padding:1px 5px;border-radius:3px;white-space:nowrap;z-index:5;transform:translateX(-50%)}
+.flags{height:24px}
+.sect .lab{font-weight:700;font-size:12px;text-transform:uppercase;letter-spacing:.04em;color:var(--mut)}
+.comp .lab{font-weight:700}
+
+#tip{position:fixed;z-index:50;pointer-events:none;background:var(--card);color:var(--ink);border:1px solid var(--line);border-radius:8px;box-shadow:0 6px 24px rgba(0,0,0,.18);padding:8px 10px;font-size:12.5px;max-width:340px;display:none}
+#tip b{display:block;margin-bottom:2px}
+#tip .k{color:var(--mut)}
+
+.grid2{display:grid;grid-template-columns:1.4fr 1fr;gap:12px}
+@media (max-width:900px){.grid2{grid-template-columns:1fr}.lab{width:170px;min-width:170px}}
+.mcard{border:1px solid var(--line);border-left:5px solid;border-radius:8px;padding:8px 10px;margin-top:8px}
+.mcard .top{display:flex;justify-content:space-between;gap:8px;align-items:center}
+.pill{font-size:12px;font-weight:700;padding:2px 8px;border-radius:20px}
+.pill.ok{background:var(--okbg);color:var(--ok)}
+.pill.no{background:var(--nobg);color:var(--no)}
+.mcard .ln{font-size:12.5px;margin-top:3px}
+.mcard .x{border:0;background:none;color:var(--mut);cursor:pointer;font-size:15px}
+.legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12px;color:var(--mut)}
+.legend i{display:inline-block;width:18px;height:10px;border-radius:2px;margin-right:5px;vertical-align:-1px}
+table.lac{width:100%;border-collapse:collapse;font-size:12.5px}
+table.lac td,table.lac th{padding:4px 6px;border-bottom:1px solid var(--line);text-align:left}
+table.lac th{color:var(--mut);font-weight:600;font-size:11.5px}
+.form{display:flex;flex-wrap:wrap;gap:6px;align-items:center;margin-top:6px}
+.proto{background:#fff4d6;color:#7a5a00;border:1px solid #f0d58a;border-radius:6px;padding:2px 8px;font-size:11.5px;font-weight:600}
+.tabs{display:flex;gap:4px;margin-top:14px;border-bottom:2px solid var(--line)}
+.tabs button{font:inherit;font-weight:600;border:0;background:none;color:var(--mut);padding:8px 16px;cursor:pointer;border-bottom:3px solid transparent;margin-bottom:-2px}
+.tabs button.on{color:var(--accent);border-bottom-color:var(--accent)}
+.fontes{display:flex;flex-direction:column;align-items:flex-start;gap:4px;margin-top:6px}
+.fonte{border:1px solid var(--line);border-radius:20px;padding:2px 10px;font-size:12px}
+.tblwrap{overflow-x:auto;margin-top:10px}
+table.vin{width:100%;border-collapse:collapse;font-size:12.5px;min-width:1150px}
+table.vin th{text-align:left;color:var(--mut);font-weight:600;font-size:11.5px;padding:6px 4px;border-bottom:2px solid var(--line);white-space:nowrap}
+table.vin td{padding:3px 4px;border-bottom:1px solid var(--line);vertical-align:middle}
+table.vin input,table.vin select{width:100%;padding:3px 5px;font-size:12.5px}
+table.vin [data-mask]{width:105px;font-variant-numeric:tabular-nums}
+table.vin .ed,.ed-ex{background:#fff3c4!important;border-color:#e0b400!important;color:#1d2330}
+table.vin .bad,.bad-ex{background:var(--nobg)!important;border-color:var(--no)!important;color:var(--no)}
+.ed-ex,.bad-ex{border:1px solid;border-radius:4px;padding:0 5px}
+table.vin .aberto{background:#ffedd5!important;border-color:#f97316!important}
+.aberto-ex{background:#ffedd5;border:1px solid #f97316;border-radius:4px;padding:0 5px;color:#9a3412}
+.aviso{background:#fff7ed;border:1px solid #fdba74;color:#9a3412;border-radius:8px;padding:8px 12px;margin-top:12px;font-size:13px}
+table.vin tr.excl td{opacity:.45}
+table.vin tr.excl input,table.vin tr.excl select{text-decoration:line-through}
+table.vin tr.sdrow td:first-child{border-left:4px solid var(--sd)}
+.org{font-size:10.5px;font-weight:700;padding:1px 6px;border-radius:4px;white-space:nowrap}
+.o-cnis{background:#e3ecf8;color:#1f3b63}.o-sd{background:#fdf1c7;color:#7a5a00}.o-man{background:#ececec;color:#555}
+table.vin [data-f=tipo]{min-width:150px}table.vin [data-f=nome]{min-width:230px}table.vin [data-f=desemp]{min-width:175px}table.vin [data-f=soma120]{min-width:70px}
+.ib{border:0;background:none;cursor:pointer;font-size:14px;padding:2px 4px;color:var(--mut)}
+.ib:hover{color:var(--ink)}
+@media print{.noprint{display:none}.chart{overflow:visible}}
+</style>
+</head>
+<body>
+<div class="wrap">
+
+  <div class="hdr">
+    <div>
+      <h1>🧮 Linha do Tempo <span class="proto">PROTÓTIPO · dados fictícios</span></h1>
+      <div class="sub" id="cab"></div>
+    </div>
+    <div class="stats" id="stats"></div>
+  </div>
+
+  <!-- Abas -->
+  <div class="tabs noprint" id="tabs">
+    <button data-v="vin">📋 Vínculos</button><button data-v="tl">📊 Linha do tempo</button>
+  </div>
+
+  <!-- ===== ABA VÍNCULOS ===== -->
+  <div id="tab-vin">
+    <div class="card">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn" id="restTudo">↺ Restaurar tudo</button>
+        <button class="btn pri" id="addLinha">+ Período não constante no CNIS</button>
+      </div>
+      <div class="tblwrap"><table class="vin" id="tblVin"></table></div>
+      <div style="margin-top:12px"><b>Fontes:</b>
+        <div class="fontes" id="fontes"></div></div>
+      <div style="margin-top:12px"><b>Legenda:</b></div>
+      <div class="sub" style="margin-top:6px;display:flex;flex-direction:column;align-items:flex-start;gap:4px"><span class="ed-ex">campo editado</span><span style="text-decoration:line-through">linha excluída da análise</span><span class="bad-ex">data inválida</span><span class="aberto-ex">vínculo em aberto (sem data fim) – fica fora do cálculo até a data fim ser informada</span></div>
+    </div>
+    <div class="card">
+      <b>📉 Competências com contribuição abaixo do salário mínimo</b>
+      <div class="sub" style="margin-top:2px">Não contam como tempo de contribuição (CF, art. 195, §14). Contam para qualidade de segurado e carência (tese) e admitem ajuste: complementação, utilização ou aproveitamento.</div>
+      <div id="abaixoTbls"></div>
+    </div>
+    <div class="card">
+      <b>⏰ Recolhimentos em atraso (contribuinte individual, MEI e facultativo — mesma regra)</b>
+      <div class="sub" style="margin-top:2px">Portaria PRES/INSS nº 1.382/2021. Vencimento: dia 15 do mês seguinte, prorrogado para o dia útil. Pago em atraso após o fato gerador: não conta para nenhum fim (art. 9º) — em cada marco o cálculo é refeito com essa regra. Pago após a perda da QS e antes do fato gerador: conta para tempo e QS, não para carência (arts. 3º, 7º e 8º). Pago na manutenção da QS: conta para carência se da mesma categoria e após um recolhimento em dia (art. 3º, § 1º). Complementação não se sujeita a essas restrições.</div>
+      <div id="atrasoTbl"></div>
+    </div>
+  </div>
+
+  <!-- ===== ABA LINHA DO TEMPO ===== -->
+  <div id="tab-tl">
+  <!-- Controles -->
+  <div class="card noprint">
+    <div class="bar-ctl">
+      <div><span class="grp">Visão</span>
+        <span class="seg" id="modo">
+          <button data-v="tudo">Completa</button><button data-v="vinc">Só vínculos</button><button data-v="qs">Só qualidade de segurado</button>
+        </span>
+      </div>
+      <div><span class="grp">Ordem</span>
+        <span class="seg" id="ordem"><button data-v="desc">Mais recente ↑</button><button data-v="asc">Mais antigo ↑</button></span>
+      </div>
+      <div><span class="grp">Zoom</span><input type="range" id="zoom" min="40" max="420" value="90" style="vertical-align:middle;width:140px"></div>
+      <button class="btn" onclick="window.print()">🖨️ Imprimir / PDF</button>
+    </div>
+    <div class="bar-ctl" style="margin-top:10px">
+      <span class="grp">Cenário</span>
+      <label class="ck" title="Padrão: não contam como tempo de contribuição (CF, art. 195, § 14), mas contam para carência e QS (tese)"><input type="checkbox" id="ajuste"> Contar contribuições abaixo do mínimo para todos os fins</label>
+      <label class="ck"><input type="checkbox" id="leg" checked> Marcos legislativos</label>
+    </div>
+  </div>
+
+  <div id="avisos"></div>
+  <!-- Gráfico -->
+  <div class="chart" id="chart"><div class="inner" id="inner"></div></div>
+
+  <div class="card legend">
+    <span><i style="background:var(--emp)"></i>Empregado</span>
+    <span><i style="background:var(--ci)"></i>Contribuinte individual</span>
+    <span><i style="background:var(--fac)"></i>Facultativo</span>
+    <span><i style="background:var(--ben)"></i>Benefício</span>
+    <span><i style="background:var(--sd)"></i>Seguro-desemprego (parcelas)</span>
+    <span><i style="background:var(--qs)"></i>Qualidade de segurado projetada</span>
+    <span id="legAbaixo"><i style="background:repeating-linear-gradient(45deg,var(--no) 0 2px,transparent 2px 5px)"></i>Competência abaixo do mínimo – não conta como tempo (CF, art. 195, §14)</span>
+    <span id="legAjuste" style="display:none"><i style="background:repeating-linear-gradient(45deg,#22c55e 0 3px,transparent 3px 6px);box-shadow:inset 0 0 0 2px #22c55e"></i>Competência abaixo do mínimo ajustada – conta para todos os fins (simulação)</span>
+    <span><i style="background:repeating-linear-gradient(90deg,#a855f7 0 2px,transparent 2px 5px);box-shadow:inset 0 0 0 1px #a855f7"></i>Plano simplificado (LC 123/MEI) – não conta como tempo de contribuição</span>
+    <span><i style="background:repeating-linear-gradient(-45deg,#f97316 0 3px,transparent 3px 6px);box-shadow:inset 0 0 0 2px #f97316"></i>Recolhimento em atraso com restrição (Portaria PRES/INSS 1.382/2021) – detalhes na aba Vínculos</span>
+    <span><i style="outline:2px dashed var(--no);background:var(--emp)"></i>Vínculo com pendência (PEXT etc.)</span>
+    <span><i style="background:var(--one)"></i>Compilado: 1 contribuição</span>
+    <span><i style="background:var(--conc)"></i>Concomitância</span>
+    <span><i style="background:var(--gap)"></i>Sem contribuição / sem QS</span>
+  </div>
+
+  <div class="grid2">
+    <!-- Marcos -->
+    <div class="card">
+      <b>📍 Marcos temporais</b> <span class="sub">— a análise de cada marco é recalculada conforme o cenário acima</span>
+      <div class="form noprint">
+        <select id="mTipo">
+          <option>DER</option><option>DII</option><option>DO</option><option>DIB</option>
+          <option>DCB</option><option>Prisão</option><option>Parto</option><option>Outro</option>
+        </select>
+        <input type="text" id="mData" data-mask="data" inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa" style="width:110px">
+        <input type="text" id="mDesc" placeholder="descrição (opcional)" style="width:180px">
+        <button class="btn pri" id="mAdd">+ Adicionar marco</button>
+      </div>
+      <div id="marcos"></div>
+    </div>
+
+    <!-- Lacunas -->
+    <div>
+      <div class="card">
+        <b>🕳️ Períodos sem contribuição</b>
+        <table class="lac" id="lacC"></table>
+      </div>
+      <div class="card">
+        <b>⛔ Períodos sem qualidade de segurado</b>
+        <table class="lac" id="lacQ"></table>
+      </div>
+    </div>
+  </div>
+  </div><!-- /tab-tl -->
+</div>
+<div id="tip"></div>
+
+<script>
+// ---------- utilidades de data (UTC, granularidade dia) ----------
+const DAY = 864e5, pad = n => String(n).padStart(2, '0');
+const D = s => { const [a, b, c] = s.split('-').map(Number); return Date.UTC(a, b - 1, c); };
+const F = t => { const x = new Date(t); return pad(x.getUTCDate()) + '/' + pad(x.getUTCMonth() + 1) + '/' + x.getUTCFullYear(); };
+const mKey = t => { const x = new Date(t); return x.getUTCFullYear() * 12 + x.getUTCMonth(); };
+const termo = (fim, P) => { const x = new Date(fim); return Date.UTC(x.getUTCFullYear(), x.getUTCMonth() + P + 2, 15); };
+const dias = (a, b) => Math.round((b - a) / DAY) + 1;
+const ymd = n => { const a = Math.floor(n / 365.25), m = Math.floor((n - a * 365.25) / 30.4375), d = Math.round(n - a * 365.25 - m * 30.4375); return `${a}a ${m}m ${d}d`; };
+const HOJE = (d => Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()))(new Date());
+
+const TIPOS = {
+  emp:   { n: 'Empregado', s: 'EMP', c: 'var(--emp)', P: 12 },
+  ci:    { n: 'Contribuinte individual', s: 'CI', c: 'var(--ci)', P: 12 },
+  fac:   { n: 'Facultativo', s: 'FAC', c: 'var(--fac)', P: 6 },
+  rural: { n: 'Segurado especial', s: 'SE', c: 'var(--rural)', P: 12 },
+  ben:   { n: 'Benefício', s: 'BEN', c: 'var(--ben)', P: 12 },
+  sd:    { n: 'Seguro-desemprego', s: 'SD', c: 'var(--sd)' },
+};
+const MCOR = { DER: '#2563eb', DII: '#c0392b', DO: '#111827', DIB: '#1e8e3e', DCB: '#7c4dbd', 'Prisão': '#8b5a2b', Parto: '#d63384', Outro: '#6b7280' };
+const contrib = i => i.tipo !== 'ben' && i.tipo !== 'sd';
+const temSD = i => itens.some(s => s.tipo === 'sd' && s.ref === i.id);
+
+// espécie do benefício lida da própria descrição do CNIS ("31 - AUXILIO...", "B21 – Pensão…")
+const ESPECIES = [
+  { g: 'dep', cods: ['21', '23', '25', '26', '93'], re: /pens[aã]o|reclus/i, rot: 'benefício de dependente', gera: false },
+  { g: 'loas', cods: ['87', '88'], re: /amparo|loas|bpc|assistencial/i, rot: 'benefício assistencial', gera: false },
+  { g: 'inc', cods: ['31', '32', '91', '92'], re: /incapacidade|doen[cç]a|invalidez/i, rot: 'benefício por incapacidade', gera: true, interc: true },
+  { g: 'mat', cods: ['80'], re: /maternidade/i, rot: 'salário-maternidade', gera: true },
+  { g: 'aa', cods: ['36', '94'], re: /aux[ií]lio[\s-]*acidente/i, rot: 'auxílio-acidente (ressalva do art. 15, I)', gera: false },
+  { g: 'apos', cods: ['04', '05', '06', '07', '41', '42', '46', '57'], re: /aposentadoria/i, rot: 'aposentadoria', gera: true },
+];
+function especie(i) {
+  const m = /^\s*B?\s?(\d{2})\b/i.exec(i.nome || '') || /esp[ée]cie\s*(\d{2})/i.exec(i.nome || '');
+  const e = (m && ESPECIES.find(e => e.cods.includes(m[1]))) || ESPECIES.find(e => e.re.test(i.nome || ''));
+  return e ? { ...e, cod: m ? m[1] : '' } : { g: '?', cod: m ? m[1] : '', rot: 'espécie não identificada – tratada como geradora de QS', gera: true };
+}
+const geraQS = i => i.tipo !== 'ben' || especie(i).gera;
+
+// ---------- dados fictícios (extração "crua" dos documentos do PAJ) ----------
+const CAB = { nome: 'JOSÉ DA SILVA EXEMPLO', paj: '2026/000-00000', proto: 'PROTÓTIPO · dados fictícios' };
+// origem: 'cnis' | 'sd' (Dossiê Seguro-Desemprego) | 'man' (inclusão manual)
+// ref (só SD): id do vínculo cuja rescisão originou o seguro-desemprego
+let base = [
+  { id: 'a', origem: 'cnis', seq: 1, tipo: 'emp', nome: 'Comércio Alfa Ltda', ini: '2008-02-03', fim: '2012-11-20', cbo: '5211-10 Vendedor de comércio varejista', causa: 'Dispensa sem justa causa', ind: '' },
+  { id: 'b', origem: 'cnis', seq: 2, tipo: 'emp', nome: 'Construtora Beta S.A.', ini: '2012-10-01', fim: '2016-06-30', cbo: '7152-10 Pedreiro', causa: 'Dispensa sem justa causa', ind: '' },
+  { id: 's1', origem: 'sd', seq: 1, tipo: 'sd', nome: 'Seguro-desemprego – req. 1.234.567.890', ini: '2016-08-10', fim: '2016-11-10', ref: 'b', req: '2016-07-12', parcelas: 4, sit: 'Concluído – 4 parcelas pagas', ind: '' },
+  { id: 'c', origem: 'cnis', seq: 3, tipo: 'ci', nome: 'Contribuinte individual', ini: '2019-01-01', fim: '2019-08-31', ind: '',
+    pgtos: [{ comp: '2019-07', pgto: '2019-08-15', ind: '' }, { comp: '2019-08', pgto: '2019-11-21', ind: '' }],
+    abaixo: [{ comp: '2019-03', valor: 800.00, ind: 'PREC-MENOR-MIN' }, { comp: '2019-04', valor: 750.00, ind: 'PREC-MENOR-MIN' }] },
+  { id: 'h', origem: 'cnis', seq: 4, tipo: 'ben', nome: '21 - PENSAO POR MORTE PREVIDENCIARIA – NB 190.555.444-3', ini: '2020-05-02', fim: '2020-12-31', ind: '' },
+  { id: 'f', origem: 'cnis', seq: 5, tipo: 'fac', nome: 'Facultativo', ini: '2021-03-01', fim: '2021-12-31', ind: '',
+    pgtos: [{ comp: '2021-11', pgto: '2021-12-15', ind: 'IREC-LC123' }, { comp: '2021-12', pgto: '2022-01-17', ind: 'IREC-LC123' }] },
+  { id: 'e', origem: 'cnis', seq: 6, tipo: 'emp', nome: 'Transportes Gama Ltda', ini: '2022-02-07', fim: '2023-05-15', cbo: '7825-10 Motorista de caminhão', causa: 'Pedido de demissão', ind: '' },
+  { id: 'g', origem: 'cnis', seq: 7, tipo: 'ben', nome: 'B31 – Aux. incapacidade temporária – NB 640.123.456-7', ini: '2023-03-10', fim: '2023-04-30', ind: '' },
+  { id: 'd', origem: 'cnis', seq: 8, tipo: 'emp', nome: 'Serviços Delta ME', ini: '2024-08-01', fim: '2024-10-31', cbo: '5143-20 Faxineiro', causa: 'Término de contrato', ind: 'PEXT',
+    abaixo: [{ comp: '2024-10', valor: 706.00, ind: 'PREM-MENOR-MIN' }] },
+];
+// desemprego involuntário: padrão "Não"; "Sim – seguro-desemprego" só quando o
+// Dossiê SD traz recebimento de seguro-desemprego originado deste mesmo vínculo
+// art. 15, § 2º: +12m sobre os prazos do inciso II — inclui a graça após cessação de
+// benefício por incapacidade (RPS, art. 13, II). Facultativo (inciso VI) e SD não têm a coluna.
+const temColDesemp = i => ['emp', 'ci', 'rural'].includes(i.tipo) || (i.tipo === 'ben' && especie(i).gera);
+function padraoDesemp(i) {
+  if (!temColDesemp(i)) { delete i.desemp; return; }
+  if (!i.desemp) i.desemp = base.some(s => s.tipo === 'sd' && s.origem === 'sd' && s.ref === i.id) ? 'sd' : 'nao';
+}
+base.forEach(padraoDesemp);
+// soma para +120 contribuições (art. 15, § 1º): padrão "Sim" nos períodos contributivos,
+// "Não" nos não contributivos (benefícios); seguro-desemprego não tem a coluna
+const temColSoma = i => i.tipo !== 'sd';
+function padraoSoma(i) {
+  if (!temColSoma(i)) { delete i.soma120; return; }
+  if (!i.soma120) i.soma120 = contrib(i) ? 'sim' : 'nao';
+}
+base.forEach(padraoSoma);
+// cópia do extraído, para marcar o que foi editado e permitir restaurar
+const ORIG = Object.fromEntries(base.map(i => [i.id, JSON.stringify(i)]));
+const CAMPOS = ['tipo', 'nome', 'ini', 'fim', 'desemp', 'soma120'];
+// desemprego involuntário após o vínculo (art. 15, § 2º)
+const DESEMP = [['nao', 'Não'], ['sd', 'Sim – seguro-desemprego'], ['prova', 'Sim – outra prova']];
+const FONTES = [
+  { org: 'cnis', txt: 'CNIS – extrato completo (juntado em 15/09/2026)' },
+  { org: 'sd', txt: 'Dossiê Seguro-Desemprego Web (gerado em 10/10/2026)' },
+];
+// lista efetiva usada pelo motor (sem excluídas, datas válidas, campos normalizados)
+let itens = [];
+function normalizar() {
+  itens = base.filter(i => !i.excl && valida(i)).map(i => ({
+    ...i,
+    ind: (i.ind || '').split(/[,;]\s*/).filter(Boolean),
+    abaixoDet: i.abaixo || [],
+    abaixo: (i.abaixo || []).map(a => a.comp),
+    pgtos: i.pgtos || [],
+    // plano simplificado (LC 123/2006 ou MEI): não conta como tempo de contribuição
+    simpl: new Set((i.pgtos || []).filter(g => /IREC-LC123|IREC-MEI/.test(g.ind || '')).map(g => kDe(g.comp))),
+    pend: /PEXT|PREM-EXT|AEXT/.test(i.ind || ''),
+    manual: i.origem === 'man',
+  }));
+}
+const ISO = v => /^\d{4}-\d{2}-\d{2}$/.test(v || '');
+// em aberto: sem data fim no documento — fica fora do cálculo até o Defensor informar o fim
+const aberto = i => ISO(i.ini) && !i.fim;
+const valida = i => ISO(i.ini) && ISO(i.fim) && i.fim >= i.ini;
+const datasRuins = i => !aberto(i) && !valida(i);
+let marcos = [
+  { tipo: 'DII', data: '2018-03-10', desc: 'laudo particular' },
+  { tipo: 'DER', data: '2018-04-05', desc: 'NB 31/622.000.000-1 – indeferido por perda da QS' },
+  { tipo: 'DER', data: '2025-06-12', desc: 'NB 31/650.000.000-2' },
+];
+const LEG = [{ tipo: 'EC 103/19', data: '2019-11-13' }, { tipo: 'MP 871', data: '2019-01-18' }];
+const cfg = { modo: 'tudo', ordem: 'desc', zoom: 90, leg: true, ajuste: false };
+
+// ---------- motor ----------
+const mesIni = k => Date.UTC(Math.floor(k / 12), k % 12, 1);
+const mesFim = k => Date.UTC(Math.floor(k / 12), k % 12 + 1, 0);
+const kDe = c => { const [y, m] = c.split('-').map(Number); return y * 12 + m - 1; };
+const kTxt = k => `${pad(k % 12 + 1)}/${Math.floor(k / 12)}`;
+const mesesDe = i => { const out = []; for (let k = mKey(D(i.ini)); k <= mKey(D(i.fim)); k++) out.push(k); return out; };
+const chave = (i, k) => i.id + '|' + k;
+
+// competências contributivas (para carência), opcionalmente entre (desde, ate]
+// abaixo do mínimo CONTAM para carência e QS (tese); recolhidas em atraso após a perda NÃO contam (art. 27, II)
+function competencias(ateK = Infinity, desdeK = -Infinity, excl = new Set()) {
+  const s = new Set();
+  itens.filter(contrib).forEach(i => mesesDe(i).forEach(k => { if (k <= ateK && k > desdeK && !excl.has(chave(i, k))) s.add(k); }));
+  {   // benefício por incapacidade intercalado conta como carência (Tema 1.125/STF)
+    const todas = [...s];
+    itens.filter(i => i.tipo === 'ben' && especie(i).interc).forEach(b => {
+      const a = mKey(D(b.ini)), z = mKey(D(b.fim));
+      if (todas.some(k => k < a) && itens.filter(contrib).some(i => mKey(D(i.ini)) > z))
+        for (let k = a; k <= z; k++) if (k <= ateK && k > desdeK) s.add(k);
+    });
+  }
+  return s;
+}
+// competências que somam para as 120 contribuições, entre (desde, ate]
+function contrib120(ateK, desdeK, excl = new Set()) {
+  const s = new Set();
+  itens.filter(i => temColSoma(i) && i.soma120 === 'sim').forEach(i => mesesDe(i).forEach(k => { if (k <= ateK && k > desdeK && !excl.has(chave(i, k))) s.add(k); }));
+  return s;
+}
+// contribuições acumuladas sem perda da QS até o fim do período (desde o último reingresso)
+function acum120(i, perdas, excl = new Set()) {
+  const ult = perdas.filter(g => g.fim < D(i.fim)).pop();
+  return { n: contrib120(mKey(D(i.fim)), ult ? mKey(ult.fim + DAY) - 1 : -Infinity, excl).size, desde: ult ? ult.fim + DAY : null };
+}
+// art. 15, § 1º: competência em que o segurado passa a ter MAIS de 120 contribuições sem perda.
+// A prorrogação incorpora-se ao patrimônio jurídico: vale para todos os períodos seguintes,
+// qualquer que seja a forma de filiação posterior, ainda que haja perda depois.
+function incorporacao(perdas, excl) {
+  const ks = [...contrib120(Infinity, -Infinity, excl)].sort((a, b) => a - b);
+  const ps = [...perdas].sort((a, b) => a.ini - b.ini);
+  let n = 0, p = 0;
+  for (const k of ks) {
+    while (p < ps.length && ps[p].fim < mesIni(k)) { n = 0; p++; }   // houve perda antes desta competência
+    if (++n > 120) return k;
+  }
+  return null;
+}
+// intervalos que contam como TEMPO de contribuição: sem as competências abaixo do mínimo
+// (CF, art. 195, § 14 — salvo o cenário de ajuste) e sem as do plano simplificado (LC 123/MEI)
+function intervalosTempo(excl = new Set()) {
+  const out = [];
+  itens.filter(contrib).forEach(i => {
+    const fora = new Set([...i.simpl, ...(cfg.ajuste ? [] : i.abaixo.map(kDe))]);
+    mesesDe(i).forEach(k => {
+      if (fora.has(k) || excl.has(chave(i, k))) return;
+      const a = Math.max(D(i.ini), mesIni(k)), b = Math.min(D(i.fim), mesFim(k)), l = out[out.length - 1];
+      if (l && l.i === i && l.fim + DAY === a) l.fim = b; else out.push({ i, ini: a, fim: b });
+    });
+  });
+  return uniao(out);
+}
+function uniao(iv, a = 'ini', b = 'fim') {
+  const s = iv.map(x => ({ ini: x[a], fim: x[b] })).sort((x, y) => x.ini - y.ini), out = [];
+  s.forEach(x => { const l = out[out.length - 1]; if (l && x.ini <= l.fim + DAY) l.fim = Math.max(l.fim, x.fim); else out.push({ ...x }); });
+  return out;
+}
+const lacunasDe = u => u.slice(1).map((x, i) => ({ ini: u[i].fim + DAY, fim: x.ini - DAY }));
+
+// projeção de QS de cada trecho de competências válidas (exclQS: competências que não valem para QS)
+function projecoes(exclQS, inc) {
+  const out = [];
+  itens.filter(i => i.tipo !== 'sd' && geraQS(i)).forEach(i => {
+    const runs = [];
+    mesesDe(i).filter(k => !exclQS.has(chave(i, k))).forEach(k => { const r = runs[runs.length - 1]; if (r && r.b === k - 1) r.b = k; else runs.push({ a: k, b: k }); });
+    runs.forEach((r, idx) => {
+      const ini = Math.max(D(i.ini), mesIni(r.a)), fim = Math.min(D(i.fim), mesFim(r.b));
+      let P = TIPOS[i.tipo].P;
+      const det = [`${P} meses (${i.tipo === 'fac' ? 'facultativo – art. 15, VI' : i.tipo === 'ben' ? `após cessação de ${especie(i).rot} – art. 15, I/II` : 'art. 15, II'})`];
+      if (inc != null && fim >= mesIni(inc)) { P += 12; det.push(`+12 (mais de 120 contribuições sem perda, alcançadas em ${kTxt(inc)} – § 1º)`); }
+      // § 2º: o que foi informado na aba Vínculos decide a prorrogação (fim do período)
+      if (idx === runs.length - 1 && temColDesemp(i) && (i.desemp === 'sd' || i.desemp === 'prova')) {
+        P += 12; det.push('+12 desemprego involuntário ' + (i.desemp === 'sd' ? '(seguro-desemprego)' : '(outra prova)'));
+      }
+      out.push({ i, ini, fim, termo: termo(fim, P), P, det });
+    });
+  });
+  return out;
+}
+// QS: ponto fixo — a incorporação dos +12 pode eliminar perdas, o que muda a contagem
+function nucleo(exclQS) {
+  let perdas = lacunasDe(uniao(projecoes(exclQS, null), 'ini', 'termo')), pj, inc = null;
+  for (let r = 0; r < 8; r++) {
+    inc = incorporacao(perdas, exclQS);
+    pj = projecoes(exclQS, inc);
+    const np = lacunasDe(uniao(pj, 'ini', 'termo')), igual = JSON.stringify(np) === JSON.stringify(perdas);
+    perdas = np; if (igual) break;
+  }
+  const uQS = uniao(pj, 'ini', 'termo');
+  return { pj, perdas, inc, uQS, ultimo: uQS[uQS.length - 1] };
+}
+// ---------- recolhimentos por GPS (CI, MEI, facultativo) — Portaria PRES/INSS nº 1.382/2021 ----------
+const RECOLH = i => i.tipo === 'ci' || i.tipo === 'fac';
+const ehCompl = g => !!g.compl || /COMPL/i.test(g.ind || '');
+// tipos dos períodos que têm a última competência válida para carência antes de k
+function ultimaValida(k, exclCar) {
+  for (let j = k - 1; j > k - 1200; j--) {
+    const tipos = itens.filter(i => contrib(i) && mKey(D(i.ini)) <= j && j <= mKey(D(i.fim)) && !exclCar.has(chave(i, j))).map(i => i.tipo);
+    if (tipos.length) return tipos;
+  }
+  return [];
+}
+// avalia cada competência paga por GPS a partir do fato gerador t (o marco; sem marco, hoje)
+function regrasRecolhimento(t, tipoMarco) {
+  const ent = [];
+  itens.filter(i => i.pgtos.length).forEach(i => i.pgtos.forEach(g => {
+    const venc = vencimento(g.comp), pgto = D(g.pgto);
+    ent.push({ i, k: kDe(g.comp), venc, pgto, atraso: pgto > venc, compl: ehCompl(g) });
+  }));
+  ent.sort((a, b) => a.k - b.k || a.pgto - b.pgto);
+  const exclQS = new Set(), exclTempo = new Set(), exclCar = new Set();
+  const fora = (e, ...sets) => sets.forEach(x => x.add(chave(e.i, e.k)));
+  ent.forEach(e => {
+    // art. 9º: em atraso e pago após o fato gerador não conta para nenhum fim, ainda que dentro
+    // da manutenção da QS (§ 2º); em dia vale mesmo após o fato gerador, salvo após o óbito (§ 1º);
+    // complementação não se sujeita à regra (§ 3º)
+    e.aposFG = !e.compl && e.pgto > t && (e.atraso || tipoMarco === 'DO');
+    if (e.aposFG) fora(e, exclQS, exclTempo, exclCar);
+  });
+  const atr = ent.filter(e => e.atraso && !e.compl && !e.aposFG);
+  const pend = new Set(atr.map(e => chave(e.i, e.k)));   // atrasos ainda não avaliados ficam de fora
+  atr.forEach(e => {
+    pend.delete(chave(e.i, e.k));
+    // art. 3º, § 2º: a perda da QS é verificada na DATA DO PAGAMENTO
+    const N = nucleo(new Set([...exclQS, ...pend, chave(e.i, e.k)]));
+    e.qsPgto = N.pj.some(p => p.ini <= e.pgto && e.pgto <= p.termo);
+    if (!e.qsPgto) { e.motivo = 'perda'; fora(e, exclCar); return; }   // art. 3º; vale para TC e QS (arts. 7º e 8º)
+    // art. 3º, § 1º: pago na manutenção da QS conta para carência se for da mesma categoria
+    // e se houve recolhimento anterior em dia (art. 4º e art. 27, II, da Lei 8.213/91)
+    // perda iniciada antes da competência; se a competência cai dentro dela, nada antes conta
+    const perda = N.perdas.filter(g => g.ini <= mesIni(e.k)).pop(), desde = perda ? Math.min(mKey(perda.fim + DAY), e.k) : -Infinity;
+    const emDia = ent.some(o => o !== e && RECOLH(o.i) && o.k < e.k && o.k >= desde && !o.atraso && !o.aposFG)
+      || itens.some(i => RECOLH(i) && mesesDe(i).some(k => k < e.k && k >= desde && !i.pgtos.some(g => kDe(g.comp) === k)));   // sem data de pagamento: recolhimento migrado, presumido regular
+    if (!emDia) { e.motivo = 'primeiro'; fora(e, exclCar); return; }
+    const tipos = ultimaValida(e.k, exclCar);
+    if (tipos.length && !tipos.includes(e.i.tipo)) { e.motivo = 'categoria'; fora(e, exclCar); }
+  });
+  return { ent, exclQS, exclTempo, exclCar };
+}
+const MOTIVO = {
+  perda: ['Não – pago após a perda da QS (art. 3º)', 'Sim, se pago antes do fato gerador (arts. 7º, 8º e 9º)'],
+  categoria: ['Não – categoria diferente da última contribuição (art. 3º, § 1º)', 'Sim, se pago antes do fato gerador (art. 9º)'],
+  primeiro: ['Não – sem recolhimento anterior em dia (art. 3º, § 1º; art. 4º)', 'Sim, se pago antes do fato gerador (art. 9º)'],
+};
+function calcular(t = HOJE, tipoMarco = '') {
+  const RG = regrasRecolhimento(t, tipoMarco);
+  const N = nucleo(RG.exclQS);
+  const acum = new Map(itens.filter(i => temColSoma(i) && geraQS(i)).map(i => [i.id, acum120(i, N.perdas, RG.exclQS)]));
+  const uC = uniao(itens.filter(contrib).map(i => ({ ini: D(i.ini), fim: D(i.fim) })));
+  return { ...N, ...RG, uC, lacC: lacunasDe(uC), acum, uT: intervalosTempo(RG.exclTempo) };
+}
+// cada marco é o fato gerador: refaz o cálculo a partir da data dele
+function avaliar(t, tipoMarco = '') {
+  const Q = calcular(t, tipoMarco);
+  const cob = Q.pj.filter(x => x.ini <= t && t <= x.termo).sort((a, b) => b.termo - a.termo);
+  const ativo = Q.pj.find(x => x.ini <= t && t <= x.fim && contrib(x.i));
+  const reing = Q.perdas.filter(g => g.fim < t).pop();
+  const car = competencias(mKey(t), -Infinity, Q.exclCar).size;
+  const carR = reing ? competencias(mKey(t), mKey(reing.fim + DAY) - 1, Q.exclCar).size : car;
+  const tempo = Q.uT.reduce((s, x) => x.ini > t ? s : s + dias(x.ini, Math.min(x.fim, t)), 0);
+  const ate = k => k <= mKey(t);
+  const nAbaixo = new Set(itens.flatMap(i => i.abaixo.map(kDe)).filter(ate)).size;
+  const nSimpl = new Set(itens.flatMap(i => [...i.simpl]).filter(ate)).size;
+  const rel = Q.ent.filter(e => ate(e.k));
+  const aposFG = rel.filter(e => e.aposFG), semCar = rel.filter(e => e.motivo || e.aposFG), posPerda = rel.filter(e => e.motivo === 'perda');
+  let qs;
+  if (cob.length) {
+    const b = cob[0];
+    qs = { ok: true, txt: ativo ? `em atividade – ${ativo.i.nome}` : `período de graça de ${b.i.nome}: ${b.det.join(' ')} → até ${F(b.termo)}` };
+  } else {
+    const ant = Q.pj.filter(x => x.termo < t).sort((a, b) => b.termo - a.termo)[0];
+    qs = { ok: false, txt: ant ? `perdida em ${F(ant.termo + DAY)} (graça de ${ant.i.nome} até ${F(ant.termo)}, ${ant.det.join(' ')})` : 'sem filiação anterior' };
+  }
+  return { qs, car, carR, reing, tempo, nAbaixo, nSimpl, aposFG, semCar, posPerda };
+}
+
+// ---------- render ----------
+const LABW = () => (innerWidth <= 900 ? 170 : 270);
+function renderAvisos() {
+  const fora = base.filter(i => !i.excl && !valida(i));
+  document.getElementById('avisos').innerHTML = fora.length ? `<div class="aviso">⚠ <b>Fora do cálculo:</b> ${fora.map(i =>
+    `<span class="org o-${i.origem}">${i.seq || 'M'}</span> ${esc(i.nome)} (${aberto(i) ? `em aberto desde ${isoBR(i.ini)}${(i.ind || '').trim() ? ' · ' + esc(i.ind) : ''}` : 'datas inválidas'})`).join(' · ')}
+    — informe a data fim na aba Vínculos para incluir.</div>` : '';
+}
+function render() {
+  renderAvisos();
+  if (!itens.some(i => i.tipo !== 'sd' && geraQS(i))) {
+    document.getElementById('inner').innerHTML = '<div style="padding:20px" class="sub">Nenhum período válido na aba Vínculos.</div>';
+    document.getElementById('marcos').innerHTML = ''; document.getElementById('lacC').innerHTML = ''; document.getElementById('lacQ').innerHTML = ''; document.getElementById('stats').innerHTML = '';
+    return;
+  }
+  const R = calcular();
+  const pxd = cfg.zoom / 365.25;
+  const allT = [...itens.flatMap(i => [D(i.ini), D(i.fim)]), ...R.pj.map(p => p.termo), ...marcos.map(m => D(m.data)), HOJE];
+  const t0 = Date.UTC(new Date(Math.min(...allT)).getUTCFullYear(), 0, 1);
+  const t1 = Date.UTC(new Date(Math.max(...allT)).getUTCFullYear() + 1, 0, 1);
+  const W = Math.round((t1 - t0) / DAY * pxd);
+  const x = t => Math.round((t - t0) / DAY * pxd);
+  const w = (a, b) => Math.max(2, x(b + DAY) - x(a));
+  const tips = []; const tip = h => (tips.push(h), `data-tip="${tips.length - 1}"`);
+  const ligado = s => s.tipo === 'sd' && itens.some(i => i.id === s.ref);
+  const ordem = itens.filter(i => !ligado(i)).sort((a, b) => D(a.ini) - D(b.ini));
+  const num = new Map(itens.map(i => [i.id, `<span class="org o-${i.origem}" style="font-size:10px">${i.seq || 'M'}</span>`]));
+  const numT = new Map(itens.map(i => [i.id, `${ORGN[i.origem]} ${i.seq || ''}`.trim()]));
+  const lista = cfg.ordem === 'desc' ? [...ordem].reverse() : ordem;
+  const pjOf = id => R.pj.find(p => p.i.id === id);
+  const modo = cfg.modo;
+  let h = '';
+
+  // faixa de bandeiras dos marcos + eixo
+  h += `<div class="row flags" style="height:__FH__px"><div class="lab"></div><div class="trk" style="width:${W}px"></div></div>`;
+  let ax = ''; for (let y = new Date(t0).getUTCFullYear(); y < new Date(t1).getUTCFullYear(); y++) ax += `<span style="left:${x(Date.UTC(y, 0, 1)) + (cfg.zoom > 70 ? cfg.zoom / 2 : 0)}px">${cfg.zoom > 70 || y % 2 === 0 ? y : ''}</span>`;
+  h += `<div class="row axis" style="height:26px"><div class="lab sub" style="font-size:11px">${modo === 'qs' ? 'Projeção de QS' : 'Vínculo / período'}</div><div class="trk" style="width:${W}px">${ax}</div></div>`;
+
+  lista.forEach(i => {
+    const T = TIPOS[i.tipo], p = pjOf(i.id), n = num.get(i.id);
+    const dur = dias(D(i.ini), D(i.fim));
+    const tipH = `<b>${n} ${i.nome}</b><span class="k">${T.n}</span>` + (i.tipo === 'ben' ? `<br><span class="k">Espécie:</span> ${especie(i).cod ? especie(i).cod + ' – ' : ''}${especie(i).rot}${especie(i).gera ? '' : ' – <b style="display:inline;color:var(--no)">não gera QS</b>'}` : '') + `<br>${F(D(i.ini))} a ${F(D(i.fim))} · ${dur} dias` +
+      (i.cbo ? `<br><span class="k">CBO:</span> ${i.cbo}` : '') + (i.causa ? `<br><span class="k">Rescisão:</span> ${i.causa}` : '') + (i.desemp ? `<br><span class="k">Desemprego involuntário?</span> ${DESEMP.find(d => d[0] === i.desemp)[1]}` : '') +
+      (i.abaixo.length ? `<br><span class="k">Abaixo do mínimo:</span> ${i.abaixo.map(c => kTxt(kDe(c))).join(', ')}` : '') +
+      (i.simpl.size ? `<br><span class="k">Plano simplificado:</span> ${[...i.simpl].map(kTxt).join(', ')}` : '') +
+      (R.ent.some(e => e.motivo && e.i.id === i.id) ? `<br><span class="k">Recolhimento em atraso com restrição:</span> ${R.ent.filter(e => e.motivo && e.i.id === i.id).map(e => `${kTxt(e.k)} (paga em ${F(e.pgto)}) – carência: ${MOTIVO[e.motivo][0]}`).join('; ')}` : '') +
+      (p ? `<br><span class="k">QS até:</span> <b style="display:inline">${F(p.termo)}</b> (${p.det.join(' ')})` : '');
+
+    // seguro-desemprego: linha própria acima (desc) / abaixo (asc) do vínculo de origem
+    const sdRow = (sd, pai) => {
+      if (modo === 'qs') return '';
+      const a = D(sd.ini), b = D(sd.fim), rq = sd.req ? D(sd.req) : null;
+      const th = `<b>${sd.nome}</b>${rq ? `Requerido em ${F(rq)}` : ''}${sd.parcelas ? ` · ${sd.parcelas} parcelas` : ''}<br>${F(a)} a ${F(b)}${sd.sit ? `<br><span class="k">${sd.sit}</span>` : ''}<br><span class="k">Origem:</span> ${pai ? 'rescisão de ' + pai.nome : 'sem vínculo associado'}`;
+      return `<div class="row" style="min-height:${modo === 'vinc' ? 22 : 26}px"><div class="lab"><div class="nm">${pai ? '↳ ' : ''}Seguro-desemprego${sd.parcelas ? ` (${sd.parcelas} parc.)` : ''}</div>${modo === 'vinc' || !rq ? '' : `<div class="dt">req. ${F(rq)}</div>`}</div>
+        <div class="trk" style="width:${W}px">${rq ? `<div class="sddot" style="left:${x(rq) - 4}px;top:${modo === 'vinc' ? 6 : 8}px" ${tip(th)}></div>` : ''}
+        <div class="b${sd.manual ? ' man' : ''}" style="left:${x(a)}px;width:${w(a, b)}px;top:${modo === 'vinc' ? 5 : 7}px;height:12px;background:var(--sd)" ${tip(th)}></div></div></div>`;
+    };
+    if (i.tipo === 'sd') { h += sdRow(i, null); return; }
+    const sds = itens.filter(s => s.tipo === 'sd' && s.ref === i.id);
+    if (cfg.ordem === 'desc') sds.forEach(sd => h += sdRow(sd, i));
+
+    const cls = (i.pend ? ' pend' : '') + (i.manual ? ' man' : '');
+    const marca = (k, cl) => `<div class="hatch ${cl}" style="left:${x(mesIni(k)) - x(D(i.ini))}px;width:${w(mesIni(k), mesFim(k))}px"></div>`;
+    const hatch = [...i.simpl].map(k => marca(k, 'simpl')).join('') + i.abaixo.map(c => marca(kDe(c), cfg.ajuste ? 'aj' : '')).join('')
+      + R.ent.filter(e => e.motivo && e.i.id === i.id).map(e => marca(e.k, 'tard')).join('');
+    const tag = `<span class="tg" style="background:${T.c}">${T.s}</span>`;
+    const inds = i.manual ? ' <span class="ind" style="border-color:var(--mut);color:var(--mut)">MANUAL</span>' : '';
+    const semQS = top => `<span class="qlab" style="left:${x(D(i.ini))}px;top:${top}px;color:var(--no)">não gera qualidade de segurado (${especie(i).rot})</span>`;
+    const qsBar = (top, ht) => `<div class="qsb" style="left:${x(p.ini)}px;width:${w(p.ini, p.termo)}px;top:${top}px;height:${ht}px" ${tip(tipH)}>
+        <div class="qsg" style="left:${x(p.fim + DAY) - x(p.ini)}px;right:0"></div></div>
+        <span class="qlab" style="left:${x(p.termo) + 6}px;top:${top + ht / 2 - 7}px">QS até ${F(p.termo)}</span>`;
+
+    if (modo === 'tudo') {
+      h += `<div class="row" style="min-height:46px"><div class="lab"><div class="nm">${n} ${i.nome}</div><div class="dt">${F(D(i.ini))} a ${F(D(i.fim))} · ${dur} d ${tag}${inds}</div></div>
+        <div class="trk" style="width:${W}px">
+          <div class="b${cls}" style="left:${x(D(i.ini))}px;width:${w(D(i.ini), D(i.fim))}px;top:7px;height:16px;background:${T.c}" ${tip(tipH)}>${hatch}</div>
+          ${p ? qsBar(28, 9) : semQS(28)}</div></div>`;
+    } else if (modo === 'vinc') {
+      h += `<div class="row" style="min-height:26px"><div class="lab"><div class="nm" style="font-weight:500">${n} ${i.nome} ${tag}${inds}</div></div>
+        <div class="trk" style="width:${W}px"><div class="b${cls}" style="left:${x(D(i.ini))}px;width:${w(D(i.ini), D(i.fim))}px;top:4px;height:18px;background:${T.c}" ${tip(tipH)}>${hatch}<span class="tx">${numT.get(i.id)} · ${i.nome}</span></div></div></div>`;
+    } else {
+      h += `<div class="row" style="min-height:24px"><div class="lab"><div class="nm" style="font-weight:500">${n} ${i.nome} ${tag}</div></div>
+        <div class="trk" style="width:${W}px">${p ? qsBar(6, 12) : semQS(4)}</div></div>`;
+    }
+    if (cfg.ordem === 'asc') sds.forEach(sd => h += sdRow(sd, i));
+  });
+
+  // ---- compilados ----
+  h += `<div class="row sect" style="height:26px"><div class="lab">Compilado</div><div class="trk" style="width:${W}px"></div></div>`;
+  if (modo !== 'qs') {
+    // segmentos por contagem de períodos contributivos ativos
+    const pts = new Set();
+    const nsd = itens.filter(i => i.tipo !== 'sd');
+    nsd.forEach(i => { pts.add(D(i.ini)); pts.add(D(i.fim) + DAY); });
+    const ps = [...pts].sort((a, b) => a - b); let seg = '';
+    for (let k = 0; k < ps.length - 1; k++) {
+      const a = ps[k], b = ps[k + 1] - DAY;
+      const at = nsd.filter(i => D(i.ini) <= a && a <= D(i.fim));
+      const c = at.filter(contrib).length, bn = at.some(i => i.tipo === 'ben');
+      const cor = c >= 2 ? 'var(--conc)' : c === 1 ? 'var(--one)' : bn ? 'var(--ben)' : 'var(--gap)';
+      const rot = c >= 2 ? `Concomitância (${at.filter(contrib).map(i => numT.get(i.id)).join(' + ')})` : c === 1 ? `Contribuição (${numT.get(at.find(contrib).id)})` : bn ? 'Benefício sem contribuição' : 'Sem contribuição';
+      seg += `<div class="b" style="left:${x(a)}px;width:${w(a, b)}px;top:5px;height:18px;background:${cor}" ${tip(`<b>${rot}</b>${F(a)} a ${F(b)} · ${dias(a, b)} dias`)}></div>`;
+    }
+    // competências destacadas também no compilado
+    const marcaC = (k, cl, txt) => seg += `<div class="hatch ${cl}" style="left:${x(mesIni(k))}px;width:${w(mesIni(k), mesFim(k))}px;top:5px;height:18px;bottom:auto;pointer-events:auto" ${tip(txt)}></div>`;
+    itens.filter(contrib).forEach(i => {
+      i.simpl.forEach(k => marcaC(k, 'simpl', `<b>${kTxt(k)} – plano simplificado (LC 123/MEI)</b>${i.nome}<br>Não conta como tempo de contribuição; conta para carência e QS`));
+      i.abaixoDet.forEach(c => marcaC(kDe(c.comp), cfg.ajuste ? 'aj' : '', `<b>${kTxt(kDe(c.comp))} – abaixo do mínimo</b>${i.nome} · ${moeda(c.valor)}<br>${cfg.ajuste ? 'Ajustada – conta para todos os fins (simulação)' : 'Não conta como tempo (CF, art. 195, §14); conta para carência e QS (tese)'}`));
+    });
+    R.ent.filter(e => e.motivo).forEach(e => marcaC(e.k, 'tard', `<b>${kTxt(e.k)} – recolhimento em atraso</b>${e.i.nome} · venc. ${F(e.venc)} · pago em ${F(e.pgto)}<br>Carência: ${MOTIVO[e.motivo][0]}<br>Tempo e QS: ${MOTIVO[e.motivo][1]}`));
+    h += `<div class="row comp" style="min-height:28px"><div class="lab">Contribuições</div><div class="trk" style="width:${W}px">${seg}</div></div>`;
+  }
+  if (modo !== 'vinc') {
+    let seg = '';
+    R.uQS.forEach(u => seg += `<div class="b" style="left:${x(u.ini)}px;width:${w(u.ini, u.fim)}px;top:5px;height:18px;background:var(--qsc)" ${tip(`<b>Com qualidade de segurado</b>${F(u.ini)} a ${F(u.fim)}`)}></div>`);
+    R.perdas.forEach(g => seg += `<div class="b" style="left:${x(g.ini)}px;width:${w(g.ini, g.fim)}px;top:5px;height:18px;background:var(--gap)" ${tip(`<b>Sem qualidade de segurado</b>${F(g.ini)} a ${F(g.fim)} · ${dias(g.ini, g.fim)} dias`)}></div>`);
+    const fimQ = R.ultimo.fim + DAY;
+    if (fimQ < t1) seg += `<div class="b" style="left:${x(fimQ)}px;width:${x(t1) - x(fimQ)}px;top:5px;height:18px;background:var(--gap)" ${tip(`<b>Sem qualidade de segurado</b>desde ${F(fimQ)}`)}></div>`;
+    h += `<div class="row comp" style="min-height:28px"><div class="lab">Qualidade de segurado</div><div class="trk" style="width:${W}px">${seg}</div></div>`;
+  }
+
+  // ---- overlay: grade de anos + marcos ----
+  let ov = '';
+  for (let y = new Date(t0).getUTCFullYear(); y <= new Date(t1).getUTCFullYear(); y++) ov += `<div class="yl" style="left:${x(Date.UTC(y, 0, 1))}px"></div>`;
+  // bandeiras em faixas (lanes) para marcos próximos não se sobreporem
+  const fl = [{ t: HOJE, cor: '#9aa3ad', txt: 'Hoje', leg: true },
+    ...(cfg.leg ? LEG.map(l => ({ t: D(l.data), cor: '#9aa3ad', txt: l.tipo, leg: true })) : []),
+    ...marcos.map(m => ({ t: D(m.data), cor: MCOR[m.tipo], txt: m.tipo }))].sort((a, b) => a.t - b.t);
+  const lanes = [];
+  fl.forEach(f => {
+    const half = f.txt.length * 3.5 + 8;
+    let l = lanes.findIndex(r => x(f.t) - half > r);
+    if (l < 0) { l = lanes.length; lanes.push(0); }
+    lanes[l] = x(f.t) + half; f.lane = l;
+  });
+  fl.forEach(f => ov += `<div class="mk${f.leg ? ' leg' : ''}" style="left:${x(f.t)}px;top:${f.lane * 19 + 18}px;border-color:${f.cor}"></div><div class="flag" style="left:${x(f.t)}px;top:${f.lane * 19 + 2}px;background:${f.cor}">${f.txt}</div>`);
+
+  document.getElementById("inner").innerHTML = h.replace("__FH__", lanes.length * 19 + 6) + `<div class="ov" style="left:${LABW()}px;width:${W}px">${ov}</div>`;
+  document.getElementById('inner').style.width = (LABW() + W) + 'px';
+  window._tips = tips;
+  document.getElementById('legAbaixo').style.display = cfg.ajuste ? 'none' : '';
+  document.getElementById('legAjuste').style.display = cfg.ajuste ? '' : 'none';
+
+  // ---- painel de marcos ----
+  document.getElementById('marcos').innerHTML = [...marcos].sort((a, b) => D(a.data) - D(b.data)).map(m => {
+    const t = D(m.data), a = avaliar(t, m.tipo), k = marcos.indexOf(m);
+    return `<div class="mcard" style="border-left-color:${MCOR[m.tipo]}">
+      <div class="top"><div><b>${m.tipo}</b> · ${F(t)} ${m.desc ? `<span class="sub">— ${m.desc}</span>` : ''}</div>
+        <div><span class="pill ${a.qs.ok ? 'ok' : 'no'}">${a.qs.ok ? '✔ com QS' : '✖ sem QS'}</span> <button class="x noprint" onclick="marcos.splice(${k},1);render()" title="remover">✕</button></div></div>
+      <div class="ln"><span class="sub">Qualidade:</span> ${a.qs.txt}</div>
+      ${a.aposFG.length ? `<div class="ln" style="color:var(--no)"><span class="sub">Desconsiderada(s) para todos os fins – ${m.tipo === 'DO' ? 'pagas após o óbito ou ' : ''}em atraso, pagas após o fato gerador (art. 9º):</span> ${a.aposFG.map(e => `${kTxt(e.k)} (paga em ${F(e.pgto)})`).join(', ')}</div>` : ''}
+      ${a.posPerda.length ? `<div class="ln"><span class="sub">Atraso pago após a perda, mas antes do fato gerador – conta para tempo e QS, não para carência (arts. 3º, 7º e 8º):</span> ${a.posPerda.map(e => `${kTxt(e.k)} (paga em ${F(e.pgto)})`).join(', ')}</div>` : ''}
+      <div class="ln"><span class="sub">Carência:</span> <b>${a.car}</b> contribuições no total${a.reing ? ` · <b>${a.carR}</b> desde o reingresso em ${F(a.reing.fim + DAY)} (art. 27-A)` : ''}${a.nAbaixo ? ` <span class="sub">· inclui ${a.nAbaixo} comp. abaixo do mínimo ${cfg.ajuste ? '(ajustadas – simulação)' : '(tese)'}</span>` : ''}${a.semCar.length ? ` <span class="sub">· sem ${a.semCar.length} comp. recolhida(s) em atraso (Portaria 1.382/2021)</span>` : ''}</div>
+      <div class="ln"><span class="sub">Tempo de contribuição:</span> ${ymd(a.tempo)} (${a.tempo} dias)${a.nAbaixo ? ` <span class="sub">· ${cfg.ajuste ? `inclui ${a.nAbaixo} comp. abaixo do mínimo (ajustadas – simulação)` : `sem as ${a.nAbaixo} comp. abaixo do mínimo (CF, art. 195, § 14)`}</span>` : ''}${a.nSimpl ? ` <span class="sub">· sem ${a.nSimpl} comp. do plano simplificado</span>` : ''}</div>
+    </div>`;
+  }).join('') || '<div class="sub" style="margin-top:8px">Nenhum marco inserido.</div>';
+
+  // ---- lacunas ----
+  // ---- períodos sem contribuição ----
+  const vazio = (n, txt) => `<tr><td colspan="${n}" class="sub">${txt}</td></tr>`;
+  const fimC = R.uC[R.uC.length - 1].fim;
+  document.getElementById('lacC').innerHTML = `<tr><th>#</th><th>Período</th><th>Duração</th><th>Entre</th></tr>` +
+    (R.lacC.map((g, k) => {
+      const ant = itens.filter(i => contrib(i) && D(i.fim) === g.ini - DAY)[0], dep = itens.filter(i => contrib(i) && D(i.ini) === g.fim + DAY)[0];
+      return `<tr><td>${k + 1}</td><td>${F(g.ini)} a ${F(g.fim)}</td><td>${dias(g.ini, g.fim)} d · ${ymd(dias(g.ini, g.fim))}</td><td class="sub">${ant ? ant.nome : '—'} → ${dep ? dep.nome : '—'}</td></tr>`;
+    }).join('') || vazio(4, 'Nenhuma lacuna entre períodos contributivos.')) +
+    (fimC < HOJE ? `<tr><td>—</td><td>desde ${F(fimC + DAY)}</td><td>${dias(fimC + DAY, HOJE)} d até hoje</td><td class="sub">última contribuição em ${F(fimC)}</td></tr>` : '');
+
+  // ---- períodos sem qualidade de segurado ----
+  const causa = g => R.pj.filter(x => x.termo === g.ini - DAY)[0];
+  document.getElementById('lacQ').innerHTML = `<tr><th>#</th><th>Período</th><th>Duração</th><th>Perda após</th><th>Reingresso</th></tr>` +
+    (R.perdas.map((g, k) => {
+      const c = causa(g), r = R.pj.filter(x => x.ini === g.fim + DAY)[0];
+      return `<tr><td>${k + 1}</td><td style="color:var(--no);font-weight:600">${F(g.ini)} a ${F(g.fim)}</td><td>${dias(g.ini, g.fim)} d</td>
+        <td class="sub">${c ? `graça de ${c.i.nome} (${c.P}m) até ${F(c.termo)}` : '—'}</td><td class="sub">${r ? `${r.i.nome} em ${F(r.ini)}` : '—'}</td></tr>`;
+    }).join('') || vazio(5, 'Nenhuma perda entre períodos.')) +
+    (R.ultimo.fim < HOJE
+      ? `<tr><td>—</td><td style="color:var(--no);font-weight:600">desde ${F(R.ultimo.fim + DAY)}</td><td>${dias(R.ultimo.fim + DAY, HOJE)} d até hoje</td><td class="sub">${(c => c ? `graça de ${c.i.nome} (${c.P}m) até ${F(c.termo)}` : '—')(causa({ ini: R.ultimo.fim + DAY }))}</td><td class="sub">—</td></tr>`
+      : `<tr><td colspan="5" style="color:var(--ok);font-weight:600">Qualidade de segurado mantida até ${F(R.ultimo.fim)}</td></tr>`);
+
+  // ---- estatísticas ----
+  const hj = avaliar(HOJE);
+  document.getElementById('stats').innerHTML = [
+    ['Períodos', itens.filter(i => i.tipo !== 'sd').length], ['Carência (hoje)', hj.car], ['Tempo de contribuição', ymd(hj.tempo)],
+    ['Perdas de QS', R.perdas.length + (R.ultimo.fim < HOJE ? 1 : 0)], ['QS hoje', hj.qs.ok ? '✔ mantida' : '✖ perdida'],
+  ].map(([k, v]) => `<div class="stat"><span>${k}</span><b>${v}</b></div>`).join('');
+}
+
+// ---------- controles ----------
+const segs = (id, key) => {
+  const el = document.getElementById(id);
+  const sync = () => el.querySelectorAll('button').forEach(b => b.classList.toggle('on', b.dataset.v === cfg[key]));
+  el.addEventListener('click', e => { if (e.target.dataset.v) { cfg[key] = e.target.dataset.v; sync(); tudo(); } }); sync();
+};
+segs('modo', 'modo'); segs('ordem', 'ordem');
+document.getElementById('zoom').oninput = e => { cfg.zoom = +e.target.value; render(); };
+['ajuste', 'leg'].forEach(k => document.getElementById(k).onchange = e => { cfg[k] = e.target.checked; render(); });
+document.getElementById('mData').addEventListener('input', e => { e.target.value = mascara(e.target.value); });
+document.getElementById('mData').addEventListener('keydown', e => { if (e.key === 'Enter') document.getElementById('mAdd').click(); });
+document.getElementById('mAdd').onclick = () => {
+  const el = document.getElementById('mData'), d = brISO(el.value);
+  if (!ISO(d)) { el.classList.add('bad'); el.style.borderColor = 'var(--no)'; return; }
+  el.style.borderColor = ''; el.value = '';
+  marcos.push({ tipo: document.getElementById('mTipo').value, data: d, desc: document.getElementById('mDesc').value.trim() });
+  document.getElementById('mDesc').value = ''; render();
+};
+// ---------- aba Vínculos: tabela editável dos dados extraídos ----------
+const esc = v => String(v ?? '').replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
+const ORGN = { cnis: 'CNIS', sd: 'Dossiê SD', man: 'Manual' };
+// datas digitadas direto em dd/mm/aaaa (máscara), guardadas em ISO
+const DT = 'data-mask="data" inputmode="numeric" maxlength="10" placeholder="dd/mm/aaaa"';
+const isoBR = v => /^\d{4}-\d{2}-\d{2}$/.test(v || '') ? v.slice(8, 10) + '/' + v.slice(5, 7) + '/' + v.slice(0, 4) : (v || '');
+const mascara = v => { const d = v.replace(/\D/g, '').slice(0, 8); return d.length > 4 ? `${d.slice(0, 2)}/${d.slice(2, 4)}/${d.slice(4)}` : d.length > 2 ? `${d.slice(0, 2)}/${d.slice(2)}` : d; };
+const brISO = v => {
+  const m = /^(\d{2})\/(\d{2})\/(\d{4})$/.exec(v); if (!m) return v;          // inválida: guarda o texto cru (fica vermelha)
+  const iso = `${m[3]}-${m[2]}-${m[1]}`, t = new Date(iso + 'T00:00:00Z');
+  return !isNaN(t) && t.toISOString().slice(0, 10) === iso ? iso : v;          // rejeita 31/06, 30/02 etc.
+};
+const editado = (i, f) => { if (!ORIG[i.id]) return false; const o = JSON.parse(ORIG[i.id]); return (o[f] ?? '') !== (i[f] ?? ''); };
+const algumaEdicao = i => ORIG[i.id] && (CAMPOS.some(f => editado(i, f)) || i.excl);
+function renderTabela() {
+  // tabela sempre em ordem crescente (primeira linha = período mais antigo)
+  const R = itens.some(i => i.tipo !== 'sd') ? calcular() : null;
+  const linhas = [...base].sort((a, b) => (a.ini || '').localeCompare(b.ini || ''));
+  const inp = (i, f, extra = '', type = 'text') => {
+    const bad = (f === 'ini' || f === 'fim') && datasRuins(i);
+    const ab = f === 'fim' && aberto(i);
+    const v = (f === 'ini' || f === 'fim') ? isoBR(i[f]) : i[f];
+    return `<input type="${type}" data-id="${i.id}" data-f="${f}" value="${esc(v)}" class="${editado(i, f) ? 'ed' : ''}${bad ? ' bad' : ''}${ab ? ' aberto' : ''}" ${ab ? extra.replace('dd/mm/aaaa', 'em aberto') : extra}>`;
+  };
+  const sel = (i, f, opts) => `<select data-id="${i.id}" data-f="${f}" class="${editado(i, f) ? 'ed' : ''}">${opts.map(([v, t]) => `<option value="${v}"${(i[f] ?? '') === v ? ' selected' : ''}>${t}</option>`).join('')}</select>`;
+  document.getElementById('tblVin').innerHTML = `<tr><th>Origem</th><th style="width:22%">Descrição / empregador</th><th style="width:150px">Tipo</th><th>Início</th><th>Fim</th><th>Dias</th><th>Desemprego involuntário?</th><th title="Art. 15, § 1º: mais de 120 contribuições mensais sem perda da qualidade de segurado">Soma p/ +120?</th><th title="Competências que somam para +120, desde o último reingresso (sem perda da QS) até o fim do período">Contrib. acumuladas sem perda</th><th></th></tr>` +
+    linhas.map(i => {
+      const ok = valida(i);
+      return `<tr class="${i.excl ? 'excl' : ''}${i.tipo === 'sd' ? ' sdrow' : ''}">
+      <td style="text-align:center"><span class="org o-${i.origem}" style="display:inline-block;min-width:26px;text-align:center" title="${ORGN[i.origem]}${i.seq ? ' – registro ' + i.seq : ''}">${i.seq || 'M'}</span></td>
+      <td>${inp(i, 'nome')}</td>
+      <td>${sel(i, 'tipo', Object.entries(TIPOS).map(([k, t]) => [k, t.n]))}</td>
+      <td>${inp(i, 'ini', DT)}</td>
+      <td>${inp(i, 'fim', DT)}</td>
+      <td style="text-align:right;color:var(--mut)">${ok ? dias(D(i.ini), D(i.fim)) : aberto(i) ? '<span style="color:#9a3412">aberto</span>' : '—'}</td>
+      <td>${temColDesemp(i) ? sel(i, 'desemp', DESEMP) : ''}</td>
+      <td>${temColSoma(i) ? sel(i, 'soma120', [['sim', 'Sim'], ['nao', 'Não']]) : ''}</td>
+      <td style="text-align:right;white-space:nowrap">${(a => !a ? (temColSoma(i) ? '<span class="sub">—</span>' : '')
+        : (inc => `<span title="${a.desde ? 'desde o reingresso em ' + F(a.desde) : 'desde a filiação'} até ${F(D(i.fim))}${inc ? ` · prorrogação de +12 meses incorporada em ${kTxt(R.inc)} (§ 1º)` : ''}" style="${inc ? 'color:var(--ok);font-weight:700' : ''}">${a.n}${inc ? ' ✔' : ''}</span>`)(R.inc != null && D(i.fim) >= mesIni(R.inc)))(R && R.acum.get(i.id))}</td>
+      <td style="white-space:nowrap">
+        ${algumaEdicao(i) ? `<button class="ib" data-act="rest" data-id="${i.id}" title="Restaurar o valor extraído">↺</button>` : ''}
+        ${i.origem === 'man' ? `<button class="ib" data-act="del" data-id="${i.id}" title="Apagar inclusão manual">🗑</button>`
+          : `<button class="ib" data-act="excl" data-id="${i.id}" title="${i.excl ? 'Reincluir na análise' : 'Excluir da análise (o dado extraído é mantido)'}">${i.excl ? '↩' : '🚫'}</button>`}
+      </td></tr>`;
+    }).join('');
+  renderAbaixo(); renderAtraso(R);
+  const nMan = base.filter(i => i.origem === 'man').length;
+  document.getElementById('fontes').innerHTML = FONTES.map(f => `<span class="fonte"><span class="org o-${f.org}">${ORGN[f.org]}</span> ${f.txt} · ${base.filter(i => i.origem === f.org).length} registro(s)</span>`).join('') +
+    `<span class="fonte"><span class="org o-man">Manual</span> ${nMan} inclusão(ões)</span>`;
+}
+// salário mínimo nacional por competência (referência para a diferença a complementar)
+const SM = { 2008: 415, 2009: 465, 2010: 510, 2011: 545, 2012: 622, 2013: 678, 2014: 724, 2015: 788, 2016: 880, 2017: 937, 2018: 954, 2019: 998, 2020: 1045, 2021: 1100, 2022: 1212, 2023: 1320, 2024: 1412, 2025: 1518 };
+const smDe = c => { const [y, m] = c.split('-').map(Number); return y === 2020 && m === 1 ? 1039 : y === 2023 && m <= 4 ? 1302 : SM[y]; };
+const moeda = v => v == null ? '—' : v.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+// vencimento: dia 15 do mês seguinte à competência, prorrogado para o próximo dia útil
+const FERIADOS = ['01-01', '04-21', '05-01', '09-07', '10-12', '11-02', '11-15', '12-25'];
+function vencimento(comp) {
+  const [y, m] = comp.split('-').map(Number); let t = Date.UTC(y, m, 15);
+  const util = t => { const x = new Date(t), md = pad(x.getUTCMonth() + 1) + '-' + pad(x.getUTCDate());
+    return x.getUTCDay() % 6 !== 0 && !FERIADOS.includes(md) && !(md === '11-20' && x.getUTCFullYear() >= 2024); };
+  while (!util(t)) t += DAY;
+  return t;
+}
+function renderAtraso(R) {
+  const linhas = R ? R.ent.filter(e => e.atraso) : [];
+  document.getElementById('atrasoTbl').innerHTML = linhas.length ? `<table class="lac" style="max-width:1100px;margin-top:8px">
+    <tr><th>Origem</th><th>Período</th><th>Competência</th><th>Vencimento</th><th>Pagamento</th><th style="text-align:right">Atraso</th><th>QS na data do pagamento?</th><th>Carência</th><th>Tempo e QS</th></tr>
+    ${linhas.map(e => `<tr><td><span class="org o-${e.i.origem}">${e.i.seq || 'M'}</span></td><td>${esc(e.i.nome)} <span class="sub">· ${TIPOS[e.i.tipo].n}</span></td>
+      <td>${kTxt(e.k)}</td><td>${F(e.venc)}</td><td>${F(e.pgto)}</td><td style="text-align:right">${dias(e.venc, e.pgto) - 1} d</td>
+      ${e.compl ? '<td colspan="3" class="sub">Complementação – sem as restrições da Portaria</td>'
+        : `<td style="${e.qsPgto ? '' : 'color:var(--no);font-weight:600'}">${e.qsPgto ? 'Sim' : 'Não'}</td>
+      <td style="${e.motivo ? 'color:var(--no)' : ''}">${e.motivo ? MOTIVO[e.motivo][0] : 'Sim'}</td>
+      <td>${e.motivo ? MOTIVO[e.motivo][1] : 'Sim, se pago antes do fato gerador (art. 9º)'}</td>`}</tr>`).join('')}</table>`
+    : '<div class="sub" style="margin-top:8px">Nenhum recolhimento em atraso nos documentos.</div>';
+}
+function renderAbaixo() {
+  const com = base.filter(i => (i.abaixo || []).length).sort((a, b) => (a.ini || '').localeCompare(b.ini || ''));
+  document.getElementById('abaixoTbls').innerHTML = com.map(i => `
+    <div style="margin-top:12px;${i.excl ? 'opacity:.45' : ''}"><span class="org o-${i.origem}">${i.seq || 'M'}</span> <b>${esc(i.nome)}</b> <span class="sub">· ${TIPOS[i.tipo].n} · ${isoBR(i.ini)} a ${isoBR(i.fim)}${i.excl ? ' · excluído da análise' : ''}</span>
+    <table class="lac" style="max-width:640px;margin-top:4px"><tr><th>Competência</th><th style="text-align:right">Salário de contribuição</th><th style="text-align:right">Salário mínimo</th><th style="text-align:right">Diferença</th><th>Indicador</th></tr>
+    ${i.abaixo.map(a => { const sm = smDe(a.comp); return `<tr><td>${a.comp.slice(5)}/${a.comp.slice(0, 4)}</td><td style="text-align:right">${moeda(a.valor)}</td><td style="text-align:right">${moeda(sm)}</td><td style="text-align:right;color:var(--no)">${sm ? moeda(sm - a.valor) : '—'}</td><td>${a.ind || ''}</td></tr>`; }).join('')}
+    </table></div>`).join('') || '<div class="sub" style="margin-top:8px">Nenhuma competência abaixo do mínimo nos documentos.</div>';
+}
+const tbl = document.getElementById('tblVin');
+tbl.addEventListener('change', e => {
+  const el = e.target, i = base.find(x => x.id === el.dataset.id); if (!i) return;
+  i[el.dataset.f] = el.dataset.mask ? brISO(el.value) : el.value;
+  if (el.dataset.f === 'tipo') { if (el.value !== 'sd') delete i.ref; delete i.soma120; padraoDesemp(i); padraoSoma(i); }
+  tudo();
+});
+tbl.addEventListener('input', e => {
+  const el = e.target; if (!el.dataset.mask) return;
+  const fimCursor = el.selectionStart === el.value.length;
+  el.value = mascara(el.value);
+  if (fimCursor) el.setSelectionRange(el.value.length, el.value.length);
+});
+tbl.addEventListener('keydown', e => { if (e.key === 'Enter' && e.target.dataset.mask) e.target.blur(); });
+tbl.addEventListener('click', e => {
+  const b = e.target.closest('[data-act]'); if (!b) return;
+  const k = base.findIndex(x => x.id === b.dataset.id), i = base[k];
+  if (b.dataset.act === 'del') base.splice(k, 1);
+  if (b.dataset.act === 'excl') i.excl = !i.excl;
+  if (b.dataset.act === 'rest') base[k] = JSON.parse(ORIG[i.id]);
+  tudo();
+});
+document.getElementById('addLinha').onclick = () => {
+  base.push({ id: 'm' + Date.now(), origem: 'man', tipo: 'emp', nome: 'Vínculo em CTPS', ini: '2017-02-01', fim: '2017-09-30', ind: '', desemp: 'nao', soma120: 'sim' });
+  tudo();
+};
+document.getElementById('restTudo').onclick = () => {
+  if (!confirm('Descartar todas as edições e inclusões manuais e voltar aos dados extraídos?')) return;
+  base = Object.values(ORIG).map(j => JSON.parse(j)); tudo();
+};
+
+// ---------- abas ----------
+let zoomIni = false;
+function aba(v) {
+  cfg.aba = v;
+  document.querySelectorAll('#tabs button').forEach(b => b.classList.toggle('on', b.dataset.v === v));
+  document.getElementById('tab-vin').style.display = v === 'vin' ? '' : 'none';
+  document.getElementById('tab-tl').style.display = v === 'tl' ? '' : 'none';
+  if (v === 'tl' && !zoomIni) {   // zoom inicial: cabe na largura disponível
+    zoomIni = true;
+    cfg.zoom = Math.max(40, Math.min(420, Math.floor((document.getElementById('chart').clientWidth - LABW() - 20) / 20)));
+    document.getElementById('zoom').value = cfg.zoom;
+  }
+  tudo();
+}
+document.getElementById('tabs').onclick = e => { if (e.target.dataset.v) aba(e.target.dataset.v); };
+function tudo() { normalizar(); renderTabela(); render(); }
+const tipEl = document.getElementById('tip');
+document.addEventListener('mousemove', e => {
+  const t = e.target.closest('[data-tip]');
+  if (!t) { tipEl.style.display = 'none'; return; }
+  tipEl.innerHTML = window._tips[+t.dataset.tip]; tipEl.style.display = 'block';
+  const r = tipEl.getBoundingClientRect();
+  tipEl.style.left = Math.min(e.clientX + 14, innerWidth - r.width - 8) + 'px';
+  tipEl.style.top = (e.clientY + 16 + r.height > innerHeight ? e.clientY - r.height - 10 : e.clientY + 16) + 'px';
+});
+addEventListener('resize', render);
+document.getElementById('cab').innerHTML = `<b>NOME:</b> ${esc(CAB.nome)}<br><b>PAJ:</b> ${esc(CAB.paj)}`;
+document.querySelector('h1 .proto').textContent = CAB.proto;
+aba('vin');
+</script>
+</body>
+</html>

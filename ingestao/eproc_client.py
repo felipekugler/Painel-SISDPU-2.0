@@ -1724,6 +1724,259 @@ async def _abrir_processo_jmu(numero_limpo: str) -> dict:
             await browser.close()
 
 
+# --- Lembretes do processo ----------------------------------------------------
+# Cada post-it da seção "Lembretes" da Consulta Processual é um
+# `div.divLembrete#divLembrete<id>` com o texto em `.desLembrete`. O e-proc não
+# tem "excluir": o ícone "Desativar Lembrete" chama `desativarLembrete(id, tipo)`,
+# que pede `confirm('Deseja excluir o lembrete?')` e desativa via AJAX — o post-it
+# some (fadeOut) e deixa de aparecer em qualquer tela (inclusive no tooltip da
+# listagem de intimações). "Alterar Lembrete" abre um formulário num subframe
+# (ver `editar_lembrete`). Conferido ao vivo em 16/10/2026.
+
+_JS_LEMBRETES_DA_PAGINA = r"""()=>[...document.querySelectorAll('#divConteudoLembretes .divLembrete')]
+  .filter(d=>d.offsetParent!==null)
+  .map(d=>({id:d.id.replace('divLembrete',''),
+            texto:((d.querySelector('.desLembrete')||{}).innerText||'').replace(/\s+/g,' ').trim(),
+            cor:(((d.getAttribute('style')||'').match(/#[0-9a-f]{6}/i))||[''])[0].toLowerCase()}))"""
+
+# Cores do post-it no formulário do e-proc (radio `selCorLembrete`): cor de
+# fundo exibida → value do radio. Conferido no formulário em 16/10/2026.
+CORES_LEMBRETE = {
+    "#efef8f": "000000000000000000000000000001",  # Amarelo (padrão)
+    "#87adcd": "000000000000000000000000000002",  # Azul
+    "#f5b574": "000000000000000000000000000007",  # Laranja
+    "#a7eda7": "000000000000000000000000000011",  # Verde
+    "#db8080": "000000000000000000000000000012",  # Vermelho
+}
+
+
+async def _marcar_cor(frame, cor: str) -> None:
+    """Marca no formulário (criar/alterar) o radio da cor `cor` (hex da tabela
+    acima); cor vazia/desconhecida deixa a que o formulário já trouxe."""
+    valor = CORES_LEMBRETE.get((cor or "").lower())
+    if valor:
+        await frame.locator(f"input[name='selCorLembrete'][value='{valor}']").check()
+
+
+def _chave_texto_lembrete(s: str) -> str:
+    """Texto comparável: o tooltip da listagem (fonte do cache) junta as linhas
+    sem espaço ("cálculo.PAJ"), a página do processo põe quebra de linha."""
+    return re.sub(r"\s+", "", s or "").lower()
+
+
+async def _abrir_lembretes_do_processo(page, numero: str) -> list[dict] | str:
+    """Leva `page` à Consulta Processual de `numero` (pesquisa rápida — GET novo,
+    lista de lembretes atualizada) e devolve os post-its visíveis [{id, texto}],
+    ou uma mensagem de erro (str) se a sessão não estiver logada."""
+    if not page.url.startswith("http") or "processo_selecionar" not in page.url:
+        await _ir_para_inicio(page, 800)
+        if not _status_dict(page.url)["logado"] and not await _garantir_login(page):
+            return "Sessão do e-proc não está logada — faça login na janela do e-proc e tente de novo."
+    await _pesquisar_processo(page, numero)
+    await page.bring_to_front()
+    with contextlib.suppress(Exception):
+        await page.locator("#divConteudoLembretes").wait_for(state="attached", timeout=15000)
+    await page.wait_for_timeout(800)
+    return await page.evaluate(_JS_LEMBRETES_DA_PAGINA)
+
+
+async def excluir_lembrete(numero: str, texto: str) -> dict:
+    """Exclui (desativa) no e-proc o lembrete do processo `numero` cujo texto
+    é `texto`, pela página do processo na janela do usuário. Devolve também os
+    lembretes que ficaram (`restantes`, [{seq, texto}] — mesmo formato do cache)
+    para o painel atualizar o cache sem nova sincronização."""
+    numero_limpo = re.sub(r"\D", "", numero or "")
+    alvo = _chave_texto_lembrete(texto)
+    if not numero_limpo or not alvo:
+        return {"ok": False, "erro": "Informe o número do processo e o texto do lembrete."}
+    browser, pagina_ref = await _connect()
+    ctx = pagina_ref.context
+    try:
+        page = await _aba_para_processo(ctx, numero_limpo)
+        lembretes = await _abrir_lembretes_do_processo(page, numero_limpo)
+        if isinstance(lembretes, str):
+            return {"ok": False, "erro": lembretes}
+        casados = [l for l in lembretes if _chave_texto_lembrete(l["texto"]) == alvo]
+        if not casados:
+            return {"ok": False, "erro": "Lembrete não encontrado na página do processo no e-proc "
+                                          "(pode já ter sido excluído).",
+                    "restantes": _como_itens_cache(lembretes)}
+        id_lembrete = casados[0]["id"]
+
+        botao = page.locator(f"#divLembrete{id_lembrete} a[aria-label='Desativar Lembrete']")
+        async with _com_dialogo_aceito(page):
+            await botao.click()
+            # some com fadeOut(200) quando o AJAX volta vazio (sucesso); se o
+            # e-proc recusar, mostra um alert com o motivo e o post-it fica.
+            with contextlib.suppress(Exception):
+                await page.locator(f"#divLembrete{id_lembrete}").wait_for(state="hidden", timeout=15000)
+            await page.wait_for_timeout(300)
+        msg = getattr(page, "_eproc_ultimo_dialogo", "") or ""
+        restantes = await page.evaluate(_JS_LEMBRETES_DA_PAGINA)
+        if any(l["id"] == id_lembrete for l in restantes):
+            recusa = msg if "excluir o lembrete" not in msg.lower() else ""
+            return {"ok": False, "erro": "O e-proc não excluiu o lembrete" + (f": {recusa}" if recusa else "."),
+                    "restantes": _como_itens_cache(restantes)}
+        return {"ok": True, "restantes": _como_itens_cache(restantes)}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:300]}
+    finally:
+        with contextlib.suppress(Exception):
+            await browser.close()
+
+
+async def editar_lembrete(numero: str, texto: str, texto_novo: str, cor: str = "") -> dict:
+    """Troca no e-proc o texto (e, com `cor`, a cor — hex de `CORES_LEMBRETE`)
+    do lembrete do processo `numero` cujo texto é `texto` — ícone "Alterar
+    Lembrete" do post-it, que abre o formulário `processo_lembrete_externo_
+    alterar` num subframe (`#ifrSubFrm`): só `txaDescricao` e a cor mudam
+    (destino e validade ficam como estão) e o botão "Alterar" salva — o e-proc
+    então cria um lembrete novo e desativa o antigo (conferido ao vivo em
+    16/10/2026). Depois recarrega o processo e confere o texto novo. Devolve
+    `restantes` como `excluir_lembrete`."""
+    numero_limpo = re.sub(r"\D", "", numero or "")
+    alvo = _chave_texto_lembrete(texto)
+    texto_novo = (texto_novo or "").strip()
+    if not numero_limpo or not alvo or not texto_novo:
+        return {"ok": False, "erro": "Informe o número do processo, o lembrete e o texto novo."}
+    browser, pagina_ref = await _connect()
+    ctx = pagina_ref.context
+    try:
+        page = await _aba_para_processo(ctx, numero_limpo)
+        lembretes = await _abrir_lembretes_do_processo(page, numero_limpo)
+        if isinstance(lembretes, str):
+            return {"ok": False, "erro": lembretes}
+        casados = [l for l in lembretes if _chave_texto_lembrete(l["texto"]) == alvo]
+        if not casados:
+            return {"ok": False, "erro": "Lembrete não encontrado na página do processo no e-proc "
+                                          "(pode ter sido excluído ou alterado).",
+                    "restantes": _como_itens_cache(lembretes)}
+        id_lembrete = casados[0]["id"]
+
+        await page.locator(f"#divLembrete{id_lembrete} a[aria-label='Alterar Lembrete']").click()
+        frame = None
+        for _ in range(30):
+            frame = next((f for f in page.frames if "lembrete_externo_alterar" in (f.url or "")), None)
+            if frame is not None:
+                with contextlib.suppress(Exception):
+                    await frame.locator("#txaDescricao").wait_for(state="visible", timeout=1000)
+                    break
+            await page.wait_for_timeout(500)
+        if frame is None:
+            return {"ok": False, "erro": "O formulário \"Alterar Lembrete\" do e-proc não abriu."}
+
+        await frame.locator("#txaDescricao").fill(texto_novo)
+        await _marcar_cor(frame, cor)
+        async with _com_dialogo_aceito(page):
+            await frame.locator("#sbmAlterar").first.click()
+            # Salvo, o e-proc fecha o subframe; se recusar (validação), o
+            # formulário continua aberto e o motivo vem num alert.
+            with contextlib.suppress(Exception):
+                await page.locator("#ifrSubFrm").wait_for(state="detached", timeout=15000)
+        msg = getattr(page, "_eproc_ultimo_dialogo", "") or ""
+        if await page.locator("#ifrSubFrm").count():
+            with contextlib.suppress(Exception):
+                await page.frame_locator("#ifrSubFrm").locator("button[name='btnFechar']").first.click()
+            return {"ok": False, "erro": "O e-proc não salvou a alteração" + (f": {msg}" if msg else "."),
+                    "restantes": _como_itens_cache(lembretes)}
+
+        restantes = await _abrir_lembretes_do_processo(page, numero_limpo)
+        if isinstance(restantes, str):
+            return {"ok": False, "erro": restantes}
+        # O e-proc grava a alteração como um lembrete NOVO (outro id, no topo) e
+        # desativa o antigo — por isso a conferência é pelo texto, não pelo id.
+        chave_nova = _chave_texto_lembrete(texto_novo)
+        if (not any(_chave_texto_lembrete(l["texto"]) == chave_nova for l in restantes)
+                or any(l["id"] == id_lembrete and _chave_texto_lembrete(l["texto"]) != chave_nova
+                       for l in restantes)):
+            return {"ok": False, "erro": "O e-proc não mostrou o texto novo depois de salvar — confira na janela do e-proc.",
+                    "restantes": _como_itens_cache(restantes)}
+        return {"ok": True, "restantes": _como_itens_cache(restantes)}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:300]}
+    finally:
+        with contextlib.suppress(Exception):
+            await browser.close()
+
+
+async def criar_lembrete(numero: str, texto: str, destino: str = "todos", cor: str = "") -> dict:
+    """Cria no e-proc um lembrete no processo `numero` — "Novo" da seção
+    Lembretes, que abre `processo_lembrete_externo_cadastrar` no mesmo subframe
+    de "Alterar" (mesmos campos; botão "Salvar"). `destino`: "todos" = "Para mim
+    e para todos do(a) <órgão>" (como os lembretes da DPU já cadastrados) ou
+    "eu" = "Somente para mim" (o padrão do formulário do e-proc). `cor`: hex de
+    `CORES_LEMBRETE` (vazia = amarelo, o padrão do formulário). Validade fica
+    no padrão. Devolve `restantes` como `excluir_lembrete`."""
+    numero_limpo = re.sub(r"\D", "", numero or "")
+    texto = (texto or "").strip()
+    if not numero_limpo or not texto:
+        return {"ok": False, "erro": "Informe o número do processo e o texto do lembrete."}
+    browser, pagina_ref = await _connect()
+    ctx = pagina_ref.context
+    try:
+        page = await _aba_para_processo(ctx, numero_limpo)
+        lembretes = await _abrir_lembretes_do_processo(page, numero_limpo)
+        if isinstance(lembretes, str):
+            return {"ok": False, "erro": lembretes}
+
+        await page.locator("#fldLembretes a[title='Novo Lembrete']").click()
+        frame = None
+        for _ in range(30):
+            frame = next((f for f in page.frames if "lembrete_externo_cadastrar" in (f.url or "")), None)
+            if frame is not None:
+                with contextlib.suppress(Exception):
+                    await frame.locator("#txaDescricao").wait_for(state="visible", timeout=1000)
+                    break
+            await page.wait_for_timeout(500)
+        if frame is None:
+            return {"ok": False, "erro": "O formulário \"Novo Lembrete\" do e-proc não abriu."}
+
+        await frame.locator("#txaDescricao").fill(texto)
+        if destino == "todos":
+            valor = await frame.evaluate(
+                "() => ([...document.querySelectorAll('#selDestino option')].find(o => o.value.startsWith('T|')) || {}).value || ''")
+            if not valor:
+                await frame.locator("button[name='btnFechar']").first.click()
+                return {"ok": False, "erro": "O e-proc não ofereceu o destino \"para todos do órgão\" neste processo."}
+            await frame.locator("#selDestino").select_option(valor)
+        else:
+            await frame.locator("#selDestino").select_option("P")
+        await _marcar_cor(frame, cor)
+
+        async with _com_dialogo_aceito(page):
+            await frame.locator("#sbmSalvar").first.click()
+            with contextlib.suppress(Exception):
+                await page.locator("#ifrSubFrm").wait_for(state="detached", timeout=15000)
+        msg = getattr(page, "_eproc_ultimo_dialogo", "") or ""
+        if await page.locator("#ifrSubFrm").count():
+            with contextlib.suppress(Exception):
+                await page.frame_locator("#ifrSubFrm").locator("button[name='btnFechar']").first.click()
+            return {"ok": False, "erro": "O e-proc não salvou o lembrete" + (f": {msg}" if msg else "."),
+                    "restantes": _como_itens_cache(lembretes)}
+
+        restantes = await _abrir_lembretes_do_processo(page, numero_limpo)
+        if isinstance(restantes, str):
+            return {"ok": False, "erro": restantes}
+        ids_antes = {l["id"] for l in lembretes}
+        chave = _chave_texto_lembrete(texto)
+        if not any(l["id"] not in ids_antes and _chave_texto_lembrete(l["texto"]) == chave for l in restantes):
+            return {"ok": False, "erro": "O e-proc não mostrou o lembrete novo depois de salvar — confira na janela do e-proc.",
+                    "restantes": _como_itens_cache(restantes)}
+        return {"ok": True, "restantes": _como_itens_cache(restantes)}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:300]}
+    finally:
+        with contextlib.suppress(Exception):
+            await browser.close()
+
+
+def _como_itens_cache(lembretes: list[dict]) -> list[dict]:
+    """[{id, texto}] na ordem da página (mais recente no topo) → formato do
+    cache da aba Prazos ([{seq, texto}], seq decrescente como no tooltip)."""
+    n = len(lembretes)
+    return [{"seq": str(n - i), "texto": l["texto"], "cor": l.get("cor", "")} for i, l in enumerate(lembretes)]
+
+
 # --- Gerenciamento de Processo (substabelecimento) ----------------------------
 # "Gerenciar Processo" na barra de ações do processo → tela "Gerenciamento
 # Individual (Meus Processos)": transfere/associa/desassocia a gestão do

@@ -13,6 +13,7 @@ function oficioSeiApp(pajNorm) {
         pajNorm: pajNorm,
         status: 'idle', // idle|running|done|error
         erro: '',
+        etapa: '',   // o que a IA está consultando agora (ex.: "Lendo EMAIL 1.pdf")
         _pollTimer: null,
 
         seiConectado: false,
@@ -36,6 +37,14 @@ function oficioSeiApp(pajNorm) {
         erroCriar: '',
         criados: [],
         aguardandoSei: false,   // "Criar no SEI" esperando o login para continuar
+
+        // Restrito (LGPD — "Informação pessoal"): sugerido pela IA, decidido aqui.
+        restrito: false, motivoRestrito: '',
+        // Edição de minuta já existente ("Abrir ofício nº") e reiteração.
+        edicao: null,           // {documento_id, numero_sei, processo, versao}
+        reiteracaoDe: '',
+        abrir: { numero: '', processo: '', carregando: false, erro: '', assinado: null },
+        _restringindoId: null,
         leitura: { aberta: false, carregando: false, titulo: '', html: '', erro: '', assinaturas: [] },
 
         async init() {
@@ -53,6 +62,7 @@ function oficioSeiApp(pajNorm) {
                 const anterior = this.status;
                 this.status = d.status || 'idle';
                 this.erro = d.erro || '';
+                this.etapa = d.etapa || '';
                 this.criados = d.criados || [];
                 this.seiConectado = !!d.sei_conectado;
                 // Só popula os campos no carregamento ou na TRANSIÇÃO pra done —
@@ -71,28 +81,59 @@ function oficioSeiApp(pajNorm) {
         // Ofício já criado e ainda não visto como assinado: confere no SEI (só
         // leitura). Assinado, some o "conferir"/"Abrir para assinar".
         async _atualizarSituacao() {
-            if (!this.seiConectado || !this.criados.some((o) => !o.assinado)) return;
+            // Também os já assinados (22/10/2026): o servidor confere se o ofício
+            // foi excluído/cancelado no SEI ou perdeu a assinatura.
+            if (!this.seiConectado || !this.criados.some((o) => !o.excluido_no_sei && !o.cancelado_no_sei)) return;
             try {
                 const j = await (await fetch('/api/oficio-sei/' + encodeURIComponent(this.pajNorm) + '/atualizar',
                                              { method: 'POST' })).json();
-                if (j.criados) this.criados = j.criados;
+                if (j.criados) {
+                    const antes = Object.fromEntries(this.criados.map((o) => [o.documento_id, o]));
+                    const novosExcluidos = j.criados.filter((o) => (o.excluido_no_sei || o.cancelado_no_sei)
+                        && !(antes[o.documento_id] || {}).excluido_no_sei && !(antes[o.documento_id] || {}).cancelado_no_sei);
+                    this.criados = j.criados;
+                    if (novosExcluidos.length) {
+                        const retirou = novosExcluidos.some((o) => o.juntada_retirada_em);
+                        showToast('Ofício ' + novosExcluidos.map((o) => 'nº ' + o.numero_sei).join(', ')
+                                  + ' não está mais no SEI (excluído/cancelado)'
+                                  + (retirou ? ' — o PDF dele saiu do rascunho de "Ações no SISDPU".' : '.'), 'warning');
+                        if (retirou) window.dispatchEvent(new CustomEvent('acoes-sisdpu-recarregar', { detail: { pajNorm: this.pajNorm } }));
+                    }
+                }
                 if (j.login) this.seiConectado = false;
             } catch (e) { /* silencioso */ }
         },
 
-        // "Anexar ao PAJ": juntada do ofício assinado (PDF) no SISDPU — fase
-        // "Juntada de documento", com a ficha de confirmação (modal global).
+        // "Anexar ao PAJ" (21/10/2026): baixa o PDF do ofício assinado e deixa o
+        // console "Ações no SISDPU" PRÉ-PREENCHIDO (fase "Juntada de documento",
+        // descrição e o ofício como 1º anexo) — o Defensor junta os demais
+        // anexos (PAJ, Peças IA, externos) e executa lá. Mesmo aviso que o
+        // "Peticionar" do e-proc usa para o console reler o rascunho e abrir.
         async anexarAoPaj(o) {
+            this._preparandoId = o.documento_id;
             try {
-                const j = await (await fetch('/api/oficio-sei/' + encodeURIComponent(this.pajNorm) + '/anexar/'
+                const j = await (await fetch('/api/oficio-sei/' + encodeURIComponent(this.pajNorm) + '/preparar-juntada/'
                                              + encodeURIComponent(o.documento_id), { method: 'POST' })).json();
-                if (!j.ok) { showToast(j.erro || 'Não foi possível anexar o ofício.', 'error'); return; }
-                o.juntada = 'running'; o.erro_juntada = '';
-                this._anexandoId = o.documento_id;
-                showToast('Anexando o ofício ao PAJ — confirme a ficha do SIS-DPU 2.0.', 'info');
-                this._acompanharJuntada();
-            } catch (e) { showToast('Erro de rede: ' + e, 'error'); }
+                if (!j.ok) {
+                    if (j.login) this.seiConectado = false;
+                    showToast(j.erro || 'Não foi possível preparar a juntada do ofício.', 'error');
+                    return;
+                }
+                o.juntada = 'preparada'; o.erro_juntada = ''; o.juntada_arquivo = j.arquivo;
+                window.dispatchEvent(new CustomEvent('acoes-sisdpu-recarregar', { detail: { pajNorm: this.pajNorm } }));
+                const alvo = document.getElementById('acoesSisdpuPaj');
+                const visivel = alvo && (alvo.firstElementChild || alvo);
+                if (visivel) visivel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                showToast((j.tinha_rascunho ? 'Ofício acrescentado ao rascunho que já estava em "Ações no SISDPU"'
+                                            : 'Juntada preparada em "Ações no SISDPU"')
+                          + ' — acrescente os demais anexos e clique em Executar.', 'success');
+            } catch (e) {
+                showToast('Erro de rede: ' + e, 'error');
+            } finally {
+                this._preparandoId = null;
+            }
         },
+        _preparandoId: null,
         _acompanharJuntada() {
             if (this._pollJuntada) return;
             this._pollJuntada = setInterval(async () => {
@@ -170,6 +211,10 @@ function oficioSeiApp(pajNorm) {
             this.fechamento = r.fechamento || 'Atenciosamente,';
             this.observacoes = r.observacoes || '';
             this.orientacaoUsada = r.orientacao || '';
+            this.restrito = !!r.restrito;
+            this.motivoRestrito = r.motivo_restrito || '';
+            this.edicao = r.edicao || null;
+            this.reiteracaoDe = r.reiteracao_de || '';
             await this._montarEditor();
             if (this._editorCorpo) this._editorCorpo.setHTML(r.corpo_html || '');
             else this.corpoTexto = htmlParaTextoSimples(r.corpo_html || '');
@@ -184,7 +229,74 @@ function oficioSeiApp(pajNorm) {
                 destinatario: this.destinatario, assunto: this.assunto, referencia: this.referencia,
                 vocativo: this.vocativo, fechamento: this.fechamento,
                 corpo_html: this._corpoHtml(), observacoes: this.observacoes, orientacao: this.orientacaoUsada,
+                restrito: this.restrito, motivo_restrito: this.motivoRestrito,
+                edicao: this.edicao, reiteracao_de: this.reiteracaoDe,
             };
+        },
+        _limparCampos() {
+            this.destinatario = this.assunto = this.referencia = this.observacoes = '';
+            this.vocativo = this.fechamento = '';
+            this.restrito = false; this.motivoRestrito = '';
+            this.edicao = null; this.reiteracaoDe = '';
+            if (this._editorCorpo) this._editorCorpo.setHTML('');
+            this.corpoTexto = '';
+        },
+
+        // --- "Abrir ofício nº" (qualquer processo de ofícios da COFE CTB) ---
+        // Minuta NÃO assinada → entra em edição (Salvar no SEI grava no mesmo
+        // documento). Assinado → oferece "Reiterar" / "Usar como base".
+        async abrirOficio() {
+            const numero = (this.abrir.numero || '').trim();
+            if (!numero) { this.abrir.erro = 'Informe o número SEI do ofício.'; return; }
+            if (this.status === 'done' && !confirm('Há um rascunho de ofício na tela. Abrir outro ofício substitui o rascunho atual. Continuar?')) return;
+            this.abrir.carregando = true; this.abrir.erro = ''; this.abrir.assinado = null;
+            Alpine.store('acoesIaMenu').mostrarOficio = true;
+            try {
+                const j = await (await fetch('/api/oficio-sei/' + encodeURIComponent(this.pajNorm) + '/abrir', {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ numero, processo: (this.abrir.processo || '').trim() }),
+                })).json();
+                if (!j.ok) { if (j.login) this.seiConectado = false; this.abrir.erro = j.erro || 'Não foi possível abrir o ofício.'; return; }
+                if (j.assinado) { this.abrir.assinado = j.oficio; return; }
+                this.status = 'done'; this.erro = '';
+                await this._popular(j.rascunho);
+                this.abrir.numero = ''; this.abrir.processo = '';
+            } catch (e) {
+                this.abrir.erro = 'Erro de rede: ' + e;
+            } finally { this.abrir.carregando = false; }
+        },
+
+        // Reiterar (ofício assinado, sem resposta) / Usar como base: a IA redige um
+        // NOVO ofício a partir do existente. Reiterar não exige orientação.
+        async redigirComBase(oficio, modo) {
+            const orientacao = this._orientacaoDiretiva();
+            if (modo === 'base' && !orientacao.trim()) {
+                this.status = 'error';
+                this.erro = 'Para "Usar como base", escreva na Orientação diretiva o que muda no novo ofício (destinatário, pedido…).';
+                return;
+            }
+            if (this.status === 'done' && !confirm('Há um rascunho de ofício na tela. Substituir pelo novo?')) return;
+            this.abrir.assinado = null;
+            await this._iniciarRedacao({ orientacao, base: { documento_id: oficio.documento_id, modo } });
+        },
+
+        // Restringir um ofício já criado (com confirmação — altera o SEI).
+        async restringirOficio(o) {
+            if (!confirm('Tornar restrito no SEI o Ofício ' + (o.numero_sei || '') + '?\n\nHipótese legal: Informação pessoal '
+                         + '(art. 31, § 1º, I, da Lei 12.527/2011).')) return;
+            this._restringindoId = o.documento_id;
+            try {
+                const j = await (await fetch('/api/oficio-sei/' + encodeURIComponent(this.pajNorm) + '/restringir/'
+                    + encodeURIComponent(o.documento_id), {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ confirmado: true }),
+                })).json();
+                if (!j.ok) { if (j.login) this.seiConectado = false; showToast(j.erro || 'Não foi possível restringir.', 'error'); return; }
+                o.nivel_acesso = 'restrito';
+                showToast('Ofício ' + (o.numero_sei || '') + ' agora é restrito no SEI.', 'success');
+            } catch (e) {
+                showToast('Erro de rede: ' + e, 'error');
+            } finally { this._restringindoId = null; }
         },
 
         // Caixa compartilhada "Orientação diretiva para análise da IA" — mesmo
@@ -197,20 +309,30 @@ function oficioSeiApp(pajNorm) {
         },
 
         async redigir() {
+            const orientacao = this._orientacaoDiretiva();
+            if (!orientacao.trim()) {
+                Alpine.store('acoesIaMenu').mostrarOficio = true;
+                this.status = 'error';
+                this.erro = this.edicao
+                    ? 'Escreva na caixa "Orientação diretiva" o que deve mudar neste ofício (ex.: "troque o prazo para 30 dias").'
+                    : 'Escreva na caixa "Orientação diretiva" o que o ofício deve pedir e a quem '
+                      + '(ex.: "oficiar a APS Cândido Lopes pedindo cópia do processo administrativo do NB ...").';
+                return;
+            }
+            // Em edição, "Redigir de novo" REVISA o ofício aberto (continua salvando no mesmo documento).
+            const corpo = this.edicao
+                ? { orientacao, base: { documento_id: this.edicao.documento_id, modo: 'revisar' }, rascunho: this._rascunho() }
+                : { orientacao };
+            await this._iniciarRedacao(corpo);
+        },
+        async _iniciarRedacao(corpo) {
             Alpine.store('acoesIaMenu').mostrarOficio = true;
             this.erro = '';
             this.erroCriar = '';
-            const orientacao = this._orientacaoDiretiva();
-            if (!orientacao.trim()) {
-                this.status = 'error';
-                this.erro = 'Escreva na caixa "Orientação diretiva" o que o ofício deve pedir e a quem '
-                    + '(ex.: "oficiar a APS Cândido Lopes pedindo cópia do processo administrativo do NB ...").';
-                return;
-            }
             try {
                 const resp = await fetch('/api/oficio-sei/' + encodeURIComponent(this.pajNorm) + '/redigir', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ orientacao }),
+                    body: JSON.stringify(corpo),
                 });
                 const j = await resp.json();
                 if (!j.ok) { this.status = 'error'; this.erro = j.erro || 'Falha ao iniciar a redação.'; return; }
@@ -246,10 +368,7 @@ function oficioSeiApp(pajNorm) {
             if (!confirm('Descartar este rascunho de ofício?')) return;
             await fetch('/api/oficio-sei/' + encodeURIComponent(this.pajNorm) + '/descartar', { method: 'POST' });
             this.status = 'idle';
-            this.destinatario = this.assunto = this.referencia = this.observacoes = '';
-            this.vocativo = this.fechamento = '';
-            if (this._editorCorpo) this._editorCorpo.setHTML('');
-            this.corpoTexto = '';
+            this._limparCampos();
         },
 
         // Login no SEI (página da DPU) — mesmo fluxo do selo "SEI" do topo
@@ -303,11 +422,11 @@ function oficioSeiApp(pajNorm) {
                     this.erroCriar = j.erro || 'Falha ao criar no SEI.';
                     return;
                 }
-                this.criados = [...this.criados, j.oficio];
+                this.criados = [...this.criados.filter((o) => o.documento_id !== j.oficio.documento_id), j.oficio];
+                if (j.editado) showToast('Ofício ' + (j.oficio.numero_sei || '') + ' atualizado no SEI.', 'success');
+                if (j.oficio.avisos && j.oficio.avisos.length) showToast(j.oficio.avisos.join(' | '), 'warning');
                 this.status = 'idle';
-                this.destinatario = this.assunto = this.referencia = this.observacoes = '';
-                this.vocativo = this.fechamento = '';
-                if (this._editorCorpo) this._editorCorpo.setHTML('');
+                this._limparCampos();
             } catch (e) {
                 this.erroCriar = 'Erro de rede: ' + e + ' — confira no SEI se o ofício foi criado antes de tentar de novo.';
             } finally { this.criando = false; }

@@ -18,9 +18,39 @@ async def api_oficio_status(paj_norm: str):
 
 @router.post("/api/oficio-sei/{paj_norm}/redigir", response_class=JSONResponse)
 async def api_oficio_redigir(paj_norm: str, request: Request):
+    """Body: {orientacao, base?: {documento_id, modo: reiterar|base|revisar}}."""
+    body = await request.json()
+    base = body.get("base") if isinstance(body.get("base"), dict) else None
+    try:
+        if base and base.get("modo") == "revisar":
+            # revisão do que está NA TELA: grava antes o texto atual como base
+            if isinstance(body.get("rascunho"), dict):
+                svc.salvar_rascunho(paj_norm, body["rascunho"])
+        return svc.iniciar_redacao(paj_norm, body.get("orientacao", ""), base)
+    except FileNotFoundError as e:
+        return {"ok": False, "erro": str(e)}
+
+
+@router.post("/api/oficio-sei/{paj_norm}/abrir", response_class=JSONResponse)
+async def api_oficio_abrir(paj_norm: str, request: Request):
+    """"Abrir ofício nº": {numero, processo?} — minuta não assinada vira rascunho
+    em edição; assinada devolve o resumo (para Reiterar / Usar como base)."""
     body = await request.json()
     try:
-        return svc.iniciar_redacao(paj_norm, body.get("orientacao", ""))
+        return await run_in_threadpool(svc.abrir_oficio, paj_norm, str(body.get("numero") or ""),
+                                       str(body.get("processo") or ""))
+    except FileNotFoundError as e:
+        return {"ok": False, "erro": str(e)}
+
+
+@router.post("/api/oficio-sei/{paj_norm}/restringir/{documento_id}", response_class=JSONResponse)
+async def api_oficio_restringir(paj_norm: str, documento_id: str, request: Request):
+    """Torna restrito (Informação pessoal) um ofício já criado. Exige confirmação."""
+    body = await request.json()
+    if not body.get("confirmado"):
+        return {"ok": False, "erro": "Alterar o nível de acesso exige confirmação explícita."}
+    try:
+        return await run_in_threadpool(svc.restringir, paj_norm, documento_id)
     except FileNotFoundError as e:
         return {"ok": False, "erro": str(e)}
 
@@ -43,7 +73,7 @@ async def api_oficio_descartar(paj_norm: str):
 async def api_oficio_criar(paj_norm: str, request: Request):
     body = await request.json()
     if not body.get("confirmado"):
-        return {"ok": False, "erro": "Criação no SEI exige confirmação explícita."}
+        return {"ok": False, "erro": "Gravação no SEI exige confirmação explícita."}
     try:
         return await run_in_threadpool(svc.criar_no_sei, paj_norm, body.get("rascunho") or {})
     except FileNotFoundError as e:
@@ -55,6 +85,16 @@ async def api_oficio_atualizar(paj_norm: str):
     """Confere no SEI se os ofícios deste PAJ já foram assinados (só leitura)."""
     try:
         return await run_in_threadpool(svc.atualizar_situacao, paj_norm)
+    except FileNotFoundError as e:
+        return {"ok": False, "erro": str(e)}
+
+
+@router.post("/api/oficio-sei/{paj_norm}/preparar-juntada/{documento_id}", response_class=JSONResponse)
+async def api_oficio_preparar_juntada(paj_norm: str, documento_id: str):
+    """Ofício assinado → console "Ações no SISDPU" pré-preenchido (fase, descrição
+    e o PDF do ofício como anexo) para o Defensor completar e executar."""
+    try:
+        return await run_in_threadpool(svc.preparar_juntada, paj_norm, documento_id)
     except FileNotFoundError as e:
         return {"ok": False, "erro": str(e)}
 

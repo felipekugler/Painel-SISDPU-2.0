@@ -362,6 +362,40 @@ _RE_COR_HEX = re.compile(r"#[0-9a-fA-F]{6}")
 
 
 @_roteia_jmu
+async def lembretes_do_processo(numero: str, instancia: int = 1) -> dict[str, Any]:
+    """Lembretes NATIVOS do processo lidos AO VIVO da página do processo no
+    e-proc (HTTP, sem navegador) — com a COR de cada post-it, que a listagem de
+    intimações (fonte do cache da aba Prazos) não traz. Funciona para qualquer
+    processo, sincronizado ou não. Os post-its vêm prontos no HTML da Consulta
+    Processual (`div.divLembrete#divLembrete<id>`, cor no `style`, texto em
+    `.desLembrete`) — conferido 16/10/2026.
+
+    Retorna {"ok": True, "itens": [{id, texto, cor}, ...]} (ordem da página,
+    mais recente no topo) ou {"ok": False, "erro": "..."}."""
+    from bs4 import BeautifulSoup
+
+    try:
+        srv = _mcp_server()
+        cli = await srv._get_client(instancia)
+        _url, html = await srv._consultar_html(cli, _normalizar_numero(numero))
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "erro": f"{type(e).__name__}: {e}"[:300]}
+    soup = BeautifulSoup(html, "html.parser")
+    if soup.find(id="fldLembretes") is None:
+        return {"ok": False, "erro": "Seção de lembretes não encontrada na página do processo."}
+    itens = []
+    for div in soup.select("#divConteudoLembretes div.divLembrete"):
+        des = div.select_one(".desLembrete")
+        m = _RE_COR_HEX.search(div.get("style") or "")
+        itens.append({
+            "id": (div.get("id") or "").replace("divLembrete", ""),
+            "texto": re.sub(r"\s+", " ", des.get_text(" ") if des else "").strip(),
+            "cor": m.group(0).lower() if m else "",
+        })
+    return {"ok": True, "itens": itens}
+
+
+@_roteia_jmu
 async def triagem_processo(
     numero: str,
     instancia: int = 1,

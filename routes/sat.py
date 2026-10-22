@@ -131,7 +131,7 @@ def _parse_nbs(nbs: str) -> list[str]:
 
 async def _stream_baixar(paj_norm: str, cpf: str, nome: str, delay: float,
                          bloqueio: float, pretensao: str, nbs: str = "", protocolos: str = "",
-                         somente_pat: bool = False):
+                         somente_pat: bool = False, delay_max: float | None = None):
     from ingestao import sat_client
     pasta = str(sat_service.pasta_arquivos_sat(paj_norm))
     if somente_pat:
@@ -161,7 +161,7 @@ async def _stream_baixar(paj_norm: str, cpf: str, nome: str, delay: float,
         pat_ignorar = []
     try:
         async for ev in sat_client.baixar_cidadao_stream(
-                cpf, nome, pasta, delay_s=delay, bloqueio_s=bloqueio,
+                cpf, nome, pasta, delay_s=delay, bloqueio_s=bloqueio, delay_max_s=delay_max,
                 tipos=tipos, pretensao=pretensao, nbs=_parse_nbs(nbs),
                 protocolos=_parse_nbs(protocolos),
                 compilar=compilar, compilar_limiar=compilar_limiar,
@@ -254,10 +254,11 @@ async def log_download(paj_norm: str):
 @router.get("/api/sat/{paj_norm}/baixar")
 async def baixar(paj_norm: str, cpf: str, nome: str = "", delay: float = 5.0,
                  bloqueio: float = 45.0, pretensao: str = "", nbs: str = "", protocolos: str = "",
-                 somente_pat: int = 0):
+                 somente_pat: int = 0, delay_max: float | None = None):
     """SSE do DOWNLOAD dos documentos do SAT (consulta + Grupos 1 e 2 + PAT). O usuário
     resolve o CAPTCHA na janela do SAT. Salva na pasta do PAJ. `delay` = tempo (s) entre
-    consultas (padrão 5s); `bloqueio` = espera (s) ao detectar antirobô (padrão 45s);
+    consultas (padrão 5s) — mínimo; `delay_max` = máximo (cada pausa é sorteada entre os
+    dois; ausente = intervalo fixo); `bloqueio` = espera (s) ao detectar antirobô (padrão 45s);
     `pretensao` = define quais tipos de documentos baixar (config por pretensão);
     `nbs` = filtro inicial por NB (Grupo 2 + PAT), separados por vírgula/espaço;
     `protocolos` = filtro inicial por protocolo (só PAT), separados por vírgula/espaço;
@@ -266,11 +267,12 @@ async def baixar(paj_norm: str, cpf: str, nome: str = "", delay: float = 5.0,
     indicado."""
     return EventSourceResponse(
         _stream_baixar(paj_norm, cpf, nome, delay, bloqueio, pretensao, nbs, protocolos,
-                        bool(somente_pat)))
+                        bool(somente_pat), delay_max))
 
 
 async def _stream_baixar_instituidor(paj_norm: str, cpf: str, nome: str,
-                                     delay: float, bloqueio: float):
+                                     delay: float, bloqueio: float,
+                                     delay_max: float | None = None):
     from ingestao import sat_client
     pasta = str(sat_service.pasta_instituidor(paj_norm))  # subpasta separada
     # seleção de docs do instituidor (config ou default) — sem filtro por espécie;
@@ -284,7 +286,7 @@ async def _stream_baixar_instituidor(paj_norm: str, cpf: str, nome: str,
         tipos = list(sat_client.TIPOS_INSTITUIDOR_DEFAULT)
     try:
         async for ev in sat_client.baixar_cidadao_stream(
-                cpf, nome, pasta, delay_s=delay, bloqueio_s=bloqueio,
+                cpf, nome, pasta, delay_s=delay, bloqueio_s=bloqueio, delay_max_s=delay_max,
                 tipos=tipos, pretensao="", rotulo="INSTITUIDOR - "):
             if ev.get("done"):
                 yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
@@ -297,11 +299,11 @@ async def _stream_baixar_instituidor(paj_norm: str, cpf: str, nome: str,
 
 @router.get("/api/sat/{paj_norm}/baixar-instituidor")
 async def baixar_instituidor(paj_norm: str, cpf: str, nome: str = "", delay: float = 5.0,
-                             bloqueio: float = 45.0):
+                             bloqueio: float = 45.0, delay_max: float | None = None):
     """SSE do DOWNLOAD dos documentos do INSTITUIDOR (2ª consulta, CPF do instituidor;
     novo CAPTCHA na janela). Usado em pretensões derivadas (pensão por morte / auxílio-
     reclusão). Salva na MESMA pasta do PAJ com prefixo 'INSTITUIDOR - '."""
-    return EventSourceResponse(_stream_baixar_instituidor(paj_norm, cpf, nome, delay, bloqueio))
+    return EventSourceResponse(_stream_baixar_instituidor(paj_norm, cpf, nome, delay, bloqueio, delay_max))
 
 
 @router.get("/api/sat/pat-ignorar", response_class=JSONResponse)
@@ -374,7 +376,8 @@ async def processar(paj_norm: str, grupo: str = "", dry: int = 0, prazo: int = 0
 
 
 async def _stream_baixar_complementar(paj_norm: str, cpf: str, nome: str, delay: float,
-                                      bloqueio: float, alvos_csv: str, escopo: str = "assistido"):
+                                      bloqueio: float, alvos_csv: str, escopo: str = "assistido",
+                                      delay_max: float | None = None):
     import shutil
     from ingestao import sat_client
     paths = sat_service._escopo_paths(paj_norm, escopo)
@@ -388,7 +391,7 @@ async def _stream_baixar_complementar(paj_norm: str, cpf: str, nome: str, delay:
     acervo = str(paths["destino"])
     try:
         async for ev in sat_client.baixar_cidadao_stream(
-                cpf, nome, str(pasta), delay_s=delay, bloqueio_s=bloqueio,
+                cpf, nome, str(pasta), delay_s=delay, bloqueio_s=bloqueio, delay_max_s=delay_max,
                 tipos=tipos, pretensao="", rotulo=paths["rotulo"], alvos=alvos, pasta_acervo=acervo):
             if ev.get("done"):
                 yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
@@ -401,13 +404,14 @@ async def _stream_baixar_complementar(paj_norm: str, cpf: str, nome: str, delay:
 
 @router.get("/api/sat/{paj_norm}/baixar-complementar")
 async def baixar_complementar(paj_norm: str, cpf: str, nome: str = "", delay: float = 5.0,
-                              bloqueio: float = 45.0, alvos: str = "", escopo: str = "assistido"):
+                              bloqueio: float = 45.0, alvos: str = "", escopo: str = "assistido",
+                              delay_max: float | None = None):
     """SSE do DOWNLOAD COMPLEMENTAR (nova consulta ao SAT no PAJ já concluído). `alvos` =
     "key|sub" separados por vírgula (subitens escolhidos). `escopo` = assistido|instituidor
     (instituidor usa CPF do instituidor, rótulo 'INSTITUIDOR - ' e subpasta 'Instituidor').
     Salva na subpasta complementar do escopo (limpa antes)."""
     return EventSourceResponse(
-        _stream_baixar_complementar(paj_norm, cpf, nome, delay, bloqueio, alvos, escopo))
+        _stream_baixar_complementar(paj_norm, cpf, nome, delay, bloqueio, alvos, escopo, delay_max))
 
 
 async def _stream_anexar_mais(paj_norm: str, rec: str, id_processo: str, assistido: str, nomes_csv: str):
