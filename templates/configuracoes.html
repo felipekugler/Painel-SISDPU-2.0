@@ -723,43 +723,47 @@
                     Os anexos mais antigos continuam disponíveis em "Baixar PAJ Completo". 0 = não baixar nada sozinho.
                 </p>
             </div>
-            <!-- Consumo do teto diário do servidor (estatística) -->
+            <!-- Consumo do teto diário — pela conta do PRÓPRIO servidor (diagnostico),
+                 única fonte (22/10/2026); o painel não estima mais. -->
             <template x-if="consumo">
                 <div class="rounded-lg border border-base-300 p-3 text-sm flex flex-col gap-2">
                     <div class="flex items-center justify-between flex-wrap gap-2">
                         <strong>Leituras no SIS-DPU 2.0 hoje</strong>
-                        <span class="font-mono tnum"
-                              x-text="'~' + consumo.hoje.registros_calibrados + ' de ' + consumo.hoje.teto + ' registros · ' + consumo.hoje.chamadas + ' chamadas'"></span>
+                        <span class="font-mono tnum" x-show="consumo.hoje.registros !== null"
+                              x-text="consumo.hoje.registros + ' de ' + consumo.hoje.teto + ' registros'"></span>
+                        <span class="text-xs text-base-content/60" x-show="consumo.hoje.registros === null">contador do servidor indisponível agora</span>
                     </div>
-                    <progress class="progress w-full"
-                              :class="consumo.hoje.teto_atingido || consumo.hoje.registros_calibrados >= 0.7*consumo.hoje.teto ? 'progress-error' : 'progress-info'"
-                              :value="Math.min(consumo.hoje.registros_calibrados, consumo.hoje.teto)" :max="consumo.hoje.teto"></progress>
+                    <progress class="progress w-full" x-show="consumo.hoje.registros !== null"
+                              :class="consumo.hoje.teto_atingido || consumo.hoje.registros >= 0.7*consumo.hoje.teto ? 'progress-error' : 'progress-info'"
+                              :value="Math.min(consumo.hoje.registros || 0, consumo.hoje.teto)" :max="consumo.hoje.teto"></progress>
                     <p class="text-xs text-base-content/60">
-                        O servidor limita cada pessoa a <span x-text="consumo.teto"></span> registros lidos por dia,
-                        somando o painel e o uso do MCP pelo Claude (o uso pelo chat não aparece aqui).
-                        <span x-show="consumo.hoje.fator !== 1"
-                              x-text="'Conta calibrada pelas recusas do servidor (fator ' + consumo.hoje.fator + (consumo.hoje.amostras_calibracao ? ', ' + consumo.hoje.amostras_calibracao + ' medição(ões) exata(s)' : ', provisório — a próxima recusa mede o fator exato') + '); estimativa bruta do painel: ' + consumo.hoje.registros + '.'"></span>
-                        <span x-show="consumo.hoje.fator === 1">Estimativa do painel — ainda sem calibração: a 1ª recusa do servidor por teto diário mede a diferença entre as contas.</span>
+                        Conta do próprio servidor do SIS-DPU 2.0<span x-show="consumo.hoje.consultado_em"
+                        x-text="' (consultada às ' + (consumo.hoje.consultado_em || '').slice(11, 16) + ')'"></span>: limite de
+                        <span x-text="consumo.hoje.teto"></span> registros lidos por dia, somando o painel e o uso do MCP
+                        pelo Claude.
+                        <span x-show="consumo.hoje.sobram !== null && consumo.hoje.sobram !== undefined"
+                              x-text="'Sobram ' + consumo.hoje.sobram + '.'"></span>
                     </p>
-                    <p class="text-xs text-error" x-show="consumo.hoje.teto_atingido"
-                       x-text="'O servidor recusou hoje: limite diário atingido' + (consumo.hoje.registros_servidor ? ' (' + consumo.hoje.registros_servidor + ' registros pela conta dele)' : '') + '. Volta amanhã, ou com liberação do Master.'"></p>
+                    <p class="text-xs text-error" x-show="consumo.hoje.teto_atingido">
+                        Limite diário atingido. Volta amanhã, ou com liberação do Master.
+                    </p>
                     <details class="text-xs">
-                        <summary class="cursor-pointer">Por ferramenta (hoje) e histórico</summary>
+                        <summary class="cursor-pointer">Chamadas do painel por ferramenta (hoje) e histórico</summary>
                         <table class="table table-xs mt-2">
-                            <thead><tr><th>Ferramenta</th><th class="text-right">Chamadas</th><th class="text-right">Registros</th></tr></thead>
+                            <thead><tr><th>Ferramenta</th><th class="text-right">Chamadas</th></tr></thead>
                             <tbody>
-                                <template x-for="[nome, v] in Object.entries(consumo.hoje.por_ferramenta || {}).sort((a,b) => b[1].registros - a[1].registros)" :key="nome">
-                                    <tr><td x-text="nome"></td><td class="text-right tnum" x-text="v.chamadas"></td><td class="text-right tnum" x-text="v.registros"></td></tr>
+                                <template x-for="[nome, v] in Object.entries(consumo.hoje.por_ferramenta || {}).sort((a,b) => b[1].chamadas - a[1].chamadas)" :key="nome">
+                                    <tr><td x-text="nome"></td><td class="text-right tnum" x-text="v.chamadas"></td></tr>
                                 </template>
                             </tbody>
                         </table>
                         <table class="table table-xs mt-2">
-                            <thead><tr><th>Dia</th><th class="text-right">Chamadas</th><th class="text-right">Registros</th><th></th></tr></thead>
+                            <thead><tr><th>Dia</th><th class="text-right">Chamadas</th><th class="text-right">Registros (servidor)</th><th></th></tr></thead>
                             <tbody>
                                 <template x-for="d in consumo.historico" :key="d.data">
                                     <tr><td x-text="d.data.split('-').reverse().join('/')"></td>
                                         <td class="text-right tnum" x-text="d.chamadas"></td>
-                                        <td class="text-right tnum" x-text="d.registros"></td>
+                                        <td class="text-right tnum" x-text="d.registros ?? '—'"></td>
                                         <td x-text="d.teto_atingido ? 'teto atingido' : ''" class="text-error"></td></tr>
                                 </template>
                             </tbody>

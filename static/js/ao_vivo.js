@@ -59,7 +59,9 @@
     window.confirmarCustoMcp = function (tipo, nivel) {
         if (!estadoAtual || estadoAtual.fonte !== 'mcp') return true;
         const c = estadoAtual.consumo_hoje || {};
-        const usado = 'Hoje já foram lidos ~' + (c.registros || 0) + ' de ' + (c.teto || 5000) + ' registros.';
+        const usado = (c.registros !== null && c.registros !== undefined)
+            ? 'Hoje já foram lidos ' + c.registros + ' de ' + (c.teto || 5000) + ' registros (contador do servidor).'
+            : 'Não consegui consultar o contador do servidor agora.';
         if (tipo === 'caixa') {
             return window.confirm('Fonte de dados: SIS-DPU 2.0 (MCP).\n\n'
                 + 'A sincronização manual da caixa relê o histórico COMPLETO de cada PAJ com trâmite novo, '

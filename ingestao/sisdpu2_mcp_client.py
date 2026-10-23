@@ -24,6 +24,7 @@ Achados da avaliação real (09-10/10/2026) que moldaram este módulo:
 from __future__ import annotations
 
 import base64
+import contextlib
 import hashlib
 import json
 import re
@@ -160,53 +161,93 @@ def _registrar_consumo(nome: str, registros: int, teto_servidor: Optional[tuple[
             pass
 
 
-def fator_calibracao(dados: Optional[dict] = None) -> tuple[float, int]:
-    """Razão (registros pela conta do SERVIDOR) / (estimativa do painel),
-    medida no instante de cada recusa por teto diário — média dos últimos dias
-    com essa medida. (1.0, 0) enquanto não houver nenhuma. Devolve (fator, n)."""
-    dados = dados if dados is not None else _ler_consumo()
-    razoes = []
-    for _d, v in sorted(dados.items(), reverse=True):
-        est, srv = v.get("estimado_na_recusa"), v.get("registros_servidor")
-        if est and srv and est > 0:
-            razoes.append(float(srv) / float(est))
-        if len(razoes) >= 5:
-            break
-    if not razoes:
-        # Sem medição no instante da recusa (dias anteriores a 16/10/2026): usa,
-        # provisoriamente, o total do dia em que houve recusa — a estimativa do
-        # fim do dia é >= a do instante da recusa, então o fator sai um pouco
-        # baixo. A 1ª medição exata substitui estes.
-        for _d, v in sorted(dados.items(), reverse=True):
-            srv, tot = v.get("registros_servidor"), v.get("registros")
-            sintetico = any("estimado" in k for k in (v.get("por_ferramenta") or {}))
-            if v.get("teto_atingido") and srv and tot and tot >= srv and not sintetico:
-                razoes.append(float(srv) / float(tot))
-        if not razoes:
-            return 1.0, 0
-        return round(sum(razoes[:5]) / len(razoes[:5]), 3), 0
-    return round(sum(razoes) / len(razoes), 3), len(razoes)
+# Contador do SERVIDOR (22/10/2026, decisão do Defensor): o consumo do teto
+# diário é o que o próprio servidor informa em `diagnostico` (registros lidos
+# hoje, teto, quanto sobra) — a única conta confiável. A estimativa local por
+# chamada (acima) errava conforme a mistura de ferramentas do dia (razão
+# servidor/estimativa entre 0,58 e 0,85) e fica só para o quadro de chamadas
+# por ferramenta. `diagnostico` não consome registros (conferido 22/10/2026).
+_SERVIDOR_TTL = 300  # s entre consultas ao contador do servidor
+_cache_servidor: dict = {"dia": None, "ts": 0.0, "dados": None}
+_lock_servidor = threading.Lock()
+
+
+def _gravar_servidor_no_dia(dados: dict) -> None:
+    with _lock_consumo:
+        tudo = _ler_consumo()
+        tudo.setdefault(_hoje(), {"chamadas": 0, "registros": 0, "por_ferramenta": {}})["servidor"] = dados
+        with contextlib.suppress(Exception):
+            _ARQ_CONSUMO.write_text(json.dumps(tudo, ensure_ascii=False, indent=1), encoding="utf-8")
+
+
+def _atualizar_contador(lidos: int, teto: int) -> dict:
+    dados = {"lidos": int(lidos), "teto": int(teto), "sobram": max(0, int(teto) - int(lidos)),
+             "consultado_em": time.strftime("%Y-%m-%dT%H:%M:%S")}
+    with _lock_servidor:
+        _cache_servidor.update(dia=_hoje(), ts=time.monotonic(), dados=dados)
+    _gravar_servidor_no_dia(dados)
+    return dados
+
+
+def contador_servidor(forcar: bool = False) -> Optional[dict]:
+    """{lidos, teto, sobram, consultado_em} pela conta do servidor — consulta
+    `diagnostico` no máximo a cada `_SERVIDOR_TTL` s. None se não houver como
+    saber (sem conexão e nada lido hoje)."""
+    with _lock_servidor:
+        c = dict(_cache_servidor)
+    if (not forcar and c["dia"] == _hoje() and c["dados"]
+            and time.monotonic() - c["ts"] < _SERVIDOR_TTL):
+        return c["dados"]
+    if conectado():
+        try:
+            d = _chamar("diagnostico", {}, 60, repetir=False)
+            reg = (d or {}).get("registros") or {} if isinstance(d, dict) else {}
+            if "lidosHoje" in reg and "tetoPorDia" in reg:
+                return _atualizar_contador(reg["lidosHoje"], reg["tetoPorDia"])
+        except Exception:  # noqa: BLE001
+            pass
+    if c["dia"] == _hoje() and c["dados"]:
+        return c["dados"]
+    salvo = (_ler_consumo().get(_hoje()) or {}).get("servidor")
+    return salvo or None
+
+
+def registros_estimados_hoje() -> int:
+    """Estimativa LOCAL (só para medir o gasto de uma rotina, antes/depois) —
+    não é o consumo do teto; para isso, `contador_servidor`."""
+    return int((_ler_consumo().get(_hoje()) or {}).get("registros", 0))
 
 
 def consumo_hoje() -> dict:
-    dados = _ler_consumo()
-    dia = dados.get(_hoje(), {})
-    fator, amostras = fator_calibracao(dados)
-    registros = dia.get("registros", 0)
-    return {"data": _hoje(), "chamadas": dia.get("chamadas", 0), "registros": registros,
-            # conta corrigida pela razão medida nas recusas (o que o servidor deve estar contando)
-            "registros_calibrados": round(registros * fator), "fator": fator, "amostras_calibracao": amostras,
-            "teto": dia.get("teto_servidor", TETO_DIARIO), "teto_atingido": bool(dia.get("teto_atingido")),
-            "registros_servidor": dia.get("registros_servidor"), "por_ferramenta": dia.get("por_ferramenta", {})}
+    """Consumo do teto diário pela conta do SERVIDOR (única fonte)."""
+    dia = _ler_consumo().get(_hoje(), {})
+    srv = contador_servidor()
+    if srv:
+        lidos, teto = srv["lidos"], srv["teto"]
+        atingido = lidos >= teto
+    else:  # sem consulta possível: só a recusa do servidor, se houve
+        lidos = dia.get("registros_servidor")
+        teto = dia.get("teto_servidor", TETO_DIARIO)
+        atingido = bool(dia.get("teto_atingido"))
+    return {"data": _hoje(), "fonte": "servidor" if srv else "indisponivel",
+            "registros": lidos, "teto": teto, "sobram": (srv or {}).get("sobram"),
+            "teto_atingido": atingido, "consultado_em": (srv or {}).get("consultado_em", ""),
+            "chamadas": dia.get("chamadas", 0),
+            "por_ferramenta": {n: {"chamadas": v.get("chamadas", 0)}
+                               for n, v in (dia.get("por_ferramenta") or {}).items()}}
 
 
 def historico_consumo(dias: int = 30) -> list[dict]:
+    """Por dia: registros pela conta do servidor (última consulta do dia, ou o
+    número da recusa por teto) e chamadas feitas pelo painel."""
     dados = _ler_consumo()
-    fator, _n = fator_calibracao(dados)
-    return [{"data": d, "chamadas": v.get("chamadas", 0), "registros": v.get("registros", 0),
-             "registros_calibrados": round(v.get("registros", 0) * fator),
-             "estimado_na_recusa": v.get("estimado_na_recusa"), "registros_servidor": v.get("registros_servidor"),
-             "teto_atingido": bool(v.get("teto_atingido"))} for d, v in sorted(dados.items(), reverse=True)[:dias]]
+    out = []
+    for d, v in sorted(dados.items(), reverse=True)[:dias]:
+        srv = v.get("servidor") or {}
+        out.append({"data": d, "chamadas": v.get("chamadas", 0),
+                    "registros": srv.get("lidos", v.get("registros_servidor")),
+                    "teto_atingido": bool(v.get("teto_atingido")) or bool(srv and srv.get("lidos", 0) >= srv.get("teto", TETO_DIARIO))})
+    return out
 
 
 # ---------------------------------------------------------------------------
@@ -510,6 +551,8 @@ def _chamar(nome: str, args: Optional[dict], timeout: float, repetir: bool,
             dia = _RE_TETO_DIA.search(texto)
             if dia:
                 _registrar_consumo(nome, 0, (int(dia.group(1)), int(dia.group(2))))
+                with contextlib.suppress(Exception):
+                    _atualizar_contador(int(dia.group(1)), int(dia.group(2)))
                 raise Sisdpu2TetoDiario(texto[:800])
             _registrar_consumo(nome, 0)
             if repetir and _RE_TETO.search(texto) and tentativa < 3:

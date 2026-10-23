@@ -141,7 +141,7 @@ async def atualizar_paj(paj_norm: str, forcar: bool = False) -> dict:
     if not forcar and time.monotonic() - _ultimo_paj.get(paj_norm, 0) < MIN_INTERVALO_PAJ_SEG:
         return {"ok": True, "mudou": False, "motivo": "recente"}
     antes = _assinatura_paj(paj_norm)
-    reg_antes = sis2.consumo_hoje()["registros"]
+    reg_antes = sis2.registros_estimados_hoje()
     linhas: list[str] = []
 
     async def _rodar():
@@ -171,7 +171,7 @@ async def atualizar_paj(paj_norm: str, forcar: bool = False) -> dict:
     _ultimo_paj[paj_norm] = time.monotonic()
     depois = _assinatura_paj(paj_norm)
     return {"ok": True, "mudou": antes != depois, "movimentacoes": depois[:1],
-            "registros_gastos": sis2.consumo_hoje()["registros"] - reg_antes}
+            "registros_gastos": sis2.registros_estimados_hoje() - reg_antes}
 
 
 # ---------------------------------------------------------------------------
@@ -329,7 +329,7 @@ async def atualizar_caixa(forcar: bool = False, automatico: bool = False) -> dic
     if not forcar and time.monotonic() - _caixa["ts"] < MIN_INTERVALO_CAIXA_SEG:
         return {"ok": True, "mudou": False, "motivo": "recente", "quando": _caixa["quando"],
                 "mudou_em": _caixa["mudou_em"]}
-    reg_antes = sis2.consumo_hoje()["registros"]
+    reg_antes = sis2.registros_estimados_hoje()
     try:
         assinatura = await asyncio.to_thread(fonte.assinatura_caixa)
     except Exception as e:  # noqa: BLE001
@@ -338,7 +338,7 @@ async def atualizar_caixa(forcar: bool = False, automatico: bool = False) -> dic
     if assinatura == _caixa["assinatura"] and not forcar:
         _caixa["quando"] = datetime.now().isoformat(timespec="seconds")
         return {"ok": True, "mudou": False, "quando": _caixa["quando"], "mudou_em": _caixa["mudou_em"],
-                "registros_gastos": sis2.consumo_hoje()["registros"] - reg_antes}
+                "registros_gastos": sis2.registros_estimados_hoje() - reg_antes}
 
     linhas: list[str] = []
 
@@ -370,7 +370,7 @@ async def atualizar_caixa(forcar: bool = False, automatico: bool = False) -> dic
     _caixa["resultado"] = {k: res.get(k) for k in ("total_caixa", "processados", "pulados", "concluidos")}
     return {"ok": not erros, "mudou": True, "quando": _caixa["quando"], "mudou_em": _caixa["mudou_em"],
             "resultado": _caixa["resultado"],
-            "erros": erros[:5], "registros_gastos": sis2.consumo_hoje()["registros"] - reg_antes}
+            "erros": erros[:5], "registros_gastos": sis2.registros_estimados_hoje() - reg_antes}
 
 
 def estado() -> dict:
