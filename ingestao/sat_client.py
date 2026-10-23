@@ -1409,11 +1409,43 @@ async def _compilar_por_tipo(pasta_destino, salvos, reg):
                   f"({n_pag} pág., ordem de NB decrescente) → {destino.name}", "novo")
 
 
+# Consulta deixada aberta pelo LEVANTAMENTO (23/10/2026): o "Baixar mais" logo em
+# seguida, no mesmo CPF, segue na tela do cidadão que já está na janela do SAT —
+# sem nova consulta por CPF e sem novo CAPTCHA (menos requisições ao antirrobô).
+# Vale uma vez e por pouco tempo; se a tela não estiver mais lá, consulta normal.
+_CONSULTA_ABERTA = {"cpf": "", "ate": 0.0}
+_CONSULTA_VALIDADE_S = 15 * 60
+
+
+async def _reaproveitar_consulta(page, dig: str) -> bool:
+    if _CONSULTA_ABERTA["cpf"] != dig or time.monotonic() > _CONSULTA_ABERTA["ate"]:
+        return False
+    _CONSULTA_ABERTA.update(cpf="", ate=0.0)  # uma vez só
+    try:
+        if not _status_dict(page.url)["logado"]:
+            return False
+        with contextlib.suppress(Exception):
+            await _fechar_modal(page)
+        if not await page.evaluate(_JS_TEM_CONSULTAR):
+            return False
+        corpo = re.sub(r"\D", "", await page.evaluate("()=>document.body.innerText||''"))
+        return dig in corpo
+    except Exception:  # noqa: BLE001
+        return False
+
+
 async def _abrir_consulta_cpf(page, cpf: str, reg, out: dict):
     """Abre o SAT, confere a sessão e consulta o CPF (o usuário resolve o CAPTCHA
     na janela). `out["ok"]` = True quando os dados do cidadão aparecem; senão já
     gera o evento final (done) com o motivo."""
     out["ok"] = False
+    dig = "".join(c for c in cpf if c.isdigit())
+    if await _reaproveitar_consulta(page, dig):
+        with contextlib.suppress(Exception):
+            await page.bring_to_front()
+        yield reg("Reaproveitando a consulta do levantamento — sem nova consulta por CPF e sem CAPTCHA.", "ok")
+        out["ok"] = True
+        return
     with contextlib.suppress(Exception):
         await page.bring_to_front()
         await page.goto(SAT_CONSULTA, wait_until="domcontentloaded", timeout=60000)
@@ -1424,7 +1456,6 @@ async def _abrir_consulta_cpf(page, cpf: str, reg, out: dict):
         yield {"done": True, "resultado": {"ok": False,
                "detalhe": "Sessão do SAT expirada — clique em 'Abrir SAT / Login' e refaça o login."}}
         return
-    dig = "".join(c for c in cpf if c.isdigit())
     yield reg(f"Consultando o CPF {cpf}…", "novo")
     try:
         await page.click('[id="formFiltrosPF:txtCpf"]', timeout=10000)
@@ -1716,8 +1747,7 @@ async def levantar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                 status = {"sem_dados": "sem_dados", "indisponivel": "indisponivel"}.get(estado, "antirobo")
                 add(cfg["key"], "", status)
                 yield reg(f"  – {cfg['label']}: {status.replace('_', ' ')}", "muted")
-                await _ritmo(page)
-                continue
+                continue  # a pausa após a consulta já foi feita em _abrir_modal
             if cfg["tipo"] == "hiscre":
                 add(cfg["key"], "", "disponivel")
                 yield reg("  ✓ Histórico de Créditos: disponível", "ok")
@@ -1735,7 +1765,7 @@ async def levantar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                 yield reg(f"  ✓ {cfg['label']}: {n} benefício(s)", "ok" if n else "muted")
             with contextlib.suppress(Exception):
                 await _fechar_modal(page)
-            await _ritmo(page)
+            # sem _ritmo aqui: a pausa após a consulta já foi feita em _abrir_modal
 
         # PAT — todas as páginas
         out = {}
@@ -1778,10 +1808,13 @@ async def levantar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
             yield reg(f"  ✓ Tarefas PAT: {len(vistos)} tarefa(s)", "ok" if vistos else "muted")
 
         concluiu = True
+        _CONSULTA_ABERTA.update(cpf="".join(c for c in cpf if c.isdigit()),
+                                ate=time.monotonic() + _CONSULTA_VALIDADE_S)
         n_disp = sum(1 for it in itens if it["status"] == "disponivel")
         yield {"done": True, "resultado": {"ok": True, "detalhe":
                f"Levantamento concluído: {n_disp} documento(s) disponível(is) no SAT, "
-               f"além dos {len(_GRUPO1)} do Grupo 1 a verificar. Use \"Baixar mais\" para escolher."}}
+               f"além dos {len(_GRUPO1)} do Grupo 1 a verificar. Escolha no \"Baixar mais\" — a consulta "
+               f"fica aberta {_CONSULTA_VALIDADE_S // 60} min (sem novo CAPTCHA).", "consulta_aberta": True}}
     finally:
         with contextlib.suppress(Exception):
             import json as _json

@@ -182,8 +182,8 @@
                                 </td>
                                 <td class="text-right whitespace-nowrap">
                                     <button class="btn btn-sm btn-primary" :disabled="rodando || !p.cpf"
-                                            @click="p.n_arquivos > 0 ? abrirBaixarMais(p, 'pendente') : baixar(p)"
-                                            :title="!p.cpf ? 'Sem CPF do assistido — sincronize a caixa do SISDPU (dashboard) antes de baixar' : (p.n_arquivos > 0 ? 'Baixar mais documentos do SAT (escolher o que baixar) — junta ao acervo pendente' : 'Baixar os documentos do SAT Central')">
+                                            @click="(p.n_arquivos > 0 || p.levantamento_em) ? abrirBaixarMais(p, 'pendente') : baixar(p)"
+                                            :title="!p.cpf ? 'Sem CPF do assistido — sincronize a caixa do SISDPU (dashboard) antes de baixar' : (p.n_arquivos > 0 ? 'Baixar mais documentos do SAT (escolher o que baixar) — junta ao acervo pendente' : (p.levantamento_em ? 'Há levantamento do SAT: escolha o que baixar — só o selecionado é baixado' : 'Baixar os documentos do SAT Central'))">
                                         <span x-text="p.n_arquivos > 0 ? 'Baixar mais' : 'Baixar arquivos'"></span>
                                     </button>
                                     <div x-show="!p.cpf" class="text-[11px] text-warning mt-1">⚠ sem CPF — sincronize o PAJ</div>
@@ -199,7 +199,7 @@
                                         Docs do instituidor
                                     </button>
                                     <button x-show="((p.n_arquivos||0)+(p.n_instituidor||0)) > 0" class="btn btn-sm btn-outline ml-1" :disabled="rodando"
-                                            @click="processar(p)"
+                                            @click="abrirAnexar(p)"
                                             :title="'Anexa ao PAJ TODOS os documentos ativos na tabela (assistido + instituidor). ' + (grupoSel===NAO_TRAMITAR ? (p.manual ? 'Só movimenta (sem tramitar e sem concluir).' : 'Movimenta e conclui o trâmite (sem tramitar).') : (p.manual ? 'Movimenta → tramita (sem concluir — não há trâmite na caixa).' : 'Movimenta → tramita → conclui.'))">Anexar ao PAJ</button>
                                 </td>
                             </tr>
@@ -470,6 +470,12 @@
                 selecionados serão baixados e poderão ser anexados no botão <strong>"Anexar Mais"</strong>.
                 Você precisará resolver o CAPTCHA na janela do SAT.
             </p>
+            <div class="alert alert-success py-2 text-xs mb-3" x-show="bmAposLevantamento">
+                <span>
+                    Levantamento concluído. Marque o que baixar: o download segue na consulta que ficou aberta
+                    na janela do SAT — <strong>sem nova consulta e sem CAPTCHA</strong> (vale uma vez, por até 15 min).
+                </span>
+            </div>
             <p class="text-sm text-base-content/70 mb-3" x-show="bmModo === 'pendente'">
                 Nova consulta ao SAT para <strong x-text="bmAlvo && bmAlvo.assistido"></strong>. Os documentos
                 selecionados serão baixados e poderão ser anexados no botão <strong>"Anexar ao PAJ"</strong>.
@@ -541,6 +547,54 @@
     </div>
 
     <!-- Modal: Anexar Mais (anexação complementar num PAJ já concluído) -->
+    <!-- "Anexar ao PAJ": escolha da caixa de tramitação (e prazo) para ESTE PAJ.
+         Vem preenchido com a barra "Tramitar para" do alto da página. -->
+    <div class="modal" :class="{'modal-open': anxModal}">
+        <div class="modal-box max-w-2xl">
+            <h3 class="font-bold text-lg mb-1">Anexar ao PAJ — <span class="font-mono" x-text="anxAlvo && anxAlvo.paj"></span></h3>
+            <p class="text-sm text-base-content/70 mb-3">
+                Anexa (movimentação) todos os documentos ativos de <strong x-text="anxAlvo && anxAlvo.assistido"></strong>
+                e, se escolhida uma caixa, tramita o PAJ para ela.
+            </p>
+            <div class="text-sm font-medium mb-1">Tramitar para:</div>
+            <div class="flex items-center gap-2 flex-wrap mb-2">
+                <button class="btn btn-xs" :class="anxGrupo===NAO_TRAMITAR ? 'btn-primary' : 'btn-outline'"
+                        @click="anxGrupo=NAO_TRAMITAR">Não tramitar</button>
+                <template x-for="g in caixasRapidas()" :key="'anx#' + g">
+                    <button class="btn btn-xs" :class="anxGrupo===g ? 'btn-primary' : 'btn-outline'"
+                            @click="anxGrupo=g" x-text="g"></button>
+                </template>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap mb-3">
+                <span class="text-xs text-base-content/60">Outra caixa:</span>
+                <span x-show="carregandoGrupos" class="loading loading-spinner loading-xs"></span>
+                <select data-busca x-show="grupos.length" class="select select-bordered select-xs" x-model="anxGrupo">
+                    <option :value="NAO_TRAMITAR">— não tramitar —</option>
+                    <template x-for="g in grupos" :key="'anxo#' + g"><option :value="g" x-text="g" :selected="g===anxGrupo"></option></template>
+                </select>
+            </div>
+            <template x-if="anxGrupo!==NAO_TRAMITAR">
+                <div class="flex items-center gap-2 flex-wrap mb-3">
+                    <span class="text-sm font-medium mr-1">Prazo:</span>
+                    <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                        <input type="radio" class="sat-radio" :checked="!anxComPrazo" @change="anxComPrazo=false"> sem prazo
+                    </label>
+                    <label class="flex items-center gap-1.5 text-sm cursor-pointer">
+                        <input type="radio" class="sat-radio" :checked="anxComPrazo" @change="anxComPrazo=true"> em
+                        <input type="number" min="1" max="365" class="input input-bordered input-xs w-16"
+                               x-model.number="anxPrazoDias" @focus="anxComPrazo=true"> dias
+                    </label>
+                </div>
+            </template>
+            <div class="text-xs text-base-content/60" x-text="anxResumo()"></div>
+            <div class="modal-action">
+                <button class="btn btn-primary btn-sm" @click="confirmarAnexar()">Anexar</button>
+                <button class="btn btn-sm" @click="anxModal=false">Cancelar</button>
+            </div>
+        </div>
+        <div class="modal-backdrop" @click="anxModal=false"></div>
+    </div>
+
     <div class="modal" :class="{'modal-open': amModal}">
         <div class="modal-box max-w-[50vw]">
             <h3 class="font-bold text-lg mb-1">Anexar mais documentos — <span class="font-mono" x-text="amAlvo && amAlvo.paj"></span></h3>
@@ -798,6 +852,7 @@ function satPage() {
         NAO_TRAMITAR: '__nao_tramitar__',
         padrao: '01 - PREV_DIVPREV', grupoSel: '__nao_tramitar__',
         comPrazo: false, prazoDias: 15,
+        anxModal: false, anxAlvo: null, anxGrupo: '__nao_tramitar__', anxComPrazo: false, anxPrazoDias: 15,
         verificado: false,
         manualPaj: '', addingManual: false, manualMsg: '', manualMsgErro: false,
         carregando: false, carregandoGrupos: false, rodando: false,
@@ -814,7 +869,7 @@ function satPage() {
         tiposInstituidor: null, tiposInstituidorDefault: [],
         patIgnorarModal: false, patIgnorar: [], patIgnorarNovo: '', patIgnorarMsg: '',
         instModal: false, instCpf: '', instNome: '', instAlvo: null,
-        bmInterrompido: null, bmLevantamento: null,
+        bmInterrompido: null, bmLevantamento: null, bmAposLevantamento: false,
         baixarMaisModal: false, bmAlvo: null, bmCpfPorEscopo: { assistido: '', instituidor: '' }, bmSel: [], bmLista: [], bmCarregando: false, bmModo: 'concluido', bmSemInventario: false,
         amModal: false, amAlvo: null, amLista: [], amSel: [], amCarregando: false,
         menuAbertoPaj: null,
@@ -899,6 +954,7 @@ function satPage() {
             this.bmAlvo = r; this.bmSel = []; this.bmLista = [];
             this.bmCpfPorEscopo = { assistido: r.cpf || '', instituidor: '' };
             this.bmSemInventario = false; this.bmInterrompido = null; this.bmLevantamento = null;
+            this.bmAposLevantamento = false;
             this.baixarMaisModal = true; this.bmCarregando = true;
             try {
                 const j = await (await fetch(`/api/sat/${encodeURIComponent(r.paj_norm)}/inventario`)).json();
@@ -1492,9 +1548,16 @@ function satPage() {
                 es.addEventListener('log', (ev) => { try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {} });
                 es.addEventListener('done', async (ev) => {
                     let res = {}; try { res = JSON.parse(ev.data); } catch (e) {}
-                    this.sseStatus = res.ok ? '— levantamento concluído ✓ (use "Baixar mais")' : '— levantamento incompleto';
+                    this.sseStatus = res.ok ? '— levantamento concluído ✓' : '— levantamento incompleto';
                     this.sseFechavel = true; this.rodando = false; es.close(); this._es = null;
-                    this.recarregar();
+                    if (res.ok && res.consulta_aberta) {
+                        // segue direto para a escolha — o download aproveita a consulta aberta
+                        this.sseAberto = false;
+                        await this.abrirBaixarMais(p, 'pendente');
+                        this.bmAposLevantamento = true;
+                    } else {
+                        this.recarregar();
+                    }
                     resolve(res);
                 });
                 es.onerror = () => {
@@ -1524,15 +1587,38 @@ function satPage() {
             p.tem_log = false; p.tem_falha = false;
             return this.baixar(p);
         },
-        async processar(p) {
+        abrirAnexar(p) {
+            if (this.rodando) return;
+            this.anxAlvo = p;
+            this.anxGrupo = this.grupoSel; this.anxComPrazo = this.comPrazo; this.anxPrazoDias = this.prazoDias;
+            this.anxModal = true;
+            if (!this.grupos.length && !this.carregandoGrupos) this.carregarGrupos();
+        },
+        anxResumo() {
+            const p = this.anxAlvo || {};
+            if (this.anxGrupo === this.NAO_TRAMITAR)
+                return p.manual ? 'Só movimenta (sem tramitar e sem concluir).' : 'Movimenta e conclui o trâmite (sem tramitar).';
+            const prazo = this.anxComPrazo ? ` com prazo de ${this.anxPrazoDias || 0} dia(s)` : ' sem prazo';
+            return p.manual ? `Movimenta → tramita para ${this.anxGrupo}${prazo} (sem concluir — não há trâmite na caixa).`
+                            : `Movimenta → tramita para ${this.anxGrupo}${prazo} → conclui.`;
+        },
+        confirmarAnexar() {
+            const p = this.anxAlvo;
+            if (!p) return;
+            this.anxModal = false;
+            return this.processar(p, { grupo: this.anxGrupo, prazo: this.anxComPrazo ? (this.anxPrazoDias || 0) : 0 });
+        },
+        async processar(p, escolha = null) {
             if (this.rodando) return;
             if (window.garantirCofre && !(await window.garantirCofre())) return;
+            const grupo = escolha ? escolha.grupo : this.grupoSel;
+            const prazo = escolha ? escolha.prazo : (this.comPrazo ? (this.prazoDias || 0) : 0);
             return new Promise((resolve) => {
                 this.rodando = true; this.sseTipo = 'processar';
                 this.sseLog = []; this.sseStatus = '— em andamento'; this.sseFechavel = false; this.sseAberto = true;
                 const url = `/api/sat/${encodeURIComponent(p.paj_norm)}/processar`
-                    + `?grupo=${encodeURIComponent(this.grupoSel)}`
-                    + `&prazo=${this.comPrazo ? (this.prazoDias || 0) : 0}`
+                    + `?grupo=${encodeURIComponent(grupo)}`
+                    + `&prazo=${prazo}`
                     + `&manual=${p.manual ? 1 : 0}`;
                 const es = new EventSource(url); this._es = es;
                 es.addEventListener('log', (ev) => {
