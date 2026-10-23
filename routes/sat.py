@@ -487,10 +487,8 @@ async def api_grupos(id: str = ""):
     """Lista caixas de grupo da unidade. `id` = id_processo de referência p/ abrir a
     tela de tramitação; se ausente, usa o de uma pendência. As caixas frequentes
     (badges de clique rápido) vêm de /api/config/sisdpu, não daqui."""
-    id_processo = id
-    if not id_processo:
-        pend = await sat_service.listar_pendentes()
-        itens = pend.get("itens", []) if isinstance(pend, dict) else []
-        id_processo = next((i.get("id_processo") for i in itens if i.get("id_processo")), "")
-    grupos = await movtram.listar_grupos_unidade(id_processo) if id_processo else []
+    if id and not sat_service._fonte_mcp():
+        grupos = await movtram.listar_grupos_unidade(id)
+    else:
+        grupos = await sat_service.listar_grupos()  # MCP: catálogo de destinos
     return JSONResponse({"grupos": grupos, "padrao": sat_service.GRUPO_PADRAO})

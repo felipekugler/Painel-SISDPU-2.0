@@ -928,9 +928,10 @@ async def registrar_pos_execucao_sisdpu(paj_norm: str, resultado: dict) -> dict:
             outros_abertos = None  # None = nao foi possivel confirmar (nao decide)
             if id_processo:
                 from ingestao import sisdpu_movtram
+                from ingestao.sisdpu2_fonte import ProxyFonte
 
                 try:
-                    outros_abertos = await sisdpu_movtram.caixas_abertas_paj(id_processo)
+                    outros_abertos = await ProxyFonte(sisdpu_movtram).caixas_abertas_paj(id_processo)
                 except Exception:  # noqa: BLE001
                     outros_abertos = None
 

@@ -588,11 +588,14 @@ async def add_paj_manual(texto: str) -> dict:
         return {"ok": False, "erro": f"Número de PAJ inválido: '{texto}'. Use AAAA/UUU-NNNNN."}
     paj_norm, ano, uni, num = parsed
     numero = f"{ano}/{uni}-{num}"
-    from ingestao import sisdpu_client as _sc
     try:
-        # forcar_sessao=False: reaproveita a sessão viva (login automático só se expirou),
-        # em vez de fechar e relogar do zero a cada inclusão (que era lento e frágil).
-        dados = await _sc.buscar_paj_global(num, ano, uni, forcar_sessao=False)
+        if _fonte_mcp():
+            dados = await _ler_paj_mcp(num, ano, uni)
+        else:
+            from ingestao import sisdpu_client as _sc
+            # forcar_sessao=False: reaproveita a sessão viva (login automático só se expirou),
+            # em vez de fechar e relogar do zero a cada inclusão (que era lento e frágil).
+            dados = await _sc.buscar_paj_global(num, ano, uni, forcar_sessao=False)
     except Exception as e:  # noqa: BLE001
         return {"ok": False, "erro": f"Falha na autenticação/consulta ao SISDPU: {e}. "
                                      f"Verifique as credenciais do SISDPU nas Configurações."}
@@ -716,11 +719,65 @@ def listar_pendentes_manuais() -> dict:
 # ---------------------------------------------------------------------------
 # listagem de pendências (para a tabela)
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Leituras do SISDPU: pelo MCP do SIS-DPU 2.0 quando ele é a fonte de dados
+# (Configurações › SISDPU › Fonte de dados); senão, pelo navegador (legado).
+# Gravações: movimentar/tramitar já escolhem a fonte em sisdpu_movtram;
+# concluir trâmite segue no navegador (o servidor MCP não tem essa operação).
+# ---------------------------------------------------------------------------
+def _fonte_mcp() -> bool:
+    from ingestao import sisdpu2_fonte
+    return sisdpu2_fonte.fonte_mcp_ativa()
+
+
+async def _caixa_estruturada() -> dict:
+    if _fonte_mcp():
+        from ingestao import sisdpu2_fonte
+        return await sisdpu2_fonte.listar_caixa_estruturada()
+    return await movtram.listar_caixa_estruturada()
+
+
+async def _ler_paj_mcp(numero: str, ano: str, unidade: str) -> dict:
+    """Capa do PAJ pelo MCP, SEM o histórico de movimentações (modo "caixa" —
+    poucos registros da cota): basta para CPF, assistido, pretensão e narrativa."""
+    from ingestao import sisdpu2_fonte
+    t = sisdpu2_fonte.MODO.set("caixa")
+    try:
+        return await sisdpu2_fonte.buscar_paj_global(numero, ano, unidade)
+    finally:
+        sisdpu2_fonte.MODO.reset(t)
+
+
+async def _detalhes_paj(item: dict) -> dict:
+    """{cpf, pretensao, assistido, narrativa} de um PAJ da caixa ainda não sincronizado."""
+    if _fonte_mcp():
+        m = re.match(r"(\d{4})/(\d{3})-(\d+)", item.get("paj", "") or "")
+        if not m:
+            return {}
+        det = await _ler_paj_mcp(m.group(3), m.group(1), m.group(2))
+        if not isinstance(det, dict) or det.get("erro"):
+            return {}
+        return {"cpf": det.get("cpf_assistido", ""), "pretensao": det.get("pretensao", ""),
+                "assistido": det.get("assistido", ""), "narrativa": det.get("narrativa", "")}
+    return await movtram.detalhes_paj(item.get("url_detalhe", ""))
+
+
+async def listar_grupos() -> list[str]:
+    """Caixas de grupo para onde o PAJ pode ser tramitado."""
+    if _fonte_mcp():
+        from ingestao import sisdpu2_movtram
+        return await sisdpu2_movtram.listar_grupos_destino()
+    pend = await listar_pendentes()
+    itens = pend.get("itens", []) if isinstance(pend, dict) else []
+    id_processo = next((i.get("id_processo") for i in itens if i.get("id_processo")), "")
+    return await movtram.listar_grupos_unidade(id_processo) if id_processo else []
+
+
 async def listar_pendentes() -> dict:
     """Lê a caixa de entrada do usuário e devolve os PAJs cujo trâmite tem a descrição
     de juntada dos documentos do SAT Central. Cruza CPF/nome do metadata e conta os
     PDFs já baixados. Retorna {ok, itens, detalhe}."""
-    caixa = await movtram.listar_caixa_estruturada()
+    caixa = await _caixa_estruturada()
     caixa_ok = bool(caixa.get("ok"))
     alvo = DESCRICAO_ALVO
     itens = []
@@ -755,7 +812,7 @@ async def listar_pendentes() -> dict:
         # FALLBACK: PAJ ainda NÃO sincronizado (sem metadata) → sem CPF/pretensão local.
         # Busca direto no detalhamento do PAJ, na mesma sessão headless.
         if not item["cpf"] and item["url_detalhe"]:
-            det = await movtram.detalhes_paj(item["url_detalhe"])
+            det = await _detalhes_paj(item)
             if det.get("cpf"):
                 item["cpf"] = det["cpf"].strip()
             if not item["pretensao"] and det.get("pretensao"):
@@ -845,7 +902,7 @@ async def processar_paj_stream(
                     f"id_processo={id_proc} — vai movimentar e tramitar, SEM conclusão")
     else:
         yield _ev("info", "Localizando o trâmite na caixa de entrada...")
-        caixa = await movtram.listar_caixa_estruturada()
+        caixa = await _caixa_estruturada()
         if not caixa.get("ok"):
             yield passo("Leitura da caixa", False, caixa.get("detalhe", ""))
             yield {"done": True, "resultado": {"ok": False, "status": "falha", "detalhe": caixa.get("detalhe", "")}}

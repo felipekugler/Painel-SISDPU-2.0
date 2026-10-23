@@ -84,9 +84,12 @@ async def set_config_sisdpu(request: Request):
 @router.post("/api/config/sisdpu/importar", response_class=JSONResponse)
 async def importar_config_sisdpu():
     """Importa do SISDPU a lista COMPLETA de fases de movimentação e caixas de
-    tramitação (navegação Playwright) e cacheia em painel_config.json."""
-    from ingestao import sisdpu_movtram as movtram
+    tramitação (MCP do SIS-DPU 2.0 ou navegador, conforme a fonte de dados) e
+    cacheia em painel_config.json."""
+    from ingestao import sisdpu_movtram
+    from ingestao.sisdpu2_fonte import ProxyFonte
     from services import retornos_service
+    movtram = ProxyFonte(sisdpu_movtram)
     idp = await retornos_service.algum_id_processo()
     if not idp:
         return JSONResponse(

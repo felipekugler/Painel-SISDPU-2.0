@@ -603,6 +603,35 @@ async def caixas_e_historico_paj(id_processo: str, limite: int = 10) -> dict:
         return {"ok": False, "abertas": [], "tramitacoes": [], "erro": f"SIS-DPU 2.0: {e}"}
 
 
+async def caixas_abertas_paj(id_processo: str) -> list[dict]:
+    """Mesmo retorno de sisdpu_movtram.caixas_abertas_paj (onde o PAJ está aberto
+    agora). Falha LEVANTA erro — nunca devolve [] por engano ("não está aberto em
+    lugar nenhum" decide conclusões em paj_service)."""
+    if not id_processo:
+        return []
+    r = await caixas_e_historico_paj(id_processo, limite=20)
+    if not r.get("ok"):
+        raise RuntimeError(r.get("erro") or "SIS-DPU 2.0 não devolveu o histórico de trâmites.")
+    return r.get("abertas") or []
+
+
+async def listar_grupos_unidade(id_processo: str = "") -> list[str]:
+    """Caixas de grupo para tramitação (catálogo `tramite_destinos`; não precisa de PAJ)."""
+    from ingestao import sisdpu2_movtram
+    return await sisdpu2_movtram.listar_grupos_destino()
+
+
+async def listar_fases_movimentacao(id_processo: str) -> list[str]:
+    """Todas as fases de movimentação (catálogo `movimentacao_opcoes` do PAJ)."""
+    if not id_processo:
+        return []
+    from ingestao import sisdpu2_movtram
+    op = await asyncio.to_thread(sisdpu2_movtram._catalogo, "movimentacao_opcoes", {"idProcesso": int(id_processo)})
+    fases = (op or {}).get("todasFases") or (op or {}).get("fasesMaisUtilizadas") or []
+    nomes = [str(x.get("descricao") or "").strip() for x in fases]
+    return list(dict.fromkeys(n for n in nomes if n))
+
+
 # ---------------------------------------------------------------------------
 # Download dos arquivos originais (documento_baixar)
 # ---------------------------------------------------------------------------
@@ -761,4 +790,6 @@ _SUBSTITUIDAS = {
     "movimentacoes_paj", "buscar_paj_global", "abrir_detalhamento_paj",
     "extrair_documentos_por_seq", "reconectar", "_ensure_logged_in",
     "baixar_todos_arquivos",
+    # leituras de trâmites/catálogos (Retornos, Configurações, conclusão — 23/10/2026)
+    "caixas_abertas_paj", "listar_grupos_unidade", "listar_fases_movimentacao",
 }

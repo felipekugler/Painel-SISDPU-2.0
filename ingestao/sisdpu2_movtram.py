@@ -408,6 +408,17 @@ async def tramitar_paj(pajs: list[dict], grupo: Optional[str] = None, usuarios: 
                 "detalhe": f"SIS-DPU 2.0: {e}" + ("" if "NADA foi gravado" in str(e) else " — CONFIRA no PAJ antes de repetir.")}
 
 
+async def listar_grupos_destino() -> list[str]:
+    """Nomes das caixas de grupo para tramitação (mesma lista que `tramitar_paj`
+    casa pelo nome) — catálogo `tramite_destinos`, guardado por 4 h."""
+    destinos = await asyncio.to_thread(_catalogo, "tramite_destinos", {})
+    lista = destinos if isinstance(destinos, list) else (destinos or {}).get("itens") or (destinos or {}).get("grupos") or []
+    if not lista:
+        return []
+    campo = "descricao" if "descricao" in lista[0] else "nome"
+    return [str(g.get(campo)).strip() for g in lista if str(g.get(campo) or "").strip()]
+
+
 def ativo() -> bool:
     from ingestao import sisdpu2_fonte
     return sisdpu2_fonte.fonte_mcp_ativa()

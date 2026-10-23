@@ -29,6 +29,13 @@ from typing import Any, AsyncIterator
 import config
 from ingestao import sisdpu_client
 from ingestao import sisdpu_movtram as movtram
+from ingestao.sisdpu2_fonte import ProxyFonte
+
+# Fonte de dados trocável (Configurações › SISDPU › Fonte de dados), como no
+# sincronizador: com "mcp", caixa, detalhe do PAJ e trâmites abertos vêm do MCP
+# do SIS-DPU 2.0; o resto (e concluir trâmite) segue no legado.
+sisdpu_client = ProxyFonte(sisdpu_client)
+movtram = ProxyFonte(movtram)
 from services import historico_painel, retornos_ia
 from services.acoes_sisdpu_service import com_auto_reconexao as _com_auto_reconexao
 
@@ -351,10 +358,14 @@ async def _detalhar(paj: str) -> dict:
     numero, ano, unidade = _paj_partes(paj)
     if not numero:
         return {}
+    from ingestao import sisdpu2_fonte
+    t = sisdpu2_fonte.MODO.set("paj")  # MCP: só as movimentações novas (incremental)
     try:
         det = await sisdpu_client.movimentacoes_paj(numero, ano, unidade, esperas_curtas=True)
     except Exception:  # noqa: BLE001
         det = {}
+    finally:
+        sisdpu2_fonte.MODO.reset(t)
     if not isinstance(det, dict) or det.get("erro"):
         return {}
     return det
