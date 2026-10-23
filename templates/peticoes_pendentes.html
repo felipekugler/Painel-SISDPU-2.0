@@ -125,7 +125,7 @@
             <div x-data="acoesEprocBlock({
                      processos: [{ numero: numeroConfirmado }],
                      paj: pajLabelAtual || numeroConfirmado, pajNorm: pajNormAtual,
-                     aberto: true,
+                     aberto: true, prazoInicial: prazoInicial,
                  })" x-init="init()">
               {% include "partials/acoes_eproc.html" %}
             </div>
@@ -146,7 +146,7 @@ function peticoesPendentesApp() {
   return {
     itens: [], carregando: false,
     modalNovoAberto: false,
-    numeroDigitado: '', numeroConfirmado: '', pajNormAtual: '', pajLabelAtual: '', erroNumero: '',
+    numeroDigitado: '', numeroConfirmado: '', pajNormAtual: '', pajLabelAtual: '', erroNumero: '', prazoInicial: null,
     async init() {
       await this.carregar();
       // "Movimentar no eproc" no minimenu do número do processo (dashboard,
@@ -158,6 +158,9 @@ function peticoesPendentesApp() {
       const params = new URLSearchParams(window.location.search);
       const novoProcesso = params.get('novo_processo');
       if (novoProcesso) {
+        // Prazo a já vir marcado (botão "Peticionar" da página de Prazos).
+        this.prazoInicial = params.get('prazo_evento')
+          ? { evento: params.get('prazo_evento'), prazo_dias: params.get('prazo_dias') || '' } : null;
         this.abrirModalNovo({
           processo: novoProcesso,
           paj_norm_vinculado: params.get('paj_norm') || '',

@@ -2089,12 +2089,18 @@ function _avisarSoTrf4(numero) {
     return true;
 }
 
-function movimentarNoEproc(numeroProcesso, pajNorm, pajLabel) {
+function movimentarNoEproc(numeroProcesso, pajNorm, pajLabel, prazo) {
     if (!numeroProcesso) return;
     if (_avisarSoTrf4(numeroProcesso)) return;
     const qs = new URLSearchParams({ novo_processo: numeroProcesso });
     if (pajNorm) qs.set('paj_norm', pajNorm);
     if (pajLabel) qs.set('paj_label', pajLabel);
+    // `prazo` (opcional, {evento, prazo_dias}): o prazo já vem marcado em
+    // "Selecione o(s) prazo(s)" — botão "Peticionar" da página de Prazos (23/10/2026).
+    if (prazo && prazo.evento) {
+        qs.set('prazo_evento', prazo.evento);
+        if (prazo.prazo_dias) qs.set('prazo_dias', prazo.prazo_dias);
+    }
     window.location.href = '/peticoes-pendentes?' + qs.toString();
 }
 

@@ -47,6 +47,10 @@ function acoesEprocBlock(cfg) {
         processos: cfg.processos || [],
         paj: cfg.paj || '',
         pajNorm: cfg.pajNorm || '',
+        // Prazo a já vir MARCADO em "Selecione o(s) prazo(s)" — {evento, prazo_dias}
+        // (botão "Peticionar" da página de Prazos, 23/10/2026). Soma ao que o
+        // rascunho já tiver marcado; não desmarca nada.
+        prazoInicial: cfg.prazoInicial || null,
         // Processo judicial escolhido para a ação (relevante só quando o PAJ tem
         // MAIS DE UM vinculado — evita movimentar/peticionar no processo errado).
         // Com só 1 (ou 0), fica vazio e carregarPrazos() usa todos os vinculados.
@@ -252,6 +256,7 @@ function acoesEprocBlock(cfg) {
             // passar como valorInicial já na criação do Quill.
             if (!this.rascunhoCarregado) await this.carregarRascunho();
             if (!this.prazosCarregados) await this.carregarPrazos();
+            this._aplicarPrazoInicial();
             if (!this.docsCarregados) await this.carregarDocsPaj();
             if (this.processos.length > 1) this.carregarClassesProcessos();  // não bloqueia — enche o rótulo quando chegar
             // Trava síncrona ANTES do primeiro `await` (mesmo motivo/padrão do
@@ -271,8 +276,27 @@ function acoesEprocBlock(cfg) {
         // Carrega o rascunho salvo do PAJ (se houver) — evento, prazos marcados,
         // texto da petição e anexos (ver `gravarRascunho`). Roda uma vez por
         // abertura do console; silencioso se não houver rascunho ou a chamada falhar.
+        // `prazoInicial` (botão "Peticionar" da página de Prazos): marca o prazo
+        // quando os prazos E o rascunho já foram lidos — init() roda duas vezes
+        // e a leitura do rascunho, se terminar depois, sobrescrevia a seleção.
+        _aplicarPrazoInicial() {
+            const alvo = this.prazoInicial;
+            if (!alvo || !this._rascunhoLido || !this.prazosCarregados || this.carregandoPrazos) return;
+            const p = (this.prazos || []).find((x) => String(x.evento || '') === String(alvo.evento || '')
+                && String(x.prazo_dias || '') === String(alvo.prazo_dias || ''));
+            if (p) this.prazosSelecionados = { ...this.prazosSelecionados, [p.id]: true };
+            this.prazoInicial = null;
+        },
         async carregarRascunho() {
             this.rascunhoCarregado = true;
+            try {
+                await this._lerRascunho();
+            } finally {
+                this._rascunhoLido = true;
+                this._aplicarPrazoInicial();
+            }
+        },
+        async _lerRascunho() {
             if (!this.chaveRascunho()) return;
             try {
                 const j = await (await fetch('/api/acoes-eproc/rascunho/' + encodeURIComponent(this.chaveRascunho()))).json();
