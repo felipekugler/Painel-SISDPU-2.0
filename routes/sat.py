@@ -383,7 +383,8 @@ async def _stream_baixar_complementar(paj_norm: str, cpf: str, nome: str, delay:
     paths = sat_service._escopo_paths(paj_norm, escopo)
     pasta = paths["complementar"]
     with __import__("contextlib").suppress(Exception):
-        shutil.rmtree(pasta, ignore_errors=True)  # isola esta rodada
+        from services import exclusao_suave  # exclusão suave (Lixeira, fora do processo do painel) — services/exclusao_suave.py, 23/10/2026
+        exclusao_suave.apagar_pasta(pasta, "sat:complementar")  # isola esta rodada
     alvos = [a for a in (alvos_csv or "").split(",") if a] or None  # "key|sub"
     tipos = sorted({a.split("|", 1)[0] for a in alvos}) if alvos else None
     # acervo = pasta do escopo (principal/instituidor): verificação prévia pula o que já foi
@@ -438,6 +439,39 @@ async def mesclar_complementar(paj_norm: str, escopo: str = "assistido"):
     do escopo (assistido → principal; instituidor → 'Instituidor') e mescla o log/inventário
     — SEM movimentação. Os arquivos entram no acervo para a futura 'Anexar ao PAJ'."""
     return JSONResponse(sat_service.mesclar_complementar_pendente(paj_norm, escopo))
+
+
+@router.post("/api/sat/{paj_norm}/reiniciar", response_class=JSONResponse)
+async def reiniciar_download(paj_norm: str):
+    """"Reiniciar download": apaga (para a Lixeira, pela exclusão suave) tudo o que
+    foi baixado/levantado do SAT para este PAJ pendente; o front recomeça o
+    download completo em seguida."""
+    return JSONResponse(sat_service.reiniciar_download(paj_norm))
+
+
+async def _stream_levantar(paj_norm: str, cpf: str, nome: str, delay: float, bloqueio: float,
+                           delay_max: float | None = None):
+    from ingestao import sat_client
+    pasta = str(sat_service.pasta_arquivos_sat(paj_norm))
+    try:
+        async for ev in sat_client.levantar_cidadao_stream(cpf, nome, pasta, delay_s=delay,
+                                                           bloqueio_s=bloqueio, delay_max_s=delay_max):
+            if ev.get("done"):
+                yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
+            else:
+                yield {"event": "log", "data": json.dumps(ev, ensure_ascii=False)}
+    except Exception as e:  # noqa: BLE001
+        yield {"event": "log", "data": json.dumps({"level": "erro", "msg": str(e)}, ensure_ascii=False)}
+        yield {"event": "done", "data": json.dumps({"ok": False, "detalhe": str(e)}, ensure_ascii=False)}
+
+
+@router.get("/api/sat/{paj_norm}/levantar")
+async def levantar(paj_norm: str, cpf: str, nome: str = "", delay: float = 5.0,
+                   bloqueio: float = 45.0, delay_max: float | None = None):
+    """SSE do LEVANTAMENTO: lista o que existe no SAT para o CPF, SEM baixar (o
+    usuário resolve o CAPTCHA na janela). Grava `_levantamento.json` na pasta do
+    PAJ; o "Baixar mais" passa a oferecer tudo o que foi encontrado."""
+    return EventSourceResponse(_stream_levantar(paj_norm, cpf, nome, delay, bloqueio, delay_max))
 
 
 @router.post("/api/sat/{paj_norm}/apagar-arquivos-sat", response_class=JSONResponse)

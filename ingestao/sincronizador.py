@@ -1333,21 +1333,22 @@ def _apagar_anexos_pasta(pasta: Path, log: Callable[[str], None]) -> tuple[int, 
     pasta_pecas = pasta / "Arquivos"
     if not pasta_pecas.exists() or not pasta_pecas.is_dir():
         return (0, 0)
-    removidos = 0
+    # exclusão suave (Lixeira, fora do processo do painel) — services/exclusao_suave.py, 23/10/2026: os anexos entram na fila da Lixeira e saem aos poucos, em lotes,
+    # por um processo auxiliar — antes eram apagados aqui, em rajada, a cada
+    # reconciliação automática (suspeita principal dos bloqueios do FortiEDR).
+    alvos = []
     bytes_lib = 0
     for f in list(pasta_pecas.iterdir()):
-        if not f.is_file():
-            continue
-        if f.suffix.lower() == ".txt":
+        if not f.is_file() or f.suffix.lower() == ".txt":
             continue  # preserva OCR companion
         try:
-            tam = f.stat().st_size
-            f.unlink()
-            removidos += 1
-            bytes_lib += tam
+            bytes_lib += f.stat().st_size
+            alvos.append(f)
         except Exception as e:
-            log(f"    [limpa] falha ao remover {f.name}: {type(e).__name__}: {e}")
-    return (removidos, bytes_lib)
+            log(f"    [limpa] falha ao ler {f.name}: {type(e).__name__}: {e}")
+    from services import exclusao_suave
+    exclusao_suave.apagar_arquivos(alvos, "reconciliacao-caixa")
+    return (len(alvos), bytes_lib)
 
 
 # Trâmites concluídos pelo painel nos últimos minutos: id_tramite -> monotonic.

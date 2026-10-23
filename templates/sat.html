@@ -168,6 +168,12 @@
                                         <span x-show="p.tem_falha" class="sat-falha-dot" @click.stop="verLogDownload(p)"
                                               title="Houve falha no último download — clique para ver o log"></span>
                                     </div>
+                                    <div x-show="p.interrompido" class="mt-1">
+                                        <span class="badge badge-warning badge-sm whitespace-nowrap cursor-pointer" @click.stop="verLogDownload(p)"
+                                              :title="'O download foi interrompido' + (p.interrompido && p.interrompido.key ? ' na etapa \'' + p.interrompido.key + '\'' : '') + '. O \'Baixar mais\' oferece o que não chegou a ser lido; \'Reiniciar download\' recomeça do zero.'">download interrompido</span>
+                                    </div>
+                                    <div x-show="p.levantamento_em" class="text-[11px] text-base-content/50 mt-1"
+                                         :title="'Levantamento completo do SAT em ' + (p.levantamento_em || '') + ' — o \'Baixar mais\' lista tudo o que existe para o CPF'">levantado ✓</div>
                                 </td>
                                 <td>
                                     <button x-show="p.tem_log || logsDownload[p.paj_norm]" class="btn btn-ghost btn-xs"
@@ -181,6 +187,12 @@
                                         <span x-text="p.n_arquivos > 0 ? 'Baixar mais' : 'Baixar arquivos'"></span>
                                     </button>
                                     <div x-show="!p.cpf" class="text-[11px] text-warning mt-1">⚠ sem CPF — sincronize o PAJ</div>
+                                    <button x-show="p.cpf" class="btn btn-sm btn-ghost ml-1" :disabled="rodando"
+                                            @click="levantar(p)"
+                                            title="Levantamento: lista tudo o que existe no SAT para o CPF, SEM baixar (CAPTCHA na janela do SAT). Depois, o 'Baixar mais' oferece todos os expedientes encontrados.">Levantamento</button>
+                                    <button x-show="p.n_arquivos > 0 || p.interrompido || p.levantamento_em" class="btn btn-sm btn-ghost ml-1 text-error" :disabled="rodando || !p.cpf"
+                                            @click="reiniciarDownload(p)"
+                                            title="Reiniciar download: manda para a Lixeira tudo o que foi baixado/levantado do SAT para este PAJ e recomeça o download completo">Reiniciar download</button>
                                     <button x-show="ehDerivada(p.pretensao)" class="btn btn-sm btn-outline ml-1" :disabled="rodando"
                                             @click="instAlvo=p; instCpf=''; instNome=''; instModal=true"
                                             title="Pensão por morte / auxílio-reclusão: baixar documentos do instituidor (2ª consulta, CPF do instituidor)">
@@ -463,6 +475,17 @@
                 selecionados serão baixados e poderão ser anexados no botão <strong>"Anexar ao PAJ"</strong>.
                 Você precisará resolver o CAPTCHA na janela do SAT.
             </p>
+            <div class="alert alert-warning py-2 text-xs mb-3" x-show="bmInterrompido && !bmSemInventario">
+                <span>
+                    O download deste PAJ foi <strong>interrompido</strong><span x-show="bmInterrompido && bmInterrompido.key" x-text="' na etapa \'' + ((bmInterrompido && bmInterrompido.key) || '') + '\''"></span>.
+                    Os tipos marcados <strong>(não lido)</strong> não chegaram a ser consultados — selecione-os para
+                    baixar todos os subitens. Para ver item a item o que existe, use <strong>"Levantamento"</strong>
+                    na linha do PAJ.
+                </span>
+            </div>
+            <div class="text-xs text-base-content/60 mb-2" x-show="bmLevantamento && bmLevantamento.completo">
+                Inclui o levantamento do SAT de <span x-text="bmLevantamento && bmLevantamento.ts"></span>.
+            </div>
             <div class="alert alert-warning py-2 text-xs mb-3" x-show="bmSemInventario">
                 <span>
                     Não há inventário do 1º download (interrompido ou sem log). A lista abaixo mostra os
@@ -791,6 +814,7 @@ function satPage() {
         tiposInstituidor: null, tiposInstituidorDefault: [],
         patIgnorarModal: false, patIgnorar: [], patIgnorarNovo: '', patIgnorarMsg: '',
         instModal: false, instCpf: '', instNome: '', instAlvo: null,
+        bmInterrompido: null, bmLevantamento: null,
         baixarMaisModal: false, bmAlvo: null, bmCpfPorEscopo: { assistido: '', instituidor: '' }, bmSel: [], bmLista: [], bmCarregando: false, bmModo: 'concluido', bmSemInventario: false,
         amModal: false, amAlvo: null, amLista: [], amSel: [], amCarregando: false,
         menuAbertoPaj: null,
@@ -874,11 +898,13 @@ function satPage() {
             this.bmModo = modo;
             this.bmAlvo = r; this.bmSel = []; this.bmLista = [];
             this.bmCpfPorEscopo = { assistido: r.cpf || '', instituidor: '' };
-            this.bmSemInventario = false;
+            this.bmSemInventario = false; this.bmInterrompido = null; this.bmLevantamento = null;
             this.baixarMaisModal = true; this.bmCarregando = true;
             try {
                 const j = await (await fetch(`/api/sat/${encodeURIComponent(r.paj_norm)}/inventario`)).json();
                 if (j.cpf) this.bmCpfPorEscopo.assistido = j.cpf;   // CPF vem do log de download
+                this.bmInterrompido = j.interrompido || null;
+                this.bmLevantamento = j.levantamento || null;
                 const tipos = j.tipos || [];
                 const secoes = [];
                 const itens = j.itens || [];
@@ -1011,8 +1037,10 @@ function satPage() {
                             // PAT: sempre mostrar tipo de serviço + protocolo
                             const svc = it.servico || 'Tarefa PAT';
                             label = svc + (it.sub ? (' — protocolo ' + it.sub) : '');
+                        } else if (it.status === 'nao_lido') {
+                            label = t.label + ' — todos';  // curinga "key|": baixa todos os subitens
                         } else {
-                            label = t.label + (it.sub ? (' — ' + it.sub) : '');
+                            label = t.label + (it.sub ? (' — ' + it.sub) : '') + (it.servico ? (' · ' + it.servico) : '');
                         }
                         rows.push({
                             alvo: it.key + '|' + (it.sub || ''),
@@ -1043,6 +1071,9 @@ function satPage() {
                 else if (row.status === 'nao_filtrado_nb') m.push('pulado - NB não indicado no filtro');
                 else if (row.status === 'nao_filtrado_protocolo') m.push('pulado - protocolo não indicado no filtro');
                 else if (row.status === 'ignorado') m.push('ignorado - espécie na lista de ignorados');
+                else if (row.status === 'nao_lido') m.push('não lido - download interrompido');
+                else if (row.status === 'disponivel') m.push('disponível no SAT (levantamento)');
+                else if (row.status === 'a_verificar') m.push('não listado no levantamento - baixa o que houver');
             }
             return m.join(' · ');
         },
@@ -1443,6 +1474,55 @@ function satPage() {
                     es.close(); this._es = null; resolve({ ok: false });
                 };
             });
+        },
+        async levantar(p) {
+            // Levantamento: lista o que existe no SAT para o CPF, SEM baixar.
+            if (this.rodando || !p.cpf) return;
+            if (!(await this.sessaoAtiva())) { this.naoLogadoModal = true; return; }
+            return new Promise((resolve) => {
+                this.rodando = true; this.sseTipo = 'download';
+                this.sseLog = []; this.sseStatus = '— levantando no SAT (sem baixar)'; this.sseFechavel = false; this.sseAberto = true;
+                const delay = Math.max(0, Number(this.tempoEntre) || 0);
+                const delayMax = Math.max(delay, Number(this.tempoEntreMax) || 0);
+                const bloqueio = Math.max(0, Number(this.esperaBloqueio) || 0);
+                const url = `/api/sat/${encodeURIComponent(p.paj_norm)}/levantar`
+                    + `?cpf=${encodeURIComponent(p.cpf)}&nome=${encodeURIComponent(p.assistido || '')}`
+                    + `&delay=${delay}&delay_max=${delayMax}&bloqueio=${bloqueio}`;
+                const es = new EventSource(url); this._es = es;
+                es.addEventListener('log', (ev) => { try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {} });
+                es.addEventListener('done', async (ev) => {
+                    let res = {}; try { res = JSON.parse(ev.data); } catch (e) {}
+                    this.sseStatus = res.ok ? '— levantamento concluído ✓ (use "Baixar mais")' : '— levantamento incompleto';
+                    this.sseFechavel = true; this.rodando = false; es.close(); this._es = null;
+                    this.recarregar();
+                    resolve(res);
+                });
+                es.onerror = () => {
+                    this.sseStatus = '— erro de conexão'; this.sseFechavel = true; this.rodando = false;
+                    es.close(); this._es = null; resolve({ ok: false });
+                };
+            });
+        },
+        async reiniciarDownload(p) {
+            // Zera o download do SAT deste PAJ pendente (pasta "Arquivos SAT" → Lixeira,
+            // pela exclusão suave) e recomeça o download completo.
+            if (this.rodando) return;
+            const ok = confirm(
+                `Reiniciar o download do SAT do PAJ ${p.paj} (${p.assistido || 'sem nome'})?\n\n` +
+                `Tudo o que foi baixado ou levantado do SAT para este PAJ (assistido, instituidor, ` +
+                `complementares, log) vai para a Lixeira do Windows, e o download completo recomeça ` +
+                `em seguida. Nada é alterado no SISDPU.`);
+            if (!ok) return;
+            try {
+                const j = await (await fetch(`/api/sat/${encodeURIComponent(p.paj_norm)}/reiniciar`, { method: 'POST' })).json();
+                if (!j.ok) { alert(j.detalhe || 'Não foi possível reiniciar.'); return; }
+            } catch (e) { alert('Erro de comunicação com o servidor.'); return; }
+            delete this.docsArquivos[p.paj_norm];
+            this.docsAbertos[p.paj_norm] = false;
+            delete this.logsDownload[p.paj_norm];
+            p.n_arquivos = 0; p.n_instituidor = 0; p.interrompido = null; p.levantamento_em = '';
+            p.tem_log = false; p.tem_falha = false;
+            return this.baixar(p);
         },
         async processar(p) {
             if (this.rodando) return;

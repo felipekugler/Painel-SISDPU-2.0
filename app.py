@@ -392,6 +392,16 @@ async def _startup_reconciliar_sessoes_interrompidas() -> None:
 
 
 @app.on_event("startup")
+async def _startup_exclusao_suave() -> None:
+    """Retoma a fila de exclusão suave (Lixeira, fora do processo do painel —
+    services/exclusao_suave.py)."""
+    with contextlib.suppress(Exception):
+        from services import exclusao_suave
+
+        exclusao_suave.iniciar()
+
+
+@app.on_event("startup")
 async def _startup_limpeza_docs_eproc() -> None:
     """Limpeza automática do cache de documentos baixados na página "Consultar
     processo" (dados/eproc_docs/) — mesmo espírito da rotação de logs

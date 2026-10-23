@@ -151,6 +151,9 @@ def limpar_documentos_antigos(dias: Optional[int] = None) -> dict[str, int]:
     pastas_removidas = 0
     if not EPROC_DOCS_DIR.exists():
         return {"removidos": 0, "bytes_liberados": 0, "pastas_removidas": 0}
+    # exclusão suave (Lixeira, fora do processo do painel) — services/exclusao_suave.py, 23/10/2026: os antigos vão para a fila da Lixeira; pasta de processo já
+    # vazia sai na partida seguinte.
+    alvos = []
     for pasta_npu in EPROC_DOCS_DIR.iterdir():
         if not pasta_npu.is_dir():
             continue
@@ -160,12 +163,13 @@ def limpar_documentos_antigos(dias: Optional[int] = None) -> dict[str, int]:
             with contextlib.suppress(OSError):
                 if f.stat().st_mtime < limite:
                     liberados += f.stat().st_size
-                    f.unlink()
-                    removidos += 1
+                    alvos.append(f)
         with contextlib.suppress(OSError):
             if not any(pasta_npu.iterdir()):
                 pasta_npu.rmdir()
                 pastas_removidas += 1
+    from services import exclusao_suave
+    removidos = exclusao_suave.apagar_arquivos(alvos, "eproc-docs-antigos")
     return {"removidos": removidos, "bytes_liberados": liberados, "pastas_removidas": pastas_removidas}
 
 
@@ -174,7 +178,8 @@ def limpar_todos_documentos() -> dict[str, int]:
     "Limpar tudo" das Configurações. Recria a pasta vazia em seguida."""
     st = status_documentos()
     if EPROC_DOCS_DIR.exists():
-        shutil.rmtree(EPROC_DOCS_DIR, ignore_errors=True)
+        from services import exclusao_suave  # exclusão suave (Lixeira, fora do processo do painel) — services/exclusao_suave.py, 23/10/2026
+        exclusao_suave.apagar_pasta(EPROC_DOCS_DIR, "eproc-docs-limpar-tudo")
     EPROC_DOCS_DIR.mkdir(parents=True, exist_ok=True)
     return {"removidos": st["arquivos"], "bytes_liberados": st["bytes"]}
 

@@ -513,6 +513,9 @@ _PASTA_ACERVO: str | None = None
 # para que uma interrupção (perda de conexão) sempre deixe o log/inventário parcial em disco.
 # Padrão do painel: todo log de rotina longa deve ser gravado incrementalmente.
 _LOG_PERSIST = None
+# Etapa em andamento (key do tipo de documento) — gravada no log quando o
+# download é interrompido (cancelamento, desconexão, erro) — 23/10/2026.
+_ETAPA_ATUAL = ""
 
 
 def _pat_ignorado(servico: str) -> bool:
@@ -1158,8 +1161,10 @@ async def _grupo2_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg, s
                          pretensao=""):
     """Baixa os documentos do Grupo 2 (cada um abre em modal). `sel` = keys selecionadas
     (None = todas). `pretensao` = filtra CCON/CRER por espécie relacionada."""
+    global _ETAPA_ATUAL
     yield reg("Baixando documentos do Grupo 2 (modais)…", "novo")
     for cfg in _GRUPO2:
+        _ETAPA_ATUAL = cfg["key"]
         if sel is not None and cfg["key"] not in sel:
             _inv_add(cfg["key"], "", "", "nao_selecionado")
             yield reg(f"  · {cfg['label']}: não baixado (desativado para esta pretensão)", "muted")
@@ -1238,8 +1243,8 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
 
     tmp = Path(pasta_destino) / "_pat_tmp"
     with contextlib.suppress(Exception):
-        import shutil as _sh
-        _sh.rmtree(tmp, ignore_errors=True)
+        from services import exclusao_suave  # exclusão suave (Lixeira, fora do processo do painel) — services/exclusao_suave.py, 23/10/2026
+        exclusao_suave.apagar_pasta(tmp, "sat:pat-tmp")
     tmp.mkdir(parents=True, exist_ok=True)
 
     mapa: dict[str, dict] = {}
@@ -1359,8 +1364,8 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
             pulados.append(f"PAT (dedup falhou: {e})")
             yield reg(f"  ✗ PAT: deduplicação/nomeação falhou: {e}", "erro")
     with contextlib.suppress(Exception):
-        import shutil as _sh
-        _sh.rmtree(tmp, ignore_errors=True)
+        from services import exclusao_suave  # exclusão suave (Lixeira, fora do processo do painel) — services/exclusao_suave.py, 23/10/2026
+        exclusao_suave.apagar_pasta(tmp, "sat:pat-tmp")
 
 
 # Tipos que podem ser compilados num único PDF (nome-base → prefixo do arquivo salvo).
@@ -1404,6 +1409,42 @@ async def _compilar_por_tipo(pasta_destino, salvos, reg):
                   f"({n_pag} pág., ordem de NB decrescente) → {destino.name}", "novo")
 
 
+async def _abrir_consulta_cpf(page, cpf: str, reg, out: dict):
+    """Abre o SAT, confere a sessão e consulta o CPF (o usuário resolve o CAPTCHA
+    na janela). `out["ok"]` = True quando os dados do cidadão aparecem; senão já
+    gera o evento final (done) com o motivo."""
+    out["ok"] = False
+    with contextlib.suppress(Exception):
+        await page.bring_to_front()
+        await page.goto(SAT_CONSULTA, wait_until="domcontentloaded", timeout=60000)
+        await page.wait_for_timeout(1000)
+    with contextlib.suppress(Exception):
+        await _preencher_2fa(page)  # resolve sozinho se a sessão caiu na tela de 2FA
+    if not _status_dict(page.url)["logado"]:
+        yield {"done": True, "resultado": {"ok": False,
+               "detalhe": "Sessão do SAT expirada — clique em 'Abrir SAT / Login' e refaça o login."}}
+        return
+    dig = "".join(c for c in cpf if c.isdigit())
+    yield reg(f"Consultando o CPF {cpf}…", "novo")
+    try:
+        await page.click('[id="formFiltrosPF:txtCpf"]', timeout=10000)
+        await page.fill('[id="formFiltrosPF:txtCpf"]', "")
+        await page.type('[id="formFiltrosPF:txtCpf"]', dig, delay=25)
+        await page.click('[id="formFiltrosPF:btnConsultarPF"]', timeout=10000)
+    except Exception as e:  # noqa: BLE001
+        yield {"done": True, "resultado": {"ok": False, "detalhe": f"Falha ao iniciar a consulta: {e}"}}
+        return
+    yield reg("⚠ Resolva o CAPTCHA na JANELA do SAT e clique em 'Enviar'. Aguardando… (até 3 min)", "info")
+    try:
+        await page.wait_for_function(_JS_TEM_CONSULTAR, timeout=180000)
+    except Exception:
+        yield {"done": True, "resultado": {"ok": False,
+               "detalhe": "Não detectei os dados do cidadão (CAPTCHA não resolvido a tempo?)."}}
+        return
+    await page.wait_for_timeout(800)
+    out["ok"] = True
+
+
 async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                                 delay_s: float = 5.0, bloqueio_s: float = 45.0,
                                 delay_max_s: float | None = None, tipos=None, pretensao="", rotulo="", alvos=None,
@@ -1426,6 +1467,9 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
     Gera eventos SSE; termina com {'done':True,'resultado':{...}}."""
     global _RITMO_MS, _RITMO_MAX_MS, _PAUSA_BLOQUEIO_MS, _ROTULO_ARQ, _INVENTARIO, _ALVOS
     global _NB_FILTRO, _PROTOCOLO_FILTRO, _SOMENTE_PAT, _COMPILAR, _COMPILAR_LIMIAR, _PAT_IGNORAR, _PASTA_ACERVO, _LOG_PERSIST
+    global _ETAPA_ATUAL
+    _ETAPA_ATUAL = ""
+    concluiu = False  # só True quando a rotina chega ao fim (ver `finally`)
     _RITMO_MS = max(0, int(float(delay_s) * 1000))
     _RITMO_MAX_MS = max(_RITMO_MS, int(float(delay_max_s if delay_max_s is not None else delay_s) * 1000))
     _PAUSA_BLOQUEIO_MS = max(0, int(float(bloqueio_s) * 1000))
@@ -1475,36 +1519,12 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
     browser, page = await _connect()
     ctx = page.context
     try:
-        with contextlib.suppress(Exception):
-            await page.bring_to_front()
-            await page.goto(SAT_CONSULTA, wait_until="domcontentloaded", timeout=60000)
-            await page.wait_for_timeout(1000)
-        with contextlib.suppress(Exception):
-            await _preencher_2fa(page)  # resolve sozinho se a sessão caiu na tela de 2FA
-        if not _status_dict(page.url)["logado"]:
-            yield {"done": True, "resultado": {"ok": False,
-                   "detalhe": "Sessão do SAT expirada — clique em 'Abrir SAT / Login' e refaça o login."}}
+        # --- sessão + consulta por CPF (CAPTCHA na janela) ---
+        out_c: dict = {}
+        async for ev in _abrir_consulta_cpf(page, cpf, reg, out_c):
+            yield ev
+        if not out_c.get("ok"):
             return
-
-        # --- consulta por CPF ---
-        dig = "".join(c for c in cpf if c.isdigit())
-        yield reg(f"Consultando o CPF {cpf}…", "novo")
-        try:
-            await page.click('[id="formFiltrosPF:txtCpf"]', timeout=10000)
-            await page.fill('[id="formFiltrosPF:txtCpf"]', "")
-            await page.type('[id="formFiltrosPF:txtCpf"]', dig, delay=25)
-            await page.click('[id="formFiltrosPF:btnConsultarPF"]', timeout=10000)
-        except Exception as e:  # noqa: BLE001
-            yield {"done": True, "resultado": {"ok": False, "detalhe": f"Falha ao iniciar a consulta: {e}"}}
-            return
-        yield reg("⚠ Resolva o CAPTCHA na JANELA do SAT e clique em 'Enviar'. Aguardando… (até 3 min)", "info")
-        try:
-            await page.wait_for_function(_JS_TEM_CONSULTAR, timeout=180000)
-        except Exception:
-            yield {"done": True, "resultado": {"ok": False,
-                   "detalhe": "Não detectei os dados do cidadão (CAPTCHA não resolvido a tempo?)."}}
-            return
-        await page.wait_for_timeout(800)
         if _SOMENTE_PAT:
             yield reg("Cidadão localizado. Opção \"Baixar exclusivamente processo "
                       "administrativo\" ativa — pulando Grupo 1 e Grupo 2, indo direto ao PAT.",
@@ -1514,6 +1534,7 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
 
         # --- Grupo 1 ---
         for label, prefixo, garantido, key in _GRUPO1:
+            _ETAPA_ATUAL = key
             if sel is not None and key not in sel:
                 _inv_add(key, "", "", "nao_selecionado")
                 if not _SOMENTE_PAT:
@@ -1597,6 +1618,7 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                 yield ev
 
         # --- PAT (2ª Via dos Processos) ---
+        _ETAPA_ATUAL = "pat"
         if sel is None or "pat" in sel:
             with contextlib.suppress(Exception):
                 await _fechar_modal(page)
@@ -1612,20 +1634,160 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                 yield ev
 
         det = f"{len(salvos)} documento(s) baixado(s)."
+        concluiu = True
         yield {"done": True, "resultado": {"ok": True, "detalhe": det,
                "salvos": salvos, "pulados": pulados, "pasta": pasta_destino}}
     finally:
         # Log já foi gravado INCREMENTALMENTE a cada documento; aqui grava a versão FINAL
         # (marcando parcial=False). Se a rotina foi interrompida (perda de conexão), o
         # parcial gravado no último _inv_add permanece em disco para permitir a retomada.
+        # Interrompido (cancelamento, desconexão, erro, sessão/CAPTCHA): marca
+        # `parcial` e `interrompido` (etapa em que parou) — o "Baixar mais" passa a
+        # oferecer o que não chegou a ser lido (sat_service.inventario_paj).
         with contextlib.suppress(Exception):
             import json as _json
+            final = {"ts": _ts_ini, "cpf": cpf, "nome": nome, "salvos": salvos,
+                     "pulados": pulados, "inventario": list(_INVENTARIO),
+                     "eventos": log_msgs, "parcial": not concluiu}
+            if not concluiu:
+                final["interrompido"] = {"key": _ETAPA_ATUAL,
+                                         "em": _dt.now().isoformat(timespec="seconds")}
             Path(pasta_destino, "_log_download.json").write_text(
-                _json.dumps({"ts": _ts_ini, "cpf": cpf, "nome": nome, "salvos": salvos,
-                             "pulados": pulados, "inventario": list(_INVENTARIO),
-                             "eventos": log_msgs, "parcial": False},
-                            ensure_ascii=False, indent=2), encoding="utf-8")
+                _json.dumps(final, ensure_ascii=False, indent=2), encoding="utf-8")
         _LOG_PERSIST = None  # desliga a persistência incremental desta rodada
         _PASTA_ACERVO = None
+        with contextlib.suppress(Exception):
+            await browser.close()
+
+
+# ---------------------------------------------------------------------------
+# LEVANTAMENTO (23/10/2026, pedido do Defensor): lista o que existe no SAT para
+# o CPF SEM BAIXAR — linhas de cada modal do Grupo 2 (benefícios por NB) e
+# todas as tarefas do PAT. Os documentos do Grupo 1 só revelam se existem ao
+# serem abertos, então ficam "a verificar". Grava `_levantamento.json` na pasta
+# do PAJ; o "Baixar mais" passa a oferecer tudo (sat_service.inventario_paj).
+# ---------------------------------------------------------------------------
+async def levantar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
+                                  delay_s: float = 5.0, bloqueio_s: float = 45.0,
+                                  delay_max_s: float | None = None):
+    global _RITMO_MS, _RITMO_MAX_MS, _PAUSA_BLOQUEIO_MS
+    _RITMO_MS = max(0, int(float(delay_s) * 1000))
+    _RITMO_MAX_MS = max(_RITMO_MS, int(float(delay_max_s if delay_max_s is not None else delay_s) * 1000))
+    _PAUSA_BLOQUEIO_MS = max(0, int(float(bloqueio_s) * 1000))
+    Path(pasta_destino).mkdir(parents=True, exist_ok=True)
+    from datetime import datetime as _dt
+    ts_ini = _dt.now().isoformat(timespec="seconds")
+    itens: list[dict] = []
+    log_msgs: list[dict] = []
+    concluiu = False
+
+    def reg(msg: str, level: str = "info") -> dict:
+        e = _ev(msg, level)
+        log_msgs.append(e)
+        return e
+
+    def add(key: str, sub: str, status: str, rotulo: str = "") -> None:
+        itens.append({"key": key, "sub": sub, "nome": "", "status": status, "rotulo": rotulo})
+
+    browser, page = await _connect()
+    try:
+        out_c: dict = {}
+        async for ev in _abrir_consulta_cpf(page, cpf, reg, out_c):
+            yield ev
+        if not out_c.get("ok"):
+            return
+        yield reg("Cidadão localizado. Levantando o que existe no SAT (nada é baixado)…", "ok")
+
+        for _label, _prefixo, _garantido, key in _GRUPO1:
+            add(key, "", "a_verificar")
+        yield reg(f"  · Grupo 1: {len(_GRUPO1)} documento(s) — só se confirma ao abrir (ficam \"a verificar\")",
+                  "muted")
+
+        for cfg in _GRUPO2:
+            with contextlib.suppress(Exception):
+                await _fechar_modal(page)
+            out: dict = {}
+            async for ev in _abrir_modal(page, cfg["label"], out, reg, nome_doc=cfg["label"],
+                                         alvo_norm=_norm(cfg.get("titulo") or cfg["label"]),
+                                         garantido=cfg.get("garantido", False)):
+                yield ev
+            estado = out.get("estado")
+            if estado != "modal":
+                status = {"sem_dados": "sem_dados", "indisponivel": "indisponivel"}.get(estado, "antirobo")
+                add(cfg["key"], "", status)
+                yield reg(f"  – {cfg['label']}: {status.replace('_', ' ')}", "muted")
+                await _ritmo(page)
+                continue
+            if cfg["tipo"] == "hiscre":
+                add(cfg["key"], "", "disponivel")
+                yield reg("  ✓ Histórico de Créditos: disponível", "ok")
+            else:
+                n = 0
+                for row in await page.evaluate(_JS_LINHAS_MODAL):
+                    nb = _achar_nb_row(row)
+                    if not nb:
+                        continue
+                    rot = " · ".join(x for x in (_achar_especie(row), _achar_situacao(row)) if x)
+                    add(cfg["key"], nb, "disponivel", rotulo=rot)
+                    n += 1
+                if not n:
+                    add(cfg["key"], "", "sem_dados")
+                yield reg(f"  ✓ {cfg['label']}: {n} benefício(s)", "ok" if n else "muted")
+            with contextlib.suppress(Exception):
+                await _fechar_modal(page)
+            await _ritmo(page)
+
+        # PAT — todas as páginas
+        out = {}
+        async for ev in _abrir_modal(page, "Tarefas PAT", out, reg, nome_doc="Tarefas PAT",
+                                     alvo_norm="tarefa", garantido=True):
+            yield ev
+        if out.get("estado") != "modal":
+            out = {}
+            async for ev in _abrir_modal(page, "Tarefas", out, reg, nome_doc="Tarefas PAT",
+                                         alvo_norm="tarefa", garantido=True):
+                yield ev
+        estado = out.get("estado")
+        if estado != "modal":
+            status = {"sem_dados": "sem_dados", "indisponivel": "indisponivel"}.get(estado, "antirobo")
+            add("pat", "", status)
+            yield reg(f"  – Tarefas PAT: {status.replace('_', ' ')}", "muted")
+        else:
+            vistos: set[str] = set()
+            pagina = 1
+            while True:
+                for row in await page.evaluate(_JS_LINHAS_MODAL):
+                    cells = _cells_dados(row)
+                    prot_i = next((k for k, c in enumerate(cells) if re.fullmatch(r"\d{6,}", c)), None)
+                    if prot_i is None or cells[prot_i] in vistos:
+                        continue
+                    vistos.add(cells[prot_i])
+                    servico = cells[prot_i + 1] if prot_i + 1 < len(cells) else ""
+                    add("pat", cells[prot_i], "disponivel", rotulo=servico)
+                if not await page.evaluate(_JS_PAG_PROX):
+                    break
+                pagina += 1
+                await _ritmo(page)
+                if pagina > 50:
+                    yield reg("  ⚠ PAT: >50 páginas — levantamento interrompido por segurança", "erro")
+                    break
+            with contextlib.suppress(Exception):
+                await _fechar_modal(page)
+            if not vistos:
+                add("pat", "", "sem_dados")
+            yield reg(f"  ✓ Tarefas PAT: {len(vistos)} tarefa(s)", "ok" if vistos else "muted")
+
+        concluiu = True
+        n_disp = sum(1 for it in itens if it["status"] == "disponivel")
+        yield {"done": True, "resultado": {"ok": True, "detalhe":
+               f"Levantamento concluído: {n_disp} documento(s) disponível(is) no SAT, "
+               f"além dos {len(_GRUPO1)} do Grupo 1 a verificar. Use \"Baixar mais\" para escolher."}}
+    finally:
+        with contextlib.suppress(Exception):
+            import json as _json
+            Path(pasta_destino, "_levantamento.json").write_text(
+                _json.dumps({"ts": ts_ini, "cpf": cpf, "nome": nome, "completo": concluiu,
+                             "itens": itens, "eventos": log_msgs}, ensure_ascii=False, indent=2),
+                encoding="utf-8")
         with contextlib.suppress(Exception):
             await browser.close()

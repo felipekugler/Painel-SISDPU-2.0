@@ -191,9 +191,9 @@ def processar_pat(pasta_temp, pasta_dest, mapa, prefixo='', nbs=None,
         grupos.setdefault((c['prot'], c['paginas']), []).append(f)
 
     def _apagar(arquivos):
-        for a in arquivos:
-            with __import__('contextlib').suppress(OSError):
-                os.remove(os.path.join(pasta_temp, a))
+        # exclusão suave — services/exclusao_suave.py, 23/10/2026: os descartados FICAM na pasta temporária (_pat_tmp), que vai
+        # inteira para a Lixeira no fim do PAT — nada é apagado arquivo a arquivo.
+        return None
 
     mantidos, descartados, pulados_prazo, pulados_nb = [], [], [], []
     for chave, arquivos in grupos.items():
@@ -233,7 +233,7 @@ def processar_pat(pasta_temp, pasta_dest, mapa, prefixo='', nbs=None,
         mantidos.append((principal, nome))
         for a in arquivos:
             if a != principal:
-                os.remove(os.path.join(pasta_temp, a))
+                # fica em _pat_tmp (vai para a Lixeira com a pasta — ver _apagar)
                 descartados.append((a, f'protocolo {mapa[a].get("protocolo","?")} '
                                        f'descartado — é subtarefa/duplicata do protocolo '
                                        f'principal {prot_int} ({servico})'))

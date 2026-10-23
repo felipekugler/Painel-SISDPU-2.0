@@ -120,7 +120,8 @@ def excluir_rascunho(paj_norm: str) -> dict:
         p.unlink()
     pasta = _rascunho_arquivos_dir(paj_norm)
     if pasta.exists():
-        shutil.rmtree(pasta, ignore_errors=True)
+        from services import exclusao_suave  # exclusão suave — services/exclusao_suave.py, 23/10/2026
+        exclusao_suave.apagar_pasta(pasta, "rascunho-acoes-eproc")
     return {"ok": True}
 
 

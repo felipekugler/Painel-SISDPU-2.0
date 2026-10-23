@@ -1307,17 +1307,18 @@ def limpar_anexos_paj(
         resultado["erro"] = "bloqueado por safeguards — passe forcar=True para override"
         return resultado
 
-    removidos = 0
+    # exclusão suave (Lixeira, fora do processo do painel) — services/exclusao_suave.py, 23/10/2026
+    alvos = []
     bytes_liberados = 0
     for a in arquivos_a_remover:
         caminho = pasta_pecas / a["nome"]
         try:
-            tam = caminho.stat().st_size
-            caminho.unlink()
-            removidos += 1
-            bytes_liberados += tam
+            bytes_liberados += caminho.stat().st_size
+            alvos.append(caminho)
         except Exception:
             pass
+    from services import exclusao_suave
+    removidos = exclusao_suave.apagar_arquivos(alvos, "limpeza-anexos-paj")
 
     resultado["removidos"] = removidos
     resultado["bytes_liberados"] = bytes_liberados

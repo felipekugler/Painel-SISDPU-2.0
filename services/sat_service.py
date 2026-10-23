@@ -261,6 +261,36 @@ def _pat_servico_map(d: dict) -> dict:
     return mapa
 
 
+def estado_download(paj_norm: str) -> dict:
+    """{interrompido: {key, em} | None, levantamento_em: str} — selos da tabela."""
+    pasta = pasta_arquivos_sat(paj_norm)
+    out = {"interrompido": None, "levantamento_em": ""}
+    with __import__("contextlib").suppress(Exception):
+        d = json.loads((pasta / "_log_download.json").read_text(encoding="utf-8"))
+        if d.get("parcial") and d.get("interrompido"):
+            out["interrompido"] = d["interrompido"]
+    with __import__("contextlib").suppress(Exception):
+        lev = json.loads((pasta / "_levantamento.json").read_text(encoding="utf-8"))
+        if lev.get("completo"):
+            out["levantamento_em"] = lev.get("ts", "")
+    return out
+
+
+def reiniciar_download(paj_norm: str) -> dict:
+    """"Reiniciar download" (23/10/2026): tira do lugar a pasta "Arquivos SAT" do
+    PAJ pendente — documentos, inventário, log e levantamento — para o download
+    recomeçar do zero. Vai para a Lixeira pela exclusão suave (fora do processo
+    do painel). Não mexe no SISDPU nem no histórico."""
+    from services import exclusao_suave
+    pasta = pasta_arquivos_sat(paj_norm)
+    if not pasta.exists():
+        return {"ok": True, "detalhe": "Não havia arquivos deste PAJ."}
+    if not exclusao_suave.apagar_pasta(pasta, "sat:reiniciar"):
+        return {"ok": False, "detalhe": "Não consegui liberar a pasta \"Arquivos SAT\" — feche arquivos "
+                                        "abertos dela e tente de novo."}
+    return {"ok": True, "detalhe": "Arquivos do SAT deste PAJ enviados para a Lixeira."}
+
+
 def inventario_paj(paj_norm: str, escopo: str = "assistido") -> dict:
     """Inventário dos documentos revelados no SAT (1º download) + marcas ja_baixado /
     ja_anexado. Usa `inventario` do log (novos) ou reconstrói de salvos/pulados (antigos).
@@ -269,14 +299,39 @@ def inventario_paj(paj_norm: str, escopo: str = "assistido") -> dict:
     pasta_base, listar_escopo = paths["destino"], paths["listar"]
     log_p = pasta_base / "_log_download.json"
     cpf, inv, pat_serv = "", [], {}
+    interrompido = None
     if os.path.isfile(str(log_p)):
         try:
             d = json.loads(log_p.read_text(encoding="utf-8"))
             cpf = d.get("cpf", "") or ""
             inv = d.get("inventario") or _inventario_de_log(d)
             pat_serv = _pat_servico_map(d)  # {protocolo: serviço} p/ rótulo do PAT
+            interrompido = d.get("interrompido") if d.get("parcial") else None
         except Exception:  # noqa: BLE001
             inv = []
+    # Levantamento (lista do SAT sem baixar — sat_client.levantar_cidadao_stream):
+    # o que ele revelou e o download ainda não registrou entra no inventário,
+    # para o "Baixar mais" oferecer TUDO o que existe para o CPF (23/10/2026).
+    lev = {}
+    with __import__("contextlib").suppress(Exception):
+        lev = json.loads((pasta_base / "_levantamento.json").read_text(encoding="utf-8"))
+    ja_no_inv = {(it.get("key", ""), it.get("sub", "")) for it in inv}
+    for it in lev.get("itens") or []:
+        chave = (it.get("key", ""), it.get("sub", ""))
+        if chave not in ja_no_inv:
+            inv.append(dict(it))
+            ja_no_inv.add(chave)
+    if not cpf:
+        cpf = lev.get("cpf", "") or ""
+    # Download interrompido (e sem levantamento completo): o que não chegou a ser
+    # lido não tem registro — oferece cada tipo não lido (e o da etapa em que parou)
+    # como "todos", o curinga "key|" do download complementar.
+    if interrompido and not lev.get("completo"):
+        from ingestao import sat_client as _sc
+        tipos_lidos = {it.get("key", "") for it in inv}
+        for k in _sc.TIPOS_KEYS:
+            if (k not in tipos_lidos or k == interrompido.get("key")) and (k, "") not in ja_no_inv:
+                inv.append({"key": k, "sub": "", "nome": "", "status": "nao_lido"})
     if not cpf and escopo == "assistido":
         cpf = _cpf_do_paj(paj_norm)
     # já anexados: nome -> conjunto de movs em que foi anexado, fazendo MERGE de todas as
@@ -340,7 +395,8 @@ def inventario_paj(paj_norm: str, escopo: str = "assistido") -> dict:
             "ja_anexado": bool(nome and nome in anexados),
             "anexado_movs": sorted(s for s in anexado_movs.get(nome, set()) if s is not None),
         })
-    return {"paj_norm": paj_norm, "cpf": cpf, "itens": itens}
+    return {"paj_norm": paj_norm, "cpf": cpf, "itens": itens, "interrompido": interrompido,
+            "levantamento": ({"ts": lev.get("ts", ""), "completo": bool(lev.get("completo"))} if lev else None)}
 
 
 def pasta_complementar(paj_norm: str) -> Path:
@@ -583,7 +639,8 @@ def del_paj_manual(paj_norm: str, apagar_arquivos: bool = True, registrar_histor
     pasta = pasta_arquivos_sat(paj_norm)  # SÓ a subpasta 'Arquivos SAT'
     tinha_arquivos = pasta.exists()
     if apagar_arquivos and tinha_arquivos:
-        shutil.rmtree(pasta, ignore_errors=True)
+        from services import exclusao_suave  # exclusão suave (Lixeira, fora do processo do painel) — services/exclusao_suave.py, 23/10/2026
+        exclusao_suave.apagar_pasta(pasta, "sat:paj-manual")
     if registrar_historico and mp:
         detalhe = ("PAJ removido manualmente da lista pelo usuário; os arquivos já "
                    "baixados do SAT foram excluídos." if tinha_arquivos else
@@ -616,7 +673,8 @@ def apagar_arquivos_sat_paj(paj_norm: str) -> dict:
     pasta = pasta_arquivos_sat(paj_norm)
     tinha_arquivos = pasta.exists()
     if tinha_arquivos:
-        shutil.rmtree(pasta, ignore_errors=True)
+        from services import exclusao_suave  # exclusão suave (Lixeira, fora do processo do painel) — services/exclusao_suave.py, 23/10/2026
+        exclusao_suave.apagar_pasta(pasta, "sat:paj-concluido")
     n_removidos = historico_sat.remover_por_paj(paj_norm)
     return {"ok": True, "tinha_arquivos": tinha_arquivos, "registros_removidos": n_removidos}
 
@@ -641,6 +699,7 @@ def _item_pendencia_manual(mp: dict) -> dict:
         "sincronizado": bool(_ler_metadata(pn)),
         "tem_log": (pasta_arquivos_sat(pn) / "_log_download.json").exists(),
         "tem_falha": _download_tem_falha(pn),
+        **estado_download(pn),
         "ja_processado": False,
         "manual": True,
         "narrativa": mp.get("narrativa", ""),
@@ -690,6 +749,7 @@ async def listar_pendentes() -> dict:
             "sincronizado": bool(meta),
             "tem_log": (pasta_arquivos_sat(paj_norm) / "_log_download.json").exists(),
             "tem_falha": _download_tem_falha(paj_norm),
+            **estado_download(paj_norm),
             "ja_processado": bool(ja and ja.get("status") == "concluido"),
         }
         # FALLBACK: PAJ ainda NÃO sincronizado (sem metadata) → sem CPF/pretensão local.
@@ -898,7 +958,8 @@ async def processar_paj_stream(
         if orig.is_dir():
             n = len(list(orig.glob("*.pdf")))
             try:
-                shutil.rmtree(orig, ignore_errors=True)
+                from services import exclusao_suave  # exclusão suave (Lixeira, fora do processo do painel) — services/exclusao_suave.py, 23/10/2026
+                exclusao_suave.apagar_pasta(orig, "sat:compilados-originais")
                 yield passo("Limpeza dos originais compilados", True,
                             f"{n} PDF(s) originais removidos após a anexação do(s) compilado(s).")
             except Exception as e:  # noqa: BLE001
@@ -1054,7 +1115,8 @@ def mesclar_complementar_pendente(paj_norm: str, escopo: str = "assistido") -> d
         except Exception:  # noqa: BLE001
             pass
     with __import__("contextlib").suppress(Exception):
-        shutil.rmtree(comp, ignore_errors=True)
+        from services import exclusao_suave  # exclusão suave (Lixeira, fora do processo do painel) — services/exclusao_suave.py, 23/10/2026
+        exclusao_suave.apagar_pasta(comp, "sat:complementar")
     return {"ok": True, "movidos": movidos, "n_arquivos": len(paths["listar"](paj_norm))}
 
 

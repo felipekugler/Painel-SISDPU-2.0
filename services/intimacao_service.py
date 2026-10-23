@@ -727,7 +727,8 @@ def _apagar_documentos_baixados(processo: str) -> None:
     pasta = eproc_mcp_client.EPROC_DOCS_DIR / _normalizar_num_processo(processo)
     if pasta.exists():
         with contextlib.suppress(Exception):
-            shutil.rmtree(pasta)
+            from services import exclusao_suave  # exclusão suave (Lixeira, fora do processo do painel) — services/exclusao_suave.py, 23/10/2026
+            exclusao_suave.apagar_pasta(pasta, "intimacoes:casos-resolvidos")
 
 
 async def purgar_casos_resolvidos() -> dict:

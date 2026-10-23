@@ -53,9 +53,10 @@ def _purgar_debug_dir_antigos(reter: int = _DEBUG_DIR_RETER) -> None:
         if len(subpastas) <= reter:
             return
         subpastas.sort(key=lambda p: p.stat().st_mtime, reverse=True)
+        from services import exclusao_suave  # exclusão suave (Lixeira, fora do processo do painel) — services/exclusao_suave.py, 23/10/2026
         for antigo in subpastas[reter:]:
             with contextlib.suppress(Exception):
-                shutil.rmtree(antigo)
+                exclusao_suave.apagar_pasta(antigo, "sisdpu-debug")
 
 
 class CredenciaisInvalidas(Exception):

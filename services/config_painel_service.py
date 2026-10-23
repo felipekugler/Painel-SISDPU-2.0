@@ -688,7 +688,8 @@ def set_minutas_ia_tipos(tipos: list[dict]) -> list[dict]:
     for removido in antigos_ids - novos_ids:
         if removido:
             with contextlib.suppress(Exception):
-                shutil.rmtree(_minutas_ia_arquivo_dir(removido), ignore_errors=True)
+                from services import exclusao_suave  # exclusão suave — services/exclusao_suave.py, 23/10/2026
+                exclusao_suave.apagar_pasta(_minutas_ia_arquivo_dir(removido), "tipo-minuta-removido")
 
     raw[_CHAVE_MINUTAS_IA] = limpos
     _salvar_raw(raw)
