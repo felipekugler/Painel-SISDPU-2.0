@@ -549,6 +549,67 @@
     <!-- Modal: Anexar Mais (anexação complementar num PAJ já concluído) -->
     <!-- "Anexar ao PAJ": escolha da caixa de tramitação (e prazo) para ESTE PAJ.
          Vem preenchido com a barra "Tramitar para" do alto da página. -->
+    <!-- Revisão ÚNICA (fonte SIS-DPU 2.0) do "Anexar ao PAJ": movimentação +
+         tramitação + conclusão num só modal (padrão do painel — acoes_sisdpu.html). -->
+    <div class="modal" :class="{'modal-open': revSat.aberto}">
+        <div class="modal-box max-w-[70vw] max-h-[85vh] flex flex-col">
+            <h3 class="font-bold text-lg mb-2" x-text="'Confirmar gravações no SISDPU — ' + (revSat.paj || '')"></h3>
+            <div class="flex-1 overflow-y-auto flex flex-col gap-3 pr-1">
+                <div x-show="revSat.carregando" class="text-sm text-base-content/60">
+                    <span class="loading loading-spinner loading-xs"></span> Conferindo com o SIS-DPU 2.0 (nada é gravado agora)…
+                </div>
+                <template x-if="!revSat.carregando">
+                    <div class="grid grid-cols-2 gap-2 items-stretch">
+                        <template x-for="lado in ['movimentacao', 'tramitacao']" :key="lado">
+                            <div class="border border-success/30 bg-base-100 rounded px-2 py-1.5 min-w-0">
+                                <div class="text-xs font-semibold mb-0.5" x-text="lado === 'tramitacao' ? 'Tramitação' : 'Movimentação'"></div>
+                                <div class="text-xs" x-show="revSatFicha(lado)" x-html="revSatHtml(revSatFicha(lado))"></div>
+                                <div class="text-xs text-base-content/40" x-show="!revSatFicha(lado)"
+                                     x-text="lado === 'tramitacao' ? 'Sem tramitação' : 'Sem movimentação'"></div>
+                            </div>
+                        </template>
+                        <div class="col-span-2 border border-success/30 bg-base-100 rounded px-2 py-1.5">
+                            <div class="text-xs font-semibold mb-0.5">Conclusão de trâmite</div>
+                            <div class="text-[11px]" x-show="revSat.conclui">Concluir o trâmite da juntada dos documentos do SAT na caixa de entrada
+                                <span class="text-base-content/50">— pelo SISDPU antigo (navegador), por último; pode pedir o cofre.</span></div>
+                            <div class="text-[11px] text-base-content/40" x-show="!revSat.conclui">Nenhum trâmite será concluído</div>
+                        </div>
+                        <template x-for="(e, ei) in revSat.erros" :key="'e' + ei">
+                            <div class="col-span-2 text-error text-sm font-medium" x-text="'⚠ ' + e"></div>
+                        </template>
+                    </div>
+                </template>
+            </div>
+            <div class="modal-action">
+                <button type="button" class="btn btn-sm btn-ghost" :disabled="revSat.carregando"
+                        @click="_revSatResolver && _revSatResolver(false)">Cancelar</button>
+                <button type="button" class="btn btn-sm btn-success" :disabled="revSat.carregando || revSat.erros.length > 0"
+                        :title="revSat.erros.length ? 'Corrija o que o SIS-DPU 2.0 apontou antes de executar' : ''"
+                        @click="_revSatResolver && _revSatResolver(true)">Confirmar e executar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Novo levantamento por cima de um já feito: confirmação expressa -->
+    <div class="modal" :class="{'modal-open': levConf.aberto}">
+        <div class="modal-box max-w-lg">
+            <h3 class="font-bold text-lg mb-2">Já existe um levantamento</h3>
+            <p class="text-sm mb-2">
+                O PAJ <span class="font-mono" x-text="levConf.paj"></span> já tem um levantamento completo do SAT,
+                feito em <strong x-text="levConf.em"></strong>. O "Baixar arquivos" / "Baixar mais" usa esse levantamento.
+            </p>
+            <p class="text-sm text-base-content/70">
+                Fazer um novo levantamento consulta o SAT de novo (CAPTCHA e consultas que contam para o antirrobô).
+                O atual só é substituído se o novo terminar; se for cancelado ou interrompido, o atual continua valendo.
+            </p>
+            <div class="modal-action">
+                <button class="btn btn-sm" @click="_levConfResolver && _levConfResolver(false)">Cancelar</button>
+                <button class="btn btn-sm btn-warning" @click="_levConfResolver && _levConfResolver(true)">Fazer novo levantamento</button>
+            </div>
+        </div>
+        <div class="modal-backdrop" @click="_levConfResolver && _levConfResolver(false)"></div>
+    </div>
+
     <div class="modal" :class="{'modal-open': anxModal}">
         <div class="modal-box max-w-2xl">
             <h3 class="font-bold text-lg mb-1">Anexar ao PAJ — <span class="font-mono" x-text="anxAlvo && anxAlvo.paj"></span></h3>
@@ -870,6 +931,8 @@ function satPage() {
         patIgnorarModal: false, patIgnorar: [], patIgnorarNovo: '', patIgnorarMsg: '',
         instModal: false, instCpf: '', instNome: '', instAlvo: null,
         bmInterrompido: null, bmLevantamento: null, bmAposLevantamento: false,
+        levConf: { aberto: false, paj: '', em: '' }, _levConfResolver: null,
+        revSat: { aberto: false, carregando: false, paj: '', fichas: [], erros: [], conclui: false }, _revSatResolver: null,
         baixarMaisModal: false, bmAlvo: null, bmCpfPorEscopo: { assistido: '', instituidor: '' }, bmSel: [], bmLista: [], bmCarregando: false, bmModo: 'concluido', bmSemInventario: false,
         amModal: false, amAlvo: null, amLista: [], amSel: [], amCarregando: false,
         menuAbertoPaj: null,
@@ -1534,6 +1597,14 @@ function satPage() {
         async levantar(p) {
             // Levantamento: lista o que existe no SAT para o CPF, SEM baixar.
             if (this.rodando || !p.cpf) return;
+            // Já existe levantamento completo: só refaz com confirmação expressa no modal.
+            const substituir = !!p.levantamento_em;
+            if (substituir) {
+                this.levConf = { aberto: true, paj: p.paj, em: this._dataHoraBr(p.levantamento_em) };
+                const ok = await new Promise((res) => { this._levConfResolver = res; });
+                this.levConf.aberto = false; this._levConfResolver = null;
+                if (!ok) return;
+            }
             if (!(await this.sessaoAtiva())) { this.naoLogadoModal = true; return; }
             return new Promise((resolve) => {
                 this.rodando = true; this.sseTipo = 'download';
@@ -1543,11 +1614,15 @@ function satPage() {
                 const bloqueio = Math.max(0, Number(this.esperaBloqueio) || 0);
                 const url = `/api/sat/${encodeURIComponent(p.paj_norm)}/levantar`
                     + `?cpf=${encodeURIComponent(p.cpf)}&nome=${encodeURIComponent(p.assistido || '')}`
-                    + `&delay=${delay}&delay_max=${delayMax}&bloqueio=${bloqueio}`;
+                    + `&delay=${delay}&delay_max=${delayMax}&bloqueio=${bloqueio}`
+                    + (substituir ? '&substituir=1' : '');
                 const es = new EventSource(url); this._es = es;
                 es.addEventListener('log', (ev) => { try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {} });
                 es.addEventListener('done', async (ev) => {
                     let res = {}; try { res = JSON.parse(ev.data); } catch (e) {}
+                    if (!res.ok && res.detalhe) this.sseLog.push({ level: 'erro', msg: res.detalhe });
+                    if (!res.ok && substituir) this.sseLog.push({ level: 'info',
+                        msg: 'O levantamento anterior continua valendo (um novo só o substitui se terminar).' });
                     this.sseStatus = res.ok ? '— levantamento concluído ✓' : '— levantamento incompleto';
                     this.sseFechavel = true; this.rodando = false; es.close(); this._es = null;
                     if (res.ok && res.consulta_aberta) {
@@ -1565,6 +1640,10 @@ function satPage() {
                     es.close(); this._es = null; resolve({ ok: false });
                 };
             });
+        },
+        _dataHoraBr(iso) {
+            const m = String(iso || '').match(/(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+            return m ? `${m[3]}/${m[2]}/${m[1]} às ${m[4]}:${m[5]}` : String(iso || '');
         },
         async reiniciarDownload(p) {
             // Zera o download do SAT deste PAJ pendente (pasta "Arquivos SAT" → Lixeira,
@@ -1602,11 +1681,50 @@ function satPage() {
             return p.manual ? `Movimenta → tramita para ${this.anxGrupo}${prazo} (sem concluir — não há trâmite na caixa).`
                             : `Movimenta → tramita para ${this.anxGrupo}${prazo} → conclui.`;
         },
-        confirmarAnexar() {
+        async confirmarAnexar() {
             const p = this.anxAlvo;
             if (!p) return;
             this.anxModal = false;
-            return this.processar(p, { grupo: this.anxGrupo, prazo: this.anxComPrazo ? (this.anxPrazoDias || 0) : 0 });
+            const escolha = { grupo: this.anxGrupo, prazo: this.anxComPrazo ? (this.anxPrazoDias || 0) : 0 };
+            // Fonte SIS-DPU 2.0: revisão ÚNICA (movimentação + tramitação + conclusão)
+            // antes de executar — a execução já sai aprovada, sem um modal por ficha.
+            if (window.PAINEL_FONTE_SISDPU_MCP && !(await this._revisarSat(p, escolha))) return;
+            return this.processar(p, escolha);
+        },
+        async _revisarSat(p, escolha) {
+            if (this.rodando) return false;
+            this.revSat = { aberto: true, carregando: true, paj: p.paj, fichas: [], erros: [], conclui: false };
+            try {
+                const r = await (await fetch(`/api/sat/${encodeURIComponent(p.paj_norm)}/fichas-resumo`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ grupo: escolha.grupo, prazo: escolha.prazo, manual: !!p.manual }),
+                })).json();
+                this.revSat.fichas = r.fichas || [];
+                this.revSat.erros = r.erros || [];
+                this.revSat.conclui = !!r.conclui;
+            } catch (e) {
+                this.revSat.erros = ['Não foi possível conferir com o SIS-DPU 2.0: ' + e];
+            }
+            this.revSat.carregando = false;
+            const ok = await new Promise((res) => { this._revSatResolver = res; });
+            this._revSatResolver = null;
+            this.revSat.aberto = false;
+            if (!ok) return false;
+            if (this.revSat.fichas.length) {
+                try {
+                    await fetch('/api/sisdpu2/aprovacoes-antecipadas', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ fichas: this.revSat.fichas }),
+                    });
+                } catch (e) { /* sem a antecipação, cada ficha volta a pedir confirmação — não perde nada */ }
+            }
+            return true;
+        },
+        revSatFicha(lado) {
+            return this.revSat.fichas.find((f) => (lado === 'tramitacao') === (f.tipo === 'tramitacao')) || null;
+        },
+        revSatHtml(f) {
+            return f && window.fichaMcp ? window.fichaMcp.htmlFicha(f.ficha, f.paj, f.contexto, { essencial: true }) : '';
         },
         async processar(p, escolha = null) {
             if (this.rodando) return;

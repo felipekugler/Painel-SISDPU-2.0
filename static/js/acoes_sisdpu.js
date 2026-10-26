@@ -558,7 +558,7 @@ function acoesSisdpuBlock(cfg) {
         // de movimentação, tramitação e etapa (de cada item da fila) num só modal,
         // como na movimentação conjunta — confirmadas de uma vez (aprovação
         // antecipada); a execução segue sem outras janelas.
-        revisaoMcp: { aberto: false, carregando: false, fichas: [], erros: [], conclusoes: [] },
+        revisaoMcp: { aberto: false, carregando: false, fichas: [], erros: [], conclusoes: [], fasesInvalidas: [] },
         _resolverRevisao: null,
         _conclusoesParaRevisao() {
             const desc = (id) => {
@@ -571,9 +571,9 @@ function acoesSisdpuBlock(cfg) {
             if (this.tramitacoesCaixa !== null) return [this.idsTramiteSelecionadosArr().map(desc)];
             return [[{ descricao: 'Concluir o trâmite da caixa de entrada', remetente: '', data_envio: '' }]];
         },
-        async _revisarMcp() {
-            this.revisaoMcp = { aberto: true, carregando: true, fichas: [], erros: [],
-                                conclusoes: this._conclusoesParaRevisao() };
+        async _conferirMcp() {
+            this.revisaoMcp.carregando = true;
+            this.revisaoMcp.fichas = []; this.revisaoMcp.erros = []; this.revisaoMcp.fasesInvalidas = [];
             try {
                 const r = await (await fetch('/api/sisdpu2/escrita/fichas-resumo', {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
@@ -581,10 +581,27 @@ function acoesSisdpuBlock(cfg) {
                 })).json();
                 this.revisaoMcp.fichas = r.fichas || [];
                 this.revisaoMcp.erros = r.erros || [];
+                this.revisaoMcp.fasesInvalidas = (r.fases_invalidas || []).map((f) => ({ ...f, nova: '' }));
             } catch (e) {
                 this.revisaoMcp.erros = ['Não foi possível conferir com o SIS-DPU 2.0: ' + e];
             }
             this.revisaoMcp.carregando = false;
+        },
+        // Fase recusada pelo SIS-DPU 2.0 (descontinuada para registro manual): troca pela
+        // escolhida no próprio modal e confere de novo — nada foi gravado até aqui.
+        async trocarFasesMcp() {
+            const trocas = this.revisaoMcp.fasesInvalidas.filter((f) => f.nova);
+            if (!trocas.length) return;
+            trocas.forEach((f) => {
+                if (this.fila.length > 0) { if (this.fila[f.item]) this.fila[f.item].fase = f.nova; }
+                else this.fase = f.nova;
+            });
+            await this._conferirMcp();
+        },
+        async _revisarMcp() {
+            this.revisaoMcp = { aberto: true, carregando: true, fichas: [], erros: [], fasesInvalidas: [],
+                                conclusoes: this._conclusoesParaRevisao() };
+            await this._conferirMcp();
             const ok = await new Promise((res) => { this._resolverRevisao = res; });
             this._resolverRevisao = null;
             this.revisaoMcp.aberto = false;

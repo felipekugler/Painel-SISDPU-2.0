@@ -1,5 +1,8 @@
 """Conexão do painel com o MCP do SIS-DPU 2.0 (OAuth) — ver ingestao/sisdpu2_mcp_client.py."""
 
+import ast
+import re
+
 from fastapi import APIRouter, Request
 from fastapi.concurrency import run_in_threadpool
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -193,6 +196,7 @@ async def api_fichas_resumo(request: Request):
     coleta: list = []
     t = sisdpu2_movtram.COLETA_FICHAS.set(coleta)
     erros: list[str] = []
+    fases_invalidas: list[dict] = []
     try:
         if b.get("itens"):
             gen = svc.executar_fila_stream(b.get("id_processo") or "", paj=b.get("paj") or "",
@@ -213,6 +217,7 @@ async def api_fichas_resumo(request: Request):
                 item = int(ev.get("index", item)) + 1
             if ev.get("level") == "erro":
                 erros.append(ev.get("msg", ""))
+                _anotar_fase_invalida(ev.get("msg", ""), item, fases_invalidas)
             if ev.get("done"):
                 res = ev.get("resultado") or {}
                 detalhe = res.get("detalhe") or ""
@@ -223,7 +228,28 @@ async def api_fichas_resumo(request: Request):
             f.setdefault("item", item)
     finally:
         sisdpu2_movtram.COLETA_FICHAS.reset(t)
-    return {"ok": not erros, "fichas": coleta, "erros": erros[:5]}
+    # a lista de opções vai estruturada em `fases_invalidas` (o modal oferece a troca);
+    # na mensagem fica só o essencial
+    erros = [_RE_OPCOES_FASE.sub("", e) for e in erros]
+    return {"ok": not erros, "fichas": coleta, "erros": erros[:5], "fases_invalidas": fases_invalidas}
+
+
+# "Fase 'X' não encontrada no SIS-DPU 2.0 (opções=[...])" — sisdpu2_movtram.movimentar_paj.
+# Fases descontinuadas para registro manual (ex.: "Narrativa", "Atendimento de
+# retorno", 23/10/2026): o modal de confirmação deixa trocar por uma válida.
+_RE_FASE_INVALIDA = re.compile(r"Fase '(.+?)' não encontrada no SIS-DPU 2\.0 \(opções=(\[.*?\])\)")
+_RE_OPCOES_FASE = re.compile(r" \(opções=\[.*?\]\)")
+
+
+def _anotar_fase_invalida(msg: str, item: int, destino: list[dict]) -> None:
+    m = _RE_FASE_INVALIDA.search(msg or "")
+    if not m or any(x["item"] == item for x in destino):
+        return
+    try:
+        opcoes = [str(o) for o in ast.literal_eval(m.group(2)) if o]
+    except Exception:  # noqa: BLE001
+        opcoes = []
+    destino.append({"item": item, "fase": m.group(1), "opcoes": opcoes})
 
 
 @router.get("/api/sisdpu2/login", response_class=JSONResponse)

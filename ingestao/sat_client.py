@@ -1818,7 +1818,20 @@ async def levantar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
     finally:
         with contextlib.suppress(Exception):
             import json as _json
-            Path(pasta_destino, "_levantamento.json").write_text(
+            # Um levantamento COMPLETO anterior nunca é perdido (25/10/2026): o novo só
+            # o substitui se também terminar — o anterior fica em
+            # `_levantamento.anterior.json`; um novo cancelado/interrompido vai para
+            # `_levantamento.incompleto.json` e o completo continua valendo.
+            destino = Path(pasta_destino, "_levantamento.json")
+            anterior = {}
+            with contextlib.suppress(Exception):
+                anterior = _json.loads(destino.read_text(encoding="utf-8"))
+            if not concluiu and anterior.get("completo"):
+                destino = Path(pasta_destino, "_levantamento.incompleto.json")
+            elif concluiu and anterior.get("completo"):
+                Path(pasta_destino, "_levantamento.anterior.json").write_text(
+                    _json.dumps(anterior, ensure_ascii=False, indent=2), encoding="utf-8")
+            destino.write_text(
                 _json.dumps({"ts": ts_ini, "cpf": cpf, "nome": nome, "completo": concluiu,
                              "itens": itens, "eventos": log_msgs}, ensure_ascii=False, indent=2),
                 encoding="utf-8")

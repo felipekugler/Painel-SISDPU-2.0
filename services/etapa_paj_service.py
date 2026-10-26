@@ -132,13 +132,16 @@ def _dt_iso(s: str | None) -> datetime | None:
 
 
 def _arquivo_minuta(pasta: Path) -> Path | None:
-    """A petição inicial mais recente em "Peças IA" (ou na raiz, compatibilidade)."""
+    """A petição inicial mais recente em "Peças IA" (ou na raiz, compatibilidade).
+    Só a INICIAL ("peticao_inicial…"): a petição intercorrente de prazo
+    ("Petição-DD-MM-AAAA", services/peticao_ia_service.py) não é minuta de
+    inicial (25/10/2026)."""
     achados = []
     for p in (pasta / "Peças IA", pasta):
         if p.is_dir():
             for f in p.iterdir():
                 nome = unicodedata.normalize("NFD", f.stem).encode("ascii", "ignore").decode().lower()
-                if f.is_file() and f.suffix.lower() == ".docx" and "peticao" in nome:
+                if f.is_file() and f.suffix.lower() == ".docx" and re.search(r"peticao[\s_\-]*inicial", nome):
                     achados.append(f)
     return max(achados, key=lambda f: f.stat().st_mtime) if achados else None
 

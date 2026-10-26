@@ -168,6 +168,30 @@ def salvar_sistema(sistema: str, usuario: str, senha: str, senha_mestra: str) ->
     sistemas[sistema] = {"usuario": usuario, "senha": senha}
     _gravar_cofre(sistemas, senha_mestra)
     _estado.update(destrancado=True, sistemas=sistemas)
+    if sistema == "eproc":
+        _sincronizar_gerenciador_eproc(usuario, senha)
+
+
+def _sincronizar_gerenciador_eproc(usuario: str, senha: str) -> None:
+    """Credenciais do e-proc salvas no cofre também vão para o Gerenciador de
+    Credenciais do Windows, de onde o MCP eproc-trf4 (e o login do e-proc pelo
+    navegador) as lê — chave `credential_key` do config.json do MCP. Sem isso,
+    trocar a senha só no cofre deixava o MCP tentando a antiga (26/10/2026).
+    A chave do 2FA (TOTP) não muda aqui."""
+    try:
+        import keyring
+
+        from ingestao.eproc_mcp_client import MCP_DIR
+        chave = "mcp-eproc"
+        try:
+            chave = json.loads((MCP_DIR / "config.json").read_text(encoding="utf-8")).get("credential_key") or chave
+        except Exception:  # noqa: BLE001
+            pass
+        keyring.set_password(chave, "usuario", usuario)
+        keyring.set_password(chave, "senha", senha)
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger("cofre").warning("não atualizou o Gerenciador de Credenciais do e-proc: %s", e)
 
 
 def remover_sistema(sistema: str, senha_mestra: str) -> bool:

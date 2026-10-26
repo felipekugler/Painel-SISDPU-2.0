@@ -513,6 +513,29 @@
                         <template x-for="(e, ei) in revisaoMcp.erros" :key="'e' + ei">
                             <div class="text-error text-sm font-medium" x-text="'⚠ ' + e"></div>
                         </template>
+                        <!-- fase descontinuada: troca aqui mesmo e confere de novo -->
+                        <template x-if="revisaoMcp.fasesInvalidas.length">
+                            <div class="border border-warning/50 bg-warning/10 rounded px-3 py-2 flex flex-col gap-2">
+                                <template x-for="(fi, fii) in revisaoMcp.fasesInvalidas" :key="'fi' + fii">
+                                    <div class="flex items-center gap-2 flex-wrap text-sm">
+                                        <span>
+                                            <span x-show="revisaoMcp.fasesInvalidas.length > 1 || fila.length > 0"
+                                                  x-text="'Registro ' + (fi.item + 1) + ': '"></span>
+                                            a fase <strong x-text="fi.fase"></strong> não está disponível para registro manual. Trocar por:
+                                        </span>
+                                        <select data-busca class="select select-bordered select-xs max-w-md" x-model="fi.nova">
+                                            <option value="">— escolha a fase —</option>
+                                            <template x-for="op in fi.opcoes" :key="op"><option :value="op" x-text="op"></option></template>
+                                        </select>
+                                    </div>
+                                </template>
+                                <div>
+                                    <button type="button" class="btn btn-xs btn-warning"
+                                            :disabled="revisaoMcp.carregando || !revisaoMcp.fasesInvalidas.some((f) => f.nova)"
+                                            @click="trocarFasesMcp()">Trocar fase e conferir de novo</button>
+                                </div>
+                            </div>
+                        </template>
                     </div>
                 </template>
             </div>

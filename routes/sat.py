@@ -367,6 +367,38 @@ async def api_tipos_set(request: Request):
     return JSONResponse({"ok": True, **res})
 
 
+@router.post("/api/sat/{paj_norm}/fichas-resumo", response_class=JSONResponse)
+async def fichas_resumo(paj_norm: str, request: Request):
+    """Revisão ÚNICA do "Anexar ao PAJ" (fonte SIS-DPU 2.0), padrão do painel:
+    roda o processamento em dry-run e devolve as fichas de movimentação e
+    tramitação que o SIS-DPU 2.0 montaria — nada é gravado. O front mostra tudo
+    num modal só e, confirmado, registra as aprovações antecipadas
+    (/api/sisdpu2/aprovacoes-antecipadas) antes de executar."""
+    from ingestao import sisdpu2_movtram
+    b = await request.json()
+    coleta: list = []
+    erros: list[str] = []
+    conclui = False
+    t = sisdpu2_movtram.COLETA_FICHAS.set(coleta)
+    try:
+        async for ev in sat_service.processar_paj_stream(
+                paj_norm, grupo=b.get("grupo") or "", prazo_dias=int(b.get("prazo") or 0),
+                dry_run=True, manual=bool(b.get("manual"))):
+            if ev.get("done"):
+                res = ev.get("resultado") or {}
+                if not res.get("ok") and res.get("detalhe") and not any(res["detalhe"] in e for e in erros):
+                    erros.append(res["detalhe"])
+            elif ev.get("level") == "erro":
+                msg = (ev.get("msg") or "").strip().lstrip("✗").strip()
+                if msg and not any(e in msg for e in erros):
+                    erros.append(msg)
+            elif "Conclusão do trâmite originário" in (ev.get("msg") or ""):
+                conclui = True
+    finally:
+        sisdpu2_movtram.COLETA_FICHAS.reset(t)
+    return JSONResponse({"ok": not erros, "fichas": coleta, "erros": erros[:5], "conclui": conclui})
+
+
 @router.get("/api/sat/{paj_norm}/processar")
 async def processar(paj_norm: str, grupo: str = "", dry: int = 0, prazo: int = 0, manual: int = 0):
     """SSE do processamento (mov→tram→concluir). `dry=1` => simulação; `prazo` = dias
@@ -467,10 +499,19 @@ async def _stream_levantar(paj_norm: str, cpf: str, nome: str, delay: float, blo
 
 @router.get("/api/sat/{paj_norm}/levantar")
 async def levantar(paj_norm: str, cpf: str, nome: str = "", delay: float = 5.0,
-                   bloqueio: float = 45.0, delay_max: float | None = None):
+                   bloqueio: float = 45.0, delay_max: float | None = None, substituir: int = 0):
     """SSE do LEVANTAMENTO: lista o que existe no SAT para o CPF, SEM baixar (o
     usuário resolve o CAPTCHA na janela). Grava `_levantamento.json` na pasta do
-    PAJ; o "Baixar mais" passa a oferecer tudo o que foi encontrado."""
+    PAJ; o "Baixar mais" passa a oferecer tudo o que foi encontrado.
+    Já havendo levantamento completo, só roda com `substituir=1` (confirmado no
+    modal da página)."""
+    ja = sat_service.estado_download(paj_norm).get("levantamento_em")
+    if ja and not substituir:
+        async def _recusa():
+            yield {"event": "done", "data": json.dumps(
+                {"ok": False, "detalhe": f"Já existe levantamento completo deste PAJ ({ja}) — "
+                                         "confirme na página para fazer outro."}, ensure_ascii=False)}
+        return EventSourceResponse(_recusa())
     return EventSourceResponse(_stream_levantar(paj_norm, cpf, nome, delay, bloqueio, delay_max))
 
 
