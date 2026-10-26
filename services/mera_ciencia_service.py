@@ -307,6 +307,28 @@ async def dar_mera_ciencia(processo: str, ato: str, descricao_mov: str, log_cb,
     # 3) SISDPU — movimentação simples (sem tramitar/concluir), com a
     # descrição já revisada/editada pelo Defensor.
     id_processo = _id_processo_sisdpu(paj_norm)
+    if not id_processo and caso.get("paj"):
+        # PAJ ainda não sincronizado no Painel (sem pasta/metadata.json local —
+        # caso real 5024586-08.2026.4.04.7000, 26/10/2026): resolve o id pelo
+        # NÚMERO do PAJ na busca do SISDPU, mesmo mecanismo de
+        # `acoes_sisdpu_service._resolver_id_processo` (com cache próprio).
+        registrar("info", f"{processo}: PAJ {caso['paj']} não sincronizado localmente — "
+                          "buscando o id no SISDPU pelo número…")
+        import re
+
+        from services import paj_link_service
+
+        try:
+            res_link = await paj_link_service.resolver(caso["paj"])
+        except Exception as e:  # noqa: BLE001
+            res_link = {"ok": False, "erro": f"{type(e).__name__}: {e}"}
+        m_id = re.search(r"[?&]id=(\d+)", res_link.get("url", "") or "") if res_link.get("ok") else None
+        if m_id:
+            id_processo = m_id.group(1)
+            registrar("ok", f"{processo}: PAJ localizado no SISDPU — id interno {id_processo}.")
+        else:
+            registrar("muted", f"{processo}: não localizei o PAJ no SISDPU pelo número "
+                               f"({res_link.get('erro') or 'id ausente na URL'}).")
     if not id_processo:
         # Fallback (pedido explícito do usuário, 2026-08-29, caso real
         # 5031818-71.2026.4.04.7000): a ciência e o Gerenciamento JÁ foram
