@@ -138,30 +138,19 @@ async def _candidatos_do_ato(processo: str, prazos_do_ato: list[dict]) -> tuple[
     intimacoes, cabecalho, instancia = await _triagem_com_fallback(processo)
     if not intimacoes:
         return [], instancia
-    minhas_partes = eproc_procurador_service.partes_do_procurador(
-        cabecalho, eproc_procurador_service.meu_identificador(processo))
-    dia_p = _so_data(prazo.get("data_envio", ""))
-    if not dia_p:
-        return [], instancia
-    try:
-        dias_p = int(prazo.get("prazo_dias") or -1)
-    except (TypeError, ValueError):
-        dias_p = -1
-    candidatos = []
-    for it in intimacoes:
-        if not it.get("ativa", True):
-            continue
-        if not eproc_procurador_service.parte_intimada_e_minha(it.get("parte_intimada", ""), minhas_partes):
-            continue
-        if _so_data(it.get("data_hora", "")) != dia_p:
-            continue
-        try:
-            dias_it = int(it.get("prazo_dias") or -1)
-        except (TypeError, ValueError):
-            dias_it = -1
-        if dias_p != -1 and dias_it != -1 and dias_p != dias_it:
-            continue
-        candidatos.append(it)
+    identificador = eproc_procurador_service.meu_identificador(processo)
+    # Toda intimação ativa do mesmo dia+dias vinculada a mim. As de parte
+    # confirmada no cabeçalho entram todas (coautores); as de interessado
+    # FORA do cabeçalho (representante legal, DPU em nome próprio — ver
+    # eproc_procurador_service.vinculo_intimacao) só até completar o nº de
+    # prazos deste ato no MEU Painel do Procurador, as do mesmo segundo de
+    # expedição primeiro.
+    idxs = eproc_procurador_service.candidatos_do_prazo(prazo, intimacoes, cabecalho, identificador)
+    no_cabecalho = [i for i in idxs if eproc_procurador_service.vinculo_intimacao(
+        intimacoes[i].get("parte_intimada", ""), cabecalho, identificador) == 0]
+    fora = [i for i in idxs if i not in no_cabecalho]
+    vagas = max(len(prazos_do_ato) - len(no_cabecalho), 0)
+    candidatos = [intimacoes[i] for i in no_cabecalho + fora[:vagas]]
     # Ordena por nº de evento — só estética (o rótulo/descrição de "Dar mera
     # ciência" lê melhor "eventos 38, 39" do que na ordem crua em que a
     # triagem devolveu); não afeta qual é o "principal" nem quais fecham.

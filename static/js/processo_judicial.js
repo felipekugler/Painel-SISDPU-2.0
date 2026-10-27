@@ -215,11 +215,40 @@ function processoJudicialBlock(cfg) {
             return nomes;
         },
         _parteIntimadaEhMinha(parteIntimada, minhasPartes) {
-            if (!minhasPartes.size) return false;
             const s = parteIntimada || '';
             const i = s.indexOf(' - ');
             const nome = i === -1 ? s : s.slice(i + 3);
+            if (this._semAcento(this._normalizarNome(nome)).includes('DEFENSORIA PUBLICA DA UNIAO')) return true;
+            if (!minhasPartes.size) return false;
             return minhasPartes.has(this._normalizarNome(nome));
+        },
+        _semAcento(s) {
+            return (s || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+        },
+        // Mesma regra de services/eproc_procurador_service.vinculo_intimacao
+        // (27/10/2026): vale TODA intimação vinculada ao procurador — como
+        // parte do cabeçalho (0) ou como interessado FORA dele (1:
+        // representante legal cadastrado à parte, DPU em nome próprio), que o
+        // cabeçalho do MCP não lista. Parte do cabeçalho com outro procurador
+        // (INSS) e papéis que nunca são a DPU (perito, MP...) ficam de fora
+        // (null). O universo continua sendo o MEU Painel do Procurador.
+        _vinculo(idx, parteIntimada, minhasPartes) {
+            if (this._parteIntimadaEhMinha(parteIntimada, minhasPartes)) return 0;
+            const s = parteIntimada || '';
+            const i = s.indexOf(' - ');
+            const papel = i === -1 ? '' : s.slice(0, i);
+            const nome = this._normalizarNome(i === -1 ? s : s.slice(i + 3));
+            const r = this.resultados[idx];
+            const partes = (r && r.cabecalho && r.cabecalho.partes) || [];
+            if (partes.some((p) => this._normalizarNome(p.nome) === nome)) return null;
+            const texto = this._semAcento(this._normalizarNome(papel + ' ' + nome));
+            const alheios = ['PERITO', 'MPF', 'MINISTERIO PUBLICO', 'ASSISTENTE TECNICO',
+                             'TESTEMUNHA', 'LEILOEIRO', 'CONTADOR', 'OFICIAL DE JUSTICA'];
+            return alheios.some((a) => texto.includes(a)) ? null : 1;
+        },
+        _diaHora(s) {
+            const m = (s || '').match(/\d{2}\/\d{2}\/\d{4} \d{2}:\d{2}(:\d{2})?/);
+            return m ? m[0] : '';
         },
         // Sem identificador do procurador (cofre trancado/sem credencial "eproc"
         // salva), NÃO há como saber a quais partes associar — nunca arrisca
@@ -249,14 +278,17 @@ function processoJudicialBlock(cfg) {
             const usadas = new Set();
             return lista.map((p) => {
                 const diaP = this._soData(p.data_envio);
+                const horaP = this._diaHora(p.data_envio);
                 const diasP = parseInt(p.prazo_dias, 10);
                 // Junta TODOS os candidatos do mesmo dia+dias que sejam de uma
                 // parte associada a mim — pode haver mais de um só quando eu
                 // represento mais de uma parte no MESMO ato (litisconsórcio).
                 const candidatos = [];
+                const rank = {};
                 todas.forEach((it, i) => {
                     if (usadas.has(i)) return;
-                    if (!this._parteIntimadaEhMinha(it.parte_intimada, minhasPartes)) return;
+                    const vinculo = this._vinculo(idx, it.parte_intimada, minhasPartes);
+                    if (vinculo === null) return;
                     // data_hora = expedição da PRÓPRIA intimação (o que casa com o
                     // "data_envio" do Painel do Procurador) — NÃO enviado_em (sub-dado
                     // "Domicílio Judicial Eletrônico: Enviado em...", momento distinto
@@ -265,6 +297,11 @@ function processoJudicialBlock(cfg) {
                     if (!diaP || !diaIt || diaP !== diaIt) return;
                     const diasIt = parseInt(it.prazo_dias, 10);
                     if (!isNaN(diasP) && !isNaN(diasIt) && diasP !== diasIt) return;
+                    // Ordem: expedida no MESMO segundo do envio do Painel (separa
+                    // autor e representante intimados no mesmo ato) > parte do
+                    // cabeçalho antes de interessado > ainda ativa.
+                    const mesmoSegundo = horaP && this._diaHora(it.data_hora) === horaP ? 0 : 1;
+                    rank[i] = [mesmoSegundo, vinculo, it.ativa ? 0 : 1];
                     candidatos.push(i);
                 });
                 if (candidatos.length) {
@@ -277,7 +314,7 @@ function processoJudicialBlock(cfg) {
                     // confirmado 2026-08-24 (PAJ 2026/029-01909: JADIRO tinha 2
                     // intimações de 5 dias no mesmo dia — uma antiga já encerrada
                     // por petição, outra da decisão de tutela, ainda aberta).
-                    candidatos.sort((a, b) => (todas[a].ativa ? 0 : 1) - (todas[b].ativa ? 0 : 1));
+                    candidatos.sort((a, b) => rank[a][0] - rank[b][0] || rank[a][1] - rank[b][1] || rank[a][2] - rank[b][2]);
                     const iMatch = candidatos[0];
                     usadas.add(iMatch);
                     const it = todas[iMatch];

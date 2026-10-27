@@ -352,10 +352,10 @@ async def listar_prazos(numeros_processo: list[str]) -> list[dict]:
 
     # 1 triagem por PROCESSO distinto (não por prazo) — barata o bastante (só os
     # processos deste PAJ, tipicamente 1).
-    triagens: dict[str, tuple[list[dict], set[str]]] = {}
+    triagens: dict[str, tuple[list[dict], dict]] = {}
     for num, entry in por_processo.items():
         intimacoes: list[dict] = []
-        minhas_partes: set[str] = set()
+        cabecalho: dict = {}
         for instancia in (1, 2):
             try:
                 res = await eproc_mcp_client.triagem_processo(entry["processo"], instancia=instancia)
@@ -363,38 +363,22 @@ async def listar_prazos(numeros_processo: list[str]) -> list[dict]:
                 res = None
             if res and not res.get("erro"):
                 intimacoes = res.get("intimacoes") or []
-                minhas_partes = eproc_procurador_service.partes_do_procurador(
-                    res.get("cabecalho") or {}, meu_id)
+                cabecalho = res.get("cabecalho") or {}
                 break
-        triagens[num] = (intimacoes, minhas_partes)
+        triagens[num] = (intimacoes, cabecalho)
 
     itens: list[dict] = []
     for num, entry in por_processo.items():
-        intimacoes, minhas_partes = triagens.get(num) or ([], set())
-        usadas: set[int] = set()
+        intimacoes, cabecalho = triagens.get(num) or ([], {})
+        # Casamento um-para-um prazo do Painel ↔ intimação ao vivo vinculada a
+        # mim — como parte do cabeçalho OU como interessado fora dele (ver
+        # eproc_procurador_service.vinculo_intimacao/candidatos_do_prazo).
+        casados = eproc_procurador_service.casar_prazos(
+            entry["prazos"], intimacoes, cabecalho, meu_id)
         for idx, p in enumerate(entry["prazos"]):
-            dia_p = _so_data(p.get("data_envio", ""))
-            dias_p = str(p.get("prazo_dias") or "")
-            # Junta TODOS os candidatos do mesmo dia+dias que sejam de uma parte
-            # associada a mim (ver eproc_procurador_service) — pode haver mais de
-            # um só quando eu represento mais de uma parte no MESMO ato (ex.
-            # litisconsórcio); nunca escolhe pelo primeiro da lista.
-            candidatos = []
-            for i, it in enumerate(intimacoes):
-                if i in usadas or not it.get("ativa"):
-                    continue
-                if not eproc_procurador_service.parte_intimada_e_minha(
-                        it.get("parte_intimada", ""), minhas_partes):
-                    continue
-                if _so_data(it.get("data_hora", "")) != dia_p:
-                    continue
-                if dias_p and str(it.get("prazo_dias") or "") != dias_p:
-                    continue
-                candidatos.append((i, it))
             label = ""
-            if candidatos:
-                i, it = candidatos[0]
-                usadas.add(i)
+            if casados[idx] is not None:
+                it = intimacoes[casados[idx]]
                 nome = (it.get("parte_intimada") or "").split(" - ", 1)
                 nome = nome[1] if len(nome) > 1 else nome[0]
                 label = (f'{it.get("rotulo", "")} ({it.get("data_hora", "")}) '

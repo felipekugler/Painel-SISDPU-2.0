@@ -126,11 +126,125 @@ def parte_intimada_e_minha(parte_intimada: str, minhas_partes: set[str]) -> bool
     arquivo) — é un match textual direto e sem ambiguidade: só existe uma
     Defensoria Pública da União num processo, e ela SEMPRE sou eu quando
     estou logado com uma credencial DPU."""
-    partes = (parte_intimada or "").split(" - ", 1)
-    nome = partes[1] if len(partes) > 1 else partes[0]
+    _papel, nome = _papel_e_nome(parte_intimada)
     nome_norm = _sem_acento(_normalizar(nome))
     if "DEFENSORIA PUBLICA DA UNIAO" in nome_norm:
         return True
     if not minhas_partes:
         return False
     return _normalizar(nome) in minhas_partes
+
+
+def _papel_e_nome(parte_intimada: str) -> tuple[str, str]:
+    """"INTERESSADO - Fulano" -> ("INTERESSADO", "Fulano")."""
+    partes = (parte_intimada or "").split(" - ", 1)
+    return (partes[0], partes[1]) if len(partes) > 1 else ("", partes[0])
+
+
+# --- Intimações vinculadas ao procurador FORA do cadastro de partes ----------
+# O cabeçalho de partes devolvido pelo MCP do e-proc só traz AUTOR/RÉU — quem
+# está no processo como INTERESSADO (representante legal cadastrado à parte,
+# conforme a vara, ou a própria DPU em nome próprio) não aparece ali, e por
+# isso nunca casava com `partes_do_procurador`. Regra do Defensor (27/10/2026):
+# vale TODA intimação vinculada ao procurador, como parte ou como interessado.
+# Caso real: processo 5056781-46.2026.4.04.7000 (PAJ 2026/029-02412) — prazo
+# de "INTERESSADO - AIDIO FERNANDES" (representante legal) no MEU Painel do
+# Procurador, mas sem casar com a triagem: aparecia sem parte/ato na página do
+# PAJ e não era fechado ao peticionar pelo Ações no Eproc.
+#
+# O universo continua sendo o MEU Painel do Procurador (só traz o que é meu);
+# a parte fora do cabeçalho só serve pra CASAR um prazo desse Painel com a
+# intimação ao vivo, com prioridade menor que a parte confirmada no cabeçalho.
+# Parte que ESTÁ no cabeçalho com outro procurador (ex. INSS) nunca entra, nem
+# papéis que jamais são a DPU (perito, Ministério Público...).
+_PAPEIS_ALHEIOS = ("PERITO", "MPF", "MINISTERIO PUBLICO", "ASSISTENTE TECNICO",
+                   "TESTEMUNHA", "LEILOEIRO", "CONTADOR", "OFICIAL DE JUSTICA")
+
+
+def vinculo_intimacao(parte_intimada: str, cabecalho: dict, identificador: str) -> int | None:
+    """Quão certo é que esta intimação é do procurador `identificador`:
+    0 = parte dele no cabeçalho (ou a própria DPU pelo nome); 1 = parte fora
+    do cabeçalho (interessado/representante legal), só aceitável casada com
+    um prazo do MEU Painel do Procurador; None = não é dele. Sem
+    `identificador` (identidade indisponível) só vale o nome da DPU."""
+    minhas = partes_do_procurador(cabecalho, identificador)
+    if parte_intimada_e_minha(parte_intimada, minhas):
+        return 0
+    if not _normalizar(identificador):
+        return None
+    papel, nome = _papel_e_nome(parte_intimada)
+    no_cabecalho = {_normalizar(p.get("nome")) for p in (cabecalho or {}).get("partes") or []}
+    if _normalizar(nome) in no_cabecalho:
+        return None
+    texto = _sem_acento(_normalizar(papel + " " + nome))
+    if any(a in texto for a in _PAPEIS_ALHEIOS):
+        return None
+    return 1
+
+
+def _dia(s: str) -> str:
+    m = re.search(r"\d{2}/\d{2}/\d{4}", s or "")
+    return m.group(0) if m else ""
+
+
+def _dia_hora(s: str) -> str:
+    m = re.search(r"\d{2}/\d{2}/\d{4} \d{2}:\d{2}(:\d{2})?", s or "")
+    return m.group(0) if m else ""
+
+
+def _dias(v) -> int:
+    try:
+        return int(v)
+    except (TypeError, ValueError):
+        return -1
+
+
+def candidatos_do_prazo(prazo: dict, intimacoes: list[dict], cabecalho: dict, identificador: str,
+                        *, so_ativas: bool = True, ignorar: set[int] | None = None) -> list[int]:
+    """Índices (em `intimacoes`, da triagem ao vivo) que podem ser ESTE prazo
+    do MEU Painel do Procurador — mesmo dia de envio, mesmo nº de dias e
+    vinculada a mim (ver `vinculo_intimacao`) —, do mais provável ao menos:
+    1º a expedição no MESMO segundo do `data_envio` do Painel (distingue
+    autor e representante intimados no mesmo ato), depois a parte confirmada
+    no cabeçalho antes da de fora dele, depois a ainda ativa."""
+    dia_p = _dia(prazo.get("data_envio", ""))
+    if not dia_p:
+        return []
+    hora_p = _dia_hora(prazo.get("data_envio", ""))
+    dias_p = _dias(prazo.get("prazo_dias"))
+    ranqueados = []
+    for i, it in enumerate(intimacoes):
+        if ignorar and i in ignorar:
+            continue
+        if so_ativas and not it.get("ativa", True):
+            continue
+        if _dia(it.get("data_hora", "")) != dia_p:
+            continue
+        dias_it = _dias(it.get("prazo_dias"))
+        if dias_p != -1 and dias_it != -1 and dias_p != dias_it:
+            continue
+        vinculo = vinculo_intimacao(it.get("parte_intimada", ""), cabecalho, identificador)
+        if vinculo is None:
+            continue
+        mesmo_segundo = bool(hora_p) and _dia_hora(it.get("data_hora", "")) == hora_p
+        ranqueados.append(((0 if mesmo_segundo else 1, vinculo, 0 if it.get("ativa", True) else 1), i))
+    ranqueados.sort()
+    return [i for _, i in ranqueados]
+
+
+def casar_prazos(prazos: list[dict], intimacoes: list[dict], cabecalho: dict, identificador: str,
+                 *, so_ativas: bool = True) -> list[int | None]:
+    """Para cada prazo do MEU Painel do Procurador, o índice da intimação da
+    triagem que é ele (um-para-um — a mesma intimação nunca serve a dois
+    prazos), ou None quando nenhuma casa."""
+    usadas: set[int] = set()
+    out: list[int | None] = []
+    for p in prazos:
+        cands = candidatos_do_prazo(p, intimacoes, cabecalho, identificador,
+                                    so_ativas=so_ativas, ignorar=usadas)
+        if cands:
+            usadas.add(cands[0])
+            out.append(cands[0])
+        else:
+            out.append(None)
+    return out

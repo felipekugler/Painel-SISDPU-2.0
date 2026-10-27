@@ -290,43 +290,17 @@ async def _coletar_async(prazo_ids: list[str]) -> list[dict]:
     for numero, itens in por_processo.items():
         triagem = await mcp.triagem_processo(numero, instancia=1)
         intimacoes = [it for it in (triagem.get("intimacoes") or [])]
-        minhas_partes = eproc_procurador_service.partes_do_procurador(
+        # Prazo do Painel ↔ intimação ao vivo vinculada a mim (parte do
+        # cabeçalho ou interessado fora dele), por dia de expedição (data_hora,
+        # NÃO enviado_em) + nº de dias — ver eproc_procurador_service.
+        casados = eproc_procurador_service.casar_prazos(
+            [item["prazo"] for item in itens], intimacoes,
             triagem.get("cabecalho") or {}, meu_id)
-        usadas: set[int] = set()
 
-        for item in itens:
+        for item, match_idx in zip(itens, casados):
             prazo, caso = item["prazo"], item["caso"]
-            dia_p = _soData(prazo.get("data_envio", ""))
-            try:
-                dias_p = int(prazo.get("prazo_dias") or -1)
-            except ValueError:
-                dias_p = -1
-            match_idx = -1
-            for i, it in enumerate(intimacoes):
-                if i in usadas or not it.get("ativa"):
-                    continue
-                if not eproc_procurador_service.parte_intimada_e_minha(
-                        it.get("parte_intimada", ""), minhas_partes):
-                    continue
-                # data_hora = expedição da PRÓPRIA intimação (casa com o "data_envio" do
-                # Painel do Procurador) — NÃO enviado_em (sub-dado "Domicílio Judicial
-                # Eletrônico: Enviado em...", momento distinto da entrega eletrônica,
-                # sempre um pouco posterior à expedição do evento).
-                dia_it = _soData(it.get("data_hora", ""))
-                if not dia_p or not dia_it or dia_p != dia_it:
-                    continue
-                try:
-                    dias_it = int(it.get("prazo_dias") or -1)
-                except ValueError:
-                    dias_it = -1
-                if dias_p != -1 and dias_it != -1 and dias_p != dias_it:
-                    continue
-                match_idx = i
-                break
-
             ref = None
-            if match_idx != -1:
-                usadas.add(match_idx)
+            if match_idx is not None:
                 ref = intimacoes[match_idx].get("evento_referenciado")
 
             if ref and ref.get("numero") and ref["numero"] not in vistos_evento:
