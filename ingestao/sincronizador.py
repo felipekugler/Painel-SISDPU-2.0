@@ -137,7 +137,12 @@ def _montar_contatos(det: dict, meta_antiga: dict) -> dict:
     emails = det.get("emails") or meta_antiga.get("emails") or []
     enderecos = det.get("enderecos") or meta_antiga.get("enderecos") or []
     whatsapp_numeros = meta_antiga.get("whatsapp_numeros") or []
+    # Contatos de CADA pessoa do PAJ (assistidos e representantes), por
+    # idPessoa — a fonte SIS 2 só devolve quem foi lido nesta rodada; quem não
+    # foi mantém o que já estava gravado.
+    contatos_pessoas = {**(meta_antiga.get("contatos_pessoas") or {}), **(det.get("contatos_pessoas") or {})}
     return {
+        "contatos_pessoas": contatos_pessoas,
         "contatos": {
             "app_sisdpu": bool(det.get("contato_app_sisdpu")),
             "telefone": bool(telefones),

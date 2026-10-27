@@ -69,6 +69,8 @@ _TOOLS_LEITURA = {
     # `pajs_da_pessoa` devolve vazio mesmo com PAJs existentes. Consulta a dado
     # pessoal — fica na trilha do SIS 2 com o nome do Defensor.
     "pessoa_pesquisar",
+    # Endereço com município/UF por extenso (a ficha só traz o id do município)
+    "inicial_cadastro_para_protocolo",
     # domínios para montar gravações (só leitura)
     "movimentacao_opcoes", "tramite_destinos",
 }

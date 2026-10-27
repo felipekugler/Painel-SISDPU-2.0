@@ -337,38 +337,105 @@ def _incremental(id_processo: int, capa: dict, locais: list[dict]) -> Optional[l
 _ficha_lida_em: dict = {}  # idPessoa -> "AAAA-MM-DD" da última leitura da ficha
 
 
-def _contatos(capa: dict, paj: str) -> dict:
-    """Telefones/e-mails/endereços do assistido principal (ficha do SIS 2)."""
-    principal = next((a for a in capa.get("assistidos") or [] if a.get("principal")), None)
-    if not principal:
-        return {}
+def _contatos(id_processo: int, capa: dict, paj: str, representantes: list[dict]) -> dict:
+    """Telefones/e-mails/endereços de CADA pessoa do PAJ — assistidos e
+    representantes legais —, cada um da ficha da PRÓPRIA pessoa no SIS 2.
+
+    Devolve `contatos_pessoas` ({idPessoa: {telefones, emails, enderecos}}, só
+    das pessoas lidas nesta rodada — o sincronizador soma às já gravadas) e,
+    se o principal foi lido, as chaves de topo `telefones`/`emails`/`enderecos`
+    dele (placeholders e petições leem estas). Chave ausente = o
+    sincronizador preserva o que já tinha."""
+    assistidos = capa.get("assistidos") or []
+    principal = next((a for a in assistidos if a.get("principal")), None)
+    ids = [str(a.get("idPessoa")) for a in assistidos if a.get("idPessoa")]
+    ids += [str(r.get("idPessoa")) for r in representantes if r.get("idPessoa")]
+    meta = _metadata_atual(paj)
+    gravados = meta.get("contatos_pessoas") or {}
     # A ficha custa ~7 registros e quase nunca muda: no máximo 1 leitura por
-    # pessoa por dia. Sem as chaves, o sincronizador preserva os contatos atuais.
+    # pessoa por dia (desde que este PAJ já tenha os contatos dela).
     hoje = datetime.now().strftime("%Y-%m-%d")
-    if _ficha_lida_em.get(principal.get("idPessoa")) == hoje and _metadata_atual(paj).get("telefones") is not None:
+    lidos: dict[str, dict] = {}
+    municipios = None
+    for id_pessoa in dict.fromkeys(ids):
+        if _ficha_lida_em.get(id_pessoa) == hoje and id_pessoa in gravados:
+            continue
+        ficha = _ler_ficha(id_pessoa)
+        if ficha is None:
+            continue  # falhou: fica o que já estava gravado para esta pessoa
+        _ficha_lida_em[id_pessoa] = hoje
+        tels = [{"numero": c.get("valor", ""), "obs": (c.get("observacao") or "").strip()}
+                for c in ficha.get("contatos") or [] if c.get("idTipo") == 1]
+        emails = [c.get("valor", "") for c in ficha.get("contatos") or [] if c.get("idTipo") == 2]
+        # A ficha traz só o id do município: aproveita município/UF já
+        # conhecidos do mesmo endereço DESTA pessoa e, faltando, busca pelo
+        # cadastro-para-protocolo do PAJ (município e UF por extenso).
+        antigos = (gravados.get(id_pessoa) or {}).get("enderecos") or []
+        if not antigos and principal and id_pessoa == str(principal.get("idPessoa")):
+            antigos = meta.get("enderecos") or []
+        ends = []
+        for e in ficha.get("enderecos") or []:
+            mesmo = next((a for a in antigos if a.get("logradouro") == (e.get("logradouro") or "").strip()
+                          and str(a.get("numero")) == str(e.get("numero"))), {})
+            municipio, uf = mesmo.get("municipio", ""), mesmo.get("uf", "")
+            if not (municipio and uf) and e.get("idMunicipio") is not None:
+                if municipios is None:
+                    municipios = _municipios_do_cadastro(id_processo)
+                municipio, uf = (municipios.get(id_pessoa) or {}).get(e["idMunicipio"], (municipio, uf))
+            ends.append({"tipo": mesmo.get("tipo", ""), "logradouro": (e.get("logradouro") or "").strip(),
+                         "numero": e.get("numero") or "", "complemento": (e.get("complemento") or "").strip(),
+                         "bairro": (e.get("bairro") or "").strip(), "municipio": municipio,
+                         "uf": uf, "cep": e.get("cep") or ""})
+        lidos[id_pessoa] = {"telefones": tels, "emails": emails, "enderecos": ends}
+    if not lidos:
         return {}
-    _ficha_lida_em[principal.get("idPessoa")] = hoje
+    out: dict[str, Any] = {"contatos_pessoas": lidos}
+    if principal and str(principal.get("idPessoa")) in lidos:
+        out.update(lidos[str(principal.get("idPessoa"))])
+    return out
+
+
+def _ler_ficha(id_pessoa: str) -> Optional[dict]:
+    """`assistido_ficha` de uma pessoa, já como dict; None se falhar."""
     try:
-        ficha = sis2.chamar("assistido_ficha", {"idPessoa": int(principal["idPessoa"])})
+        ficha = sis2.chamar("assistido_ficha", {"idPessoa": int(id_pessoa)})
     except Exception:  # noqa: BLE001
-        return {}  # sem as chaves: o sincronizador preserva o que já tinha
-    if not isinstance(ficha, dict):
+        return None
+    # Desde a foto na ficha (MCP 22/10/2026) a resposta vem como TEXTO — um
+    # aviso + o JSON — e não mais JSON puro: recorta o objeto, como em
+    # `services/placeholders_service.py`. Antes isto descartava a ficha toda
+    # e nenhum contato era gravado (caso real PAJ 2026/029-02412).
+    if isinstance(ficha, str):
+        i, j = ficha.find("{"), ficha.rfind("}")
+        try:
+            ficha = json.loads(ficha[i:j + 1]) if 0 <= i < j else None
+        except ValueError:
+            ficha = None
+    return ficha if isinstance(ficha, dict) else None
+
+
+def _municipios_do_cadastro(id_processo: int) -> dict:
+    """{idPessoa: {idMunicipio: (município, UF)}} — o endereço cadastrado de
+    cada assistido e representante do PAJ, por `inicial_cadastro_para_protocolo`
+    (lê o mesmo cadastro da ficha, com o município por extenso; a ficha só traz
+    o id). Separado por pessoa: o município de um nunca vai para outro.
+    Falha = {} (endereço fica sem município/UF)."""
+    try:
+        r = sis2.chamar("inicial_cadastro_para_protocolo", {"idProcesso": int(id_processo)})
+    except Exception:  # noqa: BLE001
         return {}
-    tels = [{"numero": c.get("valor", ""), "obs": c.get("observacao") or ""}
-            for c in ficha.get("contatos") or [] if c.get("idTipo") == 1]
-    emails = [c.get("valor", "") for c in ficha.get("contatos") or [] if c.get("idTipo") == 2]
-    # A ficha traz só o id do município: aproveita município/UF já conhecidos
-    # do mesmo endereço (sync anterior pela tela) em vez de apagá-los.
-    antigos = _metadata_atual(paj).get("enderecos") or []
-    ends = []
-    for e in ficha.get("enderecos") or []:
-        mesmo = next((a for a in antigos if a.get("logradouro") == e.get("logradouro")
-                      and str(a.get("numero")) == str(e.get("numero"))), {})
-        ends.append({"tipo": mesmo.get("tipo", ""), "logradouro": e.get("logradouro") or "",
-                     "numero": e.get("numero") or "", "complemento": e.get("complemento") or "",
-                     "bairro": e.get("bairro") or "", "municipio": mesmo.get("municipio", ""),
-                     "uf": mesmo.get("uf", ""), "cep": e.get("cep") or ""})
-    return {"telefones": tels, "emails": emails, "enderecos": ends}
+    if not isinstance(r, dict):
+        return {}
+    out: dict[str, dict] = {}
+    pessoas = list(r.get("assistidos") or [])
+    pessoas += [rep for a in pessoas for rep in a.get("representantes") or []]
+    for p in pessoas:
+        e = p.get("endereco") or {}
+        if p.get("idPessoa") is not None and e.get("idMunicipio") is not None and e.get("municipio"):
+            # "Curitiba (capital)" -> "Curitiba": vai direto para os placeholders.
+            nome = re.sub(r"\s*\(capital\)\s*$", "", e["municipio"], flags=re.I).strip()
+            out.setdefault(str(p["idPessoa"]), {})[e["idMunicipio"]] = (nome, e.get("uf") or "")
+    return out
 
 
 def _extras(id_processo: int, capa: dict, paj: str) -> dict:
@@ -409,7 +476,10 @@ def _extras(id_processo: int, capa: dict, paj: str) -> dict:
         out["audiencias"] = auds
     except Exception:  # noqa: BLE001
         pass
-    out.update(_contatos(capa, paj))
+    representantes = out.get("representantes_legais")
+    if representantes is None:  # leitura falhou: usa os já gravados
+        representantes = (_metadata_atual(paj).get("sisdpu_raw") or {}).get("representantes_legais") or []
+    out.update(_contatos(id_processo, capa, paj, representantes))
     return out
 
 

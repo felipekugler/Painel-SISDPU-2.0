@@ -1217,11 +1217,6 @@ async function enviarCorrecaoAtual() {
     await enviarCorrecao(_resumoPajAtual);
 }
 
-/** Módulo "Contatos" do cabeçalho do PAJ — App SISDPU/Telefone/E-mail/Endereço
- * vêm de window._paj_contatos (extraídos na sincronização, ver
- * ingestao/sisdpu_client.py). WhatsApp é escolha manual (o SISDPU não
- * distingue "este telefone é WhatsApp"), persistida via POST
- * /api/paj/<paj>/whatsapp. */
 /** "Caixas onde o PAJ está aberto" (igual à Retornos, ver .ret-caixas em
  * base.html) + badge de "últimas tramitações" (mesmo padrão do badge "N
  * movimentações" do card Resumo IA da Retornos — abre modal com tabela).
@@ -1279,28 +1274,39 @@ function caixasAbertasApp(pajNorm) {
     };
 }
 
-function contatosApp(pajNorm) {
-    const d = window._paj_contatos || {};
+/** Card de contatos de UMA pessoa (assistido ou representante) na tabela
+ * "Assistidos e Representantes Legais" — Telefone/E-mail/Endereço vêm de
+ * window._paj_contatos_pessoas[idPessoa] (ficha da própria pessoa, lida na
+ * sincronização). App SISDPU é do PAJ (só na linha do principal). WhatsApp é
+ * escolha manual (o SISDPU não distingue "este telefone é WhatsApp"): a lista
+ * do PAJ (window._paj_contatos.whatsappNumeros) é uma só, POST
+ * /api/paj/<paj>/whatsapp — cada linha mexe só nos números da sua pessoa. */
+function contatosApp(pajNorm, idPessoa, principal) {
+    const geral = window._paj_contatos || {};
+    const d = (window._paj_contatos_pessoas || {})[idPessoa];
+    const telefones = (d && d.telefones) || [];   // [{numero, obs}]
+    const meus = telefones.map((t) => t.numero);
     return {
         pajNorm: pajNorm,
-        temDados: !!d.temDados,
-        contatos: d.contatos || {},
-        telefones: d.telefones || [],   // [{numero, obs}]
-        emails: d.emails || [],
-        enderecosFmt: d.enderecosFmt || [],
-        whatsappNumeros: d.whatsappNumeros || [],
-        copied: null,
+        temDados: !!d,
+        principal: !!principal,
+        // App SISDPU é do PAJ (cadastro do principal): nos demais fica apagado
+        appSisdpu: !!principal && !!(geral.contatos || {}).app_sisdpu,
+        telefones: telefones,
+        emails: (d && d.emails) || [],
+        enderecosFmt: (d && d.enderecosFmt) || [],
+        whatsappNumeros: (geral.whatsappNumeros || []).filter((n) => meus.includes(n)),
         popoverWhatsapp: false,
         selecaoWhatsapp: [],
         salvandoWhatsapp: false,
 
         tituloTelefone() {
             if (!this.telefones.length) return 'Telefone — não cadastrado';
-            return 'Telefone (clique para copiar):\n' + this.telefones.map((t) => t.numero).join(', ');
+            return 'Telefone (clique para copiar):\n' + this.telefones.map((t) => t.numero + (t.obs ? ' (' + t.obs + ')' : '')).join('\n');
         },
         tituloEmail() {
             if (!this.emails.length) return 'E-mail — não cadastrado';
-            return 'E-mail (clique para copiar):\n' + this.emails.join(', ');
+            return 'E-mail (clique para copiar):\n' + this.emails.join('\n');
         },
         tituloEndereco() {
             if (!this.enderecosFmt.length) return 'Correio/Endereço — não cadastrado';
@@ -1312,15 +1318,14 @@ function contatosApp(pajNorm) {
             return 'WhatsApp — clique para escolher o(s) número(s)';
         },
 
-        copiar(texto, campo) {
+        copiar(texto) {
             if (!texto) return;
             navigator.clipboard.writeText(texto);
-            this.copied = campo;
-            setTimeout(() => { this.copied = null; }, 2000);
+            showToast('Copiado!', 'success');
         },
-        copiarTelefones() { this.copiar(this.telefones.map((t) => t.numero).join(', '), 'telefone'); },
-        copiarEmails() { this.copiar(this.emails.join(', '), 'email'); },
-        copiarEnderecos() { this.copiar(this.enderecosFmt.join(' | '), 'endereco'); },
+        copiarTelefones() { this.copiar(this.telefones.map((t) => t.numero).join(', ')); },
+        copiarEmails() { this.copiar(this.emails.join(', ')); },
+        copiarEnderecos() { this.copiar(this.enderecosFmt.join(' | ')); },
 
         abrirWhatsapp() {
             if (!this.telefones.length) return;
@@ -1334,16 +1339,18 @@ function contatosApp(pajNorm) {
         },
         async salvarWhatsapp() {
             this.salvandoWhatsapp = true;
+            // Lista do PAJ: tira os números desta pessoa e põe a nova seleção.
+            const numeros = (geral.whatsappNumeros || []).filter((n) => !meus.includes(n)).concat(this.selecaoWhatsapp);
             try {
                 const r = await fetch('/api/paj/' + encodeURIComponent(this.pajNorm) + '/whatsapp', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ numeros: this.selecaoWhatsapp }),
+                    body: JSON.stringify({ numeros: numeros }),
                 });
                 const data = await r.json();
                 if (data.ok) {
-                    this.whatsappNumeros = this.selecaoWhatsapp;
-                    this.contatos.whatsapp = this.whatsappNumeros.length > 0;
+                    geral.whatsappNumeros = numeros;
+                    this.whatsappNumeros = [...this.selecaoWhatsapp];
                     this.popoverWhatsapp = false;
                 } else {
                     showToast(data.erro || 'Falha ao salvar WhatsApp', 'error');
