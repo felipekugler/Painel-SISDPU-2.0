@@ -71,7 +71,9 @@
                                                     <td><a :href="linkArquivo(a)" target="_blank" class="link link-hover font-mono text-[11px]" x-text="a.nome"></a></td>
                                                     <td>
                                                         <select data-busca class="select select-bordered select-xs w-full max-w-sm" x-model="a.tipo"
+                                                                :class="{'select-warning': a.incluir && !a.tipo}"
                                                                 x-init="$nextTick(() => { $el.value = a.tipo })">
+                                                            <option value="">— escolha o tipo —</option>
                                                             <template x-for="t in opcoesTipo(a.tipo)" :key="t">
                                                                 <option :value="t" x-text="t"></option>
                                                             </template>
@@ -91,6 +93,11 @@
                                     Processo <span class="normal-case font-normal" x-text="'(fonte: ' + (dados.fonte_peticao || '—') + ')'"></span>
                                 </div>
                                 <div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
+                                    <label class="flex flex-col gap-0.5 md:col-span-3"><span class="text-[11px] text-base-content/60">Fluxo do e-proc</span>
+                                        <select class="select select-bordered select-sm" x-model="dados.fluxo">
+                                            <option value="bi">Benefício por incapacidade (NB + perícia; INSS fixo; 4 etapas)</option>
+                                            <option value="generico">Outros assuntos (partes autoras + partes rés; 5 etapas)</option>
+                                        </select></label>
                                     <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Ajuizar em</span>
                                         <select data-busca class="select select-bordered select-sm" x-model="dados.localidade">
                                             <template x-for="l in localidades" :key="l"><option :value="l" x-text="l" :selected="l === dados.localidade"></option></template>
@@ -104,20 +111,21 @@
                                         <input class="input input-bordered input-sm" x-model="dados.classe" readonly></label>
                                     <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Valor da causa (R$, da inicial)</span>
                                         <input class="input input-bordered input-sm" x-model="dados.valor_causa"></label>
-                                    <label class="flex flex-col gap-0.5 md:col-span-2"><span class="text-[11px] text-base-content/60">Assunto principal (deve estar entre as sugestões da IA do e-proc)</span>
+                                    <label class="flex flex-col gap-0.5 md:col-span-2"><span class="text-[11px] text-base-content/60">Assunto principal (deve estar entre as sugestões da IA do e-proc<span x-show="dados.fluxo === 'generico'">; vazio = 1ª sugestão</span>)</span>
                                         <input class="input input-bordered input-sm" x-model="dados.assunto"></label>
                                     <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" x-model="dados.renuncia_60sm">
                                         <span class="text-xs">Renúncia ao excedente de 60 SM</span></label>
                                     <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" x-model="dados.tutela">
                                         <span class="text-xs">Requer Liminar/Antecipação de Tutela</span></label>
-                                    <span class="text-[11px] text-base-content/50 self-center">Área Previdenciária · Sem sigilo · art. 129-A mantido</span>
+                                    <span class="text-[11px] text-base-content/50 self-center"
+                                          x-text="dados.fluxo === 'generico' ? 'Área Previdenciária · Sem sigilo · justiça gratuita Requerida' : 'Área Previdenciária · Sem sigilo · art. 129-A mantido'"></span>
                                 </div>
                             </div>
 
                             <!-- Autor -->
                             <div>
                                 <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1">
-                                    Autor(a): <span class="normal-case" x-text="dados.autor.nome"></span> · réu INSS
+                                    Autor(a): <span class="normal-case" x-text="dados.autor.nome"></span> · réu <span class="normal-case" x-text="dados.reu || 'INSS'"></span>
                                 </div>
                                 <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
                                     <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">CPF</span>
@@ -143,11 +151,13 @@
                                         <select class="select select-bordered select-sm" x-model="dados.autor.sexo">
                                             <option value="">(o da Receita)</option><option value="Feminino">Feminino</option><option value="Masculino">Masculino</option>
                                         </select></label>
+                                    <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Nacionalidade (vazio = brasileira)</span>
+                                        <input class="input input-bordered input-sm" x-model="dados.autor.nacionalidade"></label>
                                 </div>
                             </div>
 
                             <!-- Benefício -->
-                            <div>
+                            <div x-show="dados.fluxo !== 'generico'">
                                 <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1">Benefício e perícia</div>
                                 <div class="grid grid-cols-1 md:grid-cols-4 gap-2 text-sm items-start">
                                     <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">NB do pedido principal</span>

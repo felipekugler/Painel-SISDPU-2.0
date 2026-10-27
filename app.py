@@ -29,6 +29,7 @@ from routes.analise_pretensao import router as analise_pretensao_router
 from routes.configuracoes import router as configuracoes_router
 from routes.calcular_cnis import router as calcular_cnis_router
 from routes.calcular_qs import router as calcular_qs_router
+from routes.calcular_valor_causa import router as calcular_valor_causa_router
 from routes.consulta_rpv import router as consulta_rpv_router
 from routes.dossie_sd import router as dossie_sd_router
 from routes.dossie_cadunico import router as dossie_cadunico_router
@@ -91,7 +92,7 @@ _configurar_logging()
 # Versao do painel — fonte unica. Usada pelo FastAPI (OpenAPI/docs) e tambem
 # exposta a todos os templates via Jinja globals (renderizada no rodape da
 # sidebar). Para incrementar: mude aqui e so aqui.
-APP_VERSION = "0.4.163"
+APP_VERSION = "0.4.165"
 
 app = FastAPI(title="oficio-geral-ui", version=APP_VERSION)
 app.state.jinja = jinja2.Environment(
@@ -290,6 +291,7 @@ app.include_router(agenda_router)
 app.include_router(analise_pretensao_router)
 app.include_router(calcular_cnis_router)
 app.include_router(calcular_qs_router)
+app.include_router(calcular_valor_causa_router)
 app.include_router(consulta_rpv_router)
 app.include_router(dossie_sd_router)
 app.include_router(dossie_cadunico_router)

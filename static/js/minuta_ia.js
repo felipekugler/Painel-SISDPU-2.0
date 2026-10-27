@@ -422,6 +422,31 @@ function minutaIaApp(pajNorm, pajLabel) {
 
         // "Gerar arquivo (DOC/PDF)" — formata o texto ATUAL da caixa (com os
         // ajustes manuais do Defensor) e salva em "Peças IA", sem chamar IA.
+        // Nome da petição (o mesmo do rótulo no topo da minuta) — vira a descrição da
+        // movimentação no SISDPU no atalho "Peticionar no eproc".
+        nomePeticao() {
+            return this.labelAtivo || ((this.tipos || []).find((t) => t.slug === this.tipoSlug) || {}).label
+                || this.tipoSlug || 'Petição';
+        },
+        // "Peticionar no eproc" (26/10/2026): abre a movimentação conjunta EMBUTIDA
+        // nesta página (paj_detail.html) com a petição gerada pré-carregada — os cards
+        // aplicam `window._presetConjunta` depois de ler os próprios rascunhos
+        // (acoes_eproc.js / acoes_sisdpu.js: _aplicarPresetConjunta).
+        peticionarNoEproc() {
+            const pdf = this.arquivos.find((n) => /\.pdf$/i.test(n));
+            const docx = this.arquivos.find((n) => /\.docx$/i.test(n));
+            if (!pdf && !docx) return;
+            if (!document.querySelector('[data-conjunta-paj]')) {
+                showToast('Este PAJ não tem processo judicial vinculado — não há onde peticionar no e-proc.', 'warning');
+                return;
+            }
+            window._presetConjunta = {
+                pajNorm: this.pajNorm, descricao: this.nomePeticao(),
+                pdf: pdf ? 'Peças IA/' + pdf : '', docx: docx ? 'Peças IA/' + docx : '',
+                eproc: false, sisdpu: false,
+            };
+            window.dispatchEvent(new CustomEvent('abrir-conjunta-preset'));
+        },
         async gerarArquivo() {
             const html = this.minutaEfetiva();
             if (!html || !html.replace(/<[^>]+>/g, '').trim()) {

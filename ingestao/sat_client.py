@@ -1414,6 +1414,15 @@ async def _compilar_por_tipo(pasta_destino, salvos, reg):
 # sem nova consulta por CPF e sem novo CAPTCHA (menos requisições ao antirrobô).
 # Vale uma vez e por pouco tempo; se a tela não estiver mais lá, consulta normal.
 _CONSULTA_ABERTA = {"cpf": "", "ate": 0.0}
+
+# Rotina do painel usando a janela do SAT agora (download ou levantamento) — a
+# consulta manual (botão da página do PAJ) não pode atropelá-la (26/10/2026).
+_ROTINA_ATIVA: dict = {}
+
+
+def rotina_ativa() -> dict:
+    """{tipo, nome, desde} da rotina em andamento na janela do SAT, ou {}."""
+    return dict(_ROTINA_ATIVA)
 _CONSULTA_VALIDADE_S = 15 * 60
 
 
@@ -1474,6 +1483,105 @@ async def _abrir_consulta_cpf(page, cpf: str, reg, out: dict):
         return
     await page.wait_for_timeout(800)
     out["ok"] = True
+
+
+async def _digitar_cpf_e_consultar(page, dig: str) -> None:
+    """Preenche o CPF na consulta do SAT e clica em Consultar — o CAPTCHA aparece
+    na janela para o usuário resolver (não espera por ele)."""
+    with contextlib.suppress(Exception):
+        await page.bring_to_front()
+    if "consulta" not in (page.url or "").lower():
+        await page.goto(SAT_CONSULTA, wait_until="domcontentloaded", timeout=60000)
+        await page.wait_for_timeout(1000)
+    await page.click('[id="formFiltrosPF:txtCpf"]', timeout=10000)
+    await page.fill('[id="formFiltrosPF:txtCpf"]', "")
+    await page.type('[id="formFiltrosPF:txtCpf"]', dig, delay=25)
+    await page.click('[id="formFiltrosPF:btnConsultarPF"]', timeout=10000)
+
+
+_consulta_manual_pendente: dict = {}
+
+
+async def consulta_manual(cpf: str, usuario: str = "", senha: str = "") -> dict:
+    """Botão "Arquivos SAT Central" da página do PAJ (26/10/2026): abre a janela do
+    SAT na consulta pelo CPF do assistido, para o Defensor resolver o CAPTCHA e
+    consultar À MÃO. Nada é baixado.
+      - rotina do painel em andamento na janela → recusa (tentar quando acabar);
+      - sessão ativa → consulta o CPF agora;
+      - sem sessão → login (cofre + 2FA, ou manual na janela) e, assim que a
+        sessão abrir, consulta o CPF em segundo plano (até 5 min)."""
+    dig = "".join(ch for ch in (cpf or "") if ch.isdigit())
+    if len(dig) != 11:
+        return {"ok": False, "detalhe": "CPF do assistido ausente ou inválido neste PAJ."}
+    if _ROTINA_ATIVA:
+        r = _ROTINA_ATIVA
+        return {"ok": False, "ocupado": True,
+                "detalhe": f"A janela do SAT está em uso por um {r.get('tipo', 'processo')} "
+                           f"({r.get('nome') or 'outro assistido'}). Tente assim que ele terminar."}
+    browser, page = await _connect()
+    try:
+        with contextlib.suppress(Exception):
+            await page.bring_to_front()
+        if not _status_dict(page.url)["logado"] or "consulta" not in (page.url or "").lower():
+            with contextlib.suppress(Exception):
+                await page.goto(SAT_CONSULTA, wait_until="domcontentloaded", timeout=60000)
+                await page.wait_for_timeout(1500)
+        if _status_dict(page.url)["logado"]:
+            await _digitar_cpf_e_consultar(page, dig)
+            return {"ok": True, "logado": True,
+                    "detalhe": "Janela do SAT aberta na consulta do CPF do assistido — resolva o CAPTCHA e consulte."}
+        with contextlib.suppress(Exception):
+            await _preencher_login(page, usuario, senha)
+        with contextlib.suppress(Exception):
+            await _preencher_2fa(page)
+        if _status_dict(page.url)["logado"]:
+            await _digitar_cpf_e_consultar(page, dig)
+            return {"ok": True, "logado": True,
+                    "detalhe": "Login feito no SAT e CPF do assistido consultado — resolva o CAPTCHA na janela."}
+        _agendar_resolucao_2fa()
+        _agendar_consulta_apos_login(dig)
+        return {"ok": True, "logado": False,
+                "detalhe": "Faça o login na janela do SAT; assim que a sessão abrir, o CPF do assistido é "
+                           "consultado e o CAPTCHA aparece para você resolver."}
+    except Exception as e:  # noqa: BLE001
+        return {"ok": False, "detalhe": f"Não consegui abrir a consulta no SAT: {e}"}
+    finally:
+        with contextlib.suppress(Exception):
+            await browser.close()
+
+
+def _agendar_consulta_apos_login(dig: str) -> None:
+    """Em segundo plano: espera a sessão do SAT abrir (até 5 min) e consulta o CPF.
+    Desiste se uma rotina do painel tomar a janela nesse meio-tempo."""
+    import asyncio as _asyncio
+    _consulta_manual_pendente["cpf"] = dig
+    if _consulta_manual_pendente.get("ativo"):
+        return  # o watcher em curso usa o CPF mais recente
+
+    async def _watch():
+        _consulta_manual_pendente["ativo"] = True
+        try:
+            browser, page = await _connect()
+        except Exception:  # noqa: BLE001
+            _consulta_manual_pendente["ativo"] = False
+            return
+        try:
+            ini = time.monotonic()
+            while time.monotonic() - ini < 300:
+                if _ROTINA_ATIVA:
+                    return
+                with contextlib.suppress(Exception):
+                    if _status_dict(page.url)["logado"]:
+                        await page.wait_for_timeout(1500)
+                        await _digitar_cpf_e_consultar(page, _consulta_manual_pendente.get("cpf") or dig)
+                        return
+                await _asyncio.sleep(2)
+        finally:
+            _consulta_manual_pendente["ativo"] = False
+            with contextlib.suppress(Exception):
+                await browser.close()
+
+    _asyncio.ensure_future(_watch())
 
 
 async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
@@ -1547,6 +1655,8 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
         log_msgs.append(e)
         return e
 
+    _ROTINA_ATIVA.clear()
+    _ROTINA_ATIVA.update(tipo="download", nome=nome, desde=_dt.now().isoformat(timespec="seconds"))
     browser, page = await _connect()
     ctx = page.context
     try:
@@ -1669,6 +1779,7 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
         yield {"done": True, "resultado": {"ok": True, "detalhe": det,
                "salvos": salvos, "pulados": pulados, "pasta": pasta_destino}}
     finally:
+        _ROTINA_ATIVA.clear()
         # Log já foi gravado INCREMENTALMENTE a cada documento; aqui grava a versão FINAL
         # (marcando parcial=False). Se a rotina foi interrompida (perda de conexão), o
         # parcial gravado no último _inv_add permanece em disco para permitir a retomada.
@@ -1720,6 +1831,8 @@ async def levantar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
     def add(key: str, sub: str, status: str, rotulo: str = "") -> None:
         itens.append({"key": key, "sub": sub, "nome": "", "status": status, "rotulo": rotulo})
 
+    _ROTINA_ATIVA.clear()
+    _ROTINA_ATIVA.update(tipo="levantamento", nome=nome, desde=ts_ini)
     browser, page = await _connect()
     try:
         out_c: dict = {}
@@ -1816,6 +1929,7 @@ async def levantar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                f"além dos {len(_GRUPO1)} do Grupo 1 a verificar. Escolha no \"Baixar mais\" — a consulta "
                f"fica aberta {_CONSULTA_VALIDADE_S // 60} min (sem novo CAPTCHA).", "consulta_aberta": True}}
     finally:
+        _ROTINA_ATIVA.clear()
         with contextlib.suppress(Exception):
             import json as _json
             # Um levantamento COMPLETO anterior nunca é perdido (25/10/2026): o novo só

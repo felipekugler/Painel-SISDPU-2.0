@@ -84,6 +84,25 @@ async def api_sat_abrir():
     return JSONResponse(await sat_client.abrir(usuario=usuario, senha=senha))
 
 
+@router.post("/api/sat/consulta-manual/{paj_norm}", response_class=JSONResponse)
+async def api_sat_consulta_manual(paj_norm: str):
+    """Botão "Arquivos SAT Central" da página do PAJ: abre a janela do SAT na
+    consulta pelo CPF do assistido (login automático se preciso) para o Defensor
+    resolver o CAPTCHA e consultar à mão — não baixa nada, não muda de página."""
+    from ingestao import sat_client
+    cpf = sat_service._cpf_do_paj(paj_norm)
+    if not cpf and sat_service._fonte_mcp():
+        m = __import__("re").match(r"PAJ-(\d{4})-(\d{3})-(\d+)", paj_norm)
+        if m:
+            with __import__("contextlib").suppress(Exception):
+                det = await sat_service._ler_paj_mcp(m.group(3), m.group(1), m.group(2))
+                cpf = (det or {}).get("cpf_assistido", "") or ""
+    if not cpf:
+        return JSONResponse({"ok": False, "detalhe": "CPF do assistido não encontrado — sincronize o PAJ."})
+    usuario, senha = _credenciais_sat()
+    return JSONResponse(await sat_client.consulta_manual(cpf, usuario=usuario, senha=senha))
+
+
 @router.get("/api/sat/sessao", response_class=JSONResponse)
 async def api_sat_sessao():
     """Verifica se a sessão do SAT está pronta (logado, na página de consulta).
@@ -374,19 +393,34 @@ async def fichas_resumo(paj_norm: str, request: Request):
     tramitação que o SIS-DPU 2.0 montaria — nada é gravado. O front mostra tudo
     num modal só e, confirmado, registra as aprovações antecipadas
     (/api/sisdpu2/aprovacoes-antecipadas) antes de executar."""
-    from ingestao import sisdpu2_movtram
     b = await request.json()
+    return JSONResponse(await _coletar_fichas(sat_service.processar_paj_stream(
+        paj_norm, grupo=b.get("grupo") or "", prazo_dias=int(b.get("prazo") or 0),
+        dry_run=True, manual=bool(b.get("manual")))))
+
+
+@router.post("/api/sat/{paj_norm}/fichas-resumo-anexar-mais", response_class=JSONResponse)
+async def fichas_resumo_anexar_mais(paj_norm: str, request: Request):
+    """Revisão ÚNICA do "Anexar mais" (fonte SIS-DPU 2.0): a ficha da movimentação
+    complementar, em dry-run — nada é gravado."""
+    b = await request.json()
+    nomes = [n for n in (b.get("nomes") or []) if n]
+    return JSONResponse(await _coletar_fichas(sat_service.anexar_mais_stream(
+        paj_norm, b.get("rec") or "", b.get("id") or "", b.get("assistido") or "", nomes, dry_run=True)))
+
+
+async def _coletar_fichas(gen) -> dict:
+    """Roda um fluxo do SAT em dry-run recolhendo as fichas do SIS-DPU 2.0."""
+    from ingestao import sisdpu2_movtram
     coleta: list = []
     erros: list[str] = []
     conclui = False
     t = sisdpu2_movtram.COLETA_FICHAS.set(coleta)
     try:
-        async for ev in sat_service.processar_paj_stream(
-                paj_norm, grupo=b.get("grupo") or "", prazo_dias=int(b.get("prazo") or 0),
-                dry_run=True, manual=bool(b.get("manual"))):
+        async for ev in gen:
             if ev.get("done"):
                 res = ev.get("resultado") or {}
-                if not res.get("ok") and res.get("detalhe") and not any(res["detalhe"] in e for e in erros):
+                if not res.get("ok") and res.get("detalhe") and not erros:  # o passo já trouxe o motivo
                     erros.append(res["detalhe"])
             elif ev.get("level") == "erro":
                 msg = (ev.get("msg") or "").strip().lstrip("✗").strip()
@@ -396,7 +430,7 @@ async def fichas_resumo(paj_norm: str, request: Request):
                 conclui = True
     finally:
         sisdpu2_movtram.COLETA_FICHAS.reset(t)
-    return JSONResponse({"ok": not erros, "fichas": coleta, "erros": erros[:5], "conclui": conclui})
+    return {"ok": not erros, "fichas": coleta, "erros": erros[:5], "conclui": conclui}
 
 
 @router.get("/api/sat/{paj_norm}/processar")

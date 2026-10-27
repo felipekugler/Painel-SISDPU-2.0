@@ -310,6 +310,118 @@ judicial no PAJ posteriormente (decisão do Defensor, 2026-10-08).
    "Selecionar Todos" → honorários Não → Próxima.
 6. Informações Adicionais: tutela conforme inicial; art. 129-A mantido → PARAR.
 
+## Fluxo GENÉRICO ("outros assuntos") — caso-escola BPC (2026-10-23)
+
+Caso-escola: PAJ 2026/029-03147 (JFPR), restabelecimento de BPC à pessoa com
+deficiência (NB 227.937.759-9), com tutela de urgência. Fluxo de 5 etapas:
+Informações do processo >> Assuntos >> Partes Autoras >> **Partes Rés** >>
+Informações Adicionais. O título "(N de 5)" já aparece na etapa 1 — só depois
+do assunto se sabe se o e-proc vai para o formulário próprio do BI (4 etapas)
+ou para o genérico (5 etapas). Detectar pela URL/título:
+`acao=processo_cadastrar_3_autor` → genérico; formulário com NB/especialidade → BI.
+
+### Etapa 1 — idêntica ao BI
+Upload em lote, tipos, Curitiba, rito pelo teto de 60 SM (JEF + renúncia),
+área **Previdenciária** (vale também para BPC/assistencial), classe
+PROCEDIMENTO DO JUIZADO ESPECIAL CÍVEL, valor da causa da inicial
+(R$ 39.060,25 aqui, mesmo com o cálculo dando R$ 39.060,29 — o Defensor manda
+seguir a inicial). Lista de áreas no JEF Curitiba: Cível, Criminal,
+Habitacional, Previdenciária, Saúde, Tributária.
+
+Tipos de documento — regras novas do Defensor:
+- **Nunca usar "ANEXOS DA PETIÇÃO INICIAL".**
+- CadÚnico: **COMPROVANTES** (comprovante de cadastro) ou **EXTRATO** (folha resumo).
+- RNM (estrangeiro): DOCUMENTO DE IDENTIFICAÇÃO.
+- Carta de Concessão: CARTA DE CONCESSÃO. "PROCADM ..." = PROCESSO ADMINISTRATIVO
+  (o REGRAS_TIPO atual não casa "procadm" nem "carta de concessao" — corrigir).
+- Documentos médicos genéricos: LAUDO; Solicitação de Informações Médicas DPU: FORMULÁRIO.
+- No Chrome, os tipos foram definidos por JS: `#lblListarTipo_<n>`.click() →
+  achar `#divInfraAjaxtxtTipo_<n> li a` com o texto exato → disparar
+  mouseover/mousedown/mouseup/click → `#selTipoArquivo_<n>` preenchido.
+
+### Etapa 2 — Assuntos
+A IA sugeriu uma única opção: "Pessoa com deficiência, Benefício Assistencial
+(Art. 203,V CF/88), DIREITO ASSISTENCIAL" → código **140201**
+(`id_assunto_principal=2311`). Regra: incluir a sugestão (seta verde) como
+assunto principal, **sem complementares**, se bater com o pedido da inicial.
+Árvore mostra DIREITO ASSISTENCIAL (14) e DIREITO PREVIDENCIÁRIO (04).
+
+### Etapa 3 de 5 — Partes (autores) (`acao=processo_cadastrar_3_autor`)
+Formulário genérico de consulta/inclusão: `selTipoPessoa` (ENT/PF/PJ), CPF,
+"Sem CPF" (estrangeiro sem CPF / menor), Outros Documentos, Pesquisar pelo
+nome, botão Consultar.
+1. Tipo Pessoa = **PF**, CPF só dígitos, Consultar.
+2. CPF não cadastrado → `alert()` nativo e redireciona para a PÁGINA INTEIRA
+   `acao=pessoa_cadastrar&acao_retorno=processo_cadastrar_3_autor` (não é
+   iframe como no BI). Mesmos ids do BI (selSexo, selEstCivil, selTipoEtnia,
+   txtCep + `a#txtImage`, txtEndNum/txtEndComp + `#btnIncEnd`, selTipoCont=1 +
+   txtContato + `#btnIncCont`) e mais:
+   - `selNacionalidade` (padrão "Brasileira") → usar a da qualificação da
+     inicial (Venezuelano = 220). Não confundir com `selPais` (país do endereço).
+   - `chkPCD` + `selTipoDeficiencia` (multiselect com checkboxes): **NÃO
+     marcar** (regra do Defensor — pode dar problema no fluxo futuro). No
+     caso-escola ficou marcado Visual só porque já tinha sido salvo. Se marcar
+     sem escolher o tipo por clique real, o Salvar dá alert pedindo o tipo;
+     NÃO chamar `selectpicker('refresh')` (cria um 2º widget duplicado).
+   - Salvar → alert "<NOME> salvo com sucesso." → volta à etapa 3 já com a
+     busca feita ("1 pessoa localizada"): linha com Principal (Sim) + Incluir.
+3. Incluir → tabela "Partes (autores) a utilizar neste ajuizamento":
+   Principal? (Sim), Tipo Representação [Definir] (opcional), Inf. Extra
+   [Benefício], Justiça Gratuita (select 3=Não Requerida / 6=Requerida).
+   Regras do Defensor: **só Justiça Gratuita = Requerida**. Representação só
+   se houver representante (curador, genitor etc.). Inf. Extra/Benefício
+   (janela "Informações do Benefício": implantação sem/com pedido prévio) —
+   **não preencher**.
+4. Próxima = `#btnProxima`.
+
+### Etapa 4 de 5 — Partes (Réus) (`acao=processo_cadastrar_3_reu`)
+Mesmo formulário. Tipo Pessoa = **Entidade** (ENT) → `#txtEntidade`
+(autocomplete; digitar "INSTITUTO NACIONAL DO SEGURO" → item
+"INSTITUTO NACIONAL DO SEGURO SOCIAL - INSS") → Principal Sim →
+`#btnIncluirEnt`. A tela pode reabrir com PF selecionado e um `alert`
+"Escolha uma entidade." — trocar para ENT antes. Linha: RÉU, Principal Sim.
+`#btnProxima`.
+
+### Etapa 5 de 5 — Informações Adicionais (`acao=processo_cadastrar_4`)
+Diferenças para o BI: **não existem** `chkAtendeReqLei8213_91` nem
+`chkDesinteresseTA`. `chkIdosoVisual` veio MARCADO e desabilitado (autor com
+60 anos — automático pela data de nascimento). Aplicada a regra do BI:
+`chkCautAntecTutela` se a inicial pede tutela; demais desmarcados
+(inclusive `chkDeficiente`). PARAR — Finalizar/Assinar só pelo Defensor.
+
+### Ajuizamento e pós (2026-10-23, a pedido do Defensor)
+"Finalizar" abre o MESMO modal de conferência do BI (iframe, `#sbmConfirmar`)
+→ `processo_finalizado`: 5065719-30.2026.4.04.7000, chave 136323796926,
+10ª VF de Curitiba. Pós-ajuizamento idêntico ao do BI, pelo painel:
+gerenciamento (S + DPUPREV) → rascunho "Petição inicial" + docx → revisão
+SIS-DPU 2.0 (cadastro do processo, movimentação, tramitação 01- PREV_AJUIZADOS)
+→ cadastro/sincronização do processo + chave no PAJ → execução ✓.
+
+### Implementação do fluxo genérico (2026-10-23)
+- Plano (`peticao_inicial_service.extrair_dados`): `fluxo` = "bi" | "generico"
+  pelo título da ação ("AÇÃO DE ..."; BPC/LOAS/assistencial → genérico;
+  incapacidade/auxílio-doença/invalidez/auxílio-acidente → BI); `assunto`
+  (BI urbano; BPC deficiência → "Pessoa com deficiência, Benefício
+  Assistencial..."; senão vazio = 1ª sugestão da IA), `reu` (INSS),
+  `autor.nacionalidade`. NB/especialidade só obrigatórios no BI (rota).
+- REGRAS_TIPO: sem regra → tipo VAZIO (o modal destaca e a rota exige);
+  nunca ANEXOS DA PETIÇÃO INICIAL.
+- Automação: `_etapa3_partes_conforme_fluxo` decide pela página (campo NB →
+  BI; `processo_cadastrar_3_autor` → `_etapa3_autores_generico` +
+  `_etapa4_reus_generico`). `_cadastrar_pessoa(pagina_inteira=True)` para o
+  cadastro em página. Etapa final comum (`processo_cadastrar_4`); `ajuizar()`
+  vale para os dois.
+- NÃO TESTADO AO VIVO no Playwright do painel: id do campo CPF (achado pelo
+  `<label>` "CPF:"), botão "Consultar os dados preenchidos" (pelo nome
+  acessível), select "Principal?" ao lado de `#btnIncluirEnt`. Validar no
+  próximo caso de outro assunto.
+
+### Alerts nativos no Chrome (claude-in-chrome)
+Cada `alert()` congela a aba para a extensão (screenshot/JS dão timeout) e o
+Defensor tem de fechar manualmente. Clicar botões que podem gerar alert com
+`setTimeout(() => b.click(), 100)` para a chamada não travar. No Playwright do
+painel tratar com `page.on("dialog")` → accept.
+
 ## Classificação dos arquivos (1º passo do botão)
 
 Decisão do Defensor: o botão começa LISTANDO os arquivos da pasta

@@ -5,7 +5,7 @@
       "name": "Painel-SISDPU",
       "runtimeExecutable": ".venv/Scripts/python.exe",
       "runtimeArgs": ["app.py"],
-      "port": 8001
+      "port": 8002
     }
   ]
 }

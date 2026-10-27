@@ -172,6 +172,10 @@ function acoesEprocBlock(cfg) {
                 window.dispatchEvent(new CustomEvent('processo-eproc-selecionado', { detail: { numero, pajNorm: this.pajNorm } }));
             });
             await this.carregarPreferencias();
+            if (!this._listenerPresetLigado) {
+                this._listenerPresetLigado = true;
+                window.addEventListener('aplicar-preset-conjunta', () => this._aplicarPresetConjunta());
+            }
             // Consumidores que já nascem com aberto:true no cfg (ex.: a página do
             // PAJ, que pula o clique no cabeçalho para já mostrar o console aberto)
             // não passam pelo toggle de abrir() — dispara aqui a mesma carga inicial
@@ -257,6 +261,7 @@ function acoesEprocBlock(cfg) {
             if (!this.rascunhoCarregado) await this.carregarRascunho();
             if (!this.prazosCarregados) await this.carregarPrazos();
             this._aplicarPrazoInicial();
+            this._aplicarPresetConjunta();
             if (!this.docsCarregados) await this.carregarDocsPaj();
             if (this.processos.length > 1) this.carregarClassesProcessos();  // não bloqueia — enche o rótulo quando chegar
             // Trava síncrona ANTES do primeiro `await` (mesmo motivo/padrão do
@@ -279,6 +284,32 @@ function acoesEprocBlock(cfg) {
         // `prazoInicial` (botão "Peticionar" da página de Prazos): marca o prazo
         // quando os prazos E o rascunho já foram lidos — init() roda duas vezes
         // e a leitura do rascunho, se terminar depois, sobrescrevia a seleção.
+        // "Peticionar no eproc" da minuta com IA (26/10/2026 — ver minuta_ia.js):
+        // evento PETIÇÃO + o PDF da petição no topo da tabela de anexos (tipo
+        // PETIÇÃO, sem sigilo). Uma vez só, e só depois de ler o rascunho (que
+        // sobrescreveria o evento/anexos).
+        _aplicarPresetConjunta() {
+            const p = window._presetConjunta;
+            if (!p || p.eproc || !this.pajNorm || p.pajNorm !== this.pajNorm || !this._rascunhoLido) return;
+            if (!(this.$el && this.$el.closest('[data-conjunta-paj]'))) return;  // só o card da conjunta, não o console avulso
+            p.eproc = true;
+            const ev = [...this.eventosTodos, ...this.eventosFav].find((x) => this._normalizarTexto(x) === 'peticao');
+            this.evento = ev || 'PETIÇÃO';
+            if (!p.pdf || this.anexos.some((a) => a.origem === 'paj' && a.docPajKey === p.pdf)) return;
+            const anexo = {
+                _id: this._novoAnexoId(), origem: 'paj', docPajKey: p.pdf, docLabelCache: p.pdf.split('/').pop(),
+                tamanho: 0, arquivo: null,
+                tipo: this.tiposTodos.find((t) => this._normalizarTexto(t) === 'peticao') || 'PETIÇÃO',
+                sigilo: this.sigilosTodos.find((s) => /sem sigilo/i.test(s)) || this.sigiloPadraoEfetivo(),
+                _comprimindo: false,
+            };
+            this.anexos.unshift(anexo);
+            this.carregarPecasIa().then(() => {
+                const d = this.pecasIa.find((x) => this.docKey(x) === p.pdf);
+                const a = this.anexos.find((x) => x._id === anexo._id);
+                if (d && a) a.tamanho = d.tamanho || 0;
+            });
+        },
         _aplicarPrazoInicial() {
             const alvo = this.prazoInicial;
             if (!alvo || !this._rascunhoLido || !this.prazosCarregados || this.carregandoPrazos) return;

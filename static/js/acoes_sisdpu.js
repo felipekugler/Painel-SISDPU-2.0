@@ -288,8 +288,10 @@ function acoesSisdpuBlock(cfg) {
             // o Quill com o valor ANTIGO de _descMovHtmlRascunho antes do carregarRascunho()
             // (buscando o valor certo) terminar — bug real 2026-08-13: a descrição não
             // aparecia na movimentação após "Peticionar", só os anexos.
+            await this._aplicarPresetConjunta();
             if (!this._listenerEprocLigado) {
                 this._listenerEprocLigado = true;
+                window.addEventListener('aplicar-preset-conjunta', () => this._aplicarPresetConjunta());
                 window.addEventListener('eproc-peticionado', (ev) => this._receberPeticaoEproc(ev.detail || {}));
                 // "Anexar ao PAJ" do Minutar Ofício (21/10/2026): mesmo fluxo — o
                 // rascunho (fase + descrição + PDF do ofício) já está no disco.
@@ -371,6 +373,37 @@ function acoesSisdpuBlock(cfg) {
         // e torcer pra corrigir depois com setHTML() (dependia de timing — bug real
         // 2026-08-13, descrição não aparecia, só os anexos). Se o painel já estava
         // aberto (editor já existe), ainda assim empurra o HTML pra dentro dele.
+        // "Peticionar no eproc" da minuta com IA (26/10/2026 — ver minuta_ia.js): fase
+        // "Petição diversa com conteúdo jurídico", descrição = nome da petição e o
+        // DOCX nos anexos (tipo "Petições"). Uma vez só, depois do rascunho.
+        async _aplicarPresetConjunta() {
+            const p = window._presetConjunta;
+            if (!p || p.sisdpu || !this.pajNorm || p.pajNorm !== this.pajNorm) return;
+            if (!(this.$el && this.$el.closest('[data-conjunta-paj]'))) return;  // só o card da conjunta, não o console avulso
+            p.sisdpu = true;
+            await this.carregarRascunho();
+            const alvo = 'peticao diversa com conteudo juridico';
+            const norm = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
+            this.fase = [...this.fasesTodas, ...this.fasesFav].find((f) => norm(f) === alvo)
+                || 'Petição diversa com conteúdo jurídico';
+            // O editor pode estar sendo montado por outra chamada do init() — semeia o
+            // valor inicial e, se ele já existir (ou surgir em instantes), escreve nele.
+            const esc = (t) => String(t || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+            this._descMovHtmlRascunho = '<p>' + esc(p.descricao) + '</p>';
+            this.descMov = p.descricao || '';
+            if (!this.aberto) { this.aberto = true; await this._montarEditorMov(); }
+            for (let i = 0; i < 20 && !this._editorMov && this.quillMovOk; i++) await new Promise((r) => setTimeout(r, 100));
+            if (this._editorMov) this._editorMov.setText(p.descricao || '');
+            if (!p.docx || this.anexosStaged.some((a) => a.origem === 'paj' && a.ref === p.docx)) return;
+            const nome = p.docx.split('/').pop();
+            const item = { origem: 'paj', ref: p.docx, nome, tamanho: 0, tipo: 'docx',
+                           descricao: p.descricao || this.semExtensao(nome), tipoArquivo: 'Petições' };
+            this.anexosStaged.push(item);
+            await this.carregarPecasIa();
+            const d = this.pecasIa.find((x) => this.docKey(x) === p.docx);
+            const linha = this.anexosStaged.find((a) => a.origem === 'paj' && a.ref === p.docx);  // a reativa
+            if (d && linha) linha.tamanho = d.tamanho || 0;
+        },
         async _receberPeticaoEproc(d) {
             if (!d.pajNorm || d.pajNorm !== this.pajNorm) return;
             await this.carregarRascunho(true);

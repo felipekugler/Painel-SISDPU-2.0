@@ -1227,9 +1227,12 @@
          conjunta fecha os isolados (evento fechar-consoles-isolados) e vice-versa
          (fechar-conjunta). Montada só no 1º clique (x-if) e depois só
          escondida/mostrada (x-show) — fechar não perde o que já foi preenchido. -->
-    <div x-data="{ conjuntaAberta: false, conjuntaMontada: false }"
+    <div x-data="{ conjuntaAberta: false, conjuntaMontada: false }" data-conjunta-paj="{{ paj_norm }}"
          @alternar-conjunta.window="conjuntaAberta = !conjuntaAberta;
                                     if (conjuntaAberta) { conjuntaMontada = true; $dispatch('fechar-consoles-isolados'); }"
+         @abrir-conjunta-preset.window="conjuntaAberta = true; conjuntaMontada = true; $dispatch('fechar-consoles-isolados');
+                                        $nextTick(() => { $el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                                                          window.dispatchEvent(new CustomEvent('aplicar-preset-conjunta')); })"
          @fechar-conjunta.window="conjuntaAberta = false">
         <template x-if="conjuntaMontada">
             <div x-show="conjuntaAberta" x-transition class="mt-3 pt-3 border-t border-base-300">
@@ -1882,6 +1885,283 @@ document.addEventListener('alpine:init', () => {
             </dialog>
         </div>
 
+        <!-- Calcular Valor da Causa: lê os PEDIDOS de uma petição inicial JÁ
+             REDIGIDA e salva em "Peças IA" (pode haver mais de uma peça na
+             pasta — por isso o Defensor escolhe explicitamente qual arquivo
+             usar). A leitura é ESTRITAMENTE SOMENTE LEITURA (a petição
+             original nunca é alterada); os parâmetros extraídos sempre
+             passam por um modal de conferência/complemento antes do cálculo
+             rodar, e o resultado abre num modal de revisão com o PDF — o
+             botão "Inserir Valor da Causa na Inicial" nesse modal grava uma
+             CÓPIA separada da petição (nunca a original). Ver
+             services/calcular_valor_causa_service.py e
+             static/js/calcular_valor_causa.js. -->
+        <div class="contents"
+             x-data="calcularValorCausaApp('{{ paj_norm }}')" x-init="init()">
+            <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                    x-show="$store.acoesIaMenu.aberto === 'calculos' && status === 'idle'"
+                    @click="abrirModalPeticao(); $store.acoesIaMenu.aberto = null"
+                    title="Lê (somente leitura) os pedidos de uma petição inicial já salva em &quot;Peças IA&quot;, extrai os parâmetros e, após sua conferência, calcula deterministicamente o valor da causa">
+                Calcular Valor da Causa
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                    x-show="$store.acoesIaMenu.aberto === 'calculos' && (status === 'concluido' || status === 'erro')"
+                    @click="abrirModalPeticao(); $store.acoesIaMenu.aberto = null"
+                    title="Refaz o cálculo do valor da causa a partir de uma petição">
+                Calcular Valor da Causa (de novo)
+            </button>
+            <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="status === 'extraindo'" disabled>
+                <span class="loading loading-spinner loading-xs"></span>
+                <span>Lendo a petição e os documentos…</span>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="status === 'calculando'" disabled>
+                <span class="loading loading-spinner loading-xs"></span>
+                <span>Calculando o valor da causa…</span>
+            </button>
+            <button type="button" class="btn btn-sm btn-outline" x-show="$store.acoesIaMenu.aberto === 'calculos' && status === 'aguardando_confirmacao'" disabled>
+                Aguardando confirmação dos parâmetros…
+            </button>
+            <button type="button" class="btn btn-sm btn-outline" x-show="$store.acoesIaMenu.aberto === 'calculos' && status === 'aguardando_revisao'" disabled>
+                Cálculo concluído — revise o resultado
+            </button>
+
+            <!-- Modal 1: escolher a petição -->
+            <dialog class="modal" :open="modalPeticaoAberto" @close="fecharModalPeticao()">
+                <div class="modal-box w-full max-w-[50vw]">
+                    <h3 class="font-bold text-lg mb-1">Escolha a petição inicial</h3>
+                    <p class="text-xs text-base-content/50 mb-3">
+                        Arquivos encontrados em "Peças IA" — escolha a petição inicial cujos pedidos
+                        devem ser lidos para calcular o valor da causa. A leitura é só leitura: a
+                        petição escolhida não será alterada em nenhuma hipótese.
+                    </p>
+
+                    <div class="flex justify-center py-6" x-show="carregandoPeticoes">
+                        <span class="loading loading-spinner loading-md"></span>
+                    </div>
+                    <div class="text-sm text-base-content/50 text-center py-4" x-show="!carregandoPeticoes && erroPeticoes" x-text="erroPeticoes"></div>
+
+                    <div class="flex flex-col gap-1.5" x-show="!carregandoPeticoes && peticoes.length">
+                        <template x-for="p in peticoes" :key="p.caminho">
+                            <button type="button"
+                                    class="btn btn-sm btn-outline justify-between normal-case font-normal"
+                                    @click="escolherPeticao(p)">
+                                <span class="truncate" x-text="p.nome"></span>
+                                <span class="text-[11px] text-base-content/50 whitespace-nowrap ml-2"
+                                      x-text="formatarData(p.modificado) + ' · ' + formatarTamanho(p.tamanho)"></span>
+                            </button>
+                        </template>
+                    </div>
+
+                    <div class="modal-action">
+                        <button type="button" class="btn btn-sm" @click="fecharModalPeticao()">Fechar</button>
+                    </div>
+                </div>
+                <form method="dialog" class="modal-backdrop"><button @click="fecharModalPeticao()">fechar</button></form>
+            </dialog>
+
+            <!-- Modal 2: conferir/completar os parâmetros — abre sozinho
+                 quando a leitura termina (ligado a `status`, não a um
+                 booleano próprio) e NÃO deixa calcular sem o mínimo exigido
+                 (ver podeCalcular() em calcular_valor_causa.js). -->
+            <dialog class="modal" :open="status === 'aguardando_confirmacao'">
+                <div class="modal-box w-full max-w-[60vw]">
+                    <h3 class="font-bold text-lg mb-1">Confira os parâmetros do cálculo</h3>
+                    <p class="text-xs text-base-content/50 mb-3">
+                        Extraídos da leitura da petição e dos documentos do PAJ. Campos marcados
+                        "não encontrado pela IA" precisam ser preenchidos manualmente — o cálculo
+                        não prossegue sem o mínimo necessário.
+                    </p>
+
+                    <div class="grid grid-cols-2 gap-2 mb-3">
+                        <label class="form-control">
+                            <span class="label-text text-xs mb-1">
+                                Tipo do benefício
+                                <span class="badge badge-xs badge-warning ml-1" x-show="ehFaltando('tipo')">não encontrado</span>
+                            </span>
+                            <select class="select select-sm select-bordered" x-model="parametros.tipo">
+                                <option value="" disabled>Selecione…</option>
+                                <option value="previdenciario">Previdenciário</option>
+                                <option value="assistencial">Assistencial (BPC/LOAS)</option>
+                            </select>
+                        </label>
+                        <label class="form-control">
+                            <span class="label-text text-xs mb-1">NB</span>
+                            <input type="text" class="input input-sm input-bordered" x-model="parametros.nb">
+                        </label>
+                        <label class="form-control">
+                            <span class="label-text text-xs mb-1">Espécie</span>
+                            <input type="text" class="input input-sm input-bordered" x-model="parametros.especie">
+                        </label>
+                        <label class="form-control">
+                            <span class="label-text text-xs mb-1">Nome do assistido</span>
+                            <input type="text" class="input input-sm input-bordered" x-model="parametros.nome">
+                        </label>
+                    </div>
+
+                    <div class="border border-base-300 rounded-lg p-3 mb-3">
+                        <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-2">Valor mensal (RMI)</h4>
+                        <div class="flex items-center gap-2 mb-2">
+                            <input type="number" step="0.01" placeholder="0,00" class="input input-sm input-bordered w-40"
+                                   :disabled="parametros.piso_sm" x-model="parametros.valor_mensal">
+                            <span class="badge badge-xs badge-warning" x-show="ehFaltando('valor_mensal')">não encontrado pela IA</span>
+                        </div>
+                        <label class="label cursor-pointer justify-start gap-2 py-0">
+                            <input type="checkbox" class="checkbox checkbox-sm" x-model="parametros.piso_sm">
+                            <span class="label-text text-xs">Usar o salário mínimo vigente em cada competência (BPC ou nunca recebeu)</span>
+                        </label>
+                    </div>
+
+                    <div class="border border-base-300 rounded-lg p-3 mb-3">
+                        <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-2">
+                            Marco (DER/DCB)
+                            <span class="font-normal normal-case text-base-content/40">— ignorado se houver períodos na seção abaixo</span>
+                        </h4>
+                        <div class="grid grid-cols-2 gap-2">
+                            <label class="form-control">
+                                <span class="label-text text-xs mb-1">
+                                    Tipo <span class="badge badge-xs badge-warning ml-1" x-show="ehFaltando('marco')">não encontrado</span>
+                                </span>
+                                <select class="select select-sm select-bordered" x-model="parametros.marco">
+                                    <option value="">—</option>
+                                    <option value="DER">DER (concessão)</option>
+                                    <option value="DCB+1">DCB+1 (restabelecimento)</option>
+                                </select>
+                            </label>
+                            <label class="form-control">
+                                <span class="label-text text-xs mb-1">
+                                    Data <span class="badge badge-xs badge-warning ml-1" x-show="ehFaltando('data_marco')">não encontrada</span>
+                                </span>
+                                <input type="text" placeholder="DD/MM/AAAA" maxlength="10" class="input input-sm input-bordered" x-model="parametros.data_marco">
+                            </label>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2 mb-3">
+                        <label class="form-control">
+                            <span class="label-text text-xs mb-1">
+                                Parcelas vincendas <span class="badge badge-xs badge-warning ml-1" x-show="ehFaltando('meses_vincendos')">não encontrado</span>
+                            </span>
+                            <input type="number" min="0" class="input input-sm input-bordered" x-model="parametros.meses_vincendos">
+                        </label>
+                        <label class="form-control">
+                            <span class="label-text text-xs mb-1">Data do ajuizamento (opcional — padrão: hoje)</span>
+                            <input type="text" placeholder="DD/MM/AAAA" maxlength="10" class="input input-sm input-bordered" x-model="parametros.data_ajuizamento">
+                        </label>
+                    </div>
+
+                    <details class="border border-base-300 rounded-lg p-3 mb-3">
+                        <summary class="text-xs font-semibold uppercase text-base-content/60 cursor-pointer">
+                            Casos especiais — períodos com lacuna, 13º já pago, valor já recebido
+                        </summary>
+
+                        <div class="mt-3">
+                            <h5 class="text-xs font-medium mb-1">
+                                Períodos com lacuna <span class="badge badge-xs badge-warning ml-1" x-show="ehFaltando('periodos')">sinalizado pela IA</span>
+                            </h5>
+                            <p class="text-[11px] text-base-content/40 mb-2">
+                                Preencha só se o benefício foi devido em mais de um intervalo não contínuo — substitui o marco acima.
+                            </p>
+                            <div class="flex flex-col gap-1.5 mb-2">
+                                <template x-for="(per, i) in periodosLista" :key="i">
+                                    <div class="flex items-center gap-1.5">
+                                        <input type="text" placeholder="Início DD/MM/AAAA" class="input input-sm input-bordered flex-1" x-model="per.inicio">
+                                        <input type="text" placeholder="Fim DD/MM/AAAA" class="input input-sm input-bordered flex-1" x-model="per.fim">
+                                        <input type="number" step="0.01" placeholder="RMI (opcional)" class="input input-sm input-bordered w-32" x-model="per.valor_mensal">
+                                        <button type="button" class="btn btn-sm btn-circle btn-ghost" @click="removerPeriodo(i)">✕</button>
+                                    </div>
+                                </template>
+                            </div>
+                            <button type="button" class="btn btn-xs btn-outline" @click="adicionarPeriodo()">+ adicionar período</button>
+                        </div>
+
+                        <div class="mt-4">
+                            <h5 class="text-xs font-medium mb-1">
+                                13º já pago administrativamente <span class="badge badge-xs badge-warning ml-1" x-show="ehFaltando('sem_13')">sinalizado pela IA</span>
+                            </h5>
+                            <input type="text" placeholder="Ex.: 2025, 2026" class="input input-sm input-bordered w-full" x-model="sem13Texto">
+                            <p class="text-[11px] text-base-content/40 mt-1">Anos separados por vírgula cujo 13º não deve ser cobrado de novo.</p>
+                        </div>
+
+                        <div class="mt-4">
+                            <h5 class="text-xs font-medium mb-1">
+                                Valor já recebido por competência <span class="badge badge-xs badge-warning ml-1" x-show="ehFaltando('recebido')">sinalizado pela IA</span>
+                            </h5>
+                            <div class="flex flex-col gap-1.5 mb-2">
+                                <template x-for="(r, i) in recebidoLista" :key="i">
+                                    <div class="flex items-center gap-1.5">
+                                        <input type="text" placeholder="MM/AAAA" maxlength="7" class="input input-sm input-bordered w-28" x-model="r.competencia">
+                                        <input type="number" step="0.01" placeholder="Valor recebido" class="input input-sm input-bordered flex-1" x-model="r.valor">
+                                        <button type="button" class="btn btn-sm btn-circle btn-ghost" @click="removerRecebido(i)">✕</button>
+                                    </div>
+                                </template>
+                            </div>
+                            <button type="button" class="btn btn-xs btn-outline" @click="adicionarRecebido()">+ adicionar competência</button>
+                        </div>
+                    </details>
+
+                    <div class="alert alert-error text-xs py-2" x-show="error" x-text="error"></div>
+
+                    <div class="modal-action">
+                        <button type="button" class="btn btn-sm" @click="cancelarConfirmacao()">Cancelar</button>
+                        <button type="button" class="btn btn-sm btn-primary" :disabled="!podeCalcular()" @click="confirmarCalculo()">Confirmar e calcular</button>
+                    </div>
+                </div>
+            </dialog>
+
+            <!-- Modal 3: revisão do resultado + inserir na petição (cópia) -->
+            <dialog class="modal" :open="status === 'aguardando_revisao'">
+                <div class="modal-box w-full max-w-[55vw]">
+                    <h3 class="font-bold text-lg mb-1">Valor da causa calculado</h3>
+                    <p class="text-sm font-medium mb-3" x-text="resultadoCalc && resultadoCalc.valor_causa"></p>
+
+                    <div class="border border-base-300 rounded-lg p-3 mb-3" x-show="resultadoCalc && resultadoCalc.premissas">
+                        <h4 class="text-xs font-semibold uppercase text-base-content/60 mb-2">Premissas usadas</h4>
+                        <table class="table table-xs">
+                            <template x-for="(v, k) in (resultadoCalc && resultadoCalc.premissas) || {}" :key="k">
+                                <tr>
+                                    <td class="text-base-content/50" x-text="k"></td>
+                                    <td x-text="typeof v === 'object' ? JSON.stringify(v) : v"></td>
+                                </tr>
+                            </template>
+                        </table>
+                    </div>
+
+                    <div class="alert alert-warning text-xs py-2 mb-3" x-show="resultadoCalc && resultadoCalc.avisos && resultadoCalc.avisos.length">
+                        <ul class="list-disc pl-4">
+                            <template x-for="a in (resultadoCalc && resultadoCalc.avisos) || []" :key="a">
+                                <li x-text="a"></li>
+                            </template>
+                        </ul>
+                    </div>
+
+                    <a class="btn btn-sm btn-outline gap-1.5 mb-3" target="_blank"
+                       :href="'/files/' + pajNorm + '/Peças IA/' + (resultadoCalc && resultadoCalc.pdf || '')">
+                        📄 Abrir <span x-text="resultadoCalc && resultadoCalc.pdf"></span>
+                    </a>
+
+                    <div class="divider my-1 text-[11px] text-base-content/40">inserir na petição</div>
+
+                    <p class="text-xs text-base-content/50 mb-2">
+                        Grava uma CÓPIA da petição com o valor em negrito — a petição original não é alterada.
+                    </p>
+                    <button type="button" class="btn btn-sm btn-primary gap-1.5" :disabled="inserindo" @click="inserirValorCausa()">
+                        <span x-show="!inserindo">Inserir Valor da Causa na Inicial</span>
+                        <span x-show="inserindo" class="flex items-center gap-1.5">
+                            <span class="loading loading-spinner loading-xs"></span> Inserindo…
+                        </span>
+                    </button>
+                    <div class="text-xs text-success mt-2" x-show="resultadoInsercao && resultadoInsercao.ok">
+                        ✓ Inserido em <span x-text="resultadoInsercao && resultadoInsercao.docx"></span> /
+                        <span x-text="resultadoInsercao && resultadoInsercao.pdf"></span>
+                    </div>
+
+                    <div class="modal-action">
+                        <button type="button" class="btn btn-sm" @click="fecharRevisao()">Fechar</button>
+                    </div>
+                </div>
+            </dialog>
+        </div>
+
         <!-- Consultas: RPV/Precatório + Baixar Arquivos SAT. -->
 
         <!-- Consulta RPV/Precatório: ONE-CLICK (pedido explícito do usuário,
@@ -2123,8 +2403,8 @@ document.addEventListener('alpine:init', () => {
              botão clicado (ver função), então funciona independente do menu
              estar aberto ou não. -->
         <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left" x-show="$store.acoesIaMenu.aberto === 'consultas'"
-                onclick="baixarArquivosSat('{{ paj_norm }}', this)" @click="$store.acoesIaMenu.aberto = null"
-                title="Inclui este PAJ na página Arquivos SAT para baixar os documentos do SAT Central (INSS/Dataprev) e anexá-los ao PAJ">
+                onclick="consultarSatManual('{{ paj_norm }}', this)" @click="$store.acoesIaMenu.aberto = null"
+                title="Abre a janela do SAT Central na consulta pelo CPF do assistido (login automático se preciso) para você resolver o CAPTCHA e consultar à mão">
             Arquivos SAT Central
         </button>
 
@@ -2749,6 +3029,32 @@ document.addEventListener('alpine:init', () => {
 
 {% block scripts %}
 <script>
+// Botão "Consultar › Arquivos SAT Central" (26/10/2026): abre a janela do SAT na
+// consulta pelo CPF do assistido — login automático se a sessão não estiver
+// ativa — para o Defensor resolver o CAPTCHA e consultar à mão. Fica na página;
+// se um download/levantamento estiver usando a janela, avisa para tentar depois.
+async function consultarSatManual(pajNorm, btn) {
+    let htmlOrig = null;
+    if (btn) {
+        htmlOrig = btn.innerHTML;
+        btn.classList.add('btn-disabled');
+        btn.innerHTML = '<span class="loading loading-spinner loading-xs"></span> Abrindo o SAT…';
+    }
+    try {
+        const r = await fetch('/api/sat/consulta-manual/' + encodeURIComponent(pajNorm), { method: 'POST' });
+        const d = await r.json().catch(() => ({}));
+        if (d.ok) showToast(d.detalhe || 'Janela do SAT aberta.', d.logado ? 'success' : 'info');
+        else showToast(d.detalhe || 'Não foi possível abrir a consulta no SAT.', d.ocupado ? 'warning' : 'error');
+    } catch (e) {
+        showToast('Falha de rede: ' + e, 'error');
+    } finally {
+        if (btn && htmlOrig !== null) {
+            btn.classList.remove('btn-disabled');
+            btn.innerHTML = htmlOrig;
+        }
+    }
+}
+
 // Botão "Baixar Arquivos SAT": inclui este PAJ (manualmente) na página Arquivos SAT
 // — reusa o endpoint de inclusão manual (extrai CPF/dados AO VIVO do SISDPU) e, em
 // caso de sucesso, redireciona para /sat, onde o download do SAT Central é disparado.

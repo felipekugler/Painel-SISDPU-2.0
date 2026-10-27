@@ -350,6 +350,13 @@ def listar_analises_iniciais_pendentes() -> list[dict]:
             tem_peticao = organizar_ajuizamento_service.tem_peticao_inicial(paj_norm)
         if tem_peticao:
             r["doc_status"] = organizar_ajuizamento_service.get_status(paj_norm).get("status", "idle")
+            # Petição gerada FORA de uma sessão de análise (ex.: sessão do Claude
+            # Code direto na pasta) não grava evento — o último continua "Análise
+            # Prévia" e o caso ficava em "Análises" embora a etapa do PAJ já diga
+            # "Inicial minutada" (que olha só o arquivo). Mesma fonte da etapa:
+            # a existência da petição decide a tabela.
+            if "Petição Inicial" not in (r.get("atividade") or ""):
+                r["atividade"] = "Gerada Petição Inicial (retroativo)"
         else:
             r["doc_status"] = "sem_peticao"
         out.append(r)

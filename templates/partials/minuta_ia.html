@@ -73,11 +73,17 @@
      (mesma rota /files/ usada pelas demais peças do PAJ). -->
 <div class="mt-2" x-show="arquivos.length">
     <div class="text-xs text-success font-semibold mb-1">Salvo em "Peças IA":</div>
-    <div class="flex flex-wrap gap-1">
+    <div class="flex flex-wrap items-center gap-1">
         <template x-for="nome in arquivos" :key="nome">
             <a :href="'/files/' + encodeURIComponent(pajNorm) + '/' + encodeURIComponent('Peças IA') + '/' + encodeURIComponent(nome)"
                target="_blank" class="badge badge-sm badge-success gap-1 border border-black/15" x-text="nome"></a>
         </template>
+        <!-- Atalho (26/10/2026): abre "Movimentar Eproc + SISDPU" nesta página já com
+             o evento PETIÇÃO + o PDF no e-proc e a fase/descrição + o DOCX no SISDPU. -->
+        <button type="button" class="btn btn-xs btn-outline btn-info gap-1 ml-1" @click="peticionarNoEproc()"
+                title="Abre a movimentação conjunta Eproc + SISDPU com esta petição já anexada: no e-proc, evento PETIÇÃO e o PDF; no SISDPU, fase &quot;Petição diversa com conteúdo jurídico&quot;, descrição com o nome da petição e o DOCX (tipo Petições). Você só escolhe prazo/gerenciamento e o resto que couber.">
+            ⇄ Peticionar no eproc
+        </button>
     </div>
 </div>
 

@@ -1,7 +1,9 @@
-"""Botão "Preparar Petição Inicial no eproc" — fluxo de BENEFÍCIO POR
-INCAPACIDADE (único mapeado até agora; outras pretensões têm etapas diferentes
-no e-proc e serão ensinadas depois — ver
-`Estrutura de Construção/APRENDIZADO_PETICAO_INICIAL_EPROC.md`).
+"""Botão "Preparar Petição Inicial no eproc" — dois fluxos do e-proc (ver
+`Estrutura de Construção/APRENDIZADO_PETICAO_INICIAL_EPROC.md`):
+- "bi": benefício por incapacidade (formulário próprio: NB + especialidade,
+  INSS fixo, 4 etapas) — aula de 2026-10-08;
+- "generico": outros assuntos (partes autoras + partes rés, 5 etapas) — aula
+  de 2026-10-23, caso-escola BPC.
 
 Este módulo só LÊ: monta o "plano" que o modal mostra pro Defensor conferir/
 ajustar antes de qualquer automação — arquivos da pasta `Ajuizamento/` com o
@@ -41,6 +43,24 @@ SALARIO_MINIMO = {2025: 1518.00, 2026: 1621.00}
 ASSUNTO_BI_URBANO = ("Urbano (art. 60), Auxílio por Incapacidade Temporária, "
                      "Benefícios em Espécie, DIREITO PREVIDENCIÁRIO")
 
+# Fluxo GENÉRICO (outros assuntos — aula de 2026-10-23, caso-escola BPC): o
+# assunto é a sugestão da IA do e-proc que bate com o pedido (início do texto
+# da sugestão). Sem regra conhecida, fica vazio e a automação aceita a 1ª
+# sugestão da IA (o Defensor confere no modal e na tela).
+ASSUNTO_BPC_DEFICIENCIA = "Pessoa com deficiência, Benefício Assistencial (Art. 203,V CF/88)"
+
+REU_INSS = "INSTITUTO NACIONAL DO SEGURO SOCIAL - INSS"
+
+# Nacionalidade na qualificação ("FULANO, venezuelano, solteiro, ...") →
+# opção do e-proc (cadastro de pessoa física). Brasileira é o padrão.
+NACIONALIDADES = [
+    (r"venezuelan", "Venezuelano"), (r"haitian", "Haitiano"), (r"boliviano|boliviana", "Boliviano"),
+    (r"paraguai", "Paraguaio"), (r"argentin", "Argentino"), (r"colombian", "Colombiano"),
+    (r"peruan", "Peruano"), (r"cuban", "Cubano"), (r"uruguai", "Uruguaio"), (r"chilen", "Chileno"),
+    (r"angolan", "Angolano"), (r"senegales", "Senegalês"), (r"sirio|siria", "Sírio"),
+    (r"afeg", "Afegão"), (r"ucranian", "Ucraniano"), (r"portugu", "Português"),
+]
+
 LOCALIDADES = ["Apucarana", "Arapongas", "Campo Mourão", "Cascavel", "Curitiba",
                "Foz do Iguaçu", "Francisco Beltrão", "Guaíra", "Guarapuava",
                "Ivaiporã", "Jacarezinho", "Londrina", "Maringá", "Paranaguá",
@@ -72,24 +92,42 @@ REGRAS_TIPO = [
     (r"peticao inicial", "PETIÇÃO INICIAL"),
     # Antes da identidade: "CTPS e RG" é a carteira de trabalho (pedido do Defensor, 13/10/2026)
     (r"carteira de trabalho|\bctps\b", "CARTEIRA DE TRABALHO - CTPS"),
-    (r"\brg\b|\bcpf\b|identidade|\bcnh\b|documento de identifica", "CARTEIRA DE IDENTIDADE"),
+    # Antes do CadÚnico: "PROCADM Revisao de BPC CadUnico" é o processo administrativo
+    (r"processo administrativo|\bprocadm\b|^pa\b", "PROCESSO ADMINISTRATIVO"),
+    # CadÚnico: folha resumo = EXTRATO; comprovante de cadastro = COMPROVANTES (23/10/2026)
+    (r"cad ?unico|cadastro unico", None),
+    (r"\brnm\b|\brne\b|estrangeir", "DOCUMENTO DE IDENTIFICAÇÃO"),
+    (r"certidao de nascimento", "CERTIDÃO DE NASCIMENTO"),
+    (r"certidao de casamento", "CERTIDÃO DE CASAMENTO"),
+    (r"certidao de obito", "CERTIDÃO DE ÓBITO"),
+    (r"\brg\b|\bcpf\b|\bcin\b|identidade|\bcnh\b|documento de identifica", "CARTEIRA DE IDENTIDADE"),
     (r"comprovante de residencia|comprovante de endereco", "COMPROVANTE DE RESIDÊNCIA"),
     (r"outorga|procuracao", "PROCURAÇÃO"),
     (r"insuficiencia|hipossuficiencia|pobreza", "DECLARAÇÃO DE HIPOSSUFICIÊNCIA/POBREZA"),
     (r"renuncia", "TERMO DE RENÚNCIA"),
+    (r"carta de concessao", "CARTA DE CONCESSÃO"),
     (r"comunicacao de decisao|indeferimento|carta de decisao", "CARTA DE INDEFERIMENTO"),
-    (r"processo administrativo", "PROCESSO ADMINISTRATIVO"),
     (r"pericia|laudo", "LAUDO"),
-    (r"formulario", "FORMULÁRIO"),
+    (r"formulario|solicitacao de informacoes medicas", "FORMULÁRIO"),
     (r"exame", "EXAME MÉDICO"),
     (r"receituario|receita medica", "RECEITUÁRIO"),
     (r"prontuario", "PRONTUÁRIO"),
-    (r"atestado", "ATESTADO MÉDICO"),
+    (r"atestado|declaracao medica", "ATESTADO MÉDICO"),
+    (r"documentos? medicos?|relatorios? medicos?", "LAUDO"),
+    (r"holerite|contracheque", "CONTRACHEQUE"),
+    (r"\bgps\b|guia da previdencia", "GUIA DA PREVIDÊNCIA SOCIAL - GPS"),
+    (r"foto", "FOTO"),
     (r"\bcnis\b|extrato previdenciario", "CADASTRO NACIONAL DE INFORMAÇÕES SOCIAIS - CNIS"),
     (r"declaracao de beneficio|informacao de beneficio|historico de credito", "INFORMAÇÃO DE BENEFÍCIO"),
     (r"calculo", "CÁLCULOS"),
 ]
-TIPO_FALLBACK = "ANEXOS DA PETIÇÃO INICIAL"
+# Sem regra que case, o tipo fica VAZIO para o Defensor escolher no modal —
+# "ANEXOS DA PETIÇÃO INICIAL" não se usa (regra do Defensor, 23/10/2026).
+TIPO_FALLBACK = ""
+
+
+def _tipo_cadunico(rotulo: str) -> str:
+    return "EXTRATO" if re.search(r"folha resumo|extrato", rotulo) else "COMPROVANTES"
 
 
 def _norm(s: str) -> str:
@@ -113,14 +151,15 @@ def _catalogo_tipos() -> list[str]:
 def sugerir_tipo(nome_arquivo: str, catalogo: list[str] | None = None) -> str:
     """Tipo do e-proc sugerido pelo NOME do arquivo (rótulo da skill de
     organização). Só sugere tipos que existam no catálogo importado (quando
-    houver catálogo) — senão cai em "ANEXOS DA PETIÇÃO INICIAL"."""
-    rotulo = _norm(re.sub(r"^\d+\s*-\s*", "", Path(nome_arquivo).stem))
+    houver catálogo) — senão fica vazio, para escolher no modal."""
+    rotulo = _norm(re.sub(r"^\d+\s*-\s*", "", Path(nome_arquivo).stem).replace("_", " "))
     cat_norm = {_norm(t): t for t in (catalogo or [])}
     for padrao, tipo in REGRAS_TIPO:
         if re.search(padrao, rotulo):
+            tipo = tipo or _tipo_cadunico(rotulo)
             if not cat_norm or _norm(tipo) in cat_norm:
                 return cat_norm.get(_norm(tipo), tipo)
-    return cat_norm.get(_norm(TIPO_FALLBACK), TIPO_FALLBACK)
+    return TIPO_FALLBACK
 
 
 def listar_arquivos(paj_norm: str) -> list[dict]:
@@ -177,6 +216,25 @@ def _formatar_brl(v: float) -> str:
 def _secao_pedidos(texto: str) -> str:
     m = re.search(r"DOS\s+PEDIDOS", texto, re.IGNORECASE)
     return texto[m.end():] if m else texto
+
+
+def _fluxo(titulo_norm: str, pedidos_norm: str) -> str:
+    """"bi" (formulário próprio do e-proc: NB + especialidade, INSS fixo, 4
+    etapas) ou "generico" (partes autoras + rés, 5 etapas). Decide pelo
+    título da ação; sem título, pelos pedidos."""
+    alvo = titulo_norm or pedidos_norm
+    bi = r"incapacidade|auxilio[- ]doenca|aposentadoria por invalidez|auxilio[- ]acidente"
+    if re.search(r"prestacao continuada|\bbpc\b|\bloas\b|assistencial", alvo):
+        return "generico"
+    return "bi" if re.search(bi, alvo) else "generico"
+
+
+def _assunto_generico(titulo_norm: str, texto_norm: str) -> str:
+    if not re.search(r"prestacao continuada|\bbpc\b|\bloas\b|assistencial", titulo_norm or texto_norm):
+        return ""
+    if re.search(r"pessoa com deficiencia", titulo_norm + " " + texto_norm[:6000]):
+        return ASSUNTO_BPC_DEFICIENCIA
+    return ""  # BPC ao idoso: texto da sugestão ainda não visto — 1ª sugestão da IA
 
 
 def extrair_dados(paj_norm: str) -> dict:
@@ -272,13 +330,24 @@ def extrair_dados(paj_norm: str) -> dict:
         if ends:
             cep = re.sub(r"\D", "", ends[0].get("cep") or "")
 
-    # NB do pedido principal
+    nacionalidade = ""
+    m = re.search(r",\s*([a-z]+)\s*,", qual)  # "FULANO , venezuelano, solteiro, ..."
+    if m:
+        nacionalidade = next((n for pad, n in NACIONALIDADES if re.search(pad, m.group(1))), "")
+
     pedidos = re.sub(r"\s+", " ", _secao_pedidos(t1))
+    titulo_acao = ""
+    m = re.search(r"ajuizar\s+(A[ÇC][ÃA]O\s+DE\s+.+?)\s+em\s+face", tl, re.IGNORECASE)
+    if m and len(m.group(1)) < 200:
+        titulo_acao = m.group(1)
+    fluxo = _fluxo(_norm(titulo_acao), _norm(pedidos))
+
+    # NB do pedido principal
     nb = ""
     m = re.search(r"NB\s*([\d\.\s]{9,15}-?\s*\d)", pedidos) or re.search(r"NB\s*([\d\.\s]{9,15}-?\s*\d)", tl)
     if m:
         nb = re.sub(r"\D", "", m.group(1))
-    else:
+    elif fluxo == "bi":
         avisos.append("NB do pedido principal não encontrado na inicial.")
 
     # Especialidade(s)
@@ -288,16 +357,23 @@ def extrair_dados(paj_norm: str) -> dict:
         for pad, esp in ESPECIALIDADES:
             if re.search(pad, trecho) and esp not in especialidades:
                 especialidades.append(esp)
-    if not especialidades:
+    if not especialidades and fluxo == "bi":
         avisos.append("Especialidade da perícia não indicada expressamente na inicial — escolha no modal.")
 
     tutela = bool(re.search(r"tutela\s+de\s+urgencia|tutela\s+antecipada|antecipacao\s+(dos\s+efeitos\s+)?da\s+tutela",
                             _norm(pedidos)))
 
+    if fluxo == "bi":
+        assunto = ASSUNTO_BI_URBANO
+    else:
+        assunto = _assunto_generico(_norm(titulo_acao), tn)
+        if not assunto:
+            avisos.append("Assunto não reconhecido pela pretensão — a automação aceita a 1ª sugestão da IA do e-proc; "
+                          "confira (ou digite o início do assunto desejado).")
+
     titulo = "ação de benefício por incapacidade" + (", com pedido de tutela de urgência" if tutela else "")
-    m = re.search(r"ajuizar\s+(A[ÇC][ÃA]O\s+DE\s+.+?)\s+em\s+face", tl, re.IGNORECASE)
-    if m and len(m.group(1)) < 200:
-        titulo = re.sub(r"\s*,\s*", ", ", m.group(1).strip().rstrip(",")).lower()
+    if titulo_acao:
+        titulo = re.sub(r"\s*,\s*", ", ", titulo_acao.strip().rstrip(",")).lower()
     descricao_sisdpu = (f"Ajuizada {titulo}, em face do INSS.\n\n"
                         "Nº Processo: [PROCESSO]\nChave para Consulta: [CHAVE]")
 
@@ -309,9 +385,10 @@ def extrair_dados(paj_norm: str) -> dict:
         "localidade": localidade, "rito": rito, "area": "Previdenciária", "classe": classe,
         "sigilo": "Sem Sigilo (Nível 0)", "valor_causa": valor, "renuncia_60sm": jef,
         "teto_jef": _formatar_brl(teto), "salario_minimo": _formatar_brl(sm),
-        "assunto": ASSUNTO_BI_URBANO,
+        "fluxo": fluxo, "assunto": assunto, "reu": REU_INSS,
         "autor": {"nome": nome, "cpf": cpf, "cep": cep, "numero": numero_end, "complemento": complemento,
-                  "estado_civil": estado_civil, "sexo": sexo, "telefone": tel, "email": email},
+                  "estado_civil": estado_civil, "sexo": sexo, "nacionalidade": nacionalidade,
+                  "telefone": tel, "email": email},
         "nb": nb, "especialidades": especialidades, "tutela": tutela,
         "docx_peticao": docx_rel, "descricao_sisdpu": descricao_sisdpu,
     }

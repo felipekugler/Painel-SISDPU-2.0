@@ -1081,10 +1081,14 @@ function satPage() {
         amMarcarTodos(marcar) {
             this.amSel = marcar ? this.amLista.flatMap(g => g.rows.map(row => row.nome)) : [];
         },
-        confirmarAnexarMais() {
+        async confirmarAnexarMais() {
             const r = this.amAlvo;
             if (!r || this.amSel.length === 0) return;
             this.amModal = false;
+            // Fonte SIS-DPU 2.0: revisão ÚNICA da movimentação complementar antes de executar.
+            if (window.PAINEL_FONTE_SISDPU_MCP && !(await this._revisarSatFichas(r.paj,
+                    `/api/sat/${encodeURIComponent(r.paj_norm)}/fichas-resumo-anexar-mais`,
+                    { rec: r.id || '', id: r.id_processo || '', assistido: r.assistido || '', nomes: this.amSel.slice() }))) return;
             this.rodando = true; this.sseTipo = 'processar';
             this.sseLog = []; this.sseStatus = '— anexando (complementar)'; this.sseFechavel = false; this.sseAberto = true;
             const nomes = this.amSel.join('|');
@@ -1691,13 +1695,19 @@ function satPage() {
             if (window.PAINEL_FONTE_SISDPU_MCP && !(await this._revisarSat(p, escolha))) return;
             return this.processar(p, escolha);
         },
-        async _revisarSat(p, escolha) {
+        _revisarSat(p, escolha) {
+            return this._revisarSatFichas(p.paj, `/api/sat/${encodeURIComponent(p.paj_norm)}/fichas-resumo`,
+                { grupo: escolha.grupo, prazo: escolha.prazo, manual: !!p.manual });
+        },
+        // Modal único "Confirmar gravações no SISDPU": pede as fichas (dry-run) em `url`,
+        // mostra e, confirmado, registra as aprovações antecipadas. true = executar.
+        async _revisarSatFichas(paj, url, corpo) {
             if (this.rodando) return false;
-            this.revSat = { aberto: true, carregando: true, paj: p.paj, fichas: [], erros: [], conclui: false };
+            this.revSat = { aberto: true, carregando: true, paj: paj, fichas: [], erros: [], conclui: false };
             try {
-                const r = await (await fetch(`/api/sat/${encodeURIComponent(p.paj_norm)}/fichas-resumo`, {
+                const r = await (await fetch(url, {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ grupo: escolha.grupo, prazo: escolha.prazo, manual: !!p.manual }),
+                    body: JSON.stringify(corpo),
                 })).json();
                 this.revSat.fichas = r.fichas || [];
                 this.revSat.erros = r.erros || [];

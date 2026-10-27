@@ -1184,7 +1184,7 @@
             <div class="flex-1 flex justify-center gap-3" x-data="{ pajBusca: '', processoBusca: '', esisrecBusca: '' }">
                 <div class="flex gap-1.5 w-full max-w-xs">
                     <input type="text" class="input input-bordered input-sm flex-1 font-mono text-xs"
-                           placeholder="Pesquisar PAJ — 2026/029-00136" maxlength="14"
+                           placeholder="Pesquisar PAJ — 2026/3147" maxlength="14"
                            :value="pajBusca" @input="pajBusca = formatarInputPaj($event.target.value)"
                            @keydown.enter="pesquisarPajMenu(pajBusca)">
                     <button type="button" class="btn btn-sm btn-primary btn-square" title="Pesquisar PAJ"
@@ -1476,21 +1476,22 @@
         // Etapas manuais do PAJ (services/etapa_paj_service.py) — "Ações no SISDPU".
         window.ETAPAS_MANUAIS_PAJ = {{ etapas_manuais_paj() | tojson }};
     </script>
-    <script src="/static/js/app.js?v={{ app_version }}-pz1"></script>
+    <script src="/static/js/app.js?v={{ app_version }}-cg1"></script>
     <script src="/static/js/movimentacoes.js?v={{ app_version }}-mcp2"></script>
     <script src="/static/js/rich_editor.js?v={{ app_version }}-bt3"></script>
     <script src="/static/js/select_busca.js?v={{ app_version }}-cbx1"></script>
-    <script src="/static/js/acoes_sisdpu.js?v={{ app_version }}-fi1"></script>
-    <script src="/static/js/acoes_eproc.js?v={{ app_version }}-pz2"></script>
+    <script src="/static/js/acoes_sisdpu.js?v={{ app_version }}-cg1"></script>
+    <script src="/static/js/acoes_eproc.js?v={{ app_version }}-cg1"></script>
     <script src="/static/js/movimentar_conjunto.js?v={{ app_version }}-mc2"></script>
     <script src="/static/js/processo_judicial.js?v={{ app_version }}-mcp6"></script>
     <script src="/static/js/lembretes_eproc.js?v={{ app_version }}"></script>
     <script src="/static/js/eventos_processo.js?v={{ app_version }}"></script>
-    <script src="/static/js/minuta_ia.js?v={{ app_version }}-bt2"></script>
+    <script src="/static/js/minuta_ia.js?v={{ app_version }}-cg1"></script>
     <script src="/static/js/oficio_sei.js?v={{ app_version }}-ex1"></script>
     <script src="/static/js/analise_pretensao.js?v={{ app_version }}-bt1"></script>
     <script src="/static/js/calcular_cnis.js?v={{ app_version }}"></script>
     <script src="/static/js/calcular_qs.js?v={{ app_version }}"></script>
+    <script src="/static/js/calcular_valor_causa.js?v={{ app_version }}"></script>
     <script src="/static/js/consulta_rpv.js?v={{ app_version }}"></script>
     <script src="/static/js/dossie_sd.js?v={{ app_version }}"></script>
     <script src="/static/js/dossie_cadunico.js?v={{ app_version }}"></script>

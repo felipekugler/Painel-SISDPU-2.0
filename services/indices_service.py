@@ -1,6 +1,8 @@
 """Auto-atualização dos parâmetros externos do cálculo do valor da causa:
 
   • Índices de correção monetária (INPC, IPCA-E) — API do IBGE (SIDRA)
+  • SELIC acumulada no mês (substitui INPC/IPCA-E a partir de 12/2021, EC
+    113/2021) — API do Banco Central (SGS série 4390)
   • Salário mínimo — API do Banco Central (SGS série 1619)
 
 Grava caches JSON ao lado de indices_cm.py / salario_minimo.py, que esses
@@ -10,6 +12,7 @@ sem manutenção manual mensal/anual.
 Séries pinadas (equivalência validada mês a mês contra as tabelas locais):
   INPC   -> SIDRA agregado 1736, variável 44   (variação mensal %)
   IPCA-E -> IPCA-15 -> SIDRA agregado 3065, variável 355  (variação mensal %)
+  SELIC  -> BCB SGS série 4390  (taxa acumulada no mês, %)
   Salário mínimo -> BCB SGS série 1619  (valor mensal, R$)
 
 Offline-first: falha de rede não quebra nada — o cálculo cai no cache/tabela e o
@@ -45,6 +48,10 @@ _UA_BCB = {
 _CACHE_SM = Path(VALOR_CAUSA_DIR) / "salario_minimo_extra.json"
 _TTL_SM_HORAS = 24 * 7  # muda ~1x/ano; checar 1x/semana basta
 _SGS_SALARIO_MINIMO = 1619
+
+# ── SELIC (Banco Central) — mesmo cache/TTL da correção monetária, pois é o
+# índice que a substitui a partir de 12/2021 (ver indices_cm.SELIC_INICIO) ────
+_SGS_SELIC = 4390
 
 
 # ── Helpers de cache ─────────────────────────────────────────────────────────
@@ -85,18 +92,69 @@ def _fetch_ibge(tab: int, var: int, n: int = 12) -> dict[str, float]:
     return out
 
 
+def _fetch_bcb_ultimos(codigo: int, n: int) -> dict[str, float]:
+    """Série mensal do BCB (SGS), últimos N pontos. 3 tentativas (o BCB tem WAF
+    e às vezes falha/some de forma transitória — mesma defesa já usada em
+    `_fetch_bcb_sm`). O endpoint por intervalo de datas (`dataInicial`/
+    `dataFinal`) desse mesmo SGS se mostrou instável (bloqueado pelo WAF em
+    testes) mesmo com parâmetros válidos — por isso `ultimos/N` é preferido
+    aqui, igual ao salário mínimo; N grande (>~20) também já deu 400 Bad
+    Request nessa série, então o chamador deve pedir só o necessário."""
+    url = f"https://api.bcb.gov.br/dados/serie/bcdata.sgs.{codigo}/dados/ultimos/{n}?formato=json"
+    d = None
+    ultimo_erro = None
+    for _ in range(3):
+        try:
+            with urllib.request.urlopen(urllib.request.Request(url, headers=_UA_BCB), timeout=30) as r:
+                d = json.load(r)
+            if isinstance(d, list) and d:
+                break
+            ultimo_erro = ValueError("resposta inesperada")
+            d = None
+        except Exception as e:  # noqa: BLE001
+            ultimo_erro = e
+            d = None
+    if d is None:
+        raise ultimo_erro or ValueError("BCB sem dados")
+    out: dict[str, float] = {}
+    for p in d:
+        data = p.get("data", "")  # "DD/MM/AAAA"
+        if len(data) != 10:
+            continue
+        try:
+            out[f"{data[6:]}-{data[3:5]}"] = float(p["valor"])
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def _fetch_selic(n: int = 14) -> dict[str, float]:
+    """SELIC acumulada no mês — só os últimos `n` meses (a base histórica desde
+    12/2021 já está na tabela estática de indices_cm.SELIC; aqui só se busca o
+    que pode ter mudado/saído desde a última atualização, igual ao INPC/IPCA-E)."""
+    return _fetch_bcb_ultimos(_SGS_SELIC, n)
+
+
 def atualizar_cm(force: bool = False) -> dict:
     cache = _ler(_CACHE_CM)
     if not force and _fresco(cache, _TTL_CM_HORAS):
         return {"ok": True, "skip": "cache fresco", "ultimo": _ultimo_cm(cache)}
-    novo = {"INPC": dict(cache.get("INPC") or {}), "IPCA_E": dict(cache.get("IPCA_E") or {})}
+    novo = {
+        "INPC": dict(cache.get("INPC") or {}),
+        "IPCA_E": dict(cache.get("IPCA_E") or {}),
+        "SELIC": dict(cache.get("SELIC") or {}),
+    }
     erros: list[str] = []
     for chave, (tab, var) in _SERIES_CM.items():
         try:
             novo[chave].update(_fetch_ibge(tab, var))
         except Exception as e:  # noqa: BLE001
             erros.append(f"{chave}: {type(e).__name__}")
-    if erros and not (novo["INPC"] or novo["IPCA_E"]):
+    try:
+        novo["SELIC"].update(_fetch_selic())
+    except Exception as e:  # noqa: BLE001
+        erros.append(f"SELIC: {type(e).__name__}")
+    if erros and not (novo["INPC"] or novo["IPCA_E"] or novo["SELIC"]):
         return {"ok": False, "erro": "; ".join(erros), "ultimo": _ultimo_cm(cache)}
     novo["atualizado_em"] = _dt.datetime.now().isoformat(timespec="minutes")
     with contextlib.suppress(Exception):
@@ -107,7 +165,7 @@ def atualizar_cm(force: bool = False) -> dict:
 
 def _ultimo_cm(cache: dict) -> dict:
     out = {}
-    for chave in ("INPC", "IPCA_E"):
+    for chave in ("INPC", "IPCA_E", "SELIC"):
         meses = sorted((cache.get(chave) or {}).keys())
         out[chave] = meses[-1] if meses else None
     return out

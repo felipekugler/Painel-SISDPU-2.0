@@ -33,11 +33,15 @@ async def preparar(paj_norm: PajNorm, payload: dict = Body(...)):
     dados = payload.get("dados") or {}
     if not arquivos:
         return JSONResponse({"ok": False, "erro": "Nenhum arquivo selecionado."}, status_code=400)
-    faltando = [c for c in ("valor_causa", "nb") if not str(dados.get(c) or "").strip()]
+    bi = (dados.get("fluxo") or "bi") == "bi"
+    faltando = [c for c in (("valor_causa", "nb") if bi else ("valor_causa",)) if not str(dados.get(c) or "").strip()]
     if not (dados.get("autor") or {}).get("cpf"):
         faltando.append("CPF do autor")
-    if not dados.get("especialidades"):
+    if bi and not dados.get("especialidades"):
         faltando.append("especialidade da perícia")
+    sem_tipo = [a.get("caminho", "").split("/")[-1] for a in arquivos if not (a.get("tipo") or "").strip()]
+    if sem_tipo:
+        faltando.append("tipo de documento de " + ", ".join(sem_tipo))
     if faltando:
         return JSONResponse({"ok": False, "erro": "Campos obrigatórios vazios: " + ", ".join(faltando) + "."},
                             status_code=400)

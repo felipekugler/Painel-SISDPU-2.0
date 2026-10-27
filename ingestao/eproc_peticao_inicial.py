@@ -14,10 +14,12 @@ Duas etapas, mesmo espírito de `eproc_client.preparar_peticionamento` /
    de conferência ("Confirmar ajuizamento") — DISTRIBUIÇÃO REAL,
    irreversível — e devolve nº do processo + chave de consulta.
 
-O fluxo do BI é específico: o INSS já vem fixo como réu e o assistente tem 4
-etapas. Cada etapa é reconhecida pelo TÍTULO da página ("Peticionamento
-Eletrônico (N de M) - <nome>"); se a página não for a esperada (outra
-pretensão, mudança no e-proc), a automação PARA com erro em vez de adivinhar.
+Dois fluxos, decididos pelo assunto escolhido na etapa 2: o do BI (formulário
+próprio com NB/especialidade, INSS fixo como réu, 4 etapas) e o GENÉRICO dos
+outros assuntos (Partes autoras → Partes rés, 5 etapas — aula de
+2026-10-23, caso-escola BPC). Cada etapa é reconhecida pelo TÍTULO/URL da
+página ("Peticionamento Eletrônico (N de M) - <nome>"); se a página não for a
+esperada (mudança no e-proc), a automação PARA com erro em vez de adivinhar.
 """
 
 from __future__ import annotations
@@ -270,7 +272,10 @@ async def _etapa2_assunto(page, d: dict, passos: list) -> str:
     sugestoes = await page.evaluate(
         "() => [...document.querySelectorAll('#tblSugestaoAssuntos tr')].map(tr => tr.innerText.trim())")
     alvo = _n(d.get("assunto") or "")
-    idx = next((i for i, s in enumerate(sugestoes) if _n(s).startswith(alvo)), -1)
+    if not sugestoes:
+        return "A IA do e-proc não sugeriu nenhum assunto — escolha o assunto manualmente."
+    # Assunto vazio (fluxo genérico sem regra para a pretensão) = 1ª sugestão.
+    idx = next((i for i, s in enumerate(sugestoes) if _n(s).startswith(alvo)), -1) if alvo else 0
     if idx < 0:
         return ("O assunto \"" + (d.get("assunto") or "") + "\" não está entre as sugestões da IA do e-proc: "
                 + " | ".join(sugestoes[:5]) + ". Escolha o assunto manualmente.")
@@ -288,15 +293,22 @@ async def _botao_consultar(page, n: int):
     return page.locator('input[type=button][value="Consultar"]:visible').nth(n)
 
 
-async def _cadastrar_pessoa(page, a: dict, passos: list) -> str:
-    """Modal "Cadastro de Pessoa Física" (iframe #ifrSubFrm) — só o necessário:
-    sexo, estado civil, raça/etnia, endereço (CEP + lupa + número/complemento
-    → Incluir) e telefone (→ Incluir); depois Salvar."""
-    fr = page.frame_locator("#ifrSubFrm")
-    frame = next((f for f in page.frames if f.name == "ifrSubFrm" or "ifrSubFrm" in (f.name or "")), None)
-    if frame is None:
-        el = await page.query_selector("#ifrSubFrm")
-        frame = await el.content_frame() if el else None
+async def _cadastrar_pessoa(page, a: dict, passos: list, pagina_inteira: bool = False) -> str:
+    """"Cadastro de Pessoa Física" — no BI é modal (iframe #ifrSubFrm); no
+    fluxo genérico é a PÁGINA `acao=pessoa_cadastrar`, que volta sozinha para
+    as Partes depois do Salvar (alert "... salvo com sucesso."). Só o
+    necessário: sexo, estado civil, raça/etnia, nacionalidade (genérico),
+    endereço (CEP + lupa + número/complemento → Incluir) e telefone
+    (→ Incluir); depois Salvar. "Pessoa com deficiência" NUNCA é marcado
+    (regra do Defensor, 23/10/2026)."""
+    if pagina_inteira:
+        frame = fr = page
+    else:
+        fr = page.frame_locator("#ifrSubFrm")
+        frame = next((f for f in page.frames if f.name == "ifrSubFrm" or "ifrSubFrm" in (f.name or "")), None)
+        if frame is None:
+            el = await page.query_selector("#ifrSubFrm")
+            frame = await el.content_frame() if el else None
     if frame is None:
         return "Modal de cadastro de pessoa não encontrado."
 
@@ -310,6 +322,12 @@ async def _cadastrar_pessoa(page, a: dict, passos: list) -> str:
         await sel("#selEstCivil", "Não Informado")
     with contextlib.suppress(Exception):
         await sel("#selTipoEtnia", "Não declarado")
+    nac = (a.get("nacionalidade") or "").strip()
+    if nac and not _n(nac).startswith("brasileir") and await frame.locator("#selNacionalidade").count():
+        if await sel("#selNacionalidade", nac):
+            _log_passo(passos, f"Nacionalidade: {nac}.")
+        else:
+            _log_passo(passos, f'⚠ Nacionalidade "{nac}" não encontrada no e-proc — ficou a padrão; confira o cadastro.')
 
     if a.get("cep"):
         await fr.locator("#txtCep").click()
@@ -331,6 +349,15 @@ async def _cadastrar_pessoa(page, a: dict, passos: list) -> str:
         await page.wait_for_timeout(1500)
 
     await fr.locator("button:has-text('Salvar'), input[value='Salvar']").first.click()
+    if pagina_inteira:
+        for _ in range(40):
+            await page.wait_for_timeout(500)
+            if "processo_cadastrar_3_autor" in (page.url or ""):
+                break
+        else:
+            return "O cadastro de pessoa física não foi salvo (a página de cadastro continua aberta) — confira na janela do e-proc."
+        _log_passo(passos, "Autor(a) cadastrado(a) no e-proc (CPF não constava da base).")
+        return ""
     for _ in range(30):
         await page.wait_for_timeout(500)
         if not await page.locator("#ifrSubFrm").is_visible():
@@ -435,20 +462,154 @@ async def _etapa3_partes(page, d: dict, passos: list) -> str:
     return ""
 
 
+def _cpf_formatado(cpf: str) -> str:
+    d = re.sub(r"\D", "", cpf or "")
+    return f"{d[:3]}.{d[3:6]}.{d[6:9]}-{d[9:]}" if len(d) == 11 else d
+
+
+async def _id_campo_por_rotulo(page, rotulo: str) -> str:
+    """id do campo VISÍVEL cujo <label> tem o texto `rotulo` (ex. "CPF:") —
+    os formulários de partes do e-proc não têm ids estáveis documentados."""
+    return await page.evaluate("""(alvo) => {
+        const l = [...document.querySelectorAll('label')].find(l => l.offsetParent && l.innerText.trim() === alvo);
+        const el = l && (l.htmlFor ? document.getElementById(l.htmlFor) : l.querySelector('input,select'));
+        return el && el.id ? el.id : '';
+    }""", rotulo)
+
+
+async def _etapa3_autores_generico(page, d: dict, passos: list) -> str:
+    """Fluxo genérico, etapa "Partes (autores)": PF → CPF → Consultar →
+    (cadastro de pessoa, se o CPF não existir) → Incluir como principal →
+    Justiça Gratuita "Requerida". Representação e Inf. Extra/Benefício ficam
+    em branco (regra do Defensor, 23/10/2026)."""
+    a = d["autor"]
+    cpf_fmt = _cpf_formatado(a["cpf"])
+    await page.locator("#selTipoPessoa").select_option("PF")
+    await page.wait_for_timeout(1000)
+    cpf_id = await _id_campo_por_rotulo(page, "CPF:")
+    if not cpf_id:
+        return 'Campo "CPF" não encontrado na etapa de Partes (autores).'
+    await _digitar(page, f"#{cpf_id}", a["cpf"])
+    await page.get_by_role("button", name="Consultar os dados preenchidos").first.click()
+
+    incluir = page.locator("tr", has_text=cpf_fmt).locator("button", has_text="Incluir")
+    for _ in range(40):
+        await page.wait_for_timeout(500)
+        if "pessoa_cadastrar" in (page.url or "") or await incluir.count():
+            break
+    if "pessoa_cadastrar" in (page.url or ""):
+        await page.wait_for_load_state("domcontentloaded")
+        erro = await _cadastrar_pessoa(page, a, passos, pagina_inteira=True)
+        if erro:
+            return erro
+        for _ in range(30):
+            if await incluir.count():
+                break
+            await page.wait_for_timeout(500)
+    if not await incluir.count():
+        return f"O e-proc não localizou o CPF {cpf_fmt} do(a) autor(a) para incluir."
+    with contextlib.suppress(Exception):
+        await page.locator("tr", has_text=cpf_fmt).locator("select").first.select_option("S")
+    await incluir.first.click()
+
+    jg = page.locator("tr", has_text=cpf_fmt).locator("select:has(option[value='6'])")
+    for _ in range(30):
+        await page.wait_for_timeout(500)
+        if await jg.count():
+            break
+    else:
+        return "O(a) autor(a) não apareceu na tabela de partes do ajuizamento."
+    await jg.first.select_option("6")
+    if await jg.first.input_value() != "6":
+        return 'Não foi possível marcar Justiça Gratuita "Requerida".'
+    _log_passo(passos, f"Parte autora: {a.get('nome') or cpf_fmt} ({cpf_fmt}), principal · justiça gratuita Requerida.")
+
+    await page.locator("#btnProxima:visible").first.click()
+    if not await _esperar_titulo(page, "Réus"):
+        return f'Não avançou para "Partes (Réus)" (página atual: {await _titulo(page)}).'
+    return ""
+
+
+async def _etapa4_reus_generico(page, d: dict, passos: list) -> str:
+    """Fluxo genérico, etapa "Partes (Réus)": Entidade → INSS (autocomplete
+    #txtEntidade) → principal → Incluir. A tela pode abrir com PF e um alert
+    "Escolha uma entidade." (dispensado pelo hook)."""
+    reu = d.get("reu") or "INSTITUTO NACIONAL DO SEGURO SOCIAL - INSS"
+    await page.locator("#selTipoPessoa").select_option("ENT")
+    await page.wait_for_timeout(1000)
+    campo = page.locator("#txtEntidade")
+    await campo.click()
+    await campo.fill("")
+    await campo.type(re.sub(r"\s*-\s*\w+$", "", reu)[:28], delay=30)
+    item = page.locator("li:visible", has_text=reu)
+    for _ in range(20):
+        await page.wait_for_timeout(500)
+        if await item.count():
+            break
+    else:
+        return f'Entidade "{reu}" não apareceu na busca do e-proc.'
+    await item.first.click()
+    await page.wait_for_timeout(500)
+    if _n(await campo.input_value()) != _n(reu):
+        return f'A entidade "{reu}" não ficou selecionada.'
+    await page.evaluate("""() => {
+        const b = document.getElementById('btnIncluirEnt');
+        let c = b && b.parentElement;
+        for (let i = 0; c && i < 4; i++, c = c.parentElement) {
+            const s = [...c.querySelectorAll('select')].find(s => s.id !== 'selTipoPessoa' && [...s.options].some(o => o.value === 'S'));
+            if (s) { s.value = 'S'; s.dispatchEvent(new Event('change', {bubbles: true})); return; }
+        }
+    }""")
+    await page.locator("#btnIncluirEnt").click()
+    linha = page.locator("tr", has_text=reu)
+    for _ in range(30):
+        await page.wait_for_timeout(500)
+        if await linha.count():
+            break
+    else:
+        return f'"{reu}" não apareceu na tabela de partes rés.'
+    _log_passo(passos, f"Parte ré: {reu}, principal.")
+
+    await page.locator("#btnProxima:visible").first.click()
+    if not await _esperar_titulo(page, "Informações Adicionais"):
+        return f'Não avançou para "Informações Adicionais" (página atual: {await _titulo(page)}).'
+    return ""
+
+
+async def _etapa3_partes_conforme_fluxo(page, d: dict, passos: list) -> str:
+    """O assunto escolhido decide o formulário: BI (campo NB) ou genérico
+    (`acao=processo_cadastrar_3_autor`). Confere com o fluxo do plano."""
+    if await page.locator("#txtNumeroBeneficio").count():
+        if not re.sub(r"\D", "", d.get("nb") or "") or not d.get("especialidades"):
+            return ("O e-proc abriu o formulário de benefício por incapacidade (NB + especialidade), "
+                    "mas o plano não tem NB/especialidade — escolha o fluxo \"Benefício por incapacidade\" no modal.")
+        return await _etapa3_partes(page, d, passos)
+    if "processo_cadastrar_3_autor" in (page.url or ""):
+        erro = await _etapa3_autores_generico(page, d, passos)
+        return erro or await _etapa4_reus_generico(page, d, passos)
+    return f"Etapa de partes não reconhecida ({await _titulo(page)})."
+
+
 _CHECKBOXES_ETAPA4 = ["chkDoencaGrave", "chkCautAntecTutela", "chkIntervMinisterioPublico", "chkDeficiente",
                       "chkCrianca", "chkPessoaComTEA", "chkPessoaLei14289", "chkJuizoDigital",
                       "chkDesinteresseTA", "chkAtendeReqLei8213_91", "chkDemandaComplexa"]
 
 
 async def _etapa4_informacoes(page, d: dict, passos: list) -> str:
+    """Última etapa (4 de 4 no BI, 5 de 5 no genérico — mesma
+    `acao=processo_cadastrar_4`). No genérico não há o art. 129-A; prioridade
+    de idoso vem marcada e travada pelo próprio e-proc."""
+    tem_129a = False
     for cid in _CHECKBOXES_ETAPA4:
         loc = page.locator(f"#{cid}")
         if not await loc.count() or not await loc.is_enabled():
             continue
+        tem_129a = tem_129a or cid == "chkAtendeReqLei8213_91"
         marcar = (cid == "chkAtendeReqLei8213_91") or (cid == "chkCautAntecTutela" and bool(d.get("tutela")))
         await loc.set_checked(marcar)
-    _log_passo(passos, "Informações adicionais: art. 129-A mantido"
-                       + (" · Liminar/Antecipação de Tutela marcada" if d.get("tutela") else "") + ".")
+    marcas = (["art. 129-A mantido"] if tem_129a else []) \
+        + (["Liminar/Antecipação de Tutela marcada"] if d.get("tutela") else [])
+    _log_passo(passos, "Informações adicionais: " + (" · ".join(marcas) or "nenhuma opção marcada") + ".")
     return ""
 
 
@@ -498,7 +659,7 @@ async def preparar(plano: dict) -> dict:
             for etapa in (lambda: _upload_e_tipos(page, plano["documentos"], passos),
                           lambda: _etapa1_enderecamento(page, d, passos),
                           lambda: _etapa2_assunto(page, d, passos),
-                          lambda: _etapa3_partes(page, d, passos),
+                          lambda: _etapa3_partes_conforme_fluxo(page, d, passos),
                           lambda: _etapa4_informacoes(page, d, passos)):
                 erro = await etapa()
                 if erro:

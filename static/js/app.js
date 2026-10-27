@@ -19,9 +19,16 @@ function formatarPajNorm(paj_norm) {
 function formatarInputPaj(raw) {
     const digits = String(raw || '').replace(/\D/g, '').slice(0, 12);
     if (digits.length <= 4) return digits;
-    if (digits.length <= 7) return `${digits.slice(0, 4)}/${digits.slice(4)}`;
+    // Até 5 dígitos depois do ano = forma curta "2026/3147" (unidade padrão
+    // completada na pesquisa — ver pajExibicaoParaNorm); o hífen da unidade
+    // só aparece a partir do 6º dígito (pedido do Defensor, 23/10/2026).
+    if (digits.length <= 9) return `${digits.slice(0, 4)}/${digits.slice(4)}`;
     return `${digits.slice(0, 4)}/${digits.slice(4, 7)}-${digits.slice(7)}`;
 }
+
+// Unidade assumida quando o PAJ vem só com ano e número (mesma de
+// ingestao/eproc_intimacoes.py: UNIDADE_PADRAO = Curitiba).
+const PAJ_UNIDADE_PADRAO = '029';
 
 /* Mascara de numero de processo judicial (NPU/CNJ) pro campo "Consultar
    processo" do topo da pagina (base.html) — mesmo espirito de
@@ -41,8 +48,14 @@ function formatarInputProcesso(raw) {
 /* "2026/044-00187" -> "PAJ-2026-044-00187". Retorna null se a string nao bater
    o formato oficial (use para validar input antes de enviar para a API). */
 function pajExibicaoParaNorm(exibicao) {
-    const m = String(exibicao || '').trim().match(/^(\d{4})\/(\d{3})-(\d{5})$/);
-    return m ? `PAJ-${m[1]}-${m[2]}-${m[3]}` : null;
+    const s = String(exibicao || '').trim();
+    const m = s.match(/^(\d{4})\/(\d{3})-(\d{5})$/);
+    if (m) return `PAJ-${m[1]}-${m[2]}-${m[3]}`;
+    // Formas curtas: "2026/3147" → unidade padrão + número com zeros à
+    // esquerda; "2026/029-3147" → número com zeros à esquerda.
+    const c = s.match(/^(\d{4})\s*\/\s*(?:(\d{3})\s*-\s*)?(\d{1,5})$/);
+    if (c) return `PAJ-${c[1]}-${c[2] || PAJ_UNIDADE_PADRAO}-${c[3].padStart(5, '0')}`;
+    return null;
 }
 
 /* Watchlist toggle — usado pelo paj_detail.html como x-data="watchlistToggle('PAJ-...')".
@@ -2142,7 +2155,7 @@ function movimentarConjunto(numeroProcesso, paj) {
 function pesquisarPajMenu(pajDisplay) {
     const norm = pajExibicaoParaNorm(pajDisplay);
     if (!norm) {
-        showToast('Número de PAJ incompleto — use o formato AAAA/UUU-NNNNN.', 'warning');
+        showToast('Número de PAJ incompleto — use AAAA/NNNNN (ex.: 2026/3147) ou AAAA/UUU-NNNNN.', 'warning');
         return;
     }
     window.open('/paj/' + norm, '_blank');

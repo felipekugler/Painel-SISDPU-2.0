@@ -1062,6 +1062,7 @@ async def processar_paj_stream(
 
 async def anexar_mais_stream(
     paj_norm: str, rec_id: str, id_processo: str, assistido: str, nomes: list[str],
+    dry_run: bool = False,
 ) -> AsyncIterator[dict]:
     """Anexação COMPLEMENTAR num PAJ já concluído: nova movimentação (SÓ juntada) com os
     documentos escolhidos — SEM tramitar nem concluir. Complementa o registro `rec_id` do
@@ -1092,10 +1093,13 @@ async def anexar_mais_stream(
         return
     yield _ev("info", "Movimentando (anexação complementar)…")
     mv = await movtram.movimentar_paj([{"id": id_processo, "numero": num}],
-                                      MOV_DESCRICAO_COMPLEMENTAR, FASE_MOV, anexos, TIPO_ARQUIVO, False)
+                                      MOV_DESCRICAO_COMPLEMENTAR, FASE_MOV, anexos, TIPO_ARQUIVO, dry_run)
     yield passo("Movimentação complementar", mv.get("ok"), mv.get("detalhe", ""))
     if not mv.get("ok"):
         yield {"done": True, "resultado": {"ok": False, "detalhe": mv.get("detalhe", "")}}
+        return
+    if dry_run:  # revisão única (fichas-resumo): nada gravado, histórico intocado
+        yield {"done": True, "resultado": {"ok": True, "status": "dry_run", "n": len(anexos)}}
         return
     # complementa o registro existente (badge da nova mov + log)
     extra = {"seq": mv.get("mov_seq"), "ts": datetime.now().isoformat(timespec="seconds"),
