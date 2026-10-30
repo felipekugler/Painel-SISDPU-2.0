@@ -1314,6 +1314,7 @@ document.addEventListener('alpine:init', () => {
     <div class="flex flex-wrap items-center justify-center gap-2">
         <template x-for="cat in [
             { key: 'analisar', label: 'Analisar PAJ', icone: '🧠' },
+            { key: 'despacho', label: 'Minutar Despacho', icone: '🗒️' },
             { key: 'minutar', label: 'Minutar Petição', icone: '📝' },
             { key: 'oficio', label: 'Minutar Ofício', icone: '✉️' },
             { key: 'calculos', label: 'Cálculos', icone: '🧮' },
@@ -1343,13 +1344,12 @@ document.addEventListener('alpine:init', () => {
          :class="$store.acoesIaMenu.aberto ? 'flex-col items-stretch gap-0.5 bg-base-100 border border-base-300 rounded-box p-1.5 w-full max-w-3xl mx-auto' : 'flex-wrap items-center justify-center gap-2'">
 
         <!-- Analisar PAJ: dropdown em 2 grupos (pedido do usuário,
-             2026-10-07) — "Análise geral" ("Relatório do PAJ" +
-             "Análise ampla (geral)") e "Análises específicas" (os 10 tipos
-             com playbook de teses dedicado, skills /SISDPU-AnalisarPAJ-*,
-             na ordem pedida pelo usuário). Cada item dispara o diagnóstico
-             na seção "Análise feita pela IA" mais abaixo (exceto "Relatório
-             do PAJ", que abre um modal próprio — não usa
-             analise_pretensao_service).
+             2026-10-07) — "Análise geral" ("Análise ampla (geral)") e
+             "Análises específicas" (os 10 tipos com playbook de teses
+             dedicado, skills /SISDPU-AnalisarPAJ-*, na ordem pedida pelo
+             usuário). Cada item dispara o diagnóstico na seção "Análise feita
+             pela IA" mais abaixo. "Relatório do PAJ" saiu daqui e virou
+             "Despacho - com relatório do PAJ" em "Minutar Despacho" (30/10/2026).
 
              "Orientação diretiva para análise da IA" (pedido do usuário
              2026-09-17): texto livre opcional pro Defensor já direcionar a
@@ -1365,69 +1365,6 @@ document.addEventListener('alpine:init', () => {
 
         <div class="px-2 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-base-content/40"
              x-show="$store.acoesIaMenu.aberto === 'analisar'">Análise geral</div>
-
-        <!-- Relatório do PAJ (ex-"Síntese do PAJ", renomeado 2026-10-07) —
-             mesma função de "Gerar Síntese do PAJ" já existente em "Ações no
-             SISDPU" (ver partials/acoes_sisdpu.html e
-             static/js/acoes_sisdpu.js: gerarSinteseIA()), reaproveitando
-             ipsis litteris o mesmo endpoint (POST /api/acoes-sisdpu/sintese-paj/
-             {paj_norm} — services/acoes_sisdpu_service.gerar_sintese_paj, que só
-             precisa do paj_norm: lê o PROMPT_MAX e gera por IA um texto corrido
-             com a síntese cronológica da tramitação). Lá o texto é inserido no
-             cursor do editor de movimentação; aqui, sem um editor-alvo
-             equivalente, mostra o resultado num modal simples (texto editável +
-             botão Copiar), pra colar onde o Defensor quiser. Chamada bloqueante
-             (pode levar dezenas de segundos) — botão vira spinner enquanto roda,
-             independente de `$store.acoesIaMenu.aberto` (mesma regra de sempre:
-             indicador de progresso nunca gated pelo menu). -->
-        <div class="contents" x-data="{
-                gerando: false, texto: '', erro: '', modalAberto: false,
-                async gerar() {
-                    if (this.gerando) return;
-                    this.gerando = true; this.erro = ''; $store.acoesIaMenu.aberto = null;
-                    try {
-                        const r = await fetch('/api/acoes-sisdpu/sintese-paj/' + encodeURIComponent('{{ paj_norm }}'), { method: 'POST' });
-                        const d = await r.json().catch(() => ({}));
-                        if (!d.ok) { this.erro = d.detalhe || 'Falha ao gerar a síntese.'; this.modalAberto = true; return; }
-                        this.texto = d.texto || '';
-                        this.modalAberto = true;
-                    } catch (e) {
-                        this.erro = 'Falha de conexão ao gerar a síntese.';
-                        this.modalAberto = true;
-                    } finally {
-                        this.gerando = false;
-                    }
-                },
-            }">
-            <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
-                    x-show="$store.acoesIaMenu.aberto === 'analisar' && !gerando"
-                    @click="gerar()"
-                    title="Gera por IA um texto corrido com a síntese cronológica da tramitação do PAJ">
-                Relatório do PAJ
-            </button>
-            <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal" x-show="gerando" disabled>
-                <span class="loading loading-spinner loading-xs"></span>
-                <span>Gerando relatório do PAJ…</span>
-            </button>
-
-            <dialog class="modal" :open="modalAberto" @close="modalAberto = false">
-                <div class="modal-box max-w-2xl">
-                    <h3 class="font-bold text-lg mb-3">Relatório do PAJ</h3>
-                    <div x-show="erro" class="alert alert-error text-xs py-2 px-3 mb-3"><span x-text="erro"></span></div>
-                    <textarea x-show="!erro" x-model="texto" rows="14"
-                              class="textarea textarea-bordered w-full text-sm"
-                              placeholder="Relatório gerado pela IA"></textarea>
-                    <div class="modal-action">
-                        <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="!erro"
-                                @click="navigator.clipboard.writeText(texto); showToast('Copiado!', 'success')">
-                            Copiar
-                        </button>
-                        <button type="button" class="btn btn-sm" @click="modalAberto = false">Fechar</button>
-                    </div>
-                </div>
-                <form method="dialog" class="modal-backdrop"><button type="button" @click="modalAberto = false">fechar</button></form>
-            </dialog>
-        </div>
 
         <!-- Análise ampla (geral) — diagnóstico direto via PROMPT_MAX, sem
              playbook de área específica; permite escolher a rota certa
@@ -1472,6 +1409,407 @@ document.addEventListener('alpine:init', () => {
                 <span x-text="op.label"></span>
             </button>
         </template>
+
+        <!-- Minutar Despacho (30/10/2026, pedido do usuário) — mesmos moldes
+             de "Minutar Petição"/"Minutar Ofício", com 2 subitens que abrem o
+             MESMO modal (editor rico Quill + Usar modelo/Gravar/Salvar como
+             modelo/Copiar/Fechar):
+               - "Despacho - sem relatório": caixa vazia.
+               - "Despacho com IA": a IA redige o despacho seguindo a
+                 Orientação diretiva (obrigatória) + fatos do PAJ, com os
+                 Despachos padrão como referência de estilo (POST
+                 /api/acoes-sisdpu/despacho-ia/{paj_norm} — gerar_despacho_ia).
+               - "Despacho - com relatório do PAJ": caixa já preenchida com o
+                 relatório (ex-"Relatório do PAJ", que ficava em "Analisar
+                 PAJ") — mesmo endpoint de "Gerar Síntese do PAJ" das Ações no
+                 SISDPU (POST /api/acoes-sisdpu/sintese-paj/{paj_norm} —
+                 gerar_sintese_paj: lê o PROMPT_MAX e gera por IA um texto
+                 corrido com a síntese cronológica da tramitação).
+             Cada clique num subitem começa um despacho NOVO (pode haver vários
+             do mesmo tipo). "Gravar" guarda o despacho (dados/despachos_paj/,
+             ver acoes_sisdpu_service.salvar_despacho); os gravados ficam numa
+             lista abaixo dos subitens, com selos "Gravado em" / "Lançado no
+             SISDPU em" e lixeira — clicar abre para editar. "Gerar de novo com
+             IA" substitui o texto da caixa (só vale depois de Gravar).
+             Indicador de progresso fora do gate do menu (regra do topo). -->
+        <div class="contents" x-init="_carregarDespachos()" x-data="{
+                tipo: '', gerando: false, texto: '', erro: '', modalAberto: false,
+                salvoEm: '', textoGravado: null, gravando: false,
+                idAtual: '', lancadoEm: '',
+                modelosDespacho: null, usandoModelo: false,
+                // Editor rico (Quill — static/js/rich_editor.js, mesma caixa das
+                // Ações no SISDPU): `texto` guarda o HTML do editor (atualizado a
+                // cada mudança), o que é gravado/copiado/salvo como modelo. Montado
+                // uma vez, na 1ª abertura (o Quill precisa do container VISÍVEL);
+                // sem Quill (CDN fora do ar), cai numa textarea simples.
+                // Despachos gravados do PAJ (lista abaixo dos subitens, mais
+                // recente primeiro): {id, tipo, resumo, salvo_em, lancado_em}.
+                despachos: [],
+                _api: '/api/acoes-sisdpu/despacho/' + encodeURIComponent('{{ paj_norm }}'),
+                async _carregarDespachos() {
+                    try {
+                        const j = await (await fetch('/api/acoes-sisdpu/despachos/' + encodeURIComponent('{{ paj_norm }}'))).json();
+                        this.despachos = j.itens || [];
+                    } catch (e) {}
+                },
+                rotuloTipo(t) {
+                    return { com: 'Com relatório do PAJ', ia: 'Despacho com IA' }[t] || 'Sem relatório';
+                },
+                async abrirGravado(it) {
+                    if (this.gerando) return;
+                    $store.acoesIaMenu.aberto = null;
+                    this._carregarModelos();
+                    try {
+                        const d = await (await fetch(this._api + '/' + encodeURIComponent(it.id))).json();
+                        if (!d.despacho) { showToast('Despacho não encontrado.', 'error'); await this._carregarDespachos(); return; }
+                        this.tipo = d.despacho.tipo; this.idAtual = d.despacho.id; this.erro = '';
+                        this.salvoEm = d.despacho.salvo_em || ''; this.lancadoEm = d.despacho.lancado_em || '';
+                        this.textoGravado = await this._definirConteudo(d.despacho.texto || '');
+                    } catch (e) {
+                        showToast('Falha de conexão ao abrir o despacho.', 'error');
+                    }
+                },
+                async excluir(it) {
+                    if (!confirm('Excluir o despacho ' + this.rotuloTipo(it.tipo).toLowerCase() + ' gravado em ' + this.fmtData(it.salvo_em) + '? Não pode ser desfeito.')) return;
+                    try {
+                        const d = await (await fetch(this._api + '/' + encodeURIComponent(it.id), { method: 'DELETE' })).json();
+                        if (!d.ok) { showToast(d.erro || 'Falha ao excluir o despacho.', 'error'); return; }
+                        if (this.idAtual === it.id) { this.idAtual = ''; this.textoGravado = null; this.salvoEm = ''; this.lancadoEm = ''; }
+                        showToast('Despacho excluído.', 'success');
+                    } catch (e) {
+                        showToast('Falha de conexão ao excluir o despacho.', 'error');
+                    }
+                    await this._carregarDespachos();
+                },
+                fmtData(iso) {
+                    const m = (iso || '').match(/^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})/);
+                    return m ? m[3] + '/' + m[2] + '/' + m[1] + ' ' + m[4] + ':' + m[5] : '';
+                },
+                uidEditor: 'qdesp-' + Math.random().toString(36).slice(2, 9),
+                _editor: null, quillOk: true,
+                async _garantirEditor() {
+                    if (this._editor || !this.quillOk) return;
+                    await this.$nextTick();
+                    this._editor = criarEditorRico(this.uidEditor, { placeholder: 'Texto do despacho' });
+                    this.quillOk = !!this._editor;
+                    if (this._editor) {
+                        this._editor.quill.on('text-change', () => { this.texto = this._editor.getHTML(); });
+                    }
+                },
+                // Põe um conteúdo novo na caixa: `html` (HTML) ou `textoPuro`
+                // (relatório da IA). Devolve o HTML normalizado pelo editor — é ele
+                // que vale como referência de 'gravado' (o Quill reescreve o HTML).
+                async _definirConteudo(html, textoPuro) {
+                    this.modalAberto = true;
+                    await this._garantirEditor();
+                    if (this._editor) {
+                        if (textoPuro !== undefined) this._editor.setText(textoPuro);
+                        else this._editor.setHTML(html ? paraHtmlSeTextoPuro(html) : '');
+                        this.texto = this._editor.getHTML();
+                    } else {
+                        this.texto = textoPuro !== undefined ? textoPuro : htmlParaTextoSimples(html || '');
+                    }
+                    return this.texto;
+                },
+                async _carregarModelos() {
+                    if (this.modelosDespacho !== null) return;
+                    try {
+                        const j = await (await fetch('/api/acoes-sisdpu/preferencias')).json();
+                        this.modelosDespacho = j.modelos_despacho || [];
+                    } catch (e) { this.modelosDespacho = []; }
+                },
+                // 'Usar modelo' — mesmos despachos padrão (Configurações › SISDPU)
+                // e placeholders de usarModeloDespacho() em acoes_sisdpu.js;
+                // insere no cursor, com a formatação do modelo, sem apagar o resto.
+                async usarModelo(id) {
+                    const modelo = (this.modelosDespacho || []).find((m) => m.id === id);
+                    if (!modelo) return;
+                    document.activeElement && document.activeElement.blur();
+                    this.usandoModelo = true;
+                    try {
+                        const htmlModelo = paraHtmlSeTextoPuro(modelo.texto);
+                        const subs = { ...subsFixos(), '[PAJ]': '{{ meta.paj }}',
+                                       ...(await subsDoPaj('{{ paj_norm }}', htmlModelo)) };
+                        const html = resolverPlaceholders(htmlModelo, subs);
+                        if (this._editor) { this._editor.insertHTML(html); return; }
+                        const ins = htmlParaTextoSimples(html);
+                        const ta = this.$refs.taDespacho;
+                        const ini = ta ? ta.selectionStart : this.texto.length;
+                        const fim = ta ? ta.selectionEnd : this.texto.length;
+                        this.texto = this.texto.slice(0, ini) + ins + this.texto.slice(fim);
+                        this.$nextTick(() => { if (ta) { ta.focus(); ta.selectionStart = ta.selectionEnd = ini + ins.length; } });
+                    } finally {
+                        this.usandoModelo = false;
+                    }
+                },
+                get titulo() {
+                    return { com: 'Despacho - com relatório do PAJ', ia: 'Despacho com IA' }[this.tipo] || 'Despacho - sem relatório';
+                },
+                // Orientação diretiva (caixa compartilhada de Ações com IA, x-data
+                // ancestral) — é o parâmetro de redação do 'Despacho com IA'.
+                _orientacao() { return (this.orientacaoDiretiva || '').trim(); },
+                _pedirOrientacao() {
+                    showToast('Escreva na Orientação diretiva (abaixo dos menus de Ações com IA) o que o despacho deve determinar.', 'warning');
+                    const ta = [...document.querySelectorAll('textarea')].find((t) => t.offsetParent && /Orientação diretiva/i.test(t.placeholder || ''));
+                    if (ta) { ta.scrollIntoView({ behavior: 'smooth', block: 'center' }); ta.focus(); }
+                },
+                get alterado() { return this.textoGravado === null ? !!this.texto : this.texto !== this.textoGravado; },
+                // Subitem: sempre um despacho NOVO daquele tipo (os gravados abrem
+                // pela lista abaixo dos subitens — abrirGravado()).
+                async abrir(tipo) {
+                    if (this.gerando) return;
+                    $store.acoesIaMenu.aberto = null;
+                    if (tipo === 'ia' && !this._orientacao()) { this._pedirOrientacao(); return; }
+                    this.tipo = tipo; this.erro = ''; this.textoGravado = null; this.salvoEm = '';
+                    this.idAtual = ''; this.lancadoEm = '';
+                    this._carregarModelos();
+                    if (tipo === 'com' || tipo === 'ia') { this.texto = ''; await this.gerar(); }
+                    else await this._definirConteudo('');
+                },
+                // 'com': relatório do PAJ (texto puro); 'ia': despacho redigido
+                // pela IA a partir da orientação diretiva (HTML).
+                async gerar() {
+                    if (this.gerando) return;
+                    const ia = this.tipo === 'ia';
+                    if (ia && !this._orientacao()) { this._pedirOrientacao(); return; }
+                    if (this.texto && this.modalAberto && !confirm((ia ? 'Redigir um novo despacho com IA' : 'Gerar um novo relatório com IA') + '? O texto da caixa será substituído (o gravado só muda se você clicar em Gravar).')) return;
+                    this.gerando = true; this.erro = '';
+                    if (this._editor) this._editor.quill.enable(false);
+                    const falha = ia ? 'Falha ao redigir o despacho com IA.' : 'Falha ao gerar o relatório do PAJ.';
+                    try {
+                        const r = ia
+                            ? await fetch('/api/acoes-sisdpu/despacho-ia/' + encodeURIComponent('{{ paj_norm }}'), {
+                                method: 'POST', headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({ orientacao: this._orientacao() }) })
+                            : await fetch('/api/acoes-sisdpu/sintese-paj/' + encodeURIComponent('{{ paj_norm }}'), { method: 'POST' });
+                        const d = await r.json().catch(() => ({}));
+                        if (!d.ok) { this.erro = d.detalhe || falha; this.modalAberto = true; return; }
+                        if (ia) await this._definirConteudo(d.html || '');
+                        else await this._definirConteudo(null, d.texto || '');
+                    } catch (e) {
+                        this.erro = 'Falha de conexão: ' + falha;
+                        this.modalAberto = true;
+                    } finally {
+                        this.gerando = false;
+                        if (this._editor) this._editor.quill.enable(true);
+                    }
+                },
+                // Cria (1ª vez) ou atualiza (idAtual) o despacho. Devolve true se gravou.
+                async gravar(silencioso) {
+                    this.gravando = true;
+                    try {
+                        const r = await fetch(this._api, {
+                            method: 'POST', headers: { 'Content-Type': 'application/json' },
+                            body: JSON.stringify({ id: this.idAtual, tipo: this.tipo, texto: this.texto }),
+                        });
+                        const d = await r.json().catch(() => ({}));
+                        if (!d.ok) { showToast(d.erro || 'Falha ao gravar o despacho.', 'error'); return false; }
+                        this.idAtual = d.id; this.textoGravado = this.texto; this.salvoEm = d.salvo_em || '';
+                        if (!silencioso) showToast('Despacho gravado.', 'success');
+                        await this._carregarDespachos();
+                        return true;
+                    } catch (e) {
+                        showToast('Falha de conexão ao gravar o despacho.', 'error');
+                        return false;
+                    } finally {
+                        this.gravando = false;
+                    }
+                },
+                // Copia com a formatação (para colar no Word/SISDPU) e em texto
+                // puro (para campos simples) — cada destino usa o que entende.
+                async copiar() {
+                    const html = this._editor ? this.texto : '';
+                    const puro = this._editor ? htmlParaTextoSimples(this.texto) : this.texto;
+                    try {
+                        if (html && window.ClipboardItem) {
+                            await navigator.clipboard.write([new ClipboardItem({
+                                'text/html': new Blob([html], { type: 'text/html' }),
+                                'text/plain': new Blob([puro], { type: 'text/plain' }),
+                            })]);
+                        } else {
+                            await navigator.clipboard.writeText(puro);
+                        }
+                        showToast('Copiado!', 'success');
+                    } catch (e) {
+                        showToast('Não foi possível copiar.', 'error');
+                    }
+                },
+                // 'Salvar como modelo' — abre Configurações › SISDPU › Despachos
+                // padrão › Novo despacho numa aba nova, já com este texto (passado
+                // por localStorage — ver modelosTextoPrefs em configuracoes.html),
+                // para dar nome e trocar dados do caso por placeholders.
+                salvarComoModelo() {
+                    try { localStorage.setItem('painel_novo_despacho_padrao', JSON.stringify({ texto: this.texto })); } catch (e) {}
+                    window.open('/configuracoes?novo_despacho=1', '_blank');
+                },
+                // 'Lançar no SISDPU' — grava no rascunho de 'Ações no SISDPU' a fase
+                // 'Despacho. Impulso do PAJ' + este texto como descrição da
+                // movimentação (mantém tramitação, prazo, conclusão, etapa e anexos
+                // que já estivessem lá) e abre o console — mesmo aviso
+                // 'acoes-sisdpu-recarregar' do 'Anexar ao PAJ' do Minutar Ofício. O
+                // Defensor escolhe ali tramitar/concluir/etapa e executa.
+                lancando: false,
+                async lancarNoSisdpu() {
+                    if (this.lancando || !this.texto.trim()) return;
+                    this.lancando = true;
+                    try {
+                        // Grava antes (o selo 'Lançado no SISDPU' fica no despacho gravado).
+                        if ((!this.idAtual || this.alterado) && !(await this.gravar(true))) return;
+                        const base = '/api/acoes-sisdpu/rascunho/' + encodeURIComponent('{{ paj_norm }}');
+                        const atual = ((await (await fetch(base)).json()) || {}).rascunho || null;
+                        const descAtual = htmlParaTextoSimples((atual && atual.descricao_mov_html) || '').trim();
+                        if (atual && (atual.fase || descAtual)
+                            && !confirm('Já há um rascunho em Ações no SISDPU' + (atual.fase ? ' (fase: ' + atual.fase + ')' : '')
+                                        + '. Substituir a fase e a descrição da movimentação por este despacho? Tramitação, prazo, conclusão, etapa e anexos do rascunho são mantidos.')) return;
+                        const norm = (x) => String(x || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().replace(/\s+/g, ' ').trim();
+                        let fase = 'Despacho. Impulso do paj';
+                        try {
+                            const pr = await (await fetch('/api/acoes-sisdpu/preferencias')).json();
+                            fase = [...(pr.fases_todas || []), ...(pr.fases_favoritas || [])]
+                                .find((f) => norm(f) === 'despacho. impulso do paj') || fase;
+                        } catch (e) {}
+                        const corpo = { ...(atual || {}), paj_label: '{{ meta.paj }}', fase,
+                                        descricao_mov_html: this._editor ? this.texto : paraHtmlSeTextoPuro(this.texto) };
+                        delete corpo.paj_norm; delete corpo.salvo_em;
+                        const r = await fetch(base, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(corpo) });
+                        const j = await r.json().catch(() => ({}));
+                        if (!j.ok) { showToast(j.erro || 'Falha ao preparar o lançamento no SISDPU.', 'error'); return; }
+                        try {
+                            const m = await (await fetch(this._api + '/' + encodeURIComponent(this.idAtual) + '/lancado', { method: 'POST' })).json();
+                            if (m.ok) this.lancadoEm = m.lancado_em || '';
+                        } catch (e) {}
+                        this._carregarDespachos();
+                        this.modalAberto = false;
+                        window.dispatchEvent(new CustomEvent('fechar-conjunta'));
+                        window.dispatchEvent(new CustomEvent('acoes-sisdpu-recarregar', { detail: { pajNorm: '{{ paj_norm }}' } }));
+                        await new Promise((res) => setTimeout(res, 300));
+                        const alvo = document.getElementById('acoesSisdpuPaj');
+                        const visivel = alvo && (alvo.firstElementChild || alvo);
+                        if (visivel) visivel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                        showToast('Despacho levado para Ações no SISDPU — escolha tramitação/conclusão/etapa e execute.', 'success');
+                    } catch (e) {
+                        showToast('Falha de conexão ao preparar o lançamento no SISDPU.', 'error');
+                    } finally {
+                        this.lancando = false;
+                    }
+                },
+                fechar() {
+                    if (this.alterado && !this.erro && !confirm('Há alterações não gravadas no despacho. Fechar mesmo assim?')) return;
+                    this.modalAberto = false;
+                },
+            }">
+            <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                    x-show="$store.acoesIaMenu.aberto === 'despacho'"
+                    @click="abrir('sem')"
+                    title="Novo despacho, com a caixa de texto vazia">
+                Despacho - sem relatório
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                    x-show="$store.acoesIaMenu.aberto === 'despacho' && !gerando"
+                    @click="abrir('com')"
+                    title="Novo despacho, já com o relatório do PAJ (síntese cronológica da tramitação) gerado por IA">
+                Despacho - com relatório do PAJ
+            </button>
+            <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                    x-show="$store.acoesIaMenu.aberto === 'despacho' && !gerando"
+                    @click="abrir('ia')"
+                    title="Usa a Orientação diretiva: a IA redige um novo despacho seguindo o que estiver escrito nela (abaixo dos menus) e os fatos do PAJ">
+                Despacho com IA
+            </button>
+            <!-- Despachos gravados — abaixo dos subitens; clicar abre para editar. -->
+            <div class="w-full mt-1 pt-1 border-t border-base-300" x-show="$store.acoesIaMenu.aberto === 'despacho' && despachos.length">
+                <div class="px-2 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-base-content/40">Despachos gravados</div>
+                <template x-for="it in despachos" :key="it.id">
+                    <div class="flex items-center gap-2 px-2 py-1 rounded-lg hover:bg-base-200">
+                        <button type="button" class="flex-1 min-w-0 text-left text-sm truncate" @click="abrirGravado(it)"
+                                :title="'Abrir para editar — ' + it.resumo">
+                            <span class="font-medium" x-text="rotuloTipo(it.tipo)"></span>
+                            <span class="text-base-content/60" x-text="it.resumo ? '— ' + it.resumo : ''"></span>
+                        </button>
+                        <span class="badge badge-sm badge-success badge-outline whitespace-nowrap shrink-0"
+                              x-text="'Gravado em ' + fmtData(it.salvo_em)"></span>
+                        <span class="badge badge-sm badge-info badge-outline whitespace-nowrap shrink-0" :class="it.lancado_em ? '' : 'hidden'"
+                              x-text="'Lançado no SISDPU em ' + fmtData(it.lancado_em)"></span>
+                        <button type="button" class="btn btn-ghost btn-xs btn-square text-error shrink-0" @click="excluir(it)" title="Excluir este despacho">
+                            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="1.8" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0"/></svg>
+                        </button>
+                    </div>
+                </template>
+            </div>
+
+            <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal" x-show="gerando && !modalAberto" disabled>
+                <span class="loading loading-spinner loading-xs"></span>
+                <span x-text="tipo === 'ia' ? 'Redigindo despacho com IA…' : 'Gerando relatório do PAJ…'"></span>
+            </button>
+
+            <dialog class="modal" :class="{ 'modal-open': modalAberto }" :open="modalAberto" @close="modalAberto = false">
+                <!-- 70% da largura e da altura da tela (pedido do usuário,
+                     30/10/2026); o editor ocupa o espaço que sobra. -->
+                <div class="modal-box flex flex-col" style="width: 70vw; max-width: 70vw; height: 70vh; max-height: 70vh;">
+                    <div class="flex items-baseline justify-between gap-2 mb-3">
+                        <h3 class="font-bold text-lg" x-text="titulo"></h3>
+                        <span class="text-xs text-base-content/50"
+                              x-text="(alterado ? 'Alterações não gravadas' : (salvoEm ? 'Gravado em ' + fmtData(salvoEm) : ''))
+                                      + (lancadoEm ? ' · Lançado no SISDPU em ' + fmtData(lancadoEm) : '')"></span>
+                    </div>
+                    <div x-show="erro" class="alert alert-error text-xs py-2 px-3 mb-3"><span x-text="erro"></span></div>
+                    <div class="flex justify-end mb-1" x-show="!erro && (modelosDespacho || []).length">
+                        <div class="dropdown dropdown-end">
+                            <button type="button" tabindex="0" class="btn btn-xs btn-outline gap-1" :disabled="usandoModelo || gerando"
+                                    title="Insere o texto de um despacho padrão no cursor, com NOME/CPF/PAJ/DATA já preenchidos.">
+                                <span x-show="usandoModelo" class="loading loading-spinner loading-xs"></span>
+                                <span x-text="usandoModelo ? 'Inserindo…' : '📋 Usar modelo'"></span>
+                            </button>
+                            <ul tabindex="0" class="dropdown-content menu menu-xs bg-base-100 rounded-box z-20 w-max max-w-[28rem] p-1 shadow border border-base-300">
+                                <template x-for="m in (modelosDespacho || [])" :key="m.id">
+                                    <li><a class="whitespace-nowrap" @mousedown.prevent @click="usarModelo(m.id)" x-text="m.nome"></a></li>
+                                </template>
+                            </ul>
+                        </div>
+                    </div>
+                    <!-- Wrapper: a toolbar do Quill entra como IRMÃ do container
+                         (antes dele), então é o wrapper que esconde as duas. -->
+                    <div x-show="!erro && quillOk" class="flex-1 min-h-0 flex flex-col" :class="gerando ? 'opacity-50' : ''">
+                        <div :id="uidEditor" class="flex-1 min-h-0"></div>
+                    </div>
+                    <textarea x-show="!erro && !quillOk" x-model="texto" x-ref="taDespacho" :disabled="gerando"
+                              class="textarea textarea-bordered w-full text-sm flex-1 min-h-0"
+                              placeholder="Texto do despacho"></textarea>
+                    <div class="modal-action">
+                        <button type="button" class="btn btn-sm btn-ghost gap-1.5 mr-auto" x-show="tipo === 'com' || tipo === 'ia'" :disabled="gerando" @click="gerar()"
+                                :title="tipo === 'ia' ? 'Redige um novo despacho com IA, pela Orientação diretiva atual, e substitui o texto da caixa' : 'Gera um novo relatório do PAJ com IA e substitui o texto da caixa'">
+                            <span class="loading loading-spinner loading-xs" x-show="gerando"></span>
+                            <span x-text="gerando ? 'Gerando…' : 'Gerar de novo com IA'"></span>
+                        </button>
+                        <button type="button" class="btn btn-sm btn-primary gap-1.5" x-show="!erro"
+                                :disabled="gravando || gerando || !alterado" @click="gravar()"
+                                title="Grava o texto para continuar editando depois">
+                            <span class="loading loading-spinner loading-xs" x-show="gravando"></span>
+                            Gravar
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline btn-success gap-1.5" x-show="!erro"
+                                :disabled="lancando || gerando || !texto.trim()" @click="lancarNoSisdpu()"
+                                title="Abre Ações no SISDPU com a fase Despacho. Impulso do PAJ e este texto na movimentação — lá você escolhe tramitar, concluir, etapa etc. e executa">
+                            <span class="loading loading-spinner loading-xs" x-show="lancando"></span>
+                            <svg x-show="!lancando" class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 12 3.269 3.125A59.769 59.769 0 0 1 21.485 12 59.768 59.768 0 0 1 3.27 20.875L5.999 12Zm0 0h7.5"></path></svg>
+                            Lançar no SISDPU
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="!erro"
+                                :disabled="!texto.trim()" @click="salvarComoModelo()"
+                                title="Abre Configurações › SISDPU › Despachos padrão › Novo despacho já com este texto, para dar um nome e incluir placeholders">
+                            Salvar como modelo
+                        </button>
+                        <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="!erro"
+                                :disabled="!texto.trim()" @click="copiar()"
+                                title="Copia o despacho com a formatação">
+                            Copiar
+                        </button>
+                        <button type="button" class="btn btn-sm" @click="fechar()">Fechar</button>
+                    </div>
+                </div>
+                <form method="dialog" class="modal-backdrop"><button type="button" @click="fechar()">fechar</button></form>
+            </dialog>
+        </div>
 
         <!-- Minutar Petição: 2 itens, cada um com submenu próprio (pedido do
              usuário, 2026-10-02 — reorganização anterior tinha os 3 tipos de

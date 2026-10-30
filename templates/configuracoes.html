@@ -954,7 +954,8 @@
              "Modelos de petição" acima: x-if destruiria o <div :id="uidModelo">
              onde o Quill é montado a cada abertura/fechamento). -->
         <div class="modal" :class="{'modal-open': modalAberto}" @click.self="fecharModal()">
-            <div class="modal-box max-w-2xl">
+            <!-- 70% da largura da tela (pedido do usuário, 30/10/2026). -->
+            <div class="modal-box" style="width: 70vw; max-width: 70vw;">
                 <h3 class="font-bold text-lg mb-3" x-text="editandoIndex >= 0 ? 'Editar despacho' : 'Novo despacho'"></h3>
                 <div class="flex flex-col gap-3">
                     <div class="form-control">
@@ -1838,6 +1839,9 @@ function abrirTab(id) {
 (function () {
     let id = 'acesso';
     try { id = sessionStorage.getItem('cfg-tab-sisdpu') || 'acesso'; } catch (e) {}
+    // "Salvar como modelo" do despacho (página do PAJ) — abre direto em SISDPU ›
+    // Despachos padrão (subaba padrão da aba SISDPU), ver sisdpuDespachosPadraoPrefs.
+    if (/[?&]novo_despacho=1/.test(location.search)) id = 'sisdpu';
     if (!document.querySelector('.cfg-tab[data-tab="' + id + '"]')) id = 'acesso';
     abrirTab(id);
 })();
@@ -2246,6 +2250,16 @@ function modelosTextoPrefs(cfg) {
         _editorModelo: null, quillModeloOk: true, _montandoEditorModelo: false,
         async init() {
             await this.carregar();
+            // "Salvar como modelo" (modal de despacho da página do PAJ, 30/10/2026):
+            // a página abre Configurações numa aba nova com ?novo_despacho=1 e deixa
+            // o texto em localStorage (`cfg.chavePrefill`) — abre o "Novo" já com ele.
+            if (!cfg.chavePrefill || !/[?&]novo_despacho=1/.test(location.search)) return;
+            let texto = '';
+            try {
+                texto = (JSON.parse(localStorage.getItem(cfg.chavePrefill) || 'null') || {}).texto || '';
+                localStorage.removeItem(cfg.chavePrefill);
+            } catch (e) {}
+            if (texto) await this.abrirNovo(paraHtmlSeTextoPuro(texto));
         },
         async carregar() {
             this.carregando = true;
@@ -2272,13 +2286,15 @@ function modelosTextoPrefs(cfg) {
         textoModeloEfetivo() {
             return this._editorModelo ? this._editorModelo.getHTML() : (this.modeloEmEdicao ? this.modeloEmEdicao.texto : '');
         },
-        async abrirNovo() {
-            this.modeloEmEdicao = { id: '', nome: '', texto: '' };
+        // `textoInicial` (HTML, opcional): "Novo" já preenchido (ver init()).
+        async abrirNovo(textoInicial) {
+            const texto = typeof textoInicial === 'string' ? textoInicial : '';
+            this.modeloEmEdicao = { id: '', nome: '', texto };
             this.editandoIndex = -1;
             this.msgErro = false; this.msg = '';
             this.modalAberto = true;
             await this._garantirEditorModelo();
-            if (this._editorModelo) this._editorModelo.setHTML('');
+            if (this._editorModelo) this._editorModelo.setHTML(texto);
         },
         async abrirEditar(i) {
             this.modeloEmEdicao = { ...this.modelos[i] };
@@ -2528,6 +2544,7 @@ function sisdpuDespachosPadraoPrefs() {
     return modelosTextoPrefs({
         endpoint: '/api/config/sisdpu-modelos-despacho',
         rotuloItem: 'despacho',
+        chavePrefill: 'painel_novo_despacho_padrao',
         placeholderEditor: 'Texto padrão do despacho — clique nos botões acima pra inserir um placeholder na posição do cursor.',
         // Catálogo único, agrupado por categoria (static/js/rich_editor.js).
         placeholders: PLACEHOLDERS_LISTA,

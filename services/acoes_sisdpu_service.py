@@ -105,6 +105,119 @@ def excluir_rascunho(paj_norm: str) -> dict:
     return {"ok": True}
 
 
+# Despachos de "Ações com IA › Minutar Despacho" gravados pelo Defensor para
+# continuar editando depois (30/10/2026) — mesma convenção de `dados/` dos
+# rascunhos acima. VÁRIOS por PAJ (cada subitem pode gerar mais de um): um JSON
+# por PAJ, {"itens": [{"id", "tipo", "texto" (HTML), "criado_em", "salvo_em",
+# "lancado_em"}]}. `tipo`: "sem" relatório / "com" relatório do PAJ / "ia"
+# (Despacho com IA). `lancado_em`: quando foi levado ao rascunho de "Ações no
+# SISDPU" pelo botão "Lançar no SISDPU".
+DESPACHOS_DIR = RASCUNHOS_DIR.parent / "despachos_paj"
+TIPOS_DESPACHO = ("sem", "com", "ia")
+
+
+def _despachos_json(paj_norm: str) -> Path:
+    return DESPACHOS_DIR / f"{paj_norm}.json"
+
+
+def _agora() -> str:
+    from datetime import datetime
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def _ler_despachos(paj_norm: str) -> list[dict]:
+    """Lista de despachos do PAJ. Importa (uma vez) o formato anterior — um
+    arquivo por tipo, `{paj}__{tipo}.json` — e apaga os arquivos antigos."""
+    itens: list[dict] = []
+    p = _despachos_json(paj_norm)
+    if p.exists():
+        with contextlib.suppress(Exception):
+            itens = json.loads(p.read_text(encoding="utf-8")).get("itens") or []
+    antigos = [DESPACHOS_DIR / f"{paj_norm}__{t}.json" for t in TIPOS_DESPACHO]
+    if any(a.exists() for a in antigos):
+        for a in antigos:
+            if not a.exists():
+                continue
+            with contextlib.suppress(Exception):
+                d = json.loads(a.read_text(encoding="utf-8"))
+                itens.append({"id": uuid.uuid4().hex[:10], "tipo": d.get("tipo", "sem"),
+                              "texto": d.get("texto", ""), "criado_em": d.get("salvo_em", ""),
+                              "salvo_em": d.get("salvo_em", ""), "lancado_em": ""})
+        _gravar_despachos(paj_norm, itens)
+        for a in antigos:
+            with contextlib.suppress(Exception):
+                a.unlink()
+    return itens
+
+
+def _gravar_despachos(paj_norm: str, itens: list[dict]) -> None:
+    DESPACHOS_DIR.mkdir(parents=True, exist_ok=True)
+    _despachos_json(paj_norm).write_text(
+        json.dumps({"paj_norm": paj_norm, "itens": itens}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def _resumo_despacho(texto_html: str, limite: int = 90) -> str:
+    """Início do texto, sem tags — para distinguir despachos do mesmo tipo na lista."""
+    import html as _html
+    t = re.sub(r"<[^>]+>", " ", texto_html or "")
+    t = re.sub(r"\s+", " ", _html.unescape(t)).strip()
+    return t if len(t) <= limite else t[:limite].rstrip() + "…"
+
+
+def listar_despachos(paj_norm: str) -> list[dict]:
+    """Despachos gravados do PAJ, mais recente primeiro, sem o texto inteiro."""
+    itens = sorted(_ler_despachos(paj_norm), key=lambda d: d.get("salvo_em") or "", reverse=True)
+    return [{"id": d["id"], "tipo": d.get("tipo", ""), "resumo": _resumo_despacho(d.get("texto", "")),
+             "salvo_em": d.get("salvo_em", ""), "lancado_em": d.get("lancado_em", "")} for d in itens]
+
+
+def obter_despacho(paj_norm: str, id_despacho: str) -> dict | None:
+    return next((d for d in _ler_despachos(paj_norm) if d.get("id") == id_despacho), None)
+
+
+def salvar_despacho(paj_norm: str, tipo: str, texto: str, id_despacho: str = "") -> dict:
+    """Cria (sem `id_despacho`) ou atualiza um despacho do PAJ."""
+    if not paj_norm:
+        return {"ok": False, "erro": "paj_norm vazio."}
+    itens = _ler_despachos(paj_norm)
+    agora = _agora()
+    atual = next((d for d in itens if d.get("id") == id_despacho), None) if id_despacho else None
+    if atual:
+        atual["texto"] = texto or ""
+        atual["salvo_em"] = agora
+    else:
+        if tipo not in TIPOS_DESPACHO:
+            return {"ok": False, "erro": f"Tipo de despacho desconhecido: {tipo!r}."}
+        atual = {"id": uuid.uuid4().hex[:10], "tipo": tipo, "texto": texto or "",
+                 "criado_em": agora, "salvo_em": agora, "lancado_em": ""}
+        itens.append(atual)
+    _gravar_despachos(paj_norm, itens)
+    return {"ok": True, "id": atual["id"], "salvo_em": agora}
+
+
+def marcar_despacho_lancado(paj_norm: str, id_despacho: str) -> dict:
+    itens = _ler_despachos(paj_norm)
+    atual = next((d for d in itens if d.get("id") == id_despacho), None)
+    if not atual:
+        return {"ok": False, "erro": "Despacho não encontrado."}
+    atual["lancado_em"] = _agora()
+    _gravar_despachos(paj_norm, itens)
+    return {"ok": True, "lancado_em": atual["lancado_em"]}
+
+
+def excluir_despacho(paj_norm: str, id_despacho: str) -> dict:
+    itens = _ler_despachos(paj_norm)
+    restantes = [d for d in itens if d.get("id") != id_despacho]
+    if len(restantes) == len(itens):
+        return {"ok": False, "erro": "Despacho não encontrado."}
+    if restantes:
+        _gravar_despachos(paj_norm, restantes)
+    else:
+        with contextlib.suppress(Exception):
+            _despachos_json(paj_norm).unlink()
+    return {"ok": True}
+
+
 def listar_rascunhos() -> list[dict]:
     """Todos os rascunhos salvos — alimenta a página "Movimentações pendentes".
     Enriquece com o nome do assistido lido do metadata.json do PAJ (não fica
@@ -796,17 +909,11 @@ async def _chamar_claude_texto_sintese(prompt: str, timeout: int = 180) -> tuple
     return saida, None
 
 
-async def gerar_sintese_paj(paj_norm: str) -> dict:
-    """Gera a "SÍNTESE DA TRAMITAÇÃO DO PAJ" por IA a partir do PROMPT_MAX do
-    PAJ (cabeçalho/narrativa/movimentações já consolidados pelo painel) —
-    botão "Gerar Síntese do PAJ" ao lado de "Usar modelo". O texto retornado é
-    inserido no CURSOR do editor de descrição da movimentação pelo frontend
-    (mesmo `insertHTML()` de usarModeloDespacho), sem apagar o que já
-    estiver escrito."""
+def _ler_prompt_max(paj_norm: str) -> tuple[str, str | None]:
+    """PROMPT_MAX do PAJ (gerado na hora se ainda não existir) — (texto, erro)."""
     pasta = PAJS_DIR / paj_norm
     if not pasta.exists():
-        return {"ok": False, "detalhe": "PAJ não encontrado."}
-
+        return "", "PAJ não encontrado."
     prompt_max_path = pasta / "PROMPT_MAX.md"
     if not prompt_max_path.exists():
         from services.prompt_builder import gerar_prompt_max
@@ -818,7 +925,20 @@ async def gerar_sintese_paj(paj_norm: str) -> dict:
         with contextlib.suppress(Exception):
             prompt_max = prompt_max_path.read_text(encoding="utf-8", errors="replace")
     if not prompt_max.strip():
-        return {"ok": False, "detalhe": "Não foi possível montar o contexto do PAJ (PROMPT_MAX)."}
+        return "", "Não foi possível montar o contexto do PAJ (PROMPT_MAX)."
+    return prompt_max, None
+
+
+async def gerar_sintese_paj(paj_norm: str) -> dict:
+    """Gera a "SÍNTESE DA TRAMITAÇÃO DO PAJ" por IA a partir do PROMPT_MAX do
+    PAJ (cabeçalho/narrativa/movimentações já consolidados pelo painel) —
+    botão "Gerar Síntese do PAJ" ao lado de "Usar modelo". O texto retornado é
+    inserido no CURSOR do editor de descrição da movimentação pelo frontend
+    (mesmo `insertHTML()` de usarModeloDespacho), sem apagar o que já
+    estiver escrito."""
+    prompt_max, erro = _ler_prompt_max(paj_norm)
+    if erro:
+        return {"ok": False, "detalhe": erro}
 
     prompt = (
         "Contexto do PAJ (gerado pelo painel a partir do SISDPU):\n\n"
@@ -833,3 +953,58 @@ async def gerar_sintese_paj(paj_norm: str) -> dict:
     if erro:
         return {"ok": False, "detalhe": erro}
     return {"ok": True, "texto": _extrair_texto_puro(texto)}
+
+
+# ---------------------------------------------------------------------------
+# "Despacho com IA" (Ações com IA › Minutar Despacho, 30/10/2026): a IA redige
+# o despacho do Defensor no PAJ seguindo a ORIENTAÇÃO DIRETIVA (obrigatória —
+# é o que diz o que despachar), com os fatos do PROMPT_MAX e, como referência
+# de estilo, os Despachos padrão cadastrados em Configurações › SISDPU. Mesmo
+# motor one-shot da síntese acima. Devolve HTML simples para o editor rico.
+# ---------------------------------------------------------------------------
+
+_DESPACHO_IA_PROMPT = """Redija o DESPACHO do Defensor Público Federal neste PAJ, cumprindo EXATAMENTE a orientação diretiva abaixo (é ela que define o que despachar e em que sentido).
+
+- Use os fatos do PAJ (PROMPT_MAX) para fundamentar e situar o despacho: datas, nº das movimentações entre parênteses quando citar um ato, nome do assistido, pretensão. Nunca invente fato, data, documento ou número que não esteja no contexto; se faltar algum dado necessário, deixe um marcador visível entre colchetes (ex.: [DATA]).
+- Estrutura: título curto em maiúsculas, se o tipo de despacho pedir (ex.: DECISÃO DE ARQUIVAMENTO, DESPACHO); parágrafos numerados (1., 2., 3.) quando houver mais de uma providência; a última parte traz as determinações/encaminhamentos concretos.
+- Tom técnico-direto, conciso, sem travessão, sem saudação, sem assinatura, sem local e data no fecho.
+- Se houver despachos padrão de referência, siga o estilo, o vocabulário e a estrutura deles — sem copiar conteúdo que não se aplique ao caso.
+
+Formato da resposta: HTML simples, só com <p>, <strong>, <em>, <u>, <ol>/<ul>/<li> (um <p> por parágrafo; título em <p><strong>...</strong></p>). Nada de <html>, <body>, estilos ou classes."""
+
+
+async def gerar_despacho_ia(paj_norm: str, orientacao: str) -> dict:
+    """Redige por IA o despacho do PAJ a partir da orientação diretiva — ver
+    `_DESPACHO_IA_PROMPT`. Devolve {"ok", "html"} ou {"ok": False, "detalhe"}."""
+    orientacao = (orientacao or "").strip()
+    if not orientacao:
+        return {"ok": False, "detalhe": "Escreva na Orientação diretiva o que o despacho deve determinar."}
+    prompt_max, erro = _ler_prompt_max(paj_norm)
+    if erro:
+        return {"ok": False, "detalhe": erro}
+
+    from services import config_painel_service
+
+    modelos = [m for m in (config_painel_service.get_sisdpu_modelos_despacho() or []) if (m.get("texto") or "").strip()]
+    referencias = "\n\n".join(
+        f"### {m.get('nome', '')}\n{m.get('texto', '')}" for m in modelos[:8])
+
+    prompt = (
+        "Contexto do PAJ (gerado pelo painel a partir do SISDPU):\n\n"
+        "--- INICIO DO PROMPT_MAX ---\n"
+        f"{prompt_max.strip()}\n"
+        "--- FIM DO PROMPT_MAX ---\n\n"
+        + ("Despachos padrão do Defensor (referência de ESTILO; os [PLACEHOLDERS] são "
+           "preenchidos com os dados do caso):\n\n"
+           "--- INICIO DOS DESPACHOS PADRAO ---\n"
+           f"{referencias}\n"
+           "--- FIM DOS DESPACHOS PADRAO ---\n\n" if referencias else "")
+        + f"ORIENTAÇÃO DIRETIVA DO DEFENSOR:\n{orientacao}\n\n"
+        f"{_DESPACHO_IA_PROMPT}\n\n"
+        "Responda apenas com o HTML do despacho — sem cercas de código markdown, "
+        "sem comentários antes ou depois."
+    )
+    texto, erro = await _chamar_claude_texto_sintese(prompt, timeout=300)
+    if erro:
+        return {"ok": False, "detalhe": erro}
+    return {"ok": True, "html": _extrair_texto_puro(texto)}

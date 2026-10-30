@@ -6,6 +6,13 @@ reutilizável em qualquer página do painel — não depende da Retornos.
 - GET  /api/acoes-sisdpu/pecas-ia/{paj_norm} — arquivos da subpasta "Peças IA" do PAJ.
 - POST /api/acoes-sisdpu/sintese-paj/{paj_norm} — gera por IA a "SÍNTESE DA
   TRAMITAÇÃO DO PAJ" (botão ao lado de "Usar modelo").
+- GET  /api/acoes-sisdpu/despachos/{paj_norm} — despachos gravados do PAJ
+  (Ações com IA › Minutar Despacho; vários por PAJ).
+- GET/DELETE /api/acoes-sisdpu/despacho/{paj_norm}/{id} — abre/exclui um despacho;
+  POST /api/acoes-sisdpu/despacho/{paj_norm} grava (cria ou atualiza);
+  POST .../{id}/lancado marca "Lançado no SISDPU".
+- POST /api/acoes-sisdpu/despacho-ia/{paj_norm} — redige o despacho por IA a
+  partir da orientação diretiva.
 - POST /api/acoes-sisdpu/anexo-externo   — upload de um anexo externo (staging).
 - POST /api/acoes-sisdpu/anexo-externo/remover — descarta um anexo externo staged.
 - GET/POST/DELETE /api/acoes-sisdpu/rascunho/{paj_norm} — rascunho de movimentação.
@@ -63,6 +70,47 @@ async def api_sintese_paj(paj_norm: str):
     Chamada bloqueante (pode levar dezenas de segundos), mas síncrona pro
     frontend — mesmo padrão de /api/valor-causa/{paj_norm}."""
     return JSONResponse(await acoes_sisdpu_service.gerar_sintese_paj(paj_norm))
+
+
+@router.post("/api/acoes-sisdpu/despacho-ia/{paj_norm}", response_class=JSONResponse)
+async def api_despacho_ia(paj_norm: str, request: Request):
+    """Redige por IA o despacho a partir da orientação diretiva (Ações com IA ›
+    Minutar Despacho › Despacho com IA). Bloqueante (dezenas de segundos)."""
+    body = await request.json()
+    return JSONResponse(await acoes_sisdpu_service.gerar_despacho_ia(paj_norm, (body or {}).get("orientacao", "")))
+
+
+@router.get("/api/acoes-sisdpu/despachos/{paj_norm}", response_class=JSONResponse)
+async def api_listar_despachos(paj_norm: str):
+    """Despachos gravados do PAJ (lista abaixo dos subitens de Minutar Despacho)."""
+    return JSONResponse({"ok": True, "itens": acoes_sisdpu_service.listar_despachos(paj_norm)})
+
+
+@router.get("/api/acoes-sisdpu/despacho/{paj_norm}/{id_despacho}", response_class=JSONResponse)
+async def api_obter_despacho(paj_norm: str, id_despacho: str):
+    """Um despacho gravado, com o texto, para abrir e editar."""
+    return JSONResponse({"ok": True, "despacho": acoes_sisdpu_service.obter_despacho(paj_norm, id_despacho)})
+
+
+@router.post("/api/acoes-sisdpu/despacho/{paj_norm}", response_class=JSONResponse)
+async def api_salvar_despacho(paj_norm: str, request: Request):
+    """Grava o despacho — {tipo, texto} cria um novo; com {id} atualiza aquele."""
+    b = (await request.json()) or {}
+    res = acoes_sisdpu_service.salvar_despacho(paj_norm, b.get("tipo", ""), b.get("texto", ""), b.get("id", ""))
+    return JSONResponse(res, status_code=200 if res.get("ok") else 400)
+
+
+@router.post("/api/acoes-sisdpu/despacho/{paj_norm}/{id_despacho}/lancado", response_class=JSONResponse)
+async def api_despacho_lancado(paj_norm: str, id_despacho: str):
+    """Marca o despacho como levado ao SISDPU (botão "Lançar no SISDPU")."""
+    res = acoes_sisdpu_service.marcar_despacho_lancado(paj_norm, id_despacho)
+    return JSONResponse(res, status_code=200 if res.get("ok") else 404)
+
+
+@router.delete("/api/acoes-sisdpu/despacho/{paj_norm}/{id_despacho}", response_class=JSONResponse)
+async def api_excluir_despacho(paj_norm: str, id_despacho: str):
+    res = acoes_sisdpu_service.excluir_despacho(paj_norm, id_despacho)
+    return JSONResponse(res, status_code=200 if res.get("ok") else 404)
 
 
 @router.post("/api/acoes-sisdpu/anexo-externo", response_class=JSONResponse)
