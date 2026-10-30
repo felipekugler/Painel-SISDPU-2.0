@@ -25,14 +25,19 @@ Usado pelo item "Dossiê CadÚnico" do menu Consultas da página do PAJ (ver
   uma página HTML de "Erro Interno" com status 200 — por isso todo download é
   conferido pelo `%PDF`.
 
-Login: usuário + senha + código enviado por e-mail + 2FA — NÃO é
-automatizado. O painel abre a janela e espera o Defensor logar (a coleta
-segue sozinha quando a tela "Buscar Família" aparecer). Por isso o navegador
-NÃO é fechado ao fim de cada dossiê: a sessão fica viva para o próximo (só
-fecha no shutdown do painel)."""
+Login (Login CAIXA, Keycloak em login.caixa.gov.br, em etapas): CPF → senha →
+código enviado por e-mail → 2FA. Automatizado com o que estiver no COFRE
+(sistema "cadunico": CPF, senha, e-mail do código e, quando cadastrada, a seed
+TOTP) — o código do e-mail é lido pelo MCP do Microsoft 365
+(`services.codigo_email_service`). Qualquer etapa que não dê para resolver
+sozinho (cofre trancado, sem seed, e-mail não lido, tela desconhecida, erro do
+site) fica para o Defensor completar na janela, como antes — a coleta segue
+sozinha quando a tela "Buscar Família" aparecer. Ao fim de cada dossiê a
+sessão é encerrada (`sair` → botão "Sair") e a janela é fechada."""
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import contextlib
 import re
@@ -85,8 +90,8 @@ def _pid_na_porta(port: int) -> int | None:
 
 
 def fechar_navegador() -> None:
-    """Fecha o Chromium do CadÚnico — só no shutdown do painel (o login é
-    manual e caro; a sessão fica viva entre um dossiê e outro)."""
+    """Fecha o Chromium do CadÚnico — ao fim de cada dossiê (depois de `sair`)
+    e no shutdown do painel."""
     global _cad_pid
     if not _porta_aberta(_CDP_PORT):
         _cad_pid = None
@@ -172,9 +177,189 @@ async def _logado(page) -> bool:
     return False
 
 
+# Etapa visível do Login CAIXA (mapeada ao vivo em 2026-10-30 só até a 1ª tela:
+# `#username` = CPF + `#button-submit` "Próximo"; as seguintes são reconhecidas
+# pelo campo visível e pelo texto da tela). Só conta o que está VISÍVEL.
+_JS_ETAPA_LOGIN = r"""()=>{
+  if(!/login\.caixa\.gov\.br/.test(location.host)) return {etapa:'fora'};
+  const vis=e=>!!e && e.offsetParent!==null && !e.disabled;
+  const txt=(document.body.innerText||'').replace(/\s+/g,' ');
+  const erro=[...document.querySelectorAll('.alert-error,.kc-feedback-text,#input-error,.pf-m-danger,[role=alert]')]
+     .filter(vis).map(e=>e.innerText.trim()).filter(Boolean).join(' | ');
+  if(vis(document.getElementById('username'))) return {etapa:'cpf', erro};
+  if([...document.querySelectorAll('input[type=password]')].some(vis)) return {etapa:'senha', erro};
+  // escolha do meio de recebimento (2026-10-30): opções com o e-mail/telefone
+  // mascarados + botão "Receber código"
+  if([...document.querySelectorAll('button,a,input[type=submit]')].some(e=>vis(e)
+     && /receber\s+c[óo]digo/i.test(e.innerText||e.value||''))) return {etapa:'canal', erro};
+  const campo=[...document.querySelectorAll('input[type=text],input[type=tel],input[type=number],input:not([type])')].find(vis);
+  if(campo){
+    if(/autenticador|aplicativo|authenticator|\b2FA\b|\bOTP\b/i.test(txt) && !/enviad[oa].{0,40}e-?mail/i.test(txt))
+      return {etapa:'totp', erro};
+    // tela real (2026-10-30): "Validação de Login — insira o código de validação recebido"
+    if(/c[óo]digo de valida[çc][ãa]o|(e-?mail).{0,80}c[óo]digo|c[óo]digo.{0,80}e-?mail/i.test(txt))
+      return {etapa:'codigo_email', erro};
+  }
+  return {etapa:'desconhecida', erro, texto: txt.slice(0,200)};
+}"""
+
+_JS_PREENCHER_E_ENVIAR = r"""([seletor, valor])=>{
+  const vis=e=>!!e && e.offsetParent!==null && !e.disabled;
+  const campo=[...document.querySelectorAll(seletor)].find(vis);
+  if(!campo) return 'campo não encontrado';
+  campo.focus();
+  Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(campo, valor);
+  ['input','change','keyup'].forEach(t=>campo.dispatchEvent(new Event(t,{bubbles:true})));
+  const btn=[document.getElementById('button-submit'), ...document.querySelectorAll('button[type=submit],input[type=submit]')].find(vis);
+  if(btn) btn.click(); else if(campo.form) campo.form.requestSubmit();
+  return 'ok';
+}"""
+
+_JS_ESCOLHER_EMAIL = r"""()=>{
+  const vis=e=>!!e && e.offsetParent!==null;
+  // a opção de e-mail é a que mostra um endereço mascarado (tem "@"; o domínio
+  // exibido pode ser o antigo, ex. @dpu.gov.br) — pega o menor elemento visível com "@"
+  const ops=[...document.querySelectorAll('label,li,div,span,p,button,a')]
+     .filter(e=>vis(e) && /@/.test(e.innerText||'') && (e.innerText||'').length<150)
+     .sort((x,y)=>x.innerText.length-y.innerText.length);
+  const alvo=ops[0];
+  if(!alvo) return 'opção de e-mail não encontrada';
+  const box=alvo.closest('label,li,div')||alvo;
+  const radio=box.querySelector('input[type=radio],input[type=checkbox]')
+     || (alvo.htmlFor && document.getElementById(alvo.htmlFor));
+  if(radio){ radio.checked=true; radio.dispatchEvent(new Event('change',{bubbles:true})); radio.click(); }
+  else alvo.click();
+  const btn=[...document.querySelectorAll('button,a,input[type=submit]')].find(e=>vis(e) && !e.disabled
+     && /receber\s+c[óo]digo/i.test(e.innerText||e.value||''));
+  if(!btn) return 'botão Receber código não encontrado';
+  btn.click();
+  return 'ok';
+}"""
+
+_SEL_CAMPO_CODIGO = "input[type=text],input[type=tel],input[type=number],input:not([type])"
+
+
+async def _login_automatico(page, log, timeout_s: int = 900) -> bool:
+    """Acompanha o Login CAIXA até logar (ou `timeout_s`), resolvendo cada etapa
+    com o cofre. Etapa que não der para resolver sozinho fica para o Defensor
+    na janela, mas o laço CONTINUA vigiando: as etapas seguintes (ex.: senha e
+    2FA depois de um código digitado à mão) seguem automáticas."""
+    from datetime import datetime
+
+    from services import cofre_service
+
+    cred = cofre_service.get_credenciais("cadunico")
+    if not cred:
+        log("aviso", "Credenciais do CadÚnico indisponíveis (cofre trancado ou sem cadastro em "
+                     "Configurações › Cofre) — faça o login na janela.")
+        cpf = senha = ""
+    else:
+        cpf, senha = re.sub(r"\D", "", cred[0]), cred[1]
+    email = cofre_service.get_extra("cadunico", "email")
+    seed = cofre_service.get_extra("cadunico", "totp_seed")
+
+    enviado_em = datetime.now().astimezone()  # último envio — base da busca do e-mail
+    anterior = ""            # etapa vista na volta anterior
+    tentativas = 0           # ações nesta visita à etapa
+    manual: set[str] = set() # etapas desta visita deixadas para o Defensor
+    ini = time.monotonic()
+    while time.monotonic() - ini < timeout_s:
+        if await _logado(page):
+            return True
+        estado = None
+        with contextlib.suppress(Exception):
+            estado = await page.evaluate(_JS_ETAPA_LOGIN)
+        etapa = (estado or {}).get("etapa") or "carregando"
+        if etapa in ("fora", "carregando"):
+            await page.wait_for_timeout(1500)
+            continue
+        if etapa != anterior:
+            anterior, tentativas = etapa, 0
+            manual.clear()
+            if etapa == "desconhecida":
+                log("aviso", "Tela do Login CAIXA não reconhecida — resolva na janela; o resto "
+                             f"segue automático. Texto da tela: {estado.get('texto', '')}")
+        if etapa == "desconhecida" or etapa in manual:
+            await page.wait_for_timeout(1500)
+            continue
+
+        def deixar_manual(msg: str) -> None:
+            log("aviso", msg)
+            manual.add(etapa)
+
+        if estado.get("erro") and tentativas:
+            deixar_manual(f"Login CAIXA recusou: {estado['erro']} — resolva na janela.")
+            continue
+        if tentativas >= 2:  # a mesma etapa voltou sem mensagem = algo recusado
+            deixar_manual(f"Login CAIXA não passou da etapa '{etapa}' — resolva na janela.")
+            continue
+        tentativas += 1
+
+        r = "ok"
+        if etapa in ("cpf", "senha") and not cred:
+            manual.add(etapa)
+            continue
+        if etapa == "cpf":
+            r = await page.evaluate(_JS_PREENCHER_E_ENVIAR, ["#username", cpf])
+            log("info", "Login CAIXA: CPF informado.")
+        elif etapa == "senha":
+            r = await page.evaluate(_JS_PREENCHER_E_ENVIAR, ["input[type=password]", senha])
+            log("info", "Login CAIXA: senha informada (cofre).")
+        elif etapa == "canal":
+            enviado_em = datetime.now().astimezone()
+            r = await page.evaluate(_JS_ESCOLHER_EMAIL)
+            log("info", "Login CAIXA: envio do código por e-mail solicitado.")
+        elif etapa == "codigo_email":
+            if not email:
+                deixar_manual("Sem e-mail do código no cofre — digite o código na janela.")
+                continue
+            log("info", f"Login CAIXA: buscando o código no e-mail {email} (Microsoft 365)…")
+            from services import codigo_email_service
+            codigo = await codigo_email_service.buscar_codigo(email, enviado_em, log)
+            if await _logado(page):
+                return True
+            with contextlib.suppress(Exception):
+                if (await page.evaluate(_JS_ETAPA_LOGIN)).get("etapa") != "codigo_email":
+                    continue  # o Defensor digitou enquanto a busca rodava
+            if not codigo:
+                deixar_manual("Não consegui ler o código do e-mail — digite-o na janela.")
+                continue
+            r = await page.evaluate(_JS_PREENCHER_E_ENVIAR, [_SEL_CAMPO_CODIGO, codigo])
+            log("info", f"Login CAIXA: código do e-mail informado ({codigo}).")
+        else:  # totp
+            if not seed:
+                deixar_manual("Seed do 2FA não cadastrada no cofre — digite o código do "
+                              "autenticador na janela.")
+                continue
+            import pyotp
+            r = await page.evaluate(_JS_PREENCHER_E_ENVIAR, [_SEL_CAMPO_CODIGO, pyotp.TOTP(seed).now()])
+            log("info", "Login CAIXA: código do 2FA informado (seed do cofre).")
+        if r != "ok":
+            deixar_manual(f"Login CAIXA, etapa '{etapa}': {r} — resolva na janela.")
+            continue
+        await page.wait_for_timeout(2500)
+    return await _logado(page)
+
+
+async def sair(page) -> bool:
+    """Encerra a sessão: clica em "Sair" (canto superior direito, `#botaoSair`
+    → sairAplicacao.do). True se a página deixou de estar logada."""
+    if not await _logado(page):
+        return True
+    page.once("dialog", lambda d: asyncio.ensure_future(d.accept()))
+    with contextlib.suppress(Exception):
+        await page.click("#botaoSair", timeout=10000)
+    for _ in range(20):
+        await page.wait_for_timeout(500)
+        if not await _logado(page):
+            return True
+    return False
+
+
 async def garantir_login(page, log, timeout_s: int = 900) -> bool:
-    """Abre o CadÚnico; se não estiver logado, traz a janela para frente e
-    espera o login MANUAL (usuário, senha, código do e-mail e 2FA)."""
+    """Abre o CadÚnico; se não estiver logado, faz o login com o cofre
+    (`_login_automatico`) e, no que faltar, traz a janela para frente e espera
+    o Defensor completar à mão."""
     if await _logado(page):
         return True
     with contextlib.suppress(Exception):
@@ -184,8 +369,15 @@ async def garantir_login(page, log, timeout_s: int = 900) -> bool:
         return True
     with contextlib.suppress(Exception):
         await page.bring_to_front()
-    log("aviso", "Faça o login na janela do CadÚnico que abriu (usuário, senha, código do "
-                 "e-mail e 2FA) — a coleta continua sozinha depois.")
+    try:
+        if await _login_automatico(page, log, timeout_s):
+            return True
+    except Exception as e:  # noqa: BLE001 — automação é best-effort; o manual continua valendo
+        log("aviso", f"Login automático interrompido ({type(e).__name__}: {e}).")
+    if await _logado(page):
+        return True
+    log("aviso", "Faça o login na janela do CadÚnico que abriu (o que faltar entre CPF, senha, "
+                 "código do e-mail e 2FA) — a coleta continua sozinha depois.")
     ini = time.monotonic()
     while time.monotonic() - ini < timeout_s:
         await page.wait_for_timeout(2000)
@@ -217,7 +409,7 @@ async def _aviso(page) -> str:
 
 
 # --------------------------------------------------------------------------
-# Busca por CPF
+# Busca por CPF ou por Código Familiar
 # --------------------------------------------------------------------------
 
 _JS_ABRIR_BUSCA = r"""()=>{
@@ -235,6 +427,38 @@ _JS_BUSCAR_CPF = r"""(cpf)=>{
   c.value=cpf; c.dispatchEvent(new Event('change',{bubbles:true}));
   document.getElementById('botaoBuscar').click();
   return 'ok';
+}"""
+
+# Busca por Código Familiar (tipo 1). O campo que aparece não foi mapeado ao
+# vivo: preenche o(s) campo(s) de texto visíveis do formulário — um só recebe
+# os 11 dígitos; dois recebem código (9) + dígito verificador (2).
+_JS_BUSCAR_CODIGO = r"""(cod)=>{
+  const s=document.getElementById('idTipoBusca');
+  // a opção é escolhida pelo TEXTO: o value "1" não é o Código Familiar (2026-10-30)
+  const op=[...s.options].find(o=>/c[óo]d(igo|\.)?\s*familiar/i.test(o.text));
+  if(!op) return 'opção Código Familiar não existe no tipo de busca: '+[...s.options].map(o=>o.value+'='+o.text).join(', ');
+  s.value=op.value; s.dispatchEvent(new Event('change',{bubbles:true}));
+  if(window.jQuery) jQuery(s).trigger('change');
+  const form=s.form||document.getElementById('recebe_miolo');
+  const vis=e=>e.offsetParent!==null && !e.disabled && !e.readOnly;
+  const textos=[...form.querySelectorAll('input[type=text],input:not([type])')].filter(vis);
+  const proprios=textos.filter(e=>/fam|cod/i.test((e.id||'')+' '+(e.name||'')) && !/nis|pessoa|cpf/i.test((e.id||'')+' '+(e.name||'')));
+  const campos=proprios.length?proprios:textos;
+  if(!campos.length) return 'campo do Código Familiar não apareceu';
+  const set=(c,v)=>{c.value=v; ['input','change','keyup','blur'].forEach(t=>c.dispatchEvent(new Event(t,{bubbles:true})));};
+  // campo único com máscara "999999999-99" (maxlength 12) recebe o hífen
+  if(campos.length>=2){ set(campos[0],cod.slice(0,-2)); set(campos[1],cod.slice(-2)); }
+  else set(campos[0], campos[0].maxLength===12 ? cod.slice(0,-2)+'-'+cod.slice(-2) : cod);
+  document.getElementById('botaoBuscar').click();
+  return 'ok';
+}"""
+
+# diagnóstico da busca por código: campos visíveis do formulário e valores
+_JS_CAMPOS_BUSCA = r"""()=>{
+  const s=document.getElementById('idTipoBusca'); const form=(s&&s.form)||document.getElementById('recebe_miolo');
+  if(!form) return 'sem formulário';
+  return 'opções: '+(s?[...s.options].map(o=>o.value+'='+o.text).join(', '):'?')+' | '+[...form.querySelectorAll('input,select')].filter(e=>e.offsetParent!==null && e.type!=='hidden')
+    .map(e=>`${e.id||e.name}[${e.type},max=${e.maxLength}]=${e.value}`).join('; ');
 }"""
 
 # linhas de resultado: uma por família
@@ -262,30 +486,45 @@ async def _ir_para_busca(page) -> None:
         raise CadunicoErro("a tela Buscar Família não abriu")
 
 
-async def buscar_familias(page, cpf: str) -> list[dict]:
-    """Lista as famílias em que o CPF está cadastrado (pode ser vazia)."""
-    digitos = re.sub(r"\D", "", cpf or "")
+async def buscar_familias(page, cpf: str, codigo_familiar: str = "") -> list[dict]:
+    """Lista as famílias em que o CPF está cadastrado (pode ser vazia). Com
+    `codigo_familiar` (11 dígitos, com o DV), busca por ele em vez do CPF."""
+    cod = re.sub(r"\D", "", codigo_familiar or "")
     await _ir_para_busca(page)
-    r = await page.evaluate(_JS_BUSCAR_CPF, digitos)
+    if cod:
+        r = await page.evaluate(_JS_BUSCAR_CODIGO, cod)
+    else:
+        r = await page.evaluate(_JS_BUSCAR_CPF, re.sub(r"\D", "", cpf or ""))
     if r != "ok":
         raise CadunicoErro(r)
-    # espera resultado OU mensagem do sistema
+    # espera resultado (lista OU a própria família) ou mensagem do sistema
     achou = await _esperar(
         page, "()=>{ if((" + _JS_RESULTADO + ")()) return 'res';"
+              " if((" + _JS_NA_FAMILIA + ")()) return 'familia';"
               " const a=document.getElementById('L_aviso');"
               " return (a && a.innerText.trim()) ? 'aviso' : null }", 60)
     if achou == "res":
         return await page.evaluate(_JS_RESULTADO) or []
+    if achou == "familia":  # a busca por código pode cair direto na família
+        return [{"codigo": cod[:-2], "dv": cod[-2:], "celulas": [], "campos": {}, "direto": True}]
     aviso = await _aviso(page)
+    if cod:  # busca por código: devolve o diagnóstico (campo não mapeado ao vivo)
+        campos = ""
+        with contextlib.suppress(Exception):
+            campos = await page.evaluate(_JS_CAMPOS_BUSCA)
+        raise CadunicoErro(f"busca pelo Código Familiar {cod} sem resultado — aviso do sistema: "
+                           f"{aviso or '(nenhum)'} | campos: {campos}")
     if re.search(r"(?i)n[ãa]o\s+(foi|foram)\s+encontrad|nenhum|n[ãa]o\s+existe|inexistente", aviso):
         return []
-    raise CadunicoErro(aviso or "a busca por CPF não retornou resultado nem mensagem")
+    raise CadunicoErro(aviso or "a busca não retornou resultado nem mensagem")
 
 
-async def abrir_familia(page, cpf: str, codigo: str, dv: str) -> dict:
+async def abrir_familia(page, cpf: str, codigo: str, dv: str, por_codigo: bool = False) -> dict:
     """Refaz a busca (o form da lista é o que leva à família) e abre a
     família. Retorna os "Dados da Família" e a lista de integrantes."""
-    await buscar_familias(page, cpf)
+    res = await buscar_familias(page, cpf, codigo + dv if por_codigo else "")
+    if res and res[0].get("direto"):
+        return await page.evaluate(_JS_DADOS_FAMILIA)
     ok = await page.evaluate(
         "([c,d])=>{ if(typeof cadunChamadaFamilia!=='function') return false;"
         " cadunChamadaFamilia(c,d,'buscaFamiliaForm'); return true; }", [codigo, dv])
@@ -298,7 +537,9 @@ async def abrir_familia(page, cpf: str, codigo: str, dv: str) -> dict:
 
 _JS_NA_FAMILIA = r"""()=>{
   const m=document.getElementById('recebe_miolo'); if(!m) return false;
-  return /Visualizar Fam[ií]lia/.test(m.innerText) && /Imprimir ou salvar formul/i.test(m.innerText);
+  // família EXCLUÍDA não tem o bloco "Imprimir ou salvar formulário" (2026-10-30)
+  return /Visualizar Fam[ií]lia/.test(m.innerText)
+    && /Imprimir ou salvar formul|C[óo]digo familiar:/i.test(m.innerText);
 }"""
 
 _JS_DADOS_FAMILIA = r"""()=>{

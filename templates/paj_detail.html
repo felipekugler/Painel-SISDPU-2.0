@@ -2604,19 +2604,25 @@ document.addEventListener('alpine:init', () => {
              2026-10-09): busca o CPF do assistido no Cadastro Único (CAIXA) e,
              para CADA família encontrada, junta num PDF os documentos oficiais
              (Folha Resumo, Formulário Principal, Histórico da Família, motivos
-             de exclusão) em CadÚnico/ do PAJ. Login MANUAL (usuário, senha,
-             código do e-mail e 2FA) na janela que abre; o navegador fica aberto
-             para o próximo. Ver services/dossie_cadunico_service.py,
+             de exclusão) em CadÚnico/ do PAJ. Login AUTOMÁTICO pelo cofre (CPF,
+             senha, código do e-mail via Microsoft 365 e 2FA pela seed); ao fim,
+             clica em Sair e fecha a janela — salvo com o toggle "Deixar a sessão
+             aberta" ligado (2026-10-30), para consultas manuais depois. Ver services/dossie_cadunico_service.py,
              ingestao/cadunico_client.py e static/js/dossie_cadunico.js. -->
         <div class="contents" x-data="dossieCadunicoApp('{{ paj_norm }}')" x-init="init()">
             <div class="w-full" x-show="$store.acoesIaMenu.aberto === 'consultas' && status !== 'running' && juntada !== 'running'">
                 <button type="button" class="btn btn-ghost btn-sm justify-between w-full normal-case font-normal whitespace-nowrap text-left"
                         @click="mostrarSubmenu = !mostrarSubmenu"
-                        title="Gera documentos do Cadastro Único (um PDF por família do CPF do assistido) e salva na pasta CadÚnico do PAJ — o login no CadÚnico é feito por você na janela que abrir">
+                        title="Gera documentos do Cadastro Único (um PDF por família do CPF do assistido) e salva na pasta CadÚnico do PAJ — login automático pelo cofre">
                     <span>Dossiê CadÚnico</span>
                     <span class="text-[10px] opacity-60" x-text="mostrarSubmenu ? '▲' : '▼'"></span>
                 </button>
                 <div class="pl-3 flex flex-col" x-show="mostrarSubmenu" x-cloak>
+                    <label class="label cursor-pointer justify-start gap-2 py-1 px-3"
+                           title="Ligado: ao terminar, NÃO clica em Sair nem fecha a janela do CadÚnico — a sessão fica aberta para consultas manuais">
+                        <input type="checkbox" class="toggle toggle-xs" x-model="manterSessao">
+                        <span class="label-text text-xs whitespace-nowrap">Deixar a sessão aberta</span>
+                    </label>
                     <button type="button" class="btn btn-ghost btn-xs justify-start w-full normal-case font-normal whitespace-nowrap text-left"
                             @click="mostrarSubmenu = false; $store.acoesIaMenu.aberto = null; iniciar('completo')"
                             title="Folha Resumo + Formulário Principal + Histórico da Família + motivos de exclusão">

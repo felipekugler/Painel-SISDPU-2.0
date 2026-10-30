@@ -155,12 +155,12 @@ def _montar(destino: Path, capa: dict, partes: list[tuple[str, bytes]]) -> dict:
 # Execução
 # --------------------------------------------------------------------------
 
-async def _coletar_familia(page, cpf: str, fam_busca: dict, log,
-                           tipo: str = "completo") -> tuple[dict, list[tuple[str, bytes]], list[str]]:
+async def _coletar_familia(page, cpf: str, fam_busca: dict, log, tipo: str = "completo",
+                           por_codigo: bool = False) -> tuple[dict, list[tuple[str, bytes]], list[str]]:
     from ingestao import cadunico_client as cad
 
     completo = tipo == "completo"
-    dados = await cad.abrir_familia(page, cpf, fam_busca["codigo"], fam_busca["dv"])
+    dados = await cad.abrir_familia(page, cpf, fam_busca["codigo"], fam_busca["dv"], por_codigo)
     cod = dados.get("codigo_familiar") or f"{fam_busca['codigo']}-{fam_busca['dv']}"
     partes: list[tuple[str, bytes]] = []
     avisos: list[str] = []
@@ -177,13 +177,19 @@ async def _coletar_familia(page, cpf: str, fam_busca: dict, log,
 
     if completo:
         principal = await cad.baixar_pdf(page, cad.SERVLET_PRINCIPAL)
-        if not principal:
+        excluida = re.search(r"(?i)exclu", dados.get("estado_cadastral") or "")
+        if not principal and not excluida:
             raise RuntimeError(f"família {cod}: o Formulário Principal não foi emitido pelo sistema")
-        partes.append(("Formulário Principal (inclui os suplementares preenchidos)", principal))
-        log("info", f"Família {cod}: Formulário Principal baixado.")
+        if not principal:
+            # família EXCLUÍDA: a tela não oferece impressão dos formulários
+            avisos.append("Família com estado cadastral EXCLUÍDO — o sistema não emite o "
+                          "Formulário Principal nem os suplementares.")
+        else:
+            partes.append(("Formulário Principal (inclui os suplementares preenchidos)", principal))
+            log("info", f"Família {cod}: Formulário Principal baixado.")
 
-        pags_principal = await asyncio.to_thread(_texto_paginas, principal)
-        for n in await asyncio.to_thread(_suplementares_preenchidos, principal):
+        pags_principal = await asyncio.to_thread(_texto_paginas, principal) if principal else []
+        for n in (await asyncio.to_thread(_suplementares_preenchidos, principal) if principal else []):
             sup = await cad.baixar_pdf(page, cad.SERVLET_SUPLEMENTAR.format(n=n))
             if not sup:
                 avisos.append(f"O Formulário Suplementar {n} consta como preenchido, mas o sistema não o emitiu.")
@@ -250,6 +256,7 @@ async def _executar(paj_norm: str, sess: dict) -> None:
 
     cpf, nome, paj_label = _dados_assistido(paj_norm)
     cpf_fmt = _formatar_cpf(cpf)
+    codigo_familiar = sess.get("codigo_familiar") or ""  # busca por código em vez do CPF
     if not cpf_fmt:
         raise RuntimeError("CPF do assistido não encontrado no PAJ.")
     destino_dir = PAJS_DIR / paj_norm / SUBPASTA
@@ -266,27 +273,46 @@ async def _executar(paj_norm: str, sess: dict) -> None:
 
         for tentativa in (1, 2):
             try:
-                familias = await cad.buscar_familias(page, cpf_fmt)
+                familias = await cad.buscar_familias(page, cpf_fmt, codigo_familiar)
                 break
             except cad.SessaoExpirada:
                 if tentativa == 2 or not await cad.garantir_login(page, log):
                     raise RuntimeError("Sessão do CadÚnico expirou e o novo login não foi concluído.")
         if not familias:
-            raise RuntimeError(f"Nenhuma família encontrada no CadÚnico para o CPF {cpf_fmt}.")
-        log("info", f"{len(familias)} família(s) encontrada(s) para o CPF {cpf_fmt}.")
+            raise RuntimeError("Nenhuma família encontrada no CadÚnico para "
+                               + (f"o Código Familiar {codigo_familiar}." if codigo_familiar
+                                  else f"o CPF {cpf_fmt}."))
+        log("info", f"{len(familias)} família(s) encontrada(s) para "
+                    + (f"o Código Familiar {codigo_familiar}." if codigo_familiar else f"o CPF {cpf_fmt}."))
 
         for fam in familias:
             for tentativa in (1, 2):
                 try:
-                    coletas.append(await _coletar_familia(page, cpf_fmt, fam, log, sess["tipo"]))
+                    coletas.append(await _coletar_familia(page, cpf_fmt, fam, log, sess["tipo"],
+                                                          bool(codigo_familiar)))
                     break
                 except cad.SessaoExpirada:
                     if tentativa == 2 or not await cad.garantir_login(page, log):
                         raise RuntimeError("Sessão do CadÚnico expirou e o novo login não foi concluído.")
                     log("aviso", "Sessão expirou — relogado, repetindo a família…")
     finally:
-        # NÃO fecha o Chromium: o login é manual; a sessão fica para o próximo dossiê
+        # Encerra a sessão ("Sair", canto superior direito) e fecha a janela —
+        # o login agora é automático pelo cofre (pedido do usuário, 2026-10-30).
+        # Com o toggle "Deixar a sessão aberta", fica tudo como está.
+        manter = bool(sess.get("manter_sessao"))
+        if browser is not None and manter:
+            log("info", "Sessão do CadÚnico mantida aberta (toggle ligado) — feche-a com Sair quando terminar.")
+        elif browser is not None:
+            try:
+                if await cad.sair(page):
+                    log("info", "Sessão do CadÚnico encerrada (Sair).")
+                else:
+                    log("aviso", "Não consegui clicar em Sair no CadÚnico — a janela será fechada assim mesmo.")
+            except Exception as e:  # noqa: BLE001
+                log("aviso", f"Falha ao sair do CadÚnico: {type(e).__name__}: {e}")
         await cad.desconectar(pw, browser)
+        if browser is not None and not manter:
+            await asyncio.to_thread(cad.fechar_navegador)
 
     emitido = datetime.now().strftime("%d/%m/%Y %H:%M")
     cfg = TIPOS[sess["tipo"]]
@@ -306,9 +332,17 @@ async def _executar(paj_norm: str, sess: dict) -> None:
             log("aviso", f"Família {cod}: {a}")
 
 
-def iniciar(paj_norm: str, tipo: str = "completo") -> dict:
+def iniciar(paj_norm: str, tipo: str = "completo", codigo_familiar: str = "",
+            manter_sessao: bool = False) -> dict:
+    """`codigo_familiar` (opcional, 11 dígitos com o DV): busca a família por
+    ele em vez do CPF do assistido — ex.: extrato do CadÚnico no PAJ com outra
+    família que a busca por CPF não traz. `manter_sessao`: ao fim, não clica
+    em Sair nem fecha a janela (toggle "Deixar a sessão aberta")."""
     if tipo not in TIPOS:
         return {"ok": False, "erro": "Tipo de dossiê inválido."}
+    codigo_familiar = re.sub(r"\D", "", codigo_familiar or "")
+    if codigo_familiar and len(codigo_familiar) != 11:
+        return {"ok": False, "erro": "Código Familiar deve ter 11 dígitos (com o dígito verificador)."}
     if not (PAJS_DIR / paj_norm).exists():
         return {"ok": False, "erro": "Pasta do PAJ não encontrada."}
     with _lock:
@@ -317,7 +351,8 @@ def iniciar(paj_norm: str, tipo: str = "completo") -> dict:
                                          "(a sessão do CadÚnico só atende uma coleta por vez)."}
         sess = {"status": "running", "tipo": tipo, "rotulo": TIPOS[tipo]["rotulo"],
                 "mov_descricao": TIPOS[tipo]["mov"], "log": [], "arquivos": [],
-                "juntada": None, "aguardando_login": True}
+                "juntada": None, "aguardando_login": True, "codigo_familiar": codigo_familiar,
+                "manter_sessao": bool(manter_sessao)}
         _execucoes[paj_norm] = sess
         _ultimos.pop(paj_norm, None)
 

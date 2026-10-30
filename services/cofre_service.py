@@ -21,6 +21,9 @@ Formato do arquivo (JSON de uma linha):
     {"v": 1, "salt": "<b64>", "token": "<fernet>"}
 onde o plaintext cifrado é:
     {"sistemas": {"sisdpu": {"usuario": "...", "senha": "..."}, "eproc": {...}}}
+Alguns sistemas guardam CAMPOS EXTRAS ao lado de usuário/senha (ver
+`CAMPOS_EXTRAS`) — ex.: o CadÚnico guarda o e-mail que recebe o código de
+acesso e a seed TOTP do 2FA.
 
 Nota: enquanto BLOQUEADO, sabe-se apenas que o cofre EXISTE — não quais sistemas
 estão dentro (a lista de sistemas vive dentro do blob cifrado). Após desbloquear,
@@ -50,7 +53,18 @@ SISTEMAS = {
     "sisdpu": "SISDPU",
     "eproc": "e-proc",
     "sat": "SAT Central (GERID)",
+    "cadunico": "CadÚnico (Login CAIXA)",
 }
+
+# Campos além de usuário/senha, por sistema. Os marcados como `secreto` nunca
+# saem do cofre pela API de status (só um "tem/não tem").
+CAMPOS_EXTRAS = {
+    "cadunico": {
+        "email": {"rotulo": "E-mail que recebe o código", "obrigatorio": True, "secreto": False},
+        "totp_seed": {"rotulo": "Seed do 2FA (TOTP)", "obrigatorio": False, "secreto": True},
+    },
+}
+
 
 
 class SenhaMestraIncorreta(Exception):
@@ -141,9 +155,14 @@ def bloquear() -> None:
 
 
 # --- Cadastro / remoção de credenciais --------------------------------------
-def salvar_sistema(sistema: str, usuario: str, senha: str, senha_mestra: str) -> None:
+def salvar_sistema(sistema: str, usuario: str, senha: str, senha_mestra: str,
+                   extras: dict | None = None) -> None:
     """Adiciona/atualiza as credenciais de UM sistema no cofre unificado, mantendo
     os demais sistemas intactos. Deixa a sessão destrancada.
+
+    `extras`: campos de `CAMPOS_EXTRAS[sistema]`. Campo vazio MANTÉM o valor já
+    gravado (assim editar a senha não apaga a seed do 2FA); obrigatório que
+    continue vazio levanta ValueError.
 
     Se o cofre já existe, a senha-mestra fornecida DEVE conferir com ele (senão
     levanta SenhaMestraIncorreta) — assim garantimos uma única senha-mestra para
@@ -165,7 +184,19 @@ def salvar_sistema(sistema: str, usuario: str, senha: str, senha_mestra: str) ->
     else:
         sistemas = {}
 
-    sistemas[sistema] = {"usuario": usuario, "senha": senha}
+    novo = {"usuario": usuario, "senha": senha}
+    anterior = sistemas.get(sistema) or {}
+    for campo, spec in CAMPOS_EXTRAS.get(sistema, {}).items():
+        valor = ((extras or {}).get(campo) or "").strip()
+        if valor and campo == "totp_seed":
+            from ingestao.sat_client import validar_seed_totp  # mesma validação base32 do SAT
+            valor = validar_seed_totp(valor)
+        valor = valor or anterior.get(campo, "")
+        if spec["obrigatorio"] and not valor:
+            raise ValueError(f"{spec['rotulo']} é obrigatório.")
+        if valor:
+            novo[campo] = valor
+    sistemas[sistema] = novo
     _gravar_cofre(sistemas, senha_mestra)
     _estado.update(destrancado=True, sistemas=sistemas)
     if sistema == "eproc":
@@ -248,6 +279,13 @@ def get_credenciais(sistema: str) -> tuple[str, str] | None:
     if cred and cred.get("usuario") and cred.get("senha"):
         return cred["usuario"], cred["senha"]
     return None
+
+
+def get_extra(sistema: str, campo: str) -> str:
+    """Valor de um campo extra (ver `CAMPOS_EXTRAS`) — "" se trancado/ausente."""
+    if not _estado["destrancado"]:
+        return ""
+    return (_estado["sistemas"].get((sistema or "").strip().lower()) or {}).get(campo, "") or ""
 
 
 def get_usuario(sistema: str) -> str:

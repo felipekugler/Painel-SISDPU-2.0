@@ -7,7 +7,7 @@ Endpoints:
 - GET    /api/cofre/status            → estado do cofre + sistemas com credencial
 - POST   /api/cofre/desbloquear       → {senha_mestra}
 - POST   /api/cofre/bloquear
-- POST   /api/cofre/credenciais       → {sistema, usuario, senha, senha_mestra[, confirma]}
+- POST   /api/cofre/credenciais       → {sistema, usuario, senha, senha_mestra[, confirma][, extras]}
 - DELETE /api/cofre/credenciais/{sistema} → {senha_mestra}
 - POST   /api/cofre/trocar-senha      → {senha_atual, senha_nova[, confirma]}
 """
@@ -31,10 +31,20 @@ async def cofre_status():
     destrancado = cofre_service.destrancado()
     sistemas: dict = {}
     for chave, rotulo in cofre_service.SISTEMAS.items():
+        campos = []
+        for campo, spec in cofre_service.CAMPOS_EXTRAS.get(chave, {}).items():
+            valor = cofre_service.get_extra(chave, campo)
+            campos.append({
+                "campo": campo, "rotulo": spec["rotulo"], "obrigatorio": spec["obrigatorio"],
+                "secreto": spec["secreto"], "preenchido": bool(valor),
+                # campo secreto (ex.: seed do 2FA) nunca sai do cofre
+                "valor": "" if spec["secreto"] else valor,
+            })
         sistemas[chave] = {
             "rotulo": rotulo,
             "tem_credencial": cofre_service.tem_credencial(chave),
             "usuario": cofre_service.get_usuario(chave),
+            "extras": campos,
         }
     return {
         "ok": True,
@@ -71,6 +81,7 @@ async def cofre_salvar(payload: dict = Body(...)):
     senha = p.get("senha") or ""
     senha_mestra = p.get("senha_mestra") or ""
     confirma = p.get("senha_mestra_confirma")
+    extras = p.get("extras") if isinstance(p.get("extras"), dict) else {}
 
     if sistema not in cofre_service.SISTEMAS:
         return JSONResponse(
@@ -88,7 +99,7 @@ async def cofre_salvar(payload: dict = Body(...)):
             {"ok": False, "erro": "A confirmação da senha-mestra não confere."}, status_code=400)
 
     try:
-        cofre_service.salvar_sistema(sistema, usuario, senha, senha_mestra)
+        cofre_service.salvar_sistema(sistema, usuario, senha, senha_mestra, extras)
     except cofre_service.SenhaMestraIncorreta:
         return JSONResponse(
             {"ok": False, "erro": "A senha-mestra não confere com o cofre já existente. "

@@ -216,13 +216,27 @@
                     </template>
                     <form @submit.prevent="salvarCredenciais()" class="flex flex-col gap-3">
                         <label class="form-control">
-                            <span class="label-text text-xs mb-1">Usuário <span class="text-error">*</span></span>
+                            <span class="label-text text-xs mb-1"><span x-text="form.sistema === 'cadunico' ? 'CPF' : 'Usuário'"></span> <span class="text-error">*</span></span>
                             <input type="text" class="input input-bordered input-sm" x-model="form.usuario" autocomplete="username" required>
                         </label>
                         <label class="form-control">
                             <span class="label-text text-xs mb-1">Senha <span class="text-error">*</span></span>
                             <input type="password" class="input input-bordered input-sm" x-model="form.senha" autocomplete="off" required>
                         </label>
+                        <!-- Campos extras do sistema (ex.: CadÚnico → e-mail do código + seed do 2FA) -->
+                        <template x-for="c in extrasDe(form.sistema)" :key="c.campo">
+                            <label class="form-control">
+                                <span class="label-text text-xs mb-1">
+                                    <span x-text="c.rotulo"></span>
+                                    <span x-show="c.obrigatorio" class="text-error">*</span>
+                                    <span x-show="c.secreto && c.preenchido" class="text-base-content/50">(já cadastrada — deixe em branco para manter)</span>
+                                    <span x-show="!c.obrigatorio && !c.preenchido" class="text-base-content/50">(opcional)</span>
+                                </span>
+                                <input :type="c.secreto ? 'password' : (c.campo === 'email' ? 'email' : 'text')"
+                                       class="input input-bordered input-sm" x-model="form.extras[c.campo]" autocomplete="off"
+                                       :required="c.obrigatorio && !c.preenchido">
+                            </label>
+                        </template>
                         <label class="form-control">
                             <span class="label-text text-xs mb-1"
                                   x-text="cofre.configurado ? 'Senha-mestra do cofre' : 'Criar senha-mestra (mín. 6)'"></span>
@@ -2710,13 +2724,13 @@ function satCentralDefaults() {
 function cofreAcesso() {
     return {
         cofre: { configurado: false, destrancado: false },
-        sistemas: [],  // [{chave, rotulo, tem_credencial, usuario}]
+        sistemas: [],  // [{chave, rotulo, tem_credencial, usuario, extras: [{campo, rotulo, obrigatorio, secreto, preenchido, valor}]}]
         modal: '',     // '' | 'cad' | 'unlock' | 'trocar' | 'remover'
         busy: false, erro: '',
         form: {
             sistema: '', usuario: '', senha: '', senha_mestra: '', senha_mestra_confirma: '',
             senha_mestra_unlock: '', senha_atual: '', senha_nova: '', senha_nova_confirma: '',
-            senha_mestra_rm: '',
+            senha_mestra_rm: '', extras: {},
         },
 
         async init() { await this.carregar(); },
@@ -2729,6 +2743,7 @@ function cofreAcesso() {
                 this.sistemas = Object.keys(sis).map(k => ({
                     chave: k, rotulo: sis[k].rotulo || k,
                     tem_credencial: !!sis[k].tem_credencial, usuario: sis[k].usuario || '',
+                    extras: sis[k].extras || [],
                 }));
             } catch (e) {}
             // Sincroniza a barra de selos no topo (se existir).
@@ -2739,17 +2754,24 @@ function cofreAcesso() {
             const s = this.sistemas.find(x => x.chave === chave);
             return s ? s.rotulo : chave;
         },
+        extrasDe(chave) {
+            const s = this.sistemas.find(x => x.chave === chave);
+            return s ? s.extras : [];
+        },
 
         _limparForm() {
             this.form.usuario = ''; this.form.senha = '';
             this.form.senha_mestra = ''; this.form.senha_mestra_confirma = '';
             this.form.senha_mestra_unlock = ''; this.form.senha_atual = '';
             this.form.senha_nova = ''; this.form.senha_nova_confirma = ''; this.form.senha_mestra_rm = '';
+            this.form.extras = {};
         },
         abrirCad(chave) {
             this.erro = ''; this._limparForm(); this.form.sistema = chave;
             const s = this.sistemas.find(x => x.chave === chave);
             if (s && s.tem_credencial) this.form.usuario = s.usuario || '';
+            // campos extras não secretos vêm preenchidos; secretos (seed) ficam em branco = manter
+            for (const c of this.extrasDe(chave)) this.form.extras[c.campo] = c.secreto ? '' : (c.valor || '');
             this.modal = 'cad';
         },
         abrirUnlock() { this.erro = ''; this._limparForm(); this.modal = 'unlock'; },
@@ -2765,6 +2787,7 @@ function cofreAcesso() {
                     body: JSON.stringify({
                         sistema: this.form.sistema, usuario: this.form.usuario, senha: this.form.senha,
                         senha_mestra: this.form.senha_mestra, senha_mestra_confirma: this.form.senha_mestra_confirma,
+                        extras: this.form.extras,
                     }),
                 });
                 const d = await r.json().catch(() => ({}));

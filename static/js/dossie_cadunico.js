@@ -1,9 +1,9 @@
 // Componente Alpine "Dossiê CadÚnico" — menu Consultas da página do PAJ (ver
 // services/dossie_cadunico_service.py). Submenu Completo / Só Folha Resumo /
 // Só Histórico da Família, one-click cada; polling de status até
-// concluir, igual a dossie_sd.js. Enquanto espera o login MANUAL no CadÚnico
-// (usuário, senha, código do e-mail e 2FA), o spinner mostra o aviso para o
-// Defensor logar na janela que abriu. Em sucesso, pergunta se junta o(s)
+// concluir, igual a dossie_sd.js. O login é automático pelo cofre; se alguma
+// etapa ficar manual, o spinner mostra o aviso para o Defensor completar na
+// janela. Toggle "Deixar a sessão aberta": não sai nem fecha a janela ao fim. Em sucesso, pergunta se junta o(s)
 // PDF(s) ao SISDPU (modal em paj_detail.html).
 function dossieCadunicoApp(pajNorm) {
     return {
@@ -18,6 +18,7 @@ function dossieCadunicoApp(pajNorm) {
         aguardandoLogin: false,
         movDescricao: '',
         mostrarSubmenu: false,
+        manterSessao: false,  // toggle "Deixar a sessão aberta" (padrão: desligado → Sair + fecha a janela)
         perguntaJuntada: false,
         _pollTimer: null,
 
@@ -54,7 +55,8 @@ function dossieCadunicoApp(pajNorm) {
             if (this.status === 'running' || this.juntada === 'running') return;
             let data;
             try {
-                const resp = await fetch('/api/dossie-cadunico/iniciar/' + this.pajNorm + '/' + tipo, { method: 'POST' });
+                const resp = await fetch('/api/dossie-cadunico/iniciar/' + this.pajNorm + '/' + tipo
+                    + (this.manterSessao ? '?manter_sessao=1' : ''), { method: 'POST' });
                 data = await resp.json().catch(() => ({}));
             } catch (e) {
                 showToast('Falha de rede: ' + e, 'error');

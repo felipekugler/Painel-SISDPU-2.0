@@ -13,9 +13,12 @@ router = APIRouter()
 
 
 @router.post("/api/dossie-cadunico/iniciar/{paj_norm}/{tipo}")
-async def dossie_cadunico_iniciar(paj_norm: PajNorm, tipo: str):
-    """tipo: completo | folha | historico."""
-    result = dossie_cadunico_service.iniciar(paj_norm, tipo)
+async def dossie_cadunico_iniciar(paj_norm: PajNorm, tipo: str, codigo_familiar: str = "",
+                                  manter_sessao: bool = False):
+    """tipo: completo | folha | historico. `?codigo_familiar=` (opcional) busca
+    a família pelo Código Familiar em vez do CPF do assistido.
+    `?manter_sessao=1` não clica em Sair nem fecha a janela ao fim."""
+    result = dossie_cadunico_service.iniciar(paj_norm, tipo, codigo_familiar, manter_sessao)
     return JSONResponse(result, status_code=200 if result.get("ok") else 400)
 
 
