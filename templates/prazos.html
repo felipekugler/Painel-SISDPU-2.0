@@ -108,7 +108,9 @@
       </template>
     </div>
     <span class="text-xs text-warning w-full text-right" x-show="jmu.erro"
-          x-text="'JMU: não foi possível atualizar (' + jmu.erro + ') — mostrando a última leitura.'"></span>
+          x-text="/rejeitou usu/i.test(jmu.erro)
+                  ? 'JMU: o e-proc da JMU recusou usuário/senha — atualize a credencial “e-proc JMU” em Configurações › Acesso (cofre). Mostrando a última leitura.'
+                  : 'JMU: não foi possível atualizar (' + jmu.erro + ') — mostrando a última leitura.'"></span>
   </div>
 
   <div class="px-8 pb-8 flex-1 flex flex-col gap-10">

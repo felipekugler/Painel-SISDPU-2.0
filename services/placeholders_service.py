@@ -208,5 +208,9 @@ async def dados(paj_norm: str, extras: set[str] | None = None) -> dict:
     if "processo" in extras and processo:
         with contextlib.suppress(Exception):
             base.update(await _processo_mcp(processo))
-    base["qualificacao"] = _qualificacao(base, pessoa)
+    # Qualificação conferida no "Ver qualificação" (services/qualificacao_service,
+    # 30/10/2026) tem prioridade; sem ela, a montagem simples de sempre.
+    from services import qualificacao_service
+    conferida = ((qualificacao_service.ler(paj_norm) or {}).get("texto") or "").strip()
+    base["qualificacao"] = conferida or _qualificacao(base, pessoa)
     return base

@@ -1809,6 +1809,9 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
 # serem abertos, então ficam "a verificar". Grava `_levantamento.json` na pasta
 # do PAJ; o "Baixar mais" passa a oferecer tudo (sat_service.inventario_paj).
 # ---------------------------------------------------------------------------
+_LEVANTAMENTO_PULAR = {"hiscre", "consignados"}
+
+
 async def levantar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                                   delay_s: float = 5.0, bloqueio_s: float = 45.0,
                                   delay_max_s: float | None = None):
@@ -1847,7 +1850,13 @@ async def levantar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
         yield reg(f"  · Grupo 1: {len(_GRUPO1)} documento(s) — só se confirma ao abrir (ficam \"a verificar\")",
                   "muted")
 
+        # HISCRE e Consignados NÃO são consultados no levantamento (29/10/2026, pedido do
+        # Defensor) — poupa 2 consultas ao SAT; ficam "a verificar" p/ o "Baixar mais".
         for cfg in _GRUPO2:
+            if cfg["key"] in _LEVANTAMENTO_PULAR:
+                add(cfg["key"], "", "a_verificar")
+                yield reg(f"  · {cfg['label']}: não consultado no levantamento (fica \"a verificar\")", "muted")
+                continue
             with contextlib.suppress(Exception):
                 await _fechar_modal(page)
             out: dict = {}

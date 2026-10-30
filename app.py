@@ -43,6 +43,7 @@ from routes.movimentar_conjunto import router as movimentar_conjunto_router
 from routes.oficio_sei import router as oficio_sei_router
 from routes.sisdpu2_mcp import router as sisdpu2_mcp_router
 from routes.peticao_inicial import router as peticao_inicial_router
+from routes.qualificacao import router as qualificacao_router
 from routes.paj import router as paj_router
 from routes.eproc_consulta import router as eproc_consulta_router
 from routes.esisrec import router as esisrec_router
@@ -92,7 +93,7 @@ _configurar_logging()
 # Versao do painel — fonte unica. Usada pelo FastAPI (OpenAPI/docs) e tambem
 # exposta a todos os templates via Jinja globals (renderizada no rodape da
 # sidebar). Para incrementar: mude aqui e so aqui.
-APP_VERSION = "0.4.165"
+APP_VERSION = "0.4.174"
 
 app = FastAPI(title="oficio-geral-ui", version=APP_VERSION)
 app.state.jinja = jinja2.Environment(
@@ -323,6 +324,7 @@ app.include_router(movimentar_conjunto_router)
 app.include_router(oficio_sei_router)
 app.include_router(sisdpu2_mcp_router)
 app.include_router(peticao_inicial_router)
+app.include_router(qualificacao_router)
 app.include_router(rotinas_router)
 app.include_router(banco_teses_router)
 

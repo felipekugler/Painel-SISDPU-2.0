@@ -752,9 +752,12 @@
 <div class="flex flex-col xl:flex-row gap-4 xl:items-stretch mb-6">
 {% if assistidos|length > 0 %}
 <div class="bg-base-200 border border-base-300 rounded-lg w-full xl:w-[60%] xl:shrink-0">
-    <div class="px-4 py-2.5">
-        <span class="text-sm font-semibold">Assistidos e Representantes Legais</span>
-        <span class="badge badge-ghost badge-sm ml-1">{{ assistidos|length + representantes|length }}</span>
+    <div class="px-4 py-2.5 flex items-center justify-between gap-2">
+        <div>
+            <span class="text-sm font-semibold">Assistidos e Representantes Legais</span>
+            <span class="badge badge-ghost badge-sm ml-1">{{ assistidos|length + representantes|length }}</span>
+        </div>
+        {% include "partials/qualificacao_modal.html" %}
     </div>
     <div class="px-4 pb-3">
         {# overflow visível (não overflow-x-auto): o popover do WhatsApp do card

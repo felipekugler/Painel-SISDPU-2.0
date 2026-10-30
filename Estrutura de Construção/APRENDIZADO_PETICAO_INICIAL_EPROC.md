@@ -416,6 +416,95 @@ SIS-DPU 2.0 (cadastro do processo, movimentação, tramitação 01- PREV_AJUIZAD
   acessível), select "Principal?" ao lado de `#btnIncluirEnt`. Validar no
   próximo caso de outro assunto.
 
+### Representação / curatela (2026-10-28, PAJ 2026/029-02717 — BPC, autor interditado)
+Erro do 1º teste ao vivo: `get_by_role("button", name="Consultar os dados
+preenchidos")` não acha — esse texto é o TITLE de `#btnConsultarNome` (nome
+acessível = "Consultar"). Campo do documento: `#txtCpfCnpj` (rótulo "CPF:" na
+PF, "CPF / CNPJ:" na PJ). Resultado da busca: `#selPrincipalN` (S/N) +
+`#btnIncluir_N`; pode vir MAIS DE UM cadastro para o mesmo CNPJ (Pequeno
+Cotolengo: "PEQUENO COTOLENGO DO PARANA DOM ORIONE" fantasia ORIONOPOLIS e
+"PEQUENO COTOLENGO DO PARANÁ - DOM ORIONE").
+
+Fluxo da representação no e-proc:
+1. Autor incluído → "Definir" (coluna Tipo Representação) abre o iframe
+   `acao=representacao_peticao/autores_subform` "Informações da
+   Representação", lista `#opcoesSelect` (size 8). Grupo **Representados**:
+   43 Absolutamente Incapaz (Art. 3º CC), 44 Assistente, 34 Civilmente
+   Incapaz - Art. 110, 8.213/91, 13 Relativamente Incapaz (Art. 4º CC),
+   5 Espólio, 40 Representado - art. 10, Lei 10.259/2001, 31 Sucessão etc.
+   Salvar → a linha mostra o tipo (lápis/lixeira).
+2. Representante incluído como OUTRA parte da tabela de autores (Principal =
+   Não). Só DEPOIS de existir um representado o "Definir" dele mostra o grupo
+   **Representantes**: 35 "Cônjuge, pai, mãe, tutor, curador ou herdeiro
+   necessário" e 27 "Curador". Escolhido o tipo, aparece "Atua também como
+   parte?" (radios `selAtuaComoParte` S/N, padrão Sim). O vínculo com o
+   representado é automático (um só representado).
+
+Regras do Defensor (28/10/2026):
+- Autor curatelado: **Civilmente Incapaz - Art. 110, 8.213/91**.
+- Curador = quem o TERMO DE CURATELA nomeia — aqui a PJ PEQUENO COTOLENGO DO
+  PARANÁ DOM ORIONE (CNPJ 76.610.690/0001-62), mesmo a inicial citando o
+  Pe. Renaldo (que só representa a instituição). Tipo **Curador**.
+- "Atua também como parte?" = **Não**.
+- O termo é imagem: o plano roda o OCR do painel (`ingestao.ocr`, ~6 s) e lê
+  "nomeou FULANO (CPF/CNPJ: ...)".
+
+Plano (`peticao_inicial_service`): `representante` = {presente, nome,
+documento, tipo_pessoa PF/PJ, tipo_autor, tipo_representante,
+atua_como_parte, fonte}; "presente" quando a inicial fala em
+curador/curatela/interdição. Também corrigido: valor da causa no formato
+"Valor da causa: R$ ..."; título "propor Ação de ..."; "amparo social" = BPC;
+assunto BPC idoso ("Idoso, Benefício Assistencial (Art. 203,V CF/88)", visto
+na IA); .docx "peticao inicial.docx" (com espaço); tipos TERMO DE CURATELA,
+RECEITUÁRIO (prescrição), OFÍCIO e PETIÇÃO (inicial de OUTRO processo).
+Automação: `_consultar_parte`, `_incluir_resultado` (desempate por razão
+social), `_definir_representacao`, `_representacao`; gratuidade do autor só
+DEPOIS da representação (incluir parte recarrega a página). Representante não
+cadastrado no e-proc → para com erro (cadastro de PJ não mapeado).
+
+### Aula de 2026-10-30 — PAJ 2026/029-03088 (auxílio-reclusão, autor menor representado pela mãe)
+- **Tipo OUTROS** (id 11 na JFPR): ao escolher, o bloco do documento mostra o
+  campo **"Observação"** `#txtObservacao_<n>` (maxlength 100). Regra do
+  Defensor: preencher com o nome do arquivo sem a extensão. Na tabela de
+  documentos aparece tipo "OUT" e o texto na coluna "Obs". OUTROS = último
+  recurso, depois das regras específicas e das genéricas (DECLARAÇÃO para
+  certidão/declaração/termo/ofício/comunicado; COMPROVANTES para
+  comprovante/recibo/extrato/guia).
+- Assunto sugerido pela IA: "Auxílio-Reclusão (Art. 80), Benefícios em
+  Espécie, DIREITO PREVIDENCIÁRIO" (040109, `id_assunto_principal=1186`).
+- Autor menor de 16: Representados → **Absolutamente Incapaz (Art. 3º CC)**.
+- A lista de **Representantes depende do tipo do representado**: com
+  Absolutamente/Relativamente Incapaz = Tutor (26), **Pais (30)**, Curador (27),
+  Representante (9); com Civilmente Incapaz (art. 110) = "Cônjuge, pai, mãe,
+  tutor, curador ou herdeiro necessário" (35) e Curador (27). Mãe/pai → Pais.
+- "Atua também como parte?" = Não + Salvar → alert "O representante não será
+  considerado na prevenção/certidões." (OK; o hook do painel dispensa).
+  Linha fica "Pais (Não atua como parte)".
+- Etapa Partes rés: "Listar todas as entidades" (`#btnListarTodosEntidade`)
+  enche `#divInfraAjaxtxtEntidade` com **3.133** `li` (JFPR): as mais usadas
+  primeiro (INSS, União-AGU, União-Fazenda, CEF, MPF, PF/PR…), depois
+  alfabética. Principal da entidade: `#selPrincipalEnt`.
+- Etapa 5: só tutela marcada; `chkCrianca` (prioridade criança/adolescente)
+  NÃO vem marcado sozinho — pendente decidir com o Defensor.
+
+### Tabela de assuntos (2026-10-30, rascunho do 03088)
+- Etapa 2: jsTree `#divArvore` (objeto `jQuery('#divArvore').jstree(true)`,
+  global `arvoreJs`), carregado SOB DEMANDA (AJAX). Id do nó = código do
+  assunto; texto "Nome (código)".
+- ANTES do principal: só a área/classe (Previdenciária + JEF: 148 nós,
+  raízes DIREITO ASSISTENCIAL (14) e DIREITO PREVIDENCIÁRIO (04)); `open_all`
+  carrega tudo em ~6 s.
+- DEPOIS do principal ("Selecionar Demais Assuntos"): a tabela INTEIRA do CNJ
+  (15 raízes, 2.471 nós; ~1 min para abrir tudo). Inclui genéricos de pedido
+  (ex. 01121401 Concessão, 01121402 Restabelecimento).
+- Inclusão por código: `incluirAssunto('040109')` — o 1º vira "Assunto
+  Principal"; os seguintes vão para "Demais Assuntos Incluídos". Código que
+  não existe na árvore → erro de JSON (XML) no `carregarMaisInfo`.
+- Implementado: captura das duas árvores em `dados/eproc_assuntos.json`
+  (principal por área+classe a cada preparação; a inteira se faltar ou tiver
+  > 30 dias); modal com lista do principal + busca de complementares;
+  automação inclui pelo código (sem código: sugestão da IA, como antes).
+
 ### Alerts nativos no Chrome (claude-in-chrome)
 Cada `alert()` congela a aba para a extensão (screenshot/JS dão timeout) e o
 Defensor tem de fechar manualmente. Clicar botões que podem gerar alert com

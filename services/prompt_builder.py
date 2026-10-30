@@ -133,6 +133,24 @@ def gerar_prompt_max(paj_norm: str) -> Path | None:
         f"- **Status:** {metadata.get('detalhes_sisdpu', {}).get('status_paj') or 'Ativo'}"
     )
 
+    # Qualificação conferida no botão "Ver qualificação" (services/
+    # qualificacao_service.py, 30/10/2026): fonte ÚNICA da qualificação das
+    # partes — a peça usa o texto literalmente, em vez de remontá-lo.
+    qualif = _ler_json(pasta / "qualificacao.json") or {}
+    if (qualif.get("texto") or "").strip():
+        partes.append("")
+        partes.append("## Qualificacao das partes (USAR LITERALMENTE na peca)")
+        partes.append("Texto conferido pelo Defensor no painel (\"Ver qualificacao\"). Na qualificacao da "
+                      "peticao inicial use EXATAMENTE este texto, sem reescrever, completar ou corrigir dados "
+                      "a partir dos documentos; se algum dado parecer errado, mantenha o texto e sinalize no resumo.")
+        partes.append("")
+        partes.append("> " + qualif["texto"].strip())
+        rep = qualif.get("representacao") or {}
+        if rep.get("tipo") == "menor":
+            partes.append("- Representacao legal: autor(a) menor, representado(a) pelo(a) representante acima.")
+        elif rep.get("tipo") == "curatela":
+            partes.append("- Representacao legal: curatela — o(a) curador(a) acima representa o(a) autor(a).")
+
     prazos = metadata.get("prazos_abertos") or []
     if prazos:
         partes.append("")

@@ -6,6 +6,8 @@ Pós-ajuizamento (gerenciamento + movimentação "Petição inicial" no SISDPU) 
 mora aqui: o front reaproveita os módulos já existentes
 (/api/acoes-eproc/gerenciar e o console "Ações no SISDPU" da página do PAJ)."""
 
+import re
+
 from fastapi import APIRouter, Body
 from fastapi.responses import JSONResponse
 
@@ -39,6 +41,9 @@ async def preparar(paj_norm: PajNorm, payload: dict = Body(...)):
         faltando.append("CPF do autor")
     if bi and not dados.get("especialidades"):
         faltando.append("especialidade da perícia")
+    rep = dados.get("representante") or {}
+    if not bi and rep.get("presente") and len(re.sub(r"\D", "", rep.get("documento") or "")) not in (11, 14):
+        faltando.append("CPF/CNPJ do curador")
     sem_tipo = [a.get("caminho", "").split("/")[-1] for a in arquivos if not (a.get("tipo") or "").strip()]
     if sem_tipo:
         faltando.append("tipo de documento de " + ", ".join(sem_tipo))

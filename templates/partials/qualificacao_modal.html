@@ -1,0 +1,211 @@
+{# Botão "Ver qualificação" (canto superior direito da seção "Assistidos e
+   Representantes Legais") + modal — fonte única da qualificação do autor e do
+   representante legal; ver static/js/qualificacao.js e
+   services/qualificacao_service.py (pedido do Defensor, 30/10/2026). #}
+{% macro campo(rotulo, chave, classe='') %}
+<label class="flex flex-col gap-0.5 {{ classe }}">
+    <span class="text-[11px] text-base-content/60 flex items-center gap-1">{{ rotulo }}
+        <span class="badge badge-xs max-w-[11rem] truncate" x-show="fonte(p, '{{ chave }}')"
+              :class="corFonte(fonte(p, '{{ chave }}'))"
+              :title="fonte(p, '{{ chave }}') + (evidencia(p, '{{ chave }}') ? ' — “' + evidencia(p, '{{ chave }}') + '”' : '')"
+              x-text="fonteCurta(fonte(p, '{{ chave }}'))"></span></span>
+    <input class="input input-bordered input-sm" x-model="p.{{ chave }}" @input="editar(p, '{{ chave }}')">
+</label>
+{% endmacro %}
+{% macro campo_end(rotulo, chave, classe='') %}
+<label class="flex flex-col gap-0.5 {{ classe }}">
+    <span class="text-[11px] text-base-content/60">{{ rotulo }}</span>
+    <input class="input input-bordered input-sm" x-model="p.endereco.{{ chave }}" @input="editar(p, 'endereco')">
+</label>
+{% endmacro %}
+<div class="contents" x-data="qualificacaoApp('{{ paj_norm }}')">
+    {# Classes usadas só via :class (autor x representante): o Tailwind do CDN
+       só gera o que aparece escrito no HTML — esta lista oculta as garante. #}
+    <span class="hidden border-blue-500/40 bg-blue-500/5 bg-blue-500/15 bg-blue-600 text-blue-600
+                 border-violet-500/40 bg-violet-500/5 bg-violet-500/15 bg-violet-600 text-violet-600 text-white"></span>
+    <button type="button" class="btn btn-ghost btn-xs gap-1 normal-case" @click="abrir()"
+            title="Qualificação do autor e do representante legal: cadastro do SIS-DPU 2.0, campos editáveis e o texto corrido para a petição inicial">
+        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" class="w-4 h-4">
+            <path stroke-linecap="round" stroke-linejoin="round" d="M15 9h3.75M15 12h3.75M15 15h3.75M4.5 19.5h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5Zm6-10.125a1.875 1.875 0 1 1-3.75 0 1.875 1.875 0 0 1 3.75 0Zm1.294 6.336a6.721 6.721 0 0 1-3.17.789 6.721 6.721 0 0 1-3.168-.789 3.376 3.376 0 0 1 6.338 0Z"/>
+        </svg>
+        Ver qualificação
+    </button>
+
+    <div class="modal" :class="{'modal-open': aberto}">
+        <div class="modal-box w-11/12 max-w-7xl p-0">
+            <div class="flex items-start justify-between gap-2 px-6 py-4 border-b border-base-300 bg-base-200 sticky top-0 z-10">
+                <div class="flex items-center gap-3">
+                    <div class="rounded-lg bg-blue-500/10 text-blue-600 p-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" class="w-6 h-6">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M15 9h3.75M15 12h3.75M15 15h3.75M4.5 19.5h15a2.25 2.25 0 0 0 2.25-2.25V6.75A2.25 2.25 0 0 0 19.5 4.5h-15a2.25 2.25 0 0 0-2.25 2.25v10.5A2.25 2.25 0 0 0 4.5 19.5Zm6-10.125a1.875 1.875 0 1 1-3.75 0 1.875 1.875 0 0 1 3.75 0Zm1.294 6.336a6.721 6.721 0 0 1-3.17.789 6.721 6.721 0 0 1-3.168-.789 3.376 3.376 0 0 1 6.338 0Z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-lg leading-tight">Qualificação das partes</h3>
+                        <p class="text-xs text-base-content/60">PAJ {{ meta.paj }} · cadastro do SIS-DPU 2.0, documentos e o que você editar
+                            <span x-show="q && q.sis2_em" x-text="'· lido em ' + (q && q.sis2_em ? q.sis2_em.replace('T', ' ').slice(0, 16) : '')"></span></p>
+                    </div>
+                </div>
+                <button type="button" class="btn btn-sm btn-circle btn-ghost" @click="fechar()">✕</button>
+            </div>
+            <div class="px-6 py-4">
+
+            <div x-show="erro" class="alert alert-error text-sm mb-2"><span x-text="erro"></span></div>
+            <div x-show="aviso" class="alert alert-info text-xs py-2 mb-2"><span x-text="aviso"></span></div>
+            <div x-show="carregando" class="flex items-center gap-2 text-sm py-6 justify-center">
+                <span class="loading loading-spinner loading-sm"></span> Lendo o cadastro do PAJ…
+            </div>
+
+            <template x-if="q && !carregando">
+                <div class="flex flex-col gap-4">
+                    <template x-for="(p, i) in q.pessoas" :key="i">
+                        <section class="rounded-xl border-2 shadow-sm overflow-hidden"
+                                 :class="p.papel === 'autor' ? 'border-blue-500/40 bg-blue-500/5' : 'border-violet-500/40 bg-violet-500/5'">
+                            <div class="flex items-center justify-between gap-2 px-4 py-2.5"
+                                 :class="p.papel === 'autor' ? 'bg-blue-500/15' : 'bg-violet-500/15'">
+                                <div class="flex items-center gap-2 min-w-0">
+                                    <template x-if="p.papel === 'autor'">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" class="w-5 h-5 text-blue-600 shrink-0">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"/>
+                                        </svg>
+                                    </template>
+                                    <template x-if="p.papel !== 'autor'">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" class="w-5 h-5 text-violet-600 shrink-0">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z"/>
+                                        </svg>
+                                    </template>
+                                    <span class="text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded"
+                                          :class="p.papel === 'autor' ? 'bg-blue-600 text-white' : 'bg-violet-600 text-white'"
+                                          x-text="rotuloPapel(p)"></span>
+                                    <span class="font-semibold truncate" x-text="p.nome || '(sem nome)'"></span>
+                                    <span class="text-xs text-base-content/60 whitespace-nowrap" x-show="p.cpf" x-text="p.cpf"></span>
+                                </div>
+                                <div class="flex items-center gap-1 shrink-0">
+                                    <template x-if="(p.lacunas || []).length">
+                                        <span class="badge badge-warning badge-sm" x-text="'falta: ' + p.lacunas.join(', ')"></span>
+                                    </template>
+                                    <template x-if="!(p.lacunas || []).length">
+                                        <span class="badge badge-success badge-sm badge-outline">completo</span>
+                                    </template>
+                                    <button type="button" class="btn btn-ghost btn-xs" @click="removerPessoa(i)" title="Remover">✕</button>
+                                </div>
+                            </div>
+                            <div class="p-4 bg-base-100/70">
+                            <div class="grid grid-cols-2 md:grid-cols-4 xl:grid-cols-6 gap-x-3 gap-y-2 text-sm">
+                                {{ campo('Nome', 'nome', 'md:col-span-2') }}
+                                <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Pessoa</span>
+                                    <select class="select select-bordered select-sm" x-model="p.tipo_pessoa" @change="editar(p, 'tipo_pessoa')">
+                                        <option value="PF">Física</option><option value="PJ">Jurídica</option>
+                                    </select></label>
+                                {{ campo('CPF / CNPJ', 'cpf') }}
+                                <template x-if="p.papel === 'representante'">
+                                    <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Vínculo com o(a) autor(a)</span>
+                                        <select class="select select-bordered select-sm" x-model="p.vinculo" @change="editar(p, 'vinculo')">
+                                            <option value="">—</option>
+                                            <template x-for="v in vinculos" :key="v"><option :value="v" x-text="v" :selected="v === p.vinculo"></option></template>
+                                        </select></label>
+                                </template>
+                                <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60 flex items-center gap-1">Sexo
+                                        <span class="badge badge-xs" x-show="fonte(p, 'sexo')" :class="corFonte(fonte(p, 'sexo'))" x-text="fonteCurta(fonte(p, 'sexo'))"></span></span>
+                                    <select class="select select-bordered select-sm" x-model="p.sexo" @change="editar(p, 'sexo')" :class="{'select-warning': !p.sexo && p.tipo_pessoa !== 'PJ'}">
+                                        <option value="">não informado</option><option value="F">Feminino</option><option value="M">Masculino</option>
+                                    </select></label>
+                                {{ campo('Nacionalidade', 'nacionalidade') }}
+                                {{ campo('Nascimento', 'nascimento') }}
+                                {{ campo('Estado civil', 'estado_civil') }}
+                                {{ campo('Profissão', 'profissao') }}
+                                {{ campo('RG', 'rg') }}
+                                {{ campo('Órgão emissor', 'orgao_rg') }}
+                                {{ campo('Nome da mãe', 'nome_mae', 'md:col-span-2') }}
+                                {{ campo('Telefone', 'telefone') }}
+                                {{ campo('E-mail', 'email') }}
+                            </div>
+                            <div class="text-[11px] font-semibold uppercase tracking-wide text-base-content/50 mt-4 mb-1 pt-3 border-t border-base-200 flex items-center gap-1">Endereço
+                                <span class="badge badge-xs normal-case font-normal" x-show="fonte(p, 'endereco')" :class="corFonte(fonte(p, 'endereco'))" x-text="fonteCurta(fonte(p, 'endereco'))"></span>
+                                <span x-show="p.papel === 'representante' && !p.endereco.logradouro" class="normal-case font-normal text-base-content/50">(vazio = mesmo endereço do(a) autor(a))</span>
+                            </div>
+                            <div class="grid grid-cols-2 md:grid-cols-6 xl:grid-cols-8 gap-x-3 gap-y-2 text-sm">
+                                {{ campo_end('Logradouro', 'logradouro', 'md:col-span-2') }}
+                                {{ campo_end('Nº', 'numero') }}
+                                {{ campo_end('Complemento', 'complemento') }}
+                                {{ campo_end('Bairro', 'bairro', 'md:col-span-2') }}
+                                {{ campo_end('Município', 'municipio', 'md:col-span-2') }}
+                                {{ campo_end('UF', 'uf') }}
+                                {{ campo_end('CEP', 'cep') }}
+                            </div>
+                            </div>
+                        </section>
+                    </template>
+                    <div class="-mt-2">
+                        <button type="button" class="btn btn-ghost btn-xs text-violet-600" @click="adicionarRepresentante()">+ Adicionar representante</button>
+                    </div>
+
+                    <!-- Representação legal (vocabulário do e-proc) -->
+                    <section class="rounded-xl border border-base-300 bg-base-200/40 px-4 py-3">
+                        <div class="text-xs font-semibold uppercase tracking-wide text-base-content/60 mb-2">Representação legal <span class="normal-case font-normal text-base-content/50">— tipos usados no e-proc</span></div>
+                        <div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
+                            <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Tipo</span>
+                                <select class="select select-bordered select-sm" x-model="q.representacao.tipo" @change="editarRepresentacao()">
+                                    <option value="nenhuma">Sem representação</option>
+                                    <option value="menor">Menor (pais / tutor)</option>
+                                    <option value="curatela">Curatela</option>
+                                </select></label>
+                            <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">e-proc — autor(a) representado(a)</span>
+                                <select class="select select-bordered select-sm" x-model="q.representacao.tipo_autor_eproc" @change="editarRepresentacao()"
+                                        :disabled="q.representacao.tipo === 'nenhuma'">
+                                    <option value="">—</option>
+                                    <template x-for="o in eprocAutor" :key="o"><option :value="o" x-text="o" :selected="o === q.representacao.tipo_autor_eproc"></option></template>
+                                </select></label>
+                            <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">e-proc — representante</span>
+                                <select class="select select-bordered select-sm" x-model="q.representacao.tipo_representante_eproc" @change="editarRepresentacao()"
+                                        :disabled="q.representacao.tipo === 'nenhuma'">
+                                    <option value="">—</option>
+                                    <template x-for="o in eprocRep" :key="o"><option :value="o" x-text="o" :selected="o === q.representacao.tipo_representante_eproc"></option></template>
+                                </select></label>
+                        </div>
+                        <p class="text-[11px] text-base-content/50 mt-1">Detectada pelo cadastro: representante + autor menor de 16 = absolutamente incapaz; 16-17 = relativamente incapaz; curador ou autor maior = curatela (art. 110).</p>
+                    </section>
+
+                    <!-- Texto corrido -->
+                    <section class="rounded-xl border-2 border-success/40 bg-success/5 shadow-sm overflow-hidden">
+                        <div class="flex items-center justify-between gap-2 px-4 py-2.5 bg-success/10">
+                            <div class="flex items-center gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" class="w-5 h-5 text-success">
+                                    <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z"/>
+                                </svg>
+                                <span class="font-semibold">Qualificação na petição inicial</span>
+                                <span x-show="q.texto_editado" class="badge badge-primary badge-sm">editado</span>
+                            </div>
+                            <div class="flex gap-1">
+                                <button type="button" class="btn btn-ghost btn-xs" x-show="q.texto_editado" @click="regenerarTexto()">Regenerar pelo cadastro</button>
+                                <button type="button" class="btn btn-success btn-xs" @click="copiarTexto()">Copiar</button>
+                            </div>
+                        </div>
+                        <div class="p-4">
+                            <textarea class="textarea textarea-bordered bg-base-100 w-full text-[15px] leading-7 font-serif text-justify" rows="6"
+                                      x-model="q.texto" @input="editarTexto()"></textarea>
+                        </div>
+                    </section>
+
+                    <div class="flex items-center justify-between gap-2 pt-2 border-t border-base-300">
+                        <div class="flex gap-1">
+                            <button type="button" class="btn btn-ghost btn-sm" @click="atualizar()" :disabled="carregando || completando">Atualizar do SIS 2</button>
+                            <button type="button" class="btn btn-ghost btn-sm" @click="completarDocumentos()" :disabled="carregando || completando"
+                                    title="A IA lê os documentos do PAJ (RG, certidões, comprovante de residência, fichas, termo de curatela) e preenche só os campos vazios, citando arquivo e trecho">
+                                <span x-show="completando" class="loading loading-spinner loading-xs"></span>
+                                <span x-text="completando ? 'Lendo os documentos… (até 2 min)' : 'Completar pelos documentos (IA)'"></span>
+                            </button>
+                        </div>
+                        <div class="flex gap-2">
+                            <button type="button" class="btn btn-ghost btn-sm" @click="fechar()">Fechar</button>
+                            <button type="button" class="btn btn-primary btn-sm" @click="salvar()" :disabled="salvando">
+                                <span x-show="salvando" class="loading loading-spinner loading-xs"></span> Salvar
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </template>
+            </div>
+        </div>
+    </div>
+</div>

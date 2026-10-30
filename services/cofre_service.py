@@ -52,6 +52,7 @@ _ITERACOES = 240_000  # custo do PBKDF2 (dificulta força bruta da senha-mestra)
 SISTEMAS = {
     "sisdpu": "SISDPU",
     "eproc": "e-proc",
+    "eproc_jmu": "e-proc JMU",
     "sat": "SAT Central (GERID)",
     "cadunico": "CadÚnico (Login CAIXA)",
 }
@@ -64,7 +65,6 @@ CAMPOS_EXTRAS = {
         "totp_seed": {"rotulo": "Seed do 2FA (TOTP)", "obrigatorio": False, "secreto": True},
     },
 }
-
 
 
 class SenhaMestraIncorreta(Exception):
@@ -201,6 +201,8 @@ def salvar_sistema(sistema: str, usuario: str, senha: str, senha_mestra: str,
     _estado.update(destrancado=True, sistemas=sistemas)
     if sistema == "eproc":
         _sincronizar_gerenciador_eproc(usuario, senha)
+    elif sistema == "eproc_jmu":
+        _sincronizar_gerenciador_eproc_jmu(usuario, senha)
 
 
 def _sincronizar_gerenciador_eproc(usuario: str, senha: str) -> None:
@@ -223,6 +225,22 @@ def _sincronizar_gerenciador_eproc(usuario: str, senha: str) -> None:
     except Exception as e:  # noqa: BLE001
         import logging
         logging.getLogger("cofre").warning("não atualizou o Gerenciador de Credenciais do e-proc: %s", e)
+
+
+def _sincronizar_gerenciador_eproc_jmu(usuario: str, senha: str) -> None:
+    """Mesmo repasse de `_sincronizar_gerenciador_eproc`, para o e-proc da JMU
+    (28/10/2026): o MCP eproc-jmu, a leitura de Prazos da JMU e o login da JMU
+    pelo navegador leem a chave `mcp-eproc-jmu` do Gerenciador de Credenciais.
+    A seed do 2FA (TOTP) não muda aqui."""
+    try:
+        import keyring
+
+        from ingestao import eproc_jmu
+        keyring.set_password(eproc_jmu.CREDENCIAL, "usuario", usuario)
+        keyring.set_password(eproc_jmu.CREDENCIAL, "senha", senha)
+    except Exception as e:  # noqa: BLE001
+        import logging
+        logging.getLogger("cofre").warning("não atualizou o Gerenciador de Credenciais do e-proc da JMU: %s", e)
 
 
 def remover_sistema(sistema: str, senha_mestra: str) -> bool:

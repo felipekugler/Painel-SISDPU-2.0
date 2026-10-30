@@ -79,6 +79,64 @@ _RE_TETO = re.compile(r"teto de (\d+) (?:leituras )?por minuto", re.IGNORECASE)
 # "esta pessoa ja leu 5033 registros hoje por este modulo, e o teto e 5000"
 _RE_TETO_DIA = re.compile(r"ja leu (\d+) registros hoje.*?teto e (\d+)", re.IGNORECASE | re.DOTALL)
 
+# Limite de ESCRITA do servidor (achado em 29/10/2026, pós-ajuizamento do PAJ
+# 2026/029-03108): "O SIS 2 respondeu 429 (LIMITE_EXCEDIDO): limite de ESCRITA
+# excedido: 3 em rajada, depois uma a cada 6 s. ... Tente de novo em 4 s."
+# Vale para preparar, confirmar e anexo_guardar. A recusa é ANTES de gravar,
+# então repetir a mesma chamada é seguro (até para confirmar).
+_RE_LIMITE_ESCRITA = re.compile(r"LIMITE_EXCEDIDO|limite de ESCRITA|HTTP 429\b", re.IGNORECASE)
+_RE_TENTE_EM = re.compile(r"tente de novo em (\d+)\s*s", re.IGNORECASE)
+_ESCRITA_RAJADA = 3
+_ESCRITA_INTERVALO_S = 6.0
+_ESCRITA_FOLGA_S = 0.5  # margem sobre o relógio do servidor
+
+
+class _RitmoEscrita:
+    """Balde de fichas igual à regra do servidor (3 em rajada, depois 1 a cada
+    6 s), único para o painel inteiro: cada escrita espera aqui a sua vez em
+    vez de tomar 429. `avisar(segundos)` (opcional) é chamado antes de esperar."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._fichas = float(_ESCRITA_RAJADA)
+        self._ultimo = time.monotonic()
+
+    def _repor(self, agora: float) -> None:
+        self._fichas = min(float(_ESCRITA_RAJADA),
+                           self._fichas + (agora - self._ultimo) / (_ESCRITA_INTERVALO_S + _ESCRITA_FOLGA_S))
+        self._ultimo = agora
+
+    def aguardar(self, avisar=None) -> float:
+        esperado = 0.0
+        while True:
+            with self._lock:
+                agora = time.monotonic()
+                self._repor(agora)
+                if self._fichas >= 1:
+                    self._fichas -= 1
+                    return esperado
+                falta = (1 - self._fichas) * (_ESCRITA_INTERVALO_S + _ESCRITA_FOLGA_S)
+            if avisar:
+                with contextlib.suppress(Exception):
+                    avisar(falta)
+            time.sleep(falta)
+            esperado += falta
+
+    def recusado(self, segundos: float) -> None:
+        """O servidor recusou (429): zera o balde até a hora que ele mandou."""
+        with self._lock:
+            self._fichas = 0.0
+            self._ultimo = time.monotonic() + max(0.0, segundos - _ESCRITA_INTERVALO_S)
+
+
+_ritmo_escrita = _RitmoEscrita()
+
+
+def _avisar_espera(segundos: float) -> None:
+    import logging
+    logging.getLogger("sisdpu2.mcp").info("Aguardando o limite de gravação do SIS 2 (%.0f s)…", segundos)
+
+
 # Teto diário do servidor (achado em 10/10/2026): 5000 REGISTROS lidos por
 # pessoa por dia, somando o painel e o uso do MCP pelo Claude. Conta registros
 # (cada item de lista, cada movimentação do histórico), não chamadas.
@@ -508,7 +566,7 @@ def chamar_escrita(nome: str, args: Optional[dict] = None, timeout: float = 180)
     ingestao/sisdpu2_movtram.py, sempre depois da ficha aprovada no painel."""
     if nome not in _TOOLS_ESCRITA:
         raise Sisdpu2Erro(f"'{nome}' não é ferramenta de gravação liberada no painel.")
-    return _chamar(nome, args, timeout, repetir=nome not in _TOOLS_ESCRITA_SEM_REPETIR)
+    return _chamar(nome, args, timeout, repetir=nome not in _TOOLS_ESCRITA_SEM_REPETIR, escrita=True)
 
 
 def chamar(nome: str, args: Optional[dict] = None, timeout: float = 90) -> Any:
@@ -532,13 +590,38 @@ def chamar_com_imagens(nome: str, args: Optional[dict] = None, timeout: float = 
     return valor, imagens
 
 
+def _limite_escrita(texto: str) -> Optional[float]:
+    """Segundos a esperar se `texto` é a recusa por limite de escrita (429)."""
+    if not _RE_LIMITE_ESCRITA.search(texto or ""):
+        return None
+    m = _RE_TENTE_EM.search(texto)
+    return float(m.group(1)) + 1 if m else _ESCRITA_INTERVALO_S + 1
+
+
 def _chamar(nome: str, args: Optional[dict], timeout: float, repetir: bool,
-            imagens: Optional[list] = None) -> Any:
+            imagens: Optional[list] = None, escrita: bool = False) -> Any:
     args = args or {}
-    for tentativa in range(4 if repetir else 1):
-        msg = _sessao.tools_call(nome, args, timeout=timeout)
+    # Escrita: até 3 novas tentativas SÓ para a recusa por limite (429), que
+    # acontece antes de gravar — mesmo nas confirmações. Outros erros/timeouts
+    # de confirmação continuam sem repetição.
+    for tentativa in range(4 if (repetir or escrita) else 1):
+        if escrita:
+            _ritmo_escrita.aguardar(_avisar_espera)
+        try:
+            msg = _sessao.tools_call(nome, args, timeout=timeout)
+        except Sisdpu2Erro as e:  # HTTP 429 do próprio transporte
+            espera = _limite_escrita(str(e)) if escrita else None
+            if espera is None or tentativa >= 3:
+                raise
+            _ritmo_escrita.recusado(espera)
+            continue
         if "error" in msg:
-            raise Sisdpu2Erro(f"{nome}: {msg['error'].get('message', msg['error'])}")
+            texto_erro = str(msg["error"].get("message", msg["error"]))
+            espera = _limite_escrita(texto_erro) if escrita else None
+            if espera is not None and tentativa < 3:
+                _ritmo_escrita.recusado(espera)
+                continue
+            raise Sisdpu2Erro(f"{nome}: {texto_erro}")
         res = msg.get("result") or {}
         if imagens is not None:
             for c in res.get("content", []):
@@ -557,6 +640,10 @@ def _chamar(nome: str, args: Optional[dict], timeout: float, repetir: bool,
                     _atualizar_contador(int(dia.group(1)), int(dia.group(2)))
                 raise Sisdpu2TetoDiario(texto[:800])
             _registrar_consumo(nome, 0)
+            espera = _limite_escrita(texto) if escrita else None
+            if espera is not None and tentativa < 3:
+                _ritmo_escrita.recusado(espera)
+                continue
             if repetir and _RE_TETO.search(texto) and tentativa < 3:
                 time.sleep(20 * (tentativa + 1))
                 continue

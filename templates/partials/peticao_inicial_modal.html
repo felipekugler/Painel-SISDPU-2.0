@@ -14,15 +14,25 @@
     </button>
 
     <div class="modal" :class="{'modal-open': aberto}">
-        <div class="modal-box max-w-5xl">
-            <div class="flex items-start justify-between gap-2 mb-2">
-                <div>
-                    <h3 class="font-bold text-lg">Preparar Petição Inicial no eproc</h3>
-                    <p class="text-xs text-base-content/60">Benefício por incapacidade · PAJ {{ meta.paj }}</p>
+        <div class="modal-box w-11/12 max-w-7xl p-0">
+            <div class="flex items-start justify-between gap-2 px-6 py-4 border-b border-base-300 bg-base-200 sticky top-0 z-10">
+                <div class="flex items-center gap-3">
+                    <div class="rounded-lg bg-blue-500/10 text-blue-600 p-2">
+                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" class="w-6 h-6">
+                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v17.25m0 0c-1.472 0-2.882.265-4.185.75M12 20.25c1.472 0 2.882.265 4.185.75M18.75 4.97A48.416 48.416 0 0 0 12 4.5c-2.291 0-4.545.16-6.75.47m13.5 0c1.01.143 2.01.317 3 .52m-3-.52 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 0 1-2.031.352 5.988 5.988 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L18.75 4.971Zm-16.5.52c.99-.203 1.99-.377 3-.52m0 0 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.989 5.989 0 0 1-2.031.352 5.989 5.989 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L5.25 4.971Z"/>
+                        </svg>
+                    </div>
+                    <div>
+                        <h3 class="font-bold text-lg leading-tight">Preparar Petição Inicial no eproc</h3>
+                        <p class="text-xs text-base-content/60">
+                            <span x-text="dados && dados.fluxo === 'generico' ? 'Padrão - Assuntos gerais' : 'Benefício por incapacidade'"></span> · PAJ {{ meta.paj }}
+                            · para antes de "Finalizar" — nada é distribuído sem a sua confirmação</p>
+                    </div>
                 </div>
-                <button type="button" class="btn btn-sm btn-ghost" @click="fechar()"
+                <button type="button" class="btn btn-sm btn-circle btn-ghost" @click="fechar()"
                         :disabled="fase === 'preparando' || fase === 'conectando' || fase === 'pos' || fase === 'revisao'">✕</button>
             </div>
+            <div class="px-6 py-4">
 
             <div x-show="erro" class="alert alert-error text-sm mb-3"><span x-text="erro"></span></div>
 
@@ -57,11 +67,18 @@
                             </template>
 
                             <!-- Documentos -->
-                            <div>
-                                <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1">
-                                    Documentos (pasta Ajuizamento) — tipo no e-proc sugerido pelo nome; ajuste o que precisar
+                            <section class="rounded-xl border-2 border-amber-500/40 bg-amber-500/5 shadow-sm overflow-hidden">
+                                <div class="flex items-center justify-between gap-2 px-4 py-2.5 bg-amber-500/15">
+                                    <div class="flex items-center gap-2">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" class="w-5 h-5 text-amber-600">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 17.25v3.375c0 .621-.504 1.125-1.125 1.125h-9.75a1.125 1.125 0 0 1-1.125-1.125V7.875c0-.621.504-1.125 1.125-1.125H6.75a9.06 9.06 0 0 1 1.5.124m7.5 10.376h3.375c.621 0 1.125-.504 1.125-1.125V11.25c0-4.46-3.243-8.161-7.5-8.876a9.06 9.06 0 0 0-1.5-.124H9.375c-.621 0-1.125.504-1.125 1.125v3.5m7.5 10.375H9.375a1.125 1.125 0 0 1-1.125-1.125v-9.25m12 6.625v-1.875a3.375 3.375 0 0 0-3.375-3.375h-1.5a1.125 1.125 0 0 1-1.125-1.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H9.75"/>
+                                        </svg>
+                                        <span class="font-semibold">Documentos</span>
+                                        <span class="badge badge-sm bg-amber-600 text-white border-0" x-text="selecionados().length + ' de ' + arquivos.length"></span>
+                                    </div>
+                                    <span class="text-xs text-base-content/60">pasta Ajuizamento · tipo no e-proc sugerido pelo nome — ajuste o que precisar</span>
                                 </div>
-                                <div class="overflow-x-auto border border-base-300 rounded">
+                                <div class="p-3 bg-base-100/70"><div class="overflow-x-auto rounded-lg border border-base-300 bg-base-100">
                                     <table class="table table-xs">
                                         <thead><tr><th></th><th>Arquivo</th><th>Tipo no e-proc</th><th class="text-right">Tam.</th></tr></thead>
                                         <tbody>
@@ -84,19 +101,25 @@
                                             </template>
                                         </tbody>
                                     </table>
-                                </div>
-                            </div>
+                                </div></div>
+                            </section>
 
                             <!-- Processo -->
-                            <div>
-                                <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1">
-                                    Processo <span class="normal-case font-normal" x-text="'(fonte: ' + (dados.fonte_peticao || '—') + ')'"></span>
+                            <section class="rounded-xl border-2 border-sky-500/40 bg-sky-500/5 shadow-sm overflow-hidden">
+                                <div class="flex items-center justify-between gap-2 px-4 py-2.5 bg-sky-500/15">
+                                    <div class="flex items-center gap-2">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" class="w-5 h-5 text-sky-600">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 3v17.25m0 0c-1.472 0-2.882.265-4.185.75M12 20.25c1.472 0 2.882.265 4.185.75M18.75 4.97A48.416 48.416 0 0 0 12 4.5c-2.291 0-4.545.16-6.75.47m13.5 0c1.01.143 2.01.317 3 .52m-3-.52 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 0 1-2.031.352 5.988 5.988 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L18.75 4.971Zm-16.5.52c.99-.203 1.99-.377 3-.52m0 0 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.989 5.989 0 0 1-2.031.352 5.989 5.989 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L5.25 4.971Z"/>
+                                        </svg>
+                                        <span class="font-semibold">Processo</span>
+                                    </div>
+                                    <span class="text-xs text-base-content/60 truncate" x-text="'fonte: ' + (dados.fonte_peticao || '—')"></span>
                                 </div>
-                                <div class="grid grid-cols-1 md:grid-cols-3 gap-2 text-sm">
+                                <div class="p-4 bg-base-100/70 grid grid-cols-1 md:grid-cols-3 gap-x-3 gap-y-2 text-sm">
                                     <label class="flex flex-col gap-0.5 md:col-span-3"><span class="text-[11px] text-base-content/60">Fluxo do e-proc</span>
                                         <select class="select select-bordered select-sm" x-model="dados.fluxo">
-                                            <option value="bi">Benefício por incapacidade (NB + perícia; INSS fixo; 4 etapas)</option>
-                                            <option value="generico">Outros assuntos (partes autoras + partes rés; 5 etapas)</option>
+                                            <option value="bi">Benefício por incapacidade (4 etapas)</option>
+                                            <option value="generico">Padrão - Assuntos gerais (5 etapas)</option>
                                         </select></label>
                                     <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Ajuizar em</span>
                                         <select data-busca class="select select-bordered select-sm" x-model="dados.localidade">
@@ -111,23 +134,84 @@
                                         <input class="input input-bordered input-sm" x-model="dados.classe" readonly></label>
                                     <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Valor da causa (R$, da inicial)</span>
                                         <input class="input input-bordered input-sm" x-model="dados.valor_causa"></label>
-                                    <label class="flex flex-col gap-0.5 md:col-span-2"><span class="text-[11px] text-base-content/60">Assunto principal (deve estar entre as sugestões da IA do e-proc<span x-show="dados.fluxo === 'generico'">; vazio = 1ª sugestão</span>)</span>
-                                        <input class="input input-bordered input-sm" x-model="dados.assunto"></label>
+                                    <template x-if="assuntos.principais.length">
+                                        <label class="flex flex-col gap-0.5 md:col-span-2"><span class="text-[11px] text-base-content/60">Assunto principal
+                                            <span class="text-base-content/40" x-text="'(tabela do e-proc · ' + assuntos.principais.length + ' assuntos)'"></span></span>
+                                            <select data-busca class="select select-bordered select-sm" x-model="dados.assunto_codigo" @change="trocarAssuntoPrincipal()">
+                                                <option value="">— sugestão da IA do e-proc —</option>
+                                                <template x-for="i in assuntos.principais" :key="i.codigo">
+                                                    <option :value="i.codigo" x-text="rotuloAssunto(i)" :selected="i.codigo === dados.assunto_codigo"></option>
+                                                </template>
+                                            </select></label>
+                                    </template>
+                                    <template x-if="!assuntos.principais.length">
+                                        <label class="flex flex-col gap-0.5 md:col-span-2"><span class="text-[11px] text-base-content/60">Assunto principal (deve estar entre as sugestões da IA do e-proc<span x-show="dados.fluxo === 'generico'">; vazio = 1ª sugestão</span>
+                                            · a tabela do e-proc é capturada na 1ª preparação)</span>
+                                            <input class="input input-bordered input-sm" x-model="dados.assunto"></label>
+                                    </template>
+                                    <!-- Assuntos complementares (tabela inteira do CNJ capturada do e-proc) -->
+                                    <div class="flex flex-col gap-0.5 md:col-span-3">
+                                        <span class="text-[11px] text-base-content/60">Assuntos complementares
+                                            <span class="text-base-content/40" x-text="assuntos.complementares.length ? '(opcional · busca em ' + assuntos.complementares.length + ' assuntos do e-proc)' : '(a tabela do e-proc é capturada na 1ª preparação)'"></span></span>
+                                        <div class="flex flex-wrap gap-1" x-show="(dados.assuntos_complementares || []).length">
+                                            <template x-for="(c, k) in dados.assuntos_complementares" :key="c.codigo">
+                                                <span class="badge badge-info gap-1 py-2.5 h-auto text-left">
+                                                    <span x-text="c.codigo + ' – ' + c.nome"></span>
+                                                    <button type="button" class="font-bold" @click="remCompl(k)" title="Remover">✕</button>
+                                                </span>
+                                            </template>
+                                        </div>
+                                        <div class="relative" x-show="assuntos.complementares.length">
+                                            <input class="input input-bordered input-sm w-full" placeholder="Digite parte do nome ou o código (mín. 3 caracteres) para adicionar…"
+                                                   x-model="buscaCompl">
+                                            <div class="absolute z-20 left-0 right-0 mt-1 max-h-64 overflow-y-auto rounded-lg border border-base-300 bg-base-100 shadow-lg"
+                                                 x-show="complFiltrados().length">
+                                                <template x-for="i in complFiltrados()" :key="i.codigo">
+                                                    <button type="button" class="block w-full text-left text-xs px-3 py-1.5 hover:bg-base-200" @click="addCompl(i)">
+                                                        <span class="font-mono" x-text="i.codigo"></span> – <span class="font-semibold" x-text="i.nome"></span>
+                                                        <span class="text-base-content/50" x-text="i.caminho ? ' · ' + i.caminho : ''"></span>
+                                                    </button>
+                                                </template>
+                                            </div>
+                                        </div>
+                                    </div>
                                     <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" x-model="dados.renuncia_60sm">
                                         <span class="text-xs">Renúncia ao excedente de 60 SM</span></label>
-                                    <label class="flex items-center gap-2"><input type="checkbox" class="checkbox checkbox-sm" x-model="dados.tutela">
-                                        <span class="text-xs">Requer Liminar/Antecipação de Tutela</span></label>
-                                    <span class="text-[11px] text-base-content/50 self-center"
-                                          x-text="dados.fluxo === 'generico' ? 'Área Previdenciária · Sem sigilo · justiça gratuita Requerida' : 'Área Previdenciária · Sem sigilo · art. 129-A mantido'"></span>
+                                    <span class="text-[11px] text-base-content/50 self-center md:col-span-2"
+                                          x-text="dados.fluxo === 'generico' ? 'Área Previdenciária · Sem sigilo · justiça gratuita Requerida' : 'Área Previdenciária · Sem sigilo'"></span>
+                                    <!-- Opções da última etapa do e-proc ("Informações Adicionais") -->
+                                    <div class="md:col-span-3 mt-1 rounded-lg border border-sky-500/30 bg-base-100 px-3 py-2" x-show="dados.info_adicionais">
+                                        <div class="text-[11px] font-semibold uppercase tracking-wide text-base-content/50 mb-1.5">
+                                            Informações adicionais <span class="normal-case font-normal">— última etapa do e-proc; pré-marcadas pelas regras, ajuste o que precisar
+                                            (prioridade de idoso é automática no e-proc)</span></div>
+                                        <div class="grid grid-cols-1 md:grid-cols-3 gap-x-4 gap-y-1">
+                                            <template x-for="o in infoAdicionaisOpcoes.filter(o => !o.fluxo || o.fluxo === dados.fluxo)" :key="o.id">
+                                                <label class="flex items-center gap-2 text-xs cursor-pointer">
+                                                    <input type="checkbox" class="checkbox checkbox-xs" x-model="dados.info_adicionais[o.id]"
+                                                           @change="if (o.id === 'chkCautAntecTutela') dados.tutela = dados.info_adicionais[o.id]">
+                                                    <span x-text="o.rotulo"></span>
+                                                    <span x-show="o.nova" class="badge badge-warning badge-xs" title="Opção nova vista no e-proc">nova</span>
+                                                </label>
+                                            </template>
+                                        </div>
+                                    </div>
                                 </div>
-                            </div>
+                            </section>
 
                             <!-- Autor -->
-                            <div>
-                                <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1">
-                                    Autor(a): <span class="normal-case" x-text="dados.autor.nome"></span> · réu <span class="normal-case" x-text="dados.reu || 'INSS'"></span>
+                            <section class="rounded-xl border-2 border-blue-500/40 bg-blue-500/5 shadow-sm overflow-hidden">
+                                <div class="flex items-center justify-between gap-2 px-4 py-2.5 bg-blue-500/15">
+                                    <div class="flex items-center gap-2 min-w-0">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" class="w-5 h-5 text-blue-600 shrink-0">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M15.75 6a3.75 3.75 0 1 1-7.5 0 3.75 3.75 0 0 1 7.5 0ZM4.501 20.118a7.5 7.5 0 0 1 14.998 0A17.933 17.933 0 0 1 12 21.75c-2.676 0-5.216-.584-7.499-1.632Z"/>
+                                        </svg>
+                                        <span class="text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-blue-600 text-white">Autor(a)</span>
+                                        <span class="font-semibold truncate" x-text="dados.autor.nome"></span>
+                                    </div>
+                                    <span class="text-xs text-base-content/60 truncate" x-show="dados.fonte_partes" x-text="'fonte: ' + dados.fonte_partes"></span>
                                 </div>
-                                <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                                <div class="p-4 bg-base-100/70">
+                                <div class="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-2 text-sm">
                                     <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">CPF</span>
                                         <input class="input input-bordered input-sm" x-model="dados.autor.cpf"></label>
                                     <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">CEP</span>
@@ -137,8 +221,9 @@
                                     <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">E-mail</span>
                                         <input class="input input-bordered input-sm" x-model="dados.autor.email"></label>
                                 </div>
-                                <div class="text-[11px] text-base-content/50 mt-2 mb-1">Só usados se o CPF não estiver cadastrado no e-proc (cadastro de pessoa física):</div>
-                                <div class="grid grid-cols-2 md:grid-cols-4 gap-2 text-sm">
+                                <div class="text-[11px] font-semibold uppercase tracking-wide text-base-content/50 mt-4 mb-1 pt-3 border-t border-base-200">
+                                    Cadastro de pessoa física <span class="normal-case font-normal">— só usado se o CPF não estiver no e-proc</span></div>
+                                <div class="grid grid-cols-2 md:grid-cols-5 gap-x-3 gap-y-2 text-sm">
                                     <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Nº (endereço)</span>
                                         <input class="input input-bordered input-sm" x-model="dados.autor.numero"></label>
                                     <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Complemento</span>
@@ -154,12 +239,86 @@
                                     <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Nacionalidade (vazio = brasileira)</span>
                                         <input class="input input-bordered input-sm" x-model="dados.autor.nacionalidade"></label>
                                 </div>
-                            </div>
+                                </div>
+                            </section>
+
+                            <!-- Representante -->
+                            <template x-if="dados.representante">
+                                <section class="rounded-xl border-2 shadow-sm overflow-hidden"
+                                         :class="dados.representante.presente ? 'border-violet-500/40 bg-violet-500/5' : 'border-base-300'">
+                                    <div class="flex items-center justify-between gap-2 px-4 py-2.5"
+                                         :class="dados.representante.presente ? 'bg-violet-500/15' : 'bg-base-200/60'">
+                                        <label class="flex items-center gap-2 min-w-0 cursor-pointer">
+                                            <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" class="w-5 h-5 text-violet-600 shrink-0">
+                                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75m-3-7.036A11.959 11.959 0 0 1 3.598 6 11.99 11.99 0 0 0 3 9.749c0 5.592 3.824 10.29 9 11.623 5.176-1.332 9-6.03 9-11.622 0-1.31-.21-2.571-.598-3.751h-.152c-3.196 0-6.1-1.248-8.25-3.285Z"/>
+                                            </svg>
+                                            <input type="checkbox" class="checkbox checkbox-sm" x-model="dados.representante.presente">
+                                            <span class="text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-violet-600 text-white">Representante</span>
+                                            <span class="font-semibold truncate" x-text="dados.representante.presente ? (dados.representante.nome || '(sem nome)') : 'Autor(a) sem representação'"></span>
+                                        </label>
+                                        <span class="text-xs text-base-content/60 truncate" x-show="dados.representante.fonte" x-text="'fonte: ' + dados.representante.fonte"></span>
+                                    </div>
+                                    <div class="p-4 bg-base-100/70" x-show="dados.representante.presente">
+                                        <div class="grid grid-cols-2 md:grid-cols-4 gap-x-3 gap-y-2 text-sm">
+                                            <label class="flex flex-col gap-0.5 md:col-span-2"><span class="text-[11px] text-base-content/60">Nome do(a) representante</span>
+                                                <input class="input input-bordered input-sm" x-model="dados.representante.nome"></label>
+                                            <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">CPF / CNPJ do(a) representante</span>
+                                                <input class="input input-bordered input-sm" x-model="dados.representante.documento"
+                                                       @input="dados.representante.tipo_pessoa = $event.target.value.replace(/\D/g, '').length === 14 ? 'PJ' : 'PF'"></label>
+                                            <span class="text-[11px] text-base-content/50 self-center">
+                                                <span x-text="dados.representante.tipo_pessoa === 'PJ' ? 'Pessoa jurídica' : 'Pessoa física'"></span> ·
+                                                não atua como parte</span>
+                                            <label class="flex flex-col gap-0.5 md:col-span-2"><span class="text-[11px] text-base-content/60">Motivo da representação do(a) autor(a) (e-proc: Representados)</span>
+                                                <select class="select select-bordered select-sm" x-model="dados.representante.tipo_autor">
+                                                    <template x-for="o in representados" :key="o"><option :value="o" x-text="o" :selected="o === dados.representante.tipo_autor"></option></template>
+                                                </select></label>
+                                            <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Condição do representante (e-proc: Representantes)</span>
+                                                <select class="select select-bordered select-sm" x-model="dados.representante.tipo_representante">
+                                                    <template x-for="o in representantes" :key="o"><option :value="o" x-text="o" :selected="o === dados.representante.tipo_representante"></option></template>
+                                                </select></label>
+                                            <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">Representante é parte principal?</span>
+                                                <select class="select select-bordered select-sm"
+                                                        @change="dados.representante.principal = $event.target.value === 'true'">
+                                                    <option value="false" :selected="!dados.representante.principal">Não</option>
+                                                    <option value="true" :selected="dados.representante.principal">Sim</option>
+                                                </select></label>
+                                        </div>
+                                    </div>
+                                </section>
+                            </template>
+
+                            <!-- Réu (entidades do e-proc) -->
+                            <section class="rounded-xl border-2 border-orange-500/40 bg-orange-500/5 shadow-sm overflow-hidden">
+                                <div class="flex items-center justify-between gap-2 px-4 py-2.5 bg-orange-500/15">
+                                    <div class="flex items-center gap-2 min-w-0">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" class="w-5 h-5 text-orange-600 shrink-0">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M12 21v-8.25M15.75 21v-8.25M8.25 21v-8.25M3 9l9-6 9 6m-1.5 12V10.332A48.36 48.36 0 0 0 12 9.75c-2.551 0-5.056.2-7.5.582V21M3 21h18M12 6.75h.008v.008H12V6.75Z"/>
+                                        </svg>
+                                        <span class="text-[11px] font-bold uppercase tracking-wider px-2 py-0.5 rounded bg-orange-600 text-white">Réu</span>
+                                        <span class="font-semibold truncate" x-text="dados.reu || 'INSTITUTO NACIONAL DO SEGURO SOCIAL - INSS'"></span>
+                                    </div>
+                                    <span class="text-xs text-base-content/60 whitespace-nowrap"
+                                          x-text="entidadesEm ? entidades.length + ' entidades do e-proc · lista de ' + entidadesEm.slice(0, 10).split('-').reverse().join('/') : 'lista do e-proc ainda não capturada'"></span>
+                                </div>
+                                <div class="p-4 bg-base-100/70 grid grid-cols-1 md:grid-cols-3 gap-x-3 gap-y-2 text-sm">
+                                    <label class="flex flex-col gap-0.5 md:col-span-2"><span class="text-[11px] text-base-content/60">Entidade ré (Partes Rés › Entidade)</span>
+                                        <select data-busca class="select select-bordered select-sm" x-model="dados.reu" :disabled="dados.fluxo !== 'generico'">
+                                            <template x-for="e in entidades" :key="e"><option :value="e" x-text="e" :selected="e === dados.reu"></option></template>
+                                        </select></label>
+                                    <span class="text-[11px] text-base-content/50 self-center"
+                                          x-text="dados.fluxo !== 'generico' ? 'No fluxo do benefício por incapacidade o e-proc fixa o INSS como réu.' : 'Incluída como parte ré principal. A lista é atualizada pelo e-proc a cada preparação.'"></span>
+                                </div>
+                            </section>
 
                             <!-- Benefício -->
-                            <div x-show="dados.fluxo !== 'generico'">
-                                <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1">Benefício e perícia</div>
-                                <div class="grid grid-cols-1 md:grid-cols-4 gap-2 text-sm items-start">
+                            <section class="rounded-xl border-2 border-rose-500/40 bg-rose-500/5 shadow-sm overflow-hidden" x-show="dados.fluxo !== 'generico'">
+                                <div class="flex items-center gap-2 px-4 py-2.5 bg-rose-500/15">
+                                    <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" class="w-5 h-5 text-rose-600">
+                                        <path stroke-linecap="round" stroke-linejoin="round" d="M21 8.25c0-2.485-2.099-4.5-4.688-4.5-1.935 0-3.597 1.126-4.312 2.733-.715-1.607-2.377-2.733-4.313-2.733C5.1 3.75 3 5.765 3 8.25c0 7.22 9 12 9 12s9-4.78 9-12Z"/>
+                                    </svg>
+                                    <span class="font-semibold">Benefício e perícia</span>
+                                </div>
+                                <div class="p-4 bg-base-100/70 grid grid-cols-1 md:grid-cols-4 gap-2 text-sm items-start">
                                     <label class="flex flex-col gap-0.5"><span class="text-[11px] text-base-content/60">NB do pedido principal</span>
                                         <input class="input input-bordered input-sm" x-model="dados.nb"></label>
                                     <div class="md:col-span-3">
@@ -173,23 +332,31 @@
                                         </div>
                                     </div>
                                 </div>
-                            </div>
+                            </section>
 
                             <!-- Pós-ajuizamento -->
-                            <div>
-                                <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1">
-                                    Após o ajuizamento — movimentação "Petição inicial" no SISDPU (tramita para AJUIZADOS)
+                            <section class="rounded-xl border-2 border-success/40 bg-success/5 shadow-sm overflow-hidden">
+                                <div class="flex items-center justify-between gap-2 px-4 py-2.5 bg-success/10">
+                                    <div class="flex items-center gap-2">
+                                        <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.6" stroke="currentColor" class="w-5 h-5 text-success">
+                                            <path stroke-linecap="round" stroke-linejoin="round" d="M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z"/>
+                                        </svg>
+                                        <span class="font-semibold">Após o ajuizamento</span>
+                                    </div>
+                                    <span class="text-xs text-base-content/60">movimentação "Petição inicial" no SISDPU · tramita para AJUIZADOS</span>
                                 </div>
-                                <textarea class="textarea textarea-bordered text-sm w-full" rows="4" x-model="dados.descricao_sisdpu"></textarea>
-                                <div class="text-[11px] text-base-content/50">
-                                    [PROCESSO] e [CHAVE] são preenchidos com os dados da distribuição. Anexo:
-                                    <span class="font-mono" x-text="dados.docx_peticao || '(docx não encontrado em Peças IA)'"></span>.
-                                    O processo também é gerenciado para o procurador padrão (Configurações › e-proc).
+                                <div class="p-4 bg-base-100/70">
+                                    <textarea class="textarea textarea-bordered bg-base-100 text-sm w-full leading-relaxed" rows="4" x-model="dados.descricao_sisdpu"></textarea>
+                                    <div class="text-[11px] text-base-content/50 mt-1">
+                                        [PROCESSO] e [CHAVE] são preenchidos com os dados da distribuição. Anexo:
+                                        <span class="font-mono" x-text="dados.docx_peticao || '(docx não encontrado em Peças IA)'"></span>.
+                                        O processo também é gerenciado para o procurador padrão (Configurações › e-proc).
+                                    </div>
                                 </div>
-                            </div>
+                            </section>
 
-                            <div class="modal-action mt-0">
-                                <button type="button" class="btn btn-sm" @click="fechar()">Cancelar</button>
+                            <div class="flex items-center justify-end gap-2 pt-3 border-t border-base-300">
+                                <button type="button" class="btn btn-sm btn-ghost" @click="fechar()">Cancelar</button>
                                 <button type="button" class="btn btn-sm btn-primary" @click="preparar()" :disabled="!selecionados().length || (jaAjuizada && !novoAjuizamento)">
                                     Preparar no e-proc (<span x-text="selecionados().length"></span> documentos)
                                 </button>
@@ -363,6 +530,7 @@
                     </div>
                 </div>
             </template>
+            </div>
         </div>
         <div class="modal-backdrop" @click="fechar()"></div>
     </div>

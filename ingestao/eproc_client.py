@@ -1689,6 +1689,10 @@ async def _abrir_processo_jmu(numero_limpo: str) -> dict:
             usuario = (keyring.get_password(eproc_jmu.CREDENCIAL, "usuario") or "").strip()
             senha = keyring.get_password(eproc_jmu.CREDENCIAL, "senha") or ""
             if not (usuario and senha):
+                # Reserva: o cofre do painel (sistema "eproc_jmu"), como no TRF4.
+                from services import cofre_service
+                usuario, senha = cofre_service.get_credenciais("eproc_jmu") or ("", "")
+            if not (usuario and senha):
                 return {"ok": False, "erro": "Credenciais do e-proc da JMU não cadastradas."}
             _passo("── JMU: login na janela do e-proc", page)
             tok = _totp_chave.set(eproc_jmu.CREDENCIAL)

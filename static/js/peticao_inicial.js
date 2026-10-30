@@ -22,6 +22,8 @@ function peticaoInicialApp(pajNorm, pajLabel) {
     return {
         aberto: false, fase: 'plano', carregando: false, erro: '',
         arquivos: [], dados: null, tiposTodos: [], estadosCivis: [], especialidadesConhecidas: [],
+        representados: [], representantes: [], entidades: [], entidadesEm: '', infoAdicionaisOpcoes: [],
+        assuntos: { principais: [], complementares: [], principais_em: '', complementares_em: '' }, buscaCompl: '',
         localidades: [], jaAjuizada: null, novoAjuizamento: false, passos: [], etapaFinal: '', resultado: null, posLog: [], posErro: '',
         // Revisão UNIFICADA pós-ajuizamento (16/10/2026): todas as fichas do
         // SIS-DPU 2.0 num só modal, uma confirmação para tudo.
@@ -57,6 +59,14 @@ function peticaoInicialApp(pajNorm, pajLabel) {
                 this.tiposTodos = j.tipos_todos || [];
                 this.estadosCivis = j.estados_civis || [];
                 this.especialidadesConhecidas = j.especialidades_conhecidas || [];
+                this.representados = j.representados || [];
+                this.infoAdicionaisOpcoes = j.info_adicionais_opcoes || [];
+                this.assuntos = j.assuntos || this.assuntos;
+                if (this.dados && !Array.isArray(this.dados.assuntos_complementares)) this.dados.assuntos_complementares = [];
+                this.entidades = (j.entidades && j.entidades.entidades) || [];
+                this.entidadesEm = (j.entidades && j.entidades.capturado_em) || '';
+                if (this.dados && this.dados.reu && !this.entidades.includes(this.dados.reu)) this.entidades.unshift(this.dados.reu);
+                this.representantes = j.representantes || [];
                 this.localidades = j.localidades || [];
                 this.jaAjuizada = j.ja_ajuizada || null;
             } catch (e) {
@@ -86,6 +96,24 @@ function peticaoInicialApp(pajNorm, pajLabel) {
         },
         selecionados() { return this.arquivos.filter((a) => a.incluir); },
 
+        // Assuntos (tabela capturada do e-proc — ver services/peticao_inicial_service)
+        _semAcento(s) { return (s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase(); },
+        rotuloAssunto(i) { return i.codigo + ' – ' + i.nome + (i.caminho ? ' (' + i.caminho + ')' : ''); },
+        trocarAssuntoPrincipal() {
+            const i = this.assuntos.principais.find((x) => x.codigo === this.dados.assunto_codigo);
+            if (i) this.dados.assunto = i.nome;
+        },
+        complFiltrados() {
+            const q = this._semAcento(this.buscaCompl.trim());
+            if (q.length < 3) return [];
+            const ja = new Set((this.dados.assuntos_complementares || []).map((c) => c.codigo));
+            return this.assuntos.complementares
+                .filter((i) => !ja.has(i.codigo) && (i.codigo.startsWith(q) || this._semAcento(i.nome + ' ' + i.caminho).includes(q)))
+                .slice(0, 25);
+        },
+        addCompl(i) { this.dados.assuntos_complementares.push({ codigo: i.codigo, nome: i.nome, caminho: i.caminho }); this.buscaCompl = ''; },
+        remCompl(k) { this.dados.assuntos_complementares.splice(k, 1); },
+
         async preparar() {
             if (typeof window.garantirCofre === 'function' && !(await window.garantirCofre())) return;
             this.erro = ''; this.passos = [];
@@ -105,8 +133,7 @@ function peticaoInicialApp(pajNorm, pajLabel) {
                     method: 'POST', headers: { 'Content-Type': 'application/json' },
                     body: JSON.stringify({
                         arquivos: this.selecionados().map((a) => ({ caminho: a.caminho, tipo: a.tipo })),
-                        dados: this.dados, novo_ajuizamento: this.novoAjuizamento,
-                    }),
+                        dados: this.dados, novo_ajuizamento: this.novoAjuizamento,                    }),
                 });
                 const j = await resp.json();
                 this.passos = j.passos || [];
@@ -228,7 +255,8 @@ function peticaoInicialApp(pajNorm, pajLabel) {
         },
 
         async _cadastrarProcessoJudicial(r) {
-            this.posLog.push({ ok: null, msg: 'Cadastrando o processo ' + r.numero + ' no PAJ e sincronizando com o tribunal (SIS-DPU 2.0)…' });
+            this.posLog.push({ ok: null, msg: 'Cadastrando o processo ' + r.numero + ' no PAJ e sincronizando com o tribunal (SIS-DPU 2.0)… '
+                                               + 'O SIS 2 aceita 1 gravação a cada 6 s — pode levar até 1 min.' });
             let c;
             try {
                 c = await (await fetch('/api/sisdpu2/processo-judicial/cadastrar', {
@@ -299,7 +327,8 @@ function peticaoInicialApp(pajNorm, pajLabel) {
 
         async _executarConsole(prep) {
             const { c, fase, grupo, r } = prep;
-            this.posLog.push({ ok: null, msg: 'Lançando a movimentação "' + fase + '" no SISDPU (tramita para ' + grupo + ')…' });
+            this.posLog.push({ ok: null, msg: 'Lançando a movimentação "' + fase + '" no SISDPU (tramita para ' + grupo + ')… '
+                                               + 'Aguardando o limite de gravação do SIS 2 quando preciso (até 1 min).' });
             try { sessionStorage.setItem(CHAVE_FIM, JSON.stringify({ resultado: r, posLog: this.posLog.filter((x) => x.ok !== null) })); } catch (e) {}
             this.aberto = false;  // deixa o modal de execução do SISDPU visível
             await c.executar(true);

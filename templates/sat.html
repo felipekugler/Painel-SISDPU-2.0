@@ -394,11 +394,11 @@
 
     <!-- Modal de progresso (SSE) -->
     <div class="modal" :class="{'modal-open': sseAberto}">
-        <div class="modal-box max-w-[50vw]">
+        <div class="modal-box w-11/12 max-w-[85vw]">
             <h3 class="font-bold text-lg mb-2">Processamento <span x-text="sseStatus"></span></h3>
-            <div class="bg-base-300 rounded p-3 text-[11px] leading-[1.65] font-mono h-[340px] overflow-y-auto">
+            <div class="bg-base-300 rounded p-3 text-[11px] leading-[1.65] font-mono h-[340px] overflow-auto">
                 <template x-for="(l, i) in sseLog" :key="i">
-                    <div :class="{
+                    <div class="whitespace-pre" :class="{
                         'text-success': l.level==='ok', 'text-error': l.level==='erro',
                         'text-base-content/50': l.level==='muted', 'text-info': l.level==='info',
                         'text-primary font-semibold': l.level==='novo'}" x-text="l.msg"></div>
@@ -463,7 +463,7 @@
 
     <!-- Modal: Baixar Mais (download complementar) -->
     <div class="modal" :class="{'modal-open': baixarMaisModal}">
-        <div class="modal-box max-w-[50vw]">
+        <div class="modal-box w-11/12 max-w-[85vw]">
             <h3 class="font-bold text-lg mb-1">Baixar mais documentos — <span class="font-mono" x-text="bmAlvo && bmAlvo.paj"></span></h3>
             <p class="text-sm text-base-content/70 mb-3" x-show="bmModo === 'concluido'">
                 Nova consulta ao SAT para <strong x-text="bmAlvo && bmAlvo.assistido"></strong>. Os documentos
@@ -527,8 +527,8 @@
                                            :class="row.ja_baixado ? 'opacity-60' : 'cursor-pointer'">
                                         <input type="checkbox" class="checkbox checkbox-sm" :value="sec.escopo + '::' + row.alvo"
                                                x-model="bmSel" :disabled="row.ja_baixado">
-                                        <span x-text="row.label"></span>
-                                        <span x-show="bmStatusTxt(row)" class="text-[11px]"
+                                        <span class="whitespace-nowrap" x-text="row.label"></span>
+                                        <span x-show="bmStatusTxt(row)" class="text-[11px] whitespace-nowrap"
                                               :class="row.ja_baixado ? 'text-success' : 'text-warning'"
                                               x-text="'(' + bmStatusTxt(row) + ')'"></span>
                                     </label>

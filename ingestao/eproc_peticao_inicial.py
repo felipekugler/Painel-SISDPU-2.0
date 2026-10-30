@@ -189,6 +189,17 @@ async def _upload_e_tipos(page, documentos: list[dict], passos: list) -> str:
     for i, d in enumerate(documentos, start=1):
         if not await ec._selecionar_autocomplete(page, f"txtTipo_{i}", f"divInfraAjaxtxtTipo_{i}", d["tipo"]):
             return f'Tipo "{d["tipo"]}" não encontrado no catálogo do e-proc (documento {i}: {caminhos[i - 1].name}).'
+        if _n(d["tipo"]) == "outros":
+            # OUTROS abre o campo "Observação" (até 100 caracteres): o nome do
+            # arquivo sem a extensão (aprendido no PAJ 2026/029-03088).
+            obs = page.locator(f"#txtObservacao_{i}")
+            for _ in range(10):
+                if await obs.count() and await obs.is_visible():
+                    break
+                await page.wait_for_timeout(300)
+            else:
+                return f'Campo "Observação" do tipo OUTROS não apareceu (documento {i}: {caminhos[i - 1].name}).'
+            await obs.fill((d.get("observacao") or caminhos[i - 1].stem)[:100])
         with contextlib.suppress(Exception):
             await page.locator(f"#selIdSigilo_{i}").select_option(value="0")
     # confere os ids ocultos (o autocomplete só "pega" com clique real)
@@ -264,25 +275,99 @@ async def _etapa1_enderecamento(page, d: dict, passos: list) -> str:
     return ""
 
 
+_JS_ARVORE = r"""async (maxSeg) => {
+    // jsTree #divArvore, carregado sob demanda: abre tudo até a contagem parar.
+    const t = window.jQuery && jQuery('#divArvore').jstree(true);
+    if (!t) return [];
+    const fim = Date.now() + maxSeg * 1000;
+    let antes = -1, agora = t.get_json('#', {flat: true}).length;
+    while (agora !== antes && Date.now() < fim) {
+        antes = agora; t.open_all('#');
+        await new Promise(r => setTimeout(r, 3000));
+        agora = t.get_json('#', {flat: true}).length;
+    }
+    const limpo = h => { const x = document.createElement('div'); x.innerHTML = h; return x.innerText.replace(/\s+/g, ' ').trim(); };
+    const nos = t.get_json('#', {flat: true}).map(n => ({id: n.id, parent: n.parent,
+        nome: limpo(n.text).replace(/\s*\(\d+\)\s*$/, '')}));
+    t.close_all('#');
+    return nos;
+}"""
+
+_JS_SELECIONADOS = r"""() => {
+    const p = [...document.querySelectorAll('*')].find(e => e.children.length
+        && /^Assuntos selecionados/i.test((e.innerText || '').trim()) && e.innerText.length < 6000);
+    return p ? p.innerText.replace(/\s+/g, ' ') : '';
+}"""
+
+
+async def _capturar_arvore(page, d: dict, passos: list, tipo: str, max_seg: int) -> None:
+    """Grava a árvore de assuntos (services.peticao_inicial_service) — nunca
+    derruba a preparação."""
+    try:
+        nos = await page.evaluate(_JS_ARVORE, max_seg)
+        from services import peticao_inicial_service as pis
+        n = pis.gravar_assuntos(tipo, nos, d.get("area") or "", d.get("classe") or "")
+        if n:
+            _log_passo(passos, f"Tabela de assuntos do e-proc atualizada ({tipo}: {n}).")
+    except Exception:  # noqa: BLE001
+        _log.warning("captura da árvore de assuntos (%s) falhou", tipo, exc_info=True)
+
+
+async def _incluir_assunto_codigo(page, codigo: str) -> bool:
+    """`incluirAssunto(código)` do próprio e-proc (o 1º incluído vira o
+    principal; os seguintes, "Demais Assuntos Incluídos")."""
+    with contextlib.suppress(Exception):
+        await page.evaluate("(c) => window.incluirAssunto(c)", codigo)
+    for _ in range(16):
+        await page.wait_for_timeout(500)
+        if codigo in (await page.evaluate(_JS_SELECIONADOS) or ""):
+            return True
+    return False
+
+
 async def _etapa2_assunto(page, d: dict, passos: list) -> str:
+    """Assunto principal: pelo CÓDIGO escolhido no modal (tabela capturada do
+    e-proc) ou, sem código, a sugestão da IA do e-proc que bate com a regra
+    (vazio = 1ª). Depois os complementares, pelo código. As duas árvores
+    (principal: área/classe; demais: tabela inteira do CNJ) são capturadas
+    para o modal — a inteira só quando falta ou tem mais de 30 dias (~1 min)."""
     for _ in range(30):
         if await page.locator("#tblSugestaoAssuntos tr").count():
             break
         await page.wait_for_timeout(500)
+    await _capturar_arvore(page, d, passos, "principais", 30)
     sugestoes = await page.evaluate(
         "() => [...document.querySelectorAll('#tblSugestaoAssuntos tr')].map(tr => tr.innerText.trim())")
-    alvo = _n(d.get("assunto") or "")
-    if not sugestoes:
-        return "A IA do e-proc não sugeriu nenhum assunto — escolha o assunto manualmente."
-    # Assunto vazio (fluxo genérico sem regra para a pretensão) = 1ª sugestão.
-    idx = next((i for i, s in enumerate(sugestoes) if _n(s).startswith(alvo)), -1) if alvo else 0
-    if idx < 0:
-        return ("O assunto \"" + (d.get("assunto") or "") + "\" não está entre as sugestões da IA do e-proc: "
-                + " | ".join(sugestoes[:5]) + ". Escolha o assunto manualmente.")
-    linha = page.locator("#tblSugestaoAssuntos tr").nth(idx)
-    await linha.locator("img[src*='transportar']").first.click()
-    await page.wait_for_timeout(2500)
-    _log_passo(passos, f'Assunto principal: {sugestoes[idx]} (sugestão nº {idx + 1} da IA do e-proc).')
+
+    codigo = re.sub(r"\D", "", d.get("assunto_codigo") or "")
+    if codigo:
+        if not await _incluir_assunto_codigo(page, codigo):
+            return f"O assunto {codigo} não pôde ser incluído como principal — confira na janela do e-proc."
+        principal = (await page.evaluate(_JS_SELECIONADOS)).split("Assunto Principal Ações")[-1].split("Demais")[0].strip()
+        _log_passo(passos, f"Assunto principal: {principal or codigo} (escolhido pelo código).")
+    else:
+        alvo = _n(d.get("assunto") or "")
+        if not sugestoes:
+            return "A IA do e-proc não sugeriu nenhum assunto — escolha o assunto principal no modal."
+        # Assunto vazio (fluxo genérico sem regra para a pretensão) = 1ª sugestão.
+        idx = next((i for i, s in enumerate(sugestoes) if _n(s).startswith(alvo)), -1) if alvo else 0
+        if idx < 0:
+            return ("O assunto \"" + (d.get("assunto") or "") + "\" não está entre as sugestões da IA do e-proc: "
+                    + " | ".join(sugestoes[:5]) + ". Escolha o assunto principal no modal.")
+        linha = page.locator("#tblSugestaoAssuntos tr").nth(idx)
+        await linha.locator("img[src*='transportar']").first.click()
+        await page.wait_for_timeout(2500)
+        _log_passo(passos, f'Assunto principal: {sugestoes[idx]} (sugestão nº {idx + 1} da IA do e-proc).')
+
+    from services import peticao_inicial_service as pis
+    if pis.complementares_desatualizados():
+        await _capturar_arvore(page, d, passos, "complementares", 120)
+    for comp in d.get("assuntos_complementares") or []:
+        cod = re.sub(r"\D", "", str(comp.get("codigo") if isinstance(comp, dict) else comp))
+        if cod and not await _incluir_assunto_codigo(page, cod):
+            return f"O assunto complementar {cod} não pôde ser incluído — confira na janela do e-proc."
+    if d.get("assuntos_complementares"):
+        _log_passo(passos, f"Assuntos complementares incluídos: {len(d['assuntos_complementares'])}.")
     await page.locator("#sbmProcessoEtapa2:visible").first.click()
     if not await _esperar_titulo(page, "Partes"):
         return f'Não avançou para "Partes" (página atual: {await _titulo(page)}).'
@@ -356,7 +441,7 @@ async def _cadastrar_pessoa(page, a: dict, passos: list, pagina_inteira: bool = 
                 break
         else:
             return "O cadastro de pessoa física não foi salvo (a página de cadastro continua aberta) — confira na janela do e-proc."
-        _log_passo(passos, "Autor(a) cadastrado(a) no e-proc (CPF não constava da base).")
+        _log_passo(passos, f"{a.get('nome') or 'Pessoa'} cadastrado(a) no e-proc (CPF não constava da base).")
         return ""
     for _ in range(30):
         await page.wait_for_timeout(500)
@@ -364,7 +449,7 @@ async def _cadastrar_pessoa(page, a: dict, passos: list, pagina_inteira: bool = 
             break
     else:
         return "O cadastro de pessoa física não foi salvo (modal continua aberto) — confira na janela do e-proc."
-    _log_passo(passos, "Autor(a) cadastrado(a) no e-proc (CPF não constava da base).")
+    _log_passo(passos, f"{a.get('nome') or 'Pessoa'} cadastrado(a) no e-proc (CPF não constava da base).")
     return ""
 
 
@@ -477,40 +562,198 @@ async def _id_campo_por_rotulo(page, rotulo: str) -> str:
     }""", rotulo)
 
 
+async def _consultar_parte(page, tipo_pessoa: str, documento: str) -> str:
+    """Formulário de consulta de partes (autores/réus): tipo de pessoa →
+    `#txtCpfCnpj` → `#btnConsultarNome` ("Consultar" do formulário — o texto
+    "Consultar os dados preenchidos" é só o title, não o nome acessível;
+    erro visto em 28/10/2026). Devolve "cadastro" (e-proc abriu o cadastro de
+    pessoa), "achou" ou "" (nada)."""
+    doc_fmt = _doc_formatado(documento)
+    await page.locator("#selTipoPessoa").select_option(tipo_pessoa)
+    await page.wait_for_timeout(1000)
+    campo = "#txtCpfCnpj" if await page.locator("#txtCpfCnpj").count() else \
+        "#" + (await _id_campo_por_rotulo(page, "CPF:") or "txtCpfCnpj")
+    await _digitar(page, campo, re.sub(r"\D", "", documento))
+    await page.locator("#btnConsultarNome:visible").first.click()
+    incluir = page.locator("tr", has_text=doc_fmt).locator("button", has_text="Incluir")
+    for _ in range(40):
+        await page.wait_for_timeout(500)
+        if "pessoa_cadastrar" in (page.url or ""):
+            return "cadastro"
+        if await incluir.count():
+            return "achou"
+    return ""
+
+
+async def _incluir_resultado(page, documento: str, nome: str, principal: bool) -> str:
+    """Inclui a linha do resultado da busca (`#btnIncluir_N`/`#selPrincipalN`).
+    Com mais de um cadastro para o mesmo CPF/CNPJ (o Pequeno Cotolengo tem 2),
+    prefere o de razão social igual à do documento; senão o 1º. Devolve o nome
+    incluído."""
+    doc_fmt = _doc_formatado(documento)
+    linhas = page.locator("tr", has_text=doc_fmt).filter(has=page.locator("button", has_text="Incluir"))
+    n = await linhas.count()
+    alvo = re.sub(r"[^a-z0-9 ]", " ", _n(nome or ""))
+    alvo = re.sub(r"\s+", " ", alvo).strip()
+    idx = 0
+    for i in range(n):
+        txt = re.sub(r"\s+", " ", re.sub(r"[^a-z0-9 ]", " ", _n(await linhas.nth(i).inner_text()))).strip()
+        if alvo and alvo in txt:
+            idx = i
+            break
+    linha = linhas.nth(idx)
+    nome_tela = (await linha.locator("td").nth(2).inner_text()).strip()
+    with contextlib.suppress(Exception):
+        await linha.locator("select").first.select_option("S" if principal else "N")
+    await linha.locator("button", has_text="Incluir").first.click()
+    return nome_tela
+
+
+async def _definir_representacao(page, documento: str, tipo: str, atua_como_parte: bool | None = None) -> str:
+    """"Definir" (coluna Tipo Representação) da linha da parte → janela
+    "Informações da Representação" (iframe `representacao_peticao/
+    autores_subform`, lista `#opcoesSelect` com grupos Representados/
+    Representantes) → escolhe `tipo` → "Atua também como parte?" (só
+    representante) → Salvar. Confere o texto gravado na linha."""
+    doc_fmt = _doc_formatado(documento)
+    linha = page.locator("tr", has_text=doc_fmt).filter(has=page.locator("select:has(option[value='6'])"))
+    # Clique pelo DOM: a linha MAIS INTERNA com o CPF/CNPJ e a gratuidade, e o
+    # controle cujo texto é "Definir" (ou o lápis "alterar", se já definido).
+    # O locator `tr >> button:has-text("Definir")` não resolveu no 1º teste ao
+    # vivo (29/10/2026) — se falhar de novo, o erro traz o HTML da linha.
+    diag = await page.evaluate("""(doc) => {
+        const linhas = [...document.querySelectorAll('tr')].filter(tr =>
+            tr.innerText.includes(doc) && [...tr.querySelectorAll('select option')].some(o => o.value === '6')
+            && ![...tr.querySelectorAll('tr')].some(t => t.innerText.includes(doc)));
+        const tr = linhas[0];
+        if (!tr) return {ok: false, motivo: 'linha não encontrada'};
+        const ctrls = [...tr.querySelectorAll('button, a, input[type=button], img, i, span[onclick]')];
+        const alvo = ctrls.find(e => (e.innerText || e.value || '').trim() === 'Definir')
+                  || ctrls.find(e => /definir|altera|edit/i.test((e.title || '') + (e.getAttribute('onclick') || '') + (e.className || '')));
+        if (!alvo) return {ok: false, motivo: 'controle "Definir" não encontrado',
+                           controles: ctrls.map(e => e.tagName + ':' + (e.innerText || e.value || e.title || '').trim()),
+                           html: tr.outerHTML.slice(0, 1500)};
+        alvo.scrollIntoView({block: 'center'});
+        setTimeout(() => alvo.click(), 50);
+        return {ok: true};
+    }""", doc_fmt)
+    if not diag.get("ok"):
+        _log.warning("Definir representação — %s", diag)
+        return (f'Não consegui abrir "Definir" (Tipo Representação) da linha {doc_fmt}: {diag.get("motivo")}'
+                + (f' — controles na linha: {", ".join(diag.get("controles") or [])}' if diag.get("controles") else "") + ".")
+    frame = None
+    for _ in range(30):
+        await page.wait_for_timeout(500)
+        for f in page.frames:
+            with contextlib.suppress(Exception):
+                if await f.locator("#opcoesSelect").count():
+                    frame = f
+                    break
+        if frame:
+            break
+    if frame is None:
+        return "A janela \"Informações da Representação\" não abriu."
+    if not await _selecionar_por_rotulo(frame, "#opcoesSelect", tipo):
+        opcoes = await frame.evaluate("() => [...document.getElementById('opcoesSelect').options].map(o => o.text)")
+        return f'Tipo de representação "{tipo}" não disponível (opções: {", ".join(opcoes)}).'
+    await page.wait_for_timeout(800)
+    if atua_como_parte is not None:
+        radio = frame.locator(f"input[name='selAtuaComoParte'][value='{'S' if atua_como_parte else 'N'}']")
+        for _ in range(10):
+            if await radio.count() and await radio.first.is_visible():
+                break
+            await page.wait_for_timeout(300)
+        if not await radio.count():
+            return 'Opção "Atua também como parte?" não apareceu.'
+        await radio.first.check(force=True)
+    await frame.locator("button:has-text('Salvar')").first.click()
+    for _ in range(30):
+        await page.wait_for_timeout(500)
+        txt = await linha.first.inner_text() if await linha.count() else ""
+        if _n(tipo)[:20] in _n(txt):
+            return ""
+    return f'A representação "{tipo}" não ficou gravada na linha {doc_fmt}.'
+
+
+async def _representacao(page, a: dict, rep: dict, passos: list) -> str:
+    """Autor representado + representante (curador) — ver
+    `_etapa3_autores_generico`. O vínculo representante→representado é
+    automático quando há um único representado na tabela."""
+    doc = rep.get("documento") or ""
+    if not re.sub(r"\D", "", doc):
+        return "Há representante (curatela) mas o CPF/CNPJ dele está vazio — preencha no modal."
+    erro = await _definir_representacao(page, a["cpf"], rep.get("tipo_autor") or "Civilmente Incapaz - Art. 110, 8.213/91")
+    if erro:
+        return "Autor(a): " + erro
+    tipo_pessoa = rep.get("tipo_pessoa") or ("PJ" if len(re.sub(r"\D", "", doc)) == 14 else "PF")
+    achou = await _consultar_parte(page, tipo_pessoa, doc)
+    if achou == "cadastro" and tipo_pessoa == "PF" and rep.get("cadastro"):
+        # CPF não cadastrado: mesma página de cadastro do autor, com os dados
+        # da qualificação conferida (pedido do Defensor, 30/10/2026).
+        await page.wait_for_load_state("domcontentloaded")
+        erro = await _cadastrar_pessoa(page, rep["cadastro"], passos, pagina_inteira=True)
+        if erro:
+            return "Representante: " + erro
+        incluir = page.locator("tr", has_text=_doc_formatado(doc)).locator("button", has_text="Incluir")
+        for _ in range(30):
+            if await incluir.count():
+                achou = "achou"
+                break
+            await page.wait_for_timeout(500)
+    if achou != "achou":
+        return (f"O representante {rep.get('nome') or ''} ({_doc_formatado(doc)}) não está cadastrado no e-proc — "
+                "cadastre-o na janela do e-proc (botão Novo) e prepare de novo.")
+    principal = rep.get("principal") in (True, "true", "S", "Sim")
+    nome_tela = await _incluir_resultado(page, doc, rep.get("nome") or "", principal=principal)
+    linha = page.locator("tr", has_text=_doc_formatado(doc)).filter(has=page.locator("select:has(option[value='6'])"))
+    for _ in range(30):
+        await page.wait_for_timeout(500)
+        if await linha.count():
+            break
+    else:
+        return "O representante não apareceu na tabela de partes do ajuizamento."
+    erro = await _definir_representacao(page, doc, rep.get("tipo_representante") or "Curador",
+                                        atua_como_parte=bool(rep.get("atua_como_parte")))
+    if erro:
+        return "Representante: " + erro
+    _log_passo(passos, f'Representação: autor(a) "{rep.get("tipo_autor")}" · {nome_tela} ({_doc_formatado(doc)}) '
+                       f'"{rep.get("tipo_representante")}", principal: {"Sim" if principal else "Não"}, atua como parte: '
+                       f'{"Sim" if rep.get("atua_como_parte") else "Não"}.')
+    return ""
+
+
+def _doc_formatado(documento: str) -> str:
+    d = re.sub(r"\D", "", documento or "")
+    if len(d) == 14:
+        return f"{d[:2]}.{d[2:5]}.{d[5:8]}/{d[8:12]}-{d[12:]}"
+    return _cpf_formatado(d)
+
+
 async def _etapa3_autores_generico(page, d: dict, passos: list) -> str:
     """Fluxo genérico, etapa "Partes (autores)": PF → CPF → Consultar →
     (cadastro de pessoa, se o CPF não existir) → Incluir como principal →
-    Justiça Gratuita "Requerida". Representação e Inf. Extra/Benefício ficam
-    em branco (regra do Defensor, 23/10/2026)."""
+    Justiça Gratuita "Requerida". Sem representante, Representação e Inf.
+    Extra/Benefício ficam em branco (regra do Defensor, 23/10/2026). Com
+    representante (curatela — 28/10/2026): autor "Civilmente Incapaz - Art.
+    110, 8.213/91"; curador incluído como outra parte (não principal), tipo
+    "Curador", "Atua também como parte?" = Não."""
     a = d["autor"]
     cpf_fmt = _cpf_formatado(a["cpf"])
-    await page.locator("#selTipoPessoa").select_option("PF")
-    await page.wait_for_timeout(1000)
-    cpf_id = await _id_campo_por_rotulo(page, "CPF:")
-    if not cpf_id:
-        return 'Campo "CPF" não encontrado na etapa de Partes (autores).'
-    await _digitar(page, f"#{cpf_id}", a["cpf"])
-    await page.get_by_role("button", name="Consultar os dados preenchidos").first.click()
-
-    incluir = page.locator("tr", has_text=cpf_fmt).locator("button", has_text="Incluir")
-    for _ in range(40):
-        await page.wait_for_timeout(500)
-        if "pessoa_cadastrar" in (page.url or "") or await incluir.count():
-            break
-    if "pessoa_cadastrar" in (page.url or ""):
+    achou = await _consultar_parte(page, "PF", a["cpf"])
+    if achou == "cadastro":
         await page.wait_for_load_state("domcontentloaded")
         erro = await _cadastrar_pessoa(page, a, passos, pagina_inteira=True)
         if erro:
             return erro
+        incluir = page.locator("tr", has_text=cpf_fmt).locator("button", has_text="Incluir")
         for _ in range(30):
             if await incluir.count():
+                achou = "achou"
                 break
             await page.wait_for_timeout(500)
-    if not await incluir.count():
+    if achou != "achou":
         return f"O e-proc não localizou o CPF {cpf_fmt} do(a) autor(a) para incluir."
-    with contextlib.suppress(Exception):
-        await page.locator("tr", has_text=cpf_fmt).locator("select").first.select_option("S")
-    await incluir.first.click()
+    await _incluir_resultado(page, a["cpf"], a.get("nome") or "", principal=True)
 
     jg = page.locator("tr", has_text=cpf_fmt).locator("select:has(option[value='6'])")
     for _ in range(30):
@@ -519,6 +762,14 @@ async def _etapa3_autores_generico(page, d: dict, passos: list) -> str:
             break
     else:
         return "O(a) autor(a) não apareceu na tabela de partes do ajuizamento."
+
+    # Representação ANTES da gratuidade: incluir o representante recarrega a página.
+    rep = d.get("representante") or {}
+    if rep.get("presente"):
+        erro = await _representacao(page, a, rep, passos)
+        if erro:
+            return erro
+
     await jg.first.select_option("6")
     if await jg.first.input_value() != "6":
         return 'Não foi possível marcar Justiça Gratuita "Requerida".'
@@ -530,6 +781,35 @@ async def _etapa3_autores_generico(page, d: dict, passos: list) -> str:
     return ""
 
 
+async def _capturar_entidades(page, passos: list) -> None:
+    """"Listar todas as entidades" (botão ao lado de #txtEntidade) → grava a
+    lista para o card do réu do modal (services.peticao_inicial_service.
+    entidades_eproc). Falha aqui nunca derruba a preparação."""
+    try:
+        botao = page.locator("#btnListarTodosEntidade:visible, button[title='Listar todas as entidades']:visible")
+        if not await botao.count():
+            return
+        await botao.first.click()
+        nomes: list[str] = []
+        for _ in range(16):
+            await page.wait_for_timeout(500)
+            nomes = await page.evaluate("""() => {
+                const caixas = [...document.querySelectorAll('[id*="ntidade"]')].filter(e => e.offsetParent && e.tagName !== 'INPUT' && e.tagName !== 'BUTTON');
+                const lis = caixas.flatMap(c => [...c.querySelectorAll('li')]);
+                return [...new Set(lis.map(li => li.innerText.trim()).filter(Boolean))];
+            }""")
+            if len(nomes) > 1:
+                break
+        await page.keyboard.press("Escape")
+        await page.locator("#txtEntidade").fill("")
+        if len(nomes) > 1:
+            from services import peticao_inicial_service as pis
+            pis.gravar_entidades_eproc(nomes)
+            _log_passo(passos, f"Lista de entidades do e-proc atualizada ({len(nomes)}).")
+    except Exception:  # noqa: BLE001
+        _log.warning("captura da lista de entidades do e-proc falhou", exc_info=True)
+
+
 async def _etapa4_reus_generico(page, d: dict, passos: list) -> str:
     """Fluxo genérico, etapa "Partes (Réus)": Entidade → INSS (autocomplete
     #txtEntidade) → principal → Incluir. A tela pode abrir com PF e um alert
@@ -537,6 +817,7 @@ async def _etapa4_reus_generico(page, d: dict, passos: list) -> str:
     reu = d.get("reu") or "INSTITUTO NACIONAL DO SEGURO SOCIAL - INSS"
     await page.locator("#selTipoPessoa").select_option("ENT")
     await page.wait_for_timeout(1000)
+    await _capturar_entidades(page, passos)
     campo = page.locator("#txtEntidade")
     await campo.click()
     await campo.fill("")
@@ -599,17 +880,34 @@ async def _etapa4_informacoes(page, d: dict, passos: list) -> str:
     """Última etapa (4 de 4 no BI, 5 de 5 no genérico — mesma
     `acao=processo_cadastrar_4`). No genérico não há o art. 129-A; prioridade
     de idoso vem marcada e travada pelo próprio e-proc."""
-    tem_129a = False
-    for cid in _CHECKBOXES_ETAPA4:
+    # Marcações escolhidas no modal (seção Processo › Informações adicionais,
+    # 30/10/2026); plano antigo sem elas: regra de sempre (tutela + 129-A).
+    info = d.get("info_adicionais") or {}
+    # Lê as opções que a tela tem HOJE (o e-proc pode criar novas) e as
+    # registra para o modal (services.peticao_inicial_service).
+    vistas = []
+    with contextlib.suppress(Exception):
+        vistas = await page.evaluate("""() => [...document.querySelectorAll('input[type=checkbox][id^="chk"]')]
+            .filter(c => c.offsetParent)
+            .map(c => ({id: c.id, rotulo: ((document.querySelector('label[for="' + c.id + '"]') || c.closest('label') || c.parentElement || {}).innerText || '').trim()}))""")
+        from services import peticao_inicial_service as pis
+        novos = pis.gravar_info_adicionais_vistas(vistas, d.get("fluxo") or "")
+        if novos:
+            _log_passo(passos, "⚠ Opção(ões) nova(s) em Informações Adicionais no e-proc, deixada(s) desmarcada(s): "
+                               + ", ".join(novos) + " — já aparece(m) no modal para as próximas preparações.")
+    marcadas = []
+    for cid in list(dict.fromkeys(_CHECKBOXES_ETAPA4 + [v["id"] for v in vistas if v.get("id") != "chkIdosoVisual"])):
         loc = page.locator(f"#{cid}")
         if not await loc.count() or not await loc.is_enabled():
             continue
-        tem_129a = tem_129a or cid == "chkAtendeReqLei8213_91"
-        marcar = (cid == "chkAtendeReqLei8213_91") or (cid == "chkCautAntecTutela" and bool(d.get("tutela")))
+        if info:
+            marcar = bool(info.get(cid))
+        else:
+            marcar = (cid == "chkAtendeReqLei8213_91") or (cid == "chkCautAntecTutela" and bool(d.get("tutela")))
         await loc.set_checked(marcar)
-    marcas = (["art. 129-A mantido"] if tem_129a else []) \
-        + (["Liminar/Antecipação de Tutela marcada"] if d.get("tutela") else [])
-    _log_passo(passos, "Informações adicionais: " + (" · ".join(marcas) or "nenhuma opção marcada") + ".")
+        if marcar:
+            marcadas.append(cid.replace("chk", ""))
+    _log_passo(passos, "Informações adicionais marcadas: " + (", ".join(marcadas) or "nenhuma") + ".")
     return ""
 
 
@@ -651,6 +949,8 @@ async def preparar(plano: dict) -> dict:
                 await _marcar_radio(page, "btnPredicao")  # mesmo cuidado dos controles estilizados
             _log_passo(passos, "Apoio por Inteligência Artificial ligado.")
 
+            # Sempre apaga os pendentes e envia tudo de novo — segurança preferida
+            # pelo Defensor à conferência dos já enviados (29/10/2026).
             res = await _limpar_documentos_pendentes(page, passos)
             if not res["ok"]:
                 return {"ok": False, "passos": passos, "erro": res["erro"]}
