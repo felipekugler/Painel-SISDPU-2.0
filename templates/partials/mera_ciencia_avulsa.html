@@ -1,0 +1,13 @@
+{# "Dar mera ciência" fora da página do PAJ (Prazos, Triagem de Intimações) —
+   o MESMO fluxo e modal da página do PAJ. A página dispara:
+     window.dispatchEvent(new CustomEvent('mera-ciencia-avulsa', { detail: {...} }))
+   e mostra o spinner do botão com Alpine.store('meraCiencia').busy[chave].
+   Ver meraCienciaAvulsaBlock em static/js/processo_judicial.js. #}
+<script>
+document.addEventListener('alpine:init', () => {
+    if (!Alpine.store('meraCiencia')) Alpine.store('meraCiencia', { busy: {} });
+});
+</script>
+<div x-data="meraCienciaAvulsaBlock()" @mera-ciencia-avulsa.window="dar($event.detail)">
+    {% include "partials/mera_ciencia_modal.html" %}
+</div>

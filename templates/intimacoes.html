@@ -570,19 +570,17 @@
                                                  e-proc, e isso já vem de `it._atoRef` (mesmo carregamento
                                                  em segundo plano do badge "Ato referenciado", ver
                                                  `_carregarAtosReferenciados`); some sozinho se o casamento
-                                                 de evento não for possível. Fluxo TRAZIDO da página do PAJ
-                                                 (2026-09-26, pedido explícito do usuário — mesmo modal de
-                                                 confirmação com checklist de litisconsórcio e dropdowns de
-                                                 Gerenciamento, ver `static/js/processo_judicial.js`/
-                                                 `partials/processo_judicial.html`): clicar já busca os
-                                                 eventos candidatos (`/eventos-do-ato`) e abre o modal
-                                                 teleportado (`confirmDialog`, fim da página) — nada mais é
-                                                 disparado sem revisão explícita ali. Ver
+                                                 de evento não for possível. Unificado 30/10/2026 com a
+                                                 página do PAJ e a de Prazos: o MESMO componente e modal
+                                                 (partials/mera_ciencia_avulsa.html — checklist do prazo,
+                                                 gerenciamento opcional, ficha do SIS-DPU 2.0 e descrição
+                                                 com "Alterar"); nada é disparado sem confirmar ali. Ver
                                                  `services.mera_ciencia_service`. -->
                                             <button x-show="(it._atoRef || {}).evento_intimacao"
                                                     class="btn btn-xs btn-outline btn-success shrink-0" @click="darMeraCiencia(it)"
-                                                    :disabled="meraCienciaRodando(it) || jobRodando(it.chave_caso)"
-                                                    title="Dispara agora: ciência no e-proc + Gerenciamento de Processo + movimentação no SISDPU">
+                                                    :disabled="meraCienciaRodando(it) || jobRodando(it.chave_caso) || !it.paj_norm"
+                                                    :title="!it.paj_norm ? 'Sem PAJ vinculado a este processo — a mera ciência também movimenta o PAJ no SISDPU.'
+                                                            : 'Dispara: ciência no e-proc + Gerenciamento de Processo (opcional) + movimentação no SISDPU (com confirmação antes)'">
                                                 <span x-show="meraCienciaRodando(it)" class="loading loading-spinner loading-xs"></span>
                                                 Dar mera ciência
                                             </button>
@@ -628,96 +626,6 @@
             class="menu menu-xs bg-base-100 rounded-box z-[1000] w-48 p-1 shadow border border-base-300">
             {{ itens_minimenu_paj('menuAbertoPaj', 'menuAbertoPajLabel', after='menuAbertoPaj = null') }}
         </ul>
-    </template>
-
-    <!-- Modal de confirmação de "Dar mera ciência" (substitui confirm() nativo
-         — trazido da página do PAJ, 2026-09-26, pedido explícito do usuário —
-         mesma estrutura de templates/partials/processo_judicial.html/
-         static/js/processo_judicial.js: checklist de litisconsórcio (2 dos
-         3 passos) + dropdowns "Gerenciar processo" + descrição editável da
-         movimentação, e SÓ ENTÃO dispara as 3 ações reais. Teleportado pro
-         <body> pelo mesmo motivo dos menus acima (escapar do overflow-x da
-         tabela). -->
-    <template x-teleport="body">
-        <div class="modal" :class="{'modal-open': confirmDialog.show}" @click.self="_responderConfirmModal(false)">
-            <div class="modal-box w-full max-w-[50vw]">
-                <h3 class="font-bold text-base text-center bg-error/10 text-error border border-error/40 rounded-md py-2">Atenção</h3>
-                <p class="pt-3 text-sm">Ao prosseguir, serão executadas as seguintes ações de maneira irreversível no e-proc e no SISDPU:</p>
-                <div class="flex flex-col gap-3 py-3">
-                    <div class="text-sm">
-                        <div>1) Peticionamento no e-proc com o evento:</div>
-                        <div class="pl-5 mt-1 text-base-content/70">• ciência, com renúncia ao prazo</div>
-                        <div class="ret-acao-bloco mt-2 ml-5" x-show="confirmDialog.fase === 'confirmando'">
-                            <div class="ret-acao-titulo">Selecione o(s) prazo(s) a ser(em) fechado(s)</div>
-                            <div class="flex flex-col gap-1">
-                                <template x-for="p in confirmDialog.prazosDisponiveis" :key="p.evento_intimacao">
-                                    <label class="flex items-start gap-2 cursor-pointer">
-                                        <input type="checkbox" class="checkbox checkbox-xs mt-0.5"
-                                               x-model="confirmDialog.prazosSelecionados[p.evento_intimacao]"
-                                               @change="_atualizarDescricaoSugerida()">
-                                        <span>
-                                            <span x-text="p.label"></span>
-                                            <span class="text-base-content/40 font-mono" x-text="' · ' + confirmDialog.numeroProcesso"></span>
-                                        </span>
-                                    </label>
-                                </template>
-                            </div>
-                        </div>
-                    </div>
-                    <div class="text-sm">
-                        <div>2) Gerenciamento do processo judicial (substabelecimento):</div>
-                        <div class="pl-5 mt-1 flex items-center gap-2 flex-wrap" x-show="confirmDialog.fase === 'confirmando'">
-                            <select class="select select-bordered select-sm" x-model="confirmDialog.gerenciamentoTipo">
-                                <template x-for="t in tiposGerenciamento" :key="t.valor">
-                                    <option :value="t.valor" x-text="t.rotulo"></option>
-                                </template>
-                            </select>
-                            <!-- id fixo (não x-ref — o modal é teleportado, mas fica só 1 na
-                                 página) pra `_confirmarModal` conseguir forçar o valor depois
-                                 que as <option> (x-for) existirem de verdade no DOM — mesmo bug
-                                 já documentado nesta base ("Alpine select x-model vs nested
-                                 x-for race"): setar x-model ANTES das <option> existirem faz o
-                                 <select> nativo ignorar silenciosamente e mostrar o placeholder,
-                                 mesmo com o dado certo por trás. -->
-                            <select data-busca id="mc-select-procurador" class="select select-bordered select-sm min-w-[18rem]" x-show="confirmDialog.gerenciamentoTipo !== 'D'"
-                                    x-model="confirmDialog.gerenciamentoProcuradorValor" @change="_onTrocarGerenciamentoProcurador()">
-                                <option value="">Escolha um Procurador</option>
-                                <template x-for="p in confirmDialog.procuradoresDropdown" :key="p.valor">
-                                    <option :value="p.valor" x-text="p.rotulo"></option>
-                                </template>
-                            </select>
-                            <span x-show="confirmDialog.gerenciamentoTipo !== 'D' && !confirmDialog.procuradoresDropdown.length"
-                                  class="text-[11px] text-base-content/50">configure em Configurações › e-proc</span>
-                        </div>
-                        <div class="pl-5 mt-1 text-base-content/70" x-show="confirmDialog.fase !== 'confirmando'"
-                             x-text="'• ' + (tiposGerenciamento.find(t => t.valor === confirmDialog.gerenciamentoTipo) || {}).rotulo
-                                     + (confirmDialog.gerenciamentoTipo !== 'D' ? (' → ' + (confirmDialog.gerenciamentoProcuradorRotulo || confirmDialog.gerenciamentoProcuradorValor)) : '')"></div>
-                    </div>
-                    <div class="text-sm">
-                        <div>3) Movimentação no SISDPU da fase petição de mera ciência, com descrição:</div>
-                        <textarea class="textarea textarea-bordered textarea-sm w-[calc(100%-1.25rem)] ml-5 mt-1"
-                                  rows="2" x-show="confirmDialog.fase === 'confirmando'"
-                                  x-model="confirmDialog.descricaoMov"
-                                  @input="confirmDialog.descricaoMovEditada = true"></textarea>
-                        <div class="pl-5 mt-1 text-base-content/70" x-show="confirmDialog.fase !== 'confirmando'"
-                             x-text="'• ' + confirmDialog.descricaoMov"></div>
-                    </div>
-                </div>
-                <p class="text-sm font-medium" x-show="confirmDialog.fase === 'confirmando'">Deseja prosseguir?</p>
-                <p class="text-sm font-medium text-center" x-show="confirmDialog.fase !== 'confirmando'" x-text="confirmDialog.status"></p>
-                <div class="modal-action">
-                    <template x-if="confirmDialog.fase === 'confirmando'">
-                        <div class="flex gap-2">
-                            <button type="button" class="btn btn-sm" @click="_responderConfirmModal(false)">Cancelar</button>
-                            <button type="button" class="btn btn-sm btn-success" @click="_responderConfirmModal(true)"
-                                    :disabled="!_algumPrazoSelecionado() || !confirmDialog.descricaoMov.trim() || !_gerenciamentoValido()">Confirmar</button>
-                        </div>
-                    </template>
-                    <template x-if="confirmDialog.fase === 'executando'"><span class="loading loading-spinner loading-sm"></span></template>
-                    <template x-if="confirmDialog.fase === 'concluido'"><button type="button" class="btn btn-sm" @click="_fecharConfirmModal()">Fechar</button></template>
-                </div>
-            </div>
-        </div>
     </template>
 
     <!-- Tooltip do Lembrete (post-it estilo e-proc) — mesmo padrão de templates/prazos.html -->
@@ -776,8 +684,11 @@
         </template>
     </div>
 </div>
+
+<!-- "Dar mera ciência" — componente compartilhado com a página do PAJ e a de Prazos. -->
+{% include "partials/mera_ciencia_avulsa.html" %}
 {% endblock %}
 
 {% block scripts %}
-<script src="/static/js/intimacoes.js?v={{ app_version }}-bt1"></script>
+<script src="/static/js/intimacoes.js?v={{ app_version }}-mc2"></script>
 {% endblock %}

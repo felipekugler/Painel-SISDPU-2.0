@@ -692,6 +692,19 @@ function processoJudicialBlock(cfg) {
                 if (!entregue) this.meraCienciaBusy[chaveBusy] = false;
             }
         },
+        // Sucesso da mera ciência na página do PAJ: atualiza as movimentações e
+        // recarrega a página (nunca fica só no "Concluído ✓" sem a conferência
+        // visual do que foi lançado no SISDPU). Fora da página do PAJ,
+        // `meraCienciaAvulsaBlock` (abaixo) troca isto por "fecha o modal e
+        // avisa a página" — ex.: a Triagem recarrega só a lista.
+        async _aposSucessoMeraCiencia() {
+            this.confirmDialog.status = 'Concluído ✓ — atualizando movimentações do PAJ…';
+            if (typeof window.atualizarMovimentacoesPaj === 'function' && window._paj_norm) {
+                try { await window.atualizarMovimentacoesPaj(window._paj_norm); } catch (e) { /* ignore */ }
+            }
+            window.location.reload();
+            await new Promise(() => {});  // a navegação encerra este fluxo
+        },
         _executarMeraCienciaSSE(idx, chaveBusy, numero, ato, descricao, eventosSelecionados,
                                  gerenciamentoTipo, gerenciamentoProcuradorValor, gerenciamentoProcuradorRotulo, gerenciar) {
             return new Promise((resolve) => {
@@ -720,11 +733,8 @@ function processoJudicialBlock(cfg) {
                         // pro Defensor a conferência visual do que foi lançado no
                         // SISDPU. Nunca resolve/chega no `finally` daqui pra baixo —
                         // a própria navegação encerra este fluxo.
-                        this.confirmDialog.status = 'Concluído ✓ — atualizando movimentações do PAJ…';
-                        if (typeof window.atualizarMovimentacoesPaj === 'function' && window._paj_norm) {
-                            try { await window.atualizarMovimentacoesPaj(window._paj_norm); } catch (e) { /* ignore */ }
-                        }
-                        window.location.reload();
+                        await this._aposSucessoMeraCiencia();
+                        resolve();
                         return;
                     }
                     this.confirmDialog.status = 'Erro: ' + (res.erro || 'falha desconhecida');
@@ -907,4 +917,59 @@ function processoJudicialBlock(cfg) {
                 .join('<br>');
         },
     };
+}
+
+// "Dar mera ciência" FORA da página do PAJ (Prazos, Triagem de Intimações —
+// unificado 30/10/2026): o MESMO fluxo e modal da página do PAJ
+// (processoJudicialBlock + partials/mera_ciencia_modal.html), um processo por
+// vez, com o caso (ato) já conhecido pela linha que disparou. Montado por
+// partials/mera_ciencia_avulsa.html, que ouve o evento `mera-ciencia-avulsa`:
+//   detail = { numero, caso, pajNorm, prazo?, chave?, aoTerminar? }
+//   - prazo: prazo cru do Painel (evento/data_envio/prazo_dias); sem ele, usa o
+//     1º prazo do próprio caso.
+//   - chave: chave do spinner do botão em Alpine.store('meraCiencia').busy
+//     (default: a mesma chave da página do PAJ).
+//   - aoTerminar(ok): chamada ao fim (sucesso ou erro). Com ela, o sucesso só
+//     fecha o modal e devolve o controle à página (ex.: a Triagem recarrega a
+//     lista); sem ela, recarrega a página, como na página do PAJ.
+function meraCienciaAvulsaBlock() {
+    const base = processoJudicialBlock({ processos: [] });
+    return Object.assign(base, {
+        pajNormMc: '', _chaveAtual: '', _aoTerminar: null,
+        init() { this.meraCienciaBusy = Alpine.store('meraCiencia').busy; },
+        async carregarIntimacoes() {
+            if (this._aoTerminar) { try { await this._aoTerminar(false); } catch (e) { /* ignore */ } }
+        },
+        _chaveMeraCiencia(idx, it) {
+            return this._chaveAtual || (idx + ':' + (it._painelEvento || '') + '|' + (it._painelDataEnvio || '') + '|' + (it._painelPrazoDias || ''));
+        },
+        // Na página do PAJ o número vem de window._paj_norm (fixo); aqui muda a
+        // cada disparo, então vem de um dado reativo do componente.
+        _pajLabelAtual() {
+            const m = String(this.pajNormMc || '').match(/^PAJ-(\d{4})-(\d{3})-(\d+)$/);
+            return m ? m[1] + '/' + m[2] + '-' + m[3] : '';
+        },
+        async _aposSucessoMeraCiencia() {
+            if (!this._aoTerminar) {
+                this.confirmDialog.status = 'Concluído ✓ — atualizando…';
+                window.location.reload();
+                await new Promise(() => {});
+            }
+            this._fecharConfirmModal();
+            if (typeof showToast === 'function') showToast('Mera ciência concluída.', 'success');
+            try { await this._aoTerminar(true); } catch (e) { /* ignore */ }
+        },
+        async dar(d) {
+            if (!d || !d.caso || !d.numero) return;
+            this.pajNormMc = d.pajNorm || d.caso.paj_norm || '';
+            window._paj_norm = this.pajNormMc;  // usado pelo fluxo (PAJ da ficha do SISDPU, conferência do vínculo)
+            this._chaveAtual = d.chave || '';
+            this._aoTerminar = typeof d.aoTerminar === 'function' ? d.aoTerminar : null;
+            this.processos = [{ processo_judicial: d.numero }];
+            this.atosPorProcesso = { 0: [d.caso] };
+            const p = d.prazo || (d.caso.prazos || [])[0] || {};
+            await this.darMeraCienciaPaj(0, { _painelEvento: p.evento, _painelDataEnvio: p.data_envio,
+                                              _painelPrazoDias: p.prazo_dias });
+        },
+    });
 }

@@ -15,11 +15,10 @@
 // permitem a execução manual. A ÚNICA EXCEÇÃO é o botão "Dar mera ciência"
 // (2026-08-29, substitui o extinto "Gravar p/ mera ciência" + tela /lote-
 // ciencia — "não me senti seguro em fazer em lote"): dispara, para ESTE
-// único processo, as 3 ações reais e sempre iguais (ciência com renúncia ao
-// prazo no e-proc + Gerenciamento de Processo + movimentação no SISDPU),
-// só depois de um `confirm()` explícito e com a descrição da movimentação já
-// revisada/editada pelo Defensor na caixa de texto ao lado — ver
-// `services.mera_ciencia_service`.
+// único processo, as ações reais (ciência com renúncia ao prazo no e-proc +
+// Gerenciamento de Processo, se marcado + movimentação no SISDPU), só depois
+// de confirmadas no modal compartilhado com a página do PAJ
+// (partials/mera_ciencia_avulsa.html) — ver `services.mera_ciencia_service`.
 
 function intimacoesPage() {
     return {
@@ -41,29 +40,6 @@ function intimacoesPage() {
         // processo mesmo (de propósito).
         selecionados: {},   // { [chave_caso]: true } — checkboxes da análise coletiva
         baixandoAto: {},    // { [chave_caso + ':' + numero_evento]: true } — feedback do badge "Baixar" do ato referenciado
-        meraCienciaBusy: {},  // { [chave_caso]: true } — spinner do botão "Dar mera ciência" (resolvendo o ato + aguardando o modal)
-
-        // Mesma lista estática de `static/js/acoes_eproc.js:tiposGerenciamento`
-        // (espelha `eproc_client.TIPOS_GERENCIAMENTO`) — dropdown "tipo" do
-        // item 2 do modal de "Dar mera ciência", trazido da página do PAJ
-        // (2026-09-26 — ver `static/js/processo_judicial.js`).
-        tiposGerenciamento: [
-            { valor: 'S', rotulo: 'Substituir procurador' },
-            { valor: 'C', rotulo: 'Associar procurador' },
-            { valor: 'D', rotulo: 'Desassociar procurador' },
-            { valor: 'T', rotulo: 'Substituição Transitória' },
-        ],
-        // Modal de confirmação de "Dar mera ciência" (substitui confirm()
-        // nativo) — MESMA estrutura/campos de `processo_judicial.js`
-        // (trazido de lá, 2026-09-26, pedido explícito do usuário). Ver
-        // comentário completo lá pro significado de cada campo.
-        confirmDialog: {
-            show: false, resolver: null, fase: 'confirmando', status: '', numeroProcesso: '',
-            descricaoAto: '', prazosDisponiveis: [], prazosSelecionados: {},
-            gerenciamentoTipo: 'S', gerenciamentoProcuradorValor: '', gerenciamentoProcuradorRotulo: '',
-            procuradoresDropdown: [],
-            descricaoMov: '', descricaoMovEditada: false,
-        },
 
         // Minimenus "Consultar processo"/"Abrir PAJ" — menu global único,
         // reposicionado por clique e teleportado pro <body> (ver os 2
@@ -595,252 +571,26 @@ function intimacoesPage() {
         },
 
         // --------------------------------------------------------------
-        // "Dar mera ciência" — TRAZIDO da página do PAJ (2026-09-26, pedido
-        // explícito do usuário: "traga para cá o que desenvolvemos lá. adote
-        // o modal de confirmação aqui também"). Mesmo fluxo/mesmos campos de
-        // `static/js/processo_judicial.js` — só adaptado pra já ter `it`
-        // (processo + chave_caso) direto, sem precisar casar um prazo cru
-        // contra `/api/intimacoes/{processo}/atos` (a Triagem já lista por
-        // ato, a página do PAJ não). Substitui o extinto "Gravar p/ mera
-        // ciência" + tela /lote-ciencia ("não me senti seguro em fazer em
-        // lote") e, agora, também o confirm() nativo simples que eu tinha
-        // posto antes disto (substituído pelo modal com checklist de
-        // litisconsórcio + dropdowns de Gerenciamento).
+        // "Dar mera ciência" — unificado 30/10/2026 com a página do PAJ e a de
+        // Prazos: o MESMO componente e modal (partials/mera_ciencia_avulsa.html
+        // + meraCienciaAvulsaBlock em static/js/processo_judicial.js — checklist
+        // do prazo, gerenciamento opcional, ficha do SIS-DPU 2.0, descrição com
+        // "Alterar", sessão do MCP). Antes havia aqui uma cópia própria, que
+        // ficou para trás (sem a ficha do SIS-DPU 2.0 e com o gerenciamento
+        // sempre ligado). Aqui só se diz qual processo/ato/PAJ; ao terminar,
+        // recarrega a lista (não a página).
         // --------------------------------------------------------------
-
         meraCienciaRodando(it) {
-            return !!this.meraCienciaBusy[it.chave_caso];
+            return !!Alpine.store('meraCiencia').busy[it.chave_caso];
         },
-
-        // Sugestão da descrição da movimentação no SISDPU, montada a partir
-        // dos eventos MARCADOS no checklist (não todos os disponíveis — o
-        // Defensor pode desmarcar algum evento do litisconsórcio antes de
-        // fechar). Só uma SUGESTÃO — o texto final vem de
-        // `confirmDialog.descricaoMov` (caixa editável dentro do modal).
-        // Função PURA (não lê `this.confirmDialog`) pra poder ser chamada
-        // tanto ANTES do modal existir (sugestão inicial) quanto DEPOIS
-        // (recálculo ao vivo, ver `_atualizarDescricaoSugerida`).
-        _descricaoMeraCiencia(prazosDisponiveis, prazosSelecionados, descricaoAto) {
-            const eventos = (prazosDisponiveis || [])
-                .filter((p) => prazosSelecionados[p.evento_intimacao])
-                .map((p) => String(p.evento_intimacao));
-            if (!eventos.length) return '';
-            const plural = eventos.length > 1;
-            return `Ciente da intimação do${plural ? 's' : ''} evento${plural ? 's' : ''} `
-                 + `(${eventos.join(', ')}), referente a ${descricaoAto || 'ato judicial'}.`;
-        },
-
-        // Chamada a cada clique num checkbox do checklist — só recalcula a
-        // sugestão enquanto o Defensor não tiver editado a caixa de texto à
-        // mão (nunca sobrescreve uma edição manual).
-        _atualizarDescricaoSugerida() {
-            const cd = this.confirmDialog;
-            if (cd.descricaoMovEditada) return;
-            cd.descricaoMov = this._descricaoMeraCiencia(cd.prazosDisponiveis, cd.prazosSelecionados, cd.descricaoAto);
-        },
-
-        _algumPrazoSelecionado() {
-            return Object.values(this.confirmDialog.prazosSelecionados || {}).some(Boolean);
-        },
-
-        // "Desassociar procurador" (tipo "D") não tem procurador destino —
-        // só os demais tipos exigem um escolhido (mesma regra de "Ações no
-        // Eproc"/do backend, ver `mera_ciencia_service.dar_mera_ciencia`).
-        _gerenciamentoValido() {
-            const cd = this.confirmDialog;
-            return cd.gerenciamentoTipo === 'D' || !!cd.gerenciamentoProcuradorValor;
-        },
-
-        // Guarda o rótulo junto do valor pro log/histórico ficarem legíveis.
-        _onTrocarGerenciamentoProcurador() {
-            const cd = this.confirmDialog;
-            const p = (cd.procuradoresDropdown || []).find((p) => p.valor === cd.gerenciamentoProcuradorValor);
-            cd.gerenciamentoProcuradorRotulo = p ? p.rotulo : '';
-        },
-
-        // Modal de confirmação (substitui confirm() nativo) — devolve uma
-        // Promise<boolean>, resolvida pelos botões do modal teleportado (ver
-        // fim do template). `dados`: {descricaoAto, prazosDisponiveis,
-        // prazosSelecionados, gerenciamentoTipo, gerenciamentoProcuradorValor,
-        // gerenciamentoProcuradorRotulo, procuradoresDropdown, descricaoMov}.
-        _confirmarModal(dados) {
-            return new Promise((resolve) => {
-                this.confirmDialog = {
-                    show: true, resolver: resolve, fase: 'confirmando', status: '',
-                    numeroProcesso: dados.numeroProcesso,
-                    descricaoAto: dados.descricaoAto,
-                    prazosDisponiveis: dados.prazosDisponiveis,
-                    prazosSelecionados: dados.prazosSelecionados,
-                    gerenciamentoTipo: dados.gerenciamentoTipo,
-                    gerenciamentoProcuradorValor: dados.gerenciamentoProcuradorValor,
-                    gerenciamentoProcuradorRotulo: dados.gerenciamentoProcuradorRotulo,
-                    procuradoresDropdown: dados.procuradoresDropdown,
-                    descricaoMov: dados.descricaoMov, descricaoMovEditada: false,
-                };
-                // Bug real já documentado nesta base ("Alpine select x-model
-                // vs nested x-for race"): o <select> do procurador recebe o
-                // valor pré-selecionado (`gerenciamentoProcuradorValor`) no
-                // MESMO instante em que suas <option> (x-for sobre
-                // `procuradoresDropdown`, um array NOVO a cada abertura do
-                // modal) ainda não existem no DOM — o <select> nativo ignora
-                // silenciosamente e mostra o placeholder, mesmo com o dado
-                // certo por trás (a próxima leitura de `confirmDialog.
-                // gerenciamentoProcuradorValor` continua correta, só a
-                // seleção VISUAL falha). `Alpine.nextTick` roda só depois do
-                // Alpine já ter criado as <option> novas.
-                Alpine.nextTick(() => {
-                    const el = document.getElementById('mc-select-procurador');
-                    if (el) el.value = dados.gerenciamentoProcuradorValor || '';
-                });
-            });
-        },
-
-        _responderConfirmModal(ok) {
-            // Só faz algo na fase "confirmando" — clique no backdrop/Cancelar
-            // durante a execução real NUNCA fecha o modal (só habilitado
-            // depois de concluído). Confirmar sem prazo marcado, sem
-            // descrição ou com gerenciamento incompleto tampouco faz nada
-            // (botão já fica desabilitado nesses casos — isto aqui é só a
-            // segunda trava).
-            if (this.confirmDialog.fase !== 'confirmando') return;
-            if (ok && (!this._algumPrazoSelecionado() || !this.confirmDialog.descricaoMov.trim()
-                       || !this._gerenciamentoValido())) return;
-            const resolver = this.confirmDialog.resolver;
-            if (ok) {
-                this.confirmDialog.fase = 'executando';
-                this.confirmDialog.resolver = null;
-            } else {
-                this._fecharConfirmModal();
-            }
-            if (resolver) resolver(ok);
-        },
-
-        _fecharConfirmModal() {
-            this.confirmDialog = {
-                show: false, resolver: null, fase: 'confirmando', status: '', numeroProcesso: '',
-                descricaoAto: '', prazosDisponiveis: [], prazosSelecionados: {},
-                gerenciamentoTipo: 'S', gerenciamentoProcuradorValor: '', gerenciamentoProcuradorRotulo: '',
-                procuradoresDropdown: [], descricaoMov: '', descricaoMovEditada: false,
-            };
-        },
-
-        async darMeraCiencia(it) {
-            if (this.meraCienciaBusy[it.chave_caso]) return;
-            this.meraCienciaBusy[it.chave_caso] = true;
-            // Sem texto de status aqui — só o spinner do botão
-            // (`meraCienciaRodando`) enquanto resolve o ato e a descrição por
-            // trás; a 1ª coisa visível pro Defensor é o modal de confirmação.
-            // `_executarMeraCienciaSSE` assume o controle de `meraCienciaBusy`
-            // (zera sozinha ao terminar) só depois de disparada — `entregue`
-            // marca esse ponto pra este `finally` só zerar `busy` nos
-            // caminhos de saída ANTES dela (evento não encontrado, cancelado
-            // no modal).
-            let entregue = false;
-            try {
-                const ato = it.chave_caso.split(':')[1];
-                // Checklist "Selecione o(s) prazo(s) a ser(em) fechado(s)" —
-                // mesmo estilo de "Ações no Eproc". Todos os candidatos
-                // identificados (por identidade — ver `eproc_procurador_
-                // service`) vêm pré-marcados; o Defensor pode desmarcar algum
-                // antes de confirmar (ex.: litisconsórcio em que só um
-                // coautor deve fechar agora).
-                const eventosResp = await (await fetch(`/api/intimacoes/${encodeURIComponent(it.processo)}/eventos-do-ato?ato=${encodeURIComponent(ato)}`)).json();
-                const prazosDisponiveis = (eventosResp && eventosResp.ok) ? (eventosResp.itens || []) : [];
-                if (!prazosDisponiveis.length) {
-                    alert('Não foi possível identificar automaticamente o evento de intimação deste processo — '
-                        + 'não é possível marcar o prazo a fechar no e-proc.');
-                    return;
-                }
-                const prazosSelecionados = {};
-                prazosDisponiveis.forEach((p) => { prazosSelecionados[p.evento_intimacao] = true; });
-
-                // Dropdowns "Gerenciar processo" — mesmos 2 elementos de
-                // "Ações no Eproc", pré-preenchidos com o padrão configurado
-                // mas editáveis só pra ESTE disparo.
-                let procuradoresDropdown = [];
-                let gerenciamentoProcuradorValor = '';
-                let gerenciamentoProcuradorRotulo = '';
-                try {
-                    const cfg = await (await fetch('/api/config/eproc-procuradores')).json();
-                    procuradoresDropdown = (cfg.procuradores_favoritos && cfg.procuradores_favoritos.length)
-                        ? cfg.procuradores_favoritos : (cfg.procuradores_todos || []);
-                    const padrao = cfg && cfg.procurador_padrao;
-                    if (padrao) {
-                        gerenciamentoProcuradorValor = padrao.valor || '';
-                        gerenciamentoProcuradorRotulo = padrao.rotulo || '';
-                    }
-                } catch (e) { /* segue sem padrão — o Defensor escolhe na hora */ }
-
-                const descricaoSugerida = this._descricaoMeraCiencia(
-                    prazosDisponiveis, prazosSelecionados, eventosResp.descricao_ato || '');
-
-                const confirmado = await this._confirmarModal({
-                    descricaoAto: eventosResp.descricao_ato || '',
-                    prazosDisponiveis, prazosSelecionados,
-                    numeroProcesso: it.processo,
-                    gerenciamentoTipo: 'S', gerenciamentoProcuradorValor, gerenciamentoProcuradorRotulo,
-                    procuradoresDropdown,
-                    descricaoMov: descricaoSugerida,
-                });
-                if (!confirmado) return;
-
-                const cd = this.confirmDialog;
-                const eventosSelecionados = prazosDisponiveis
-                    .filter((p) => prazosSelecionados[p.evento_intimacao])
-                    .map((p) => String(p.evento_intimacao));
-                const descricao = cd.descricaoMov.trim();
-                const gerTipo = cd.gerenciamentoTipo;
-                const gerValor = gerTipo === 'D' ? '' : cd.gerenciamentoProcuradorValor;
-                const gerRotulo = gerTipo === 'D' ? '' : cd.gerenciamentoProcuradorRotulo;
-
-                entregue = true;
-                await this._executarMeraCienciaSSE(it, ato, descricao, eventosSelecionados, gerTipo, gerValor, gerRotulo);
-            } finally {
-                if (!entregue) this.meraCienciaBusy[it.chave_caso] = false;
-            }
-        },
-
-        _executarMeraCienciaSSE(it, ato, descricao, eventosSelecionados, gerenciamentoTipo,
-                                 gerenciamentoProcuradorValor, gerenciamentoProcuradorRotulo) {
-            return new Promise((resolve) => {
-                this.confirmDialog.status = 'Executando…';
-                const qs = new URLSearchParams({
-                    descricao, ato, eventos: (eventosSelecionados || []).join(','),
-                    gerenciamento_tipo: gerenciamentoTipo || '',
-                    gerenciamento_procurador_valor: gerenciamentoProcuradorValor || '',
-                    gerenciamento_procurador_rotulo: gerenciamentoProcuradorRotulo || '',
-                });
-                const es = new EventSource(`/api/intimacoes/${encodeURIComponent(it.processo)}/dar-mera-ciencia?${qs}`);
-                es.addEventListener('log', (ev) => {
-                    try { this.confirmDialog.status = JSON.parse(ev.data).msg; } catch (e) { /* ignore */ }
-                });
-                es.addEventListener('done', async (ev) => {
-                    let res = {};
-                    try { res = JSON.parse(ev.data); } catch (e) { /* ignore */ }
-                    this.meraCienciaBusy[it.chave_caso] = false;
-                    es.close();
-                    if (res.ok) {
-                        // Sucesso: fecha o modal e recarrega a lista (não a
-                        // página inteira — aqui é uma listagem, não a página
-                        // do PAJ) pra o caso concluído sumir/atualizar sozinho.
-                        this._fecharConfirmModal();
-                        await this.carregarLista();
-                        resolve();
-                        return;
-                    }
-                    this.confirmDialog.status = 'Erro: ' + (res.erro || 'falha desconhecida');
-                    this.confirmDialog.fase = 'concluido';
-                    await this.carregarLista();
-                    resolve();
-                });
-                es.onerror = () => {
-                    this.confirmDialog.status = 'Erro de conexão com o servidor';
-                    this.confirmDialog.fase = 'concluido';
-                    this.meraCienciaBusy[it.chave_caso] = false;
-                    es.close();
-                    resolve();
-                };
-            });
+        darMeraCiencia(it) {
+            if (this.meraCienciaRodando(it) || !it.paj_norm) return;
+            // A lista da Triagem não traz `ato` solto — ele é a 2ª parte de `chave_caso`.
+            const caso = { ...it, ato: it.ato || String(it.chave_caso || '').split(':')[1] || '' };
+            window.dispatchEvent(new CustomEvent('mera-ciencia-avulsa', { detail: {
+                numero: it.processo, caso, pajNorm: it.paj_norm, chave: it.chave_caso,
+                aoTerminar: () => this.carregarLista(),
+            } }));
         },
 
         // Cria um job novo (1 EventSource) e o adiciona ao painel flutuante.

@@ -278,7 +278,7 @@
                         <!-- Ações da intimação (23/10/2026) — as MESMAS da página do PAJ
                              ("Intimações pendentes"), sem precisar abrir o PAJ:
                              "Dar mera ciência" usa o darMeraCienciaPaj do processoJudicialBlock
-                             (componente meraCienciaPrazosBlock, no fim da página) e
+                             (partials/mera_ciencia_avulsa.html, no fim da página) e
                              "Peticionar" usa movimentarNoEproc (app.js) com este prazo já marcado. -->
                         <div class="mt-8 flex flex-wrap gap-1">
                           <button type="button" class="btn btn-xs btn-outline btn-success"
@@ -287,7 +287,7 @@
                                   :title="!casoDe(c, p) ? 'Aguardando a identificação do ato desta intimação…'
                                         : (!pajNormDe(c, p) ? 'Sem PAJ vinculado a este processo — a mera ciência também movimenta o PAJ no SISDPU.'
                                         : 'Dispara: ciência no e-proc + Gerenciamento de Processo + movimentação no SISDPU (com confirmação antes)')">
-                            <span x-show="!!$store.mcPrazos.busy[chaveMc(p)]" class="loading loading-spinner loading-xs"></span>
+                            <span x-show="!!$store.meraCiencia.busy[chaveMc(p)]" class="loading loading-spinner loading-xs"></span>
                             Dar mera ciência
                           </button>
                           <button type="button" class="btn btn-xs btn-outline btn-info"
@@ -362,44 +362,11 @@
 </div>
 
 <!-- "Dar mera ciência" (23/10/2026): o MESMO fluxo e modal da página do PAJ —
-     processoJudicialBlock (static/js/processo_judicial.js) com o modal de
-     partials/mera_ciencia_modal.html; aqui só se diz qual processo/ato/PAJ. -->
-<div x-data="meraCienciaPrazosBlock()" @mera-ciencia-prazos.window="dar($event.detail)">
-  {% include "partials/mera_ciencia_modal.html" %}
-</div>
+     componente compartilhado (partials/mera_ciencia_avulsa.html, unificado
+     30/10/2026 com a Triagem de Intimações); aqui só se diz qual processo/ato/PAJ. -->
+{% include "partials/mera_ciencia_avulsa.html" %}
 
 <script>
-document.addEventListener('alpine:init', () => {
-  Alpine.store('mcPrazos', { busy: {} });
-});
-
-// Reaproveita o processoJudicialBlock (página do PAJ) só para a mera ciência:
-// um "processo" de cada vez, com o caso da Triagem já conhecido pela linha.
-function meraCienciaPrazosBlock() {
-  const base = processoJudicialBlock({ processos: [] });
-  return Object.assign(base, {
-    pajNormMc: '',
-    init() { this.meraCienciaBusy = Alpine.store('mcPrazos').busy; },
-    async carregarIntimacoes() { /* nada a recarregar aqui (só na página do PAJ) */ },
-    // Na página do PAJ o número vem de window._paj_norm (fixo); aqui muda a cada
-    // linha, então vem de um dado reativo do componente.
-    _pajLabelAtual() {
-      const m = String(this.pajNormMc || '').match(/^PAJ-(\d{4})-(\d{3})-(\d+)$/);
-      return m ? m[1] + '/' + m[2] + '-' + m[3] : '';
-    },
-    async dar(d) {
-      if (!d || !d.caso || !d.numero) return;
-      // usado pelo fluxo de lá: PAJ da ficha do SISDPU e conferência de vínculo
-      this.pajNormMc = d.pajNorm || d.caso.paj_norm || '';
-      window._paj_norm = this.pajNormMc;
-      this.processos = [{ processo_judicial: d.numero }];
-      this.atosPorProcesso = { 0: [d.caso] };
-      const p = d.prazo || {};
-      await this.darMeraCienciaPaj(0, { _painelEvento: p.evento, _painelDataEnvio: p.data_envio,
-                                        _painelPrazoDias: p.prazo_dias });
-    },
-  });
-}
 
 function prazosEprocApp() {
   return {
@@ -524,14 +491,14 @@ function prazosEprocApp() {
     // Mesma chave de `_chaveMeraCiencia(0, it)` do processoJudicialBlock — o
     // spinner do botão acompanha o fluxo de lá.
     mcDesabilitado(c, p) {
-      return !this.casoDe(c, p) || !this.pajNormDe(c, p) || !!Alpine.store('mcPrazos').busy[this.chaveMc(p)];
+      return !this.casoDe(c, p) || !this.pajNormDe(c, p) || !!Alpine.store('meraCiencia').busy[this.chaveMc(p)];
     },
     chaveMc(p) { return '0:' + (p.evento || '') + '|' + (p.data_envio || '') + '|' + (p.prazo_dias || ''); },
     darMeraCiencia(c, p) {
       const caso = this.casoDe(c, p);
       if (!caso) return;
-      window.dispatchEvent(new CustomEvent('mera-ciencia-prazos', {
-        detail: { numero: c.processo, caso, pajNorm: this.pajNormDe(c, p), prazo: p } }));
+      window.dispatchEvent(new CustomEvent('mera-ciencia-avulsa', {
+        detail: { numero: c.processo, caso, pajNorm: this.pajNormDe(c, p), prazo: p, chave: this.chaveMc(p) } }));
     },
     nomeDocumentoAto(nomeArquivo) { return (nomeArquivo || '').replace(/\.[^.]+$/, '') || nomeArquivo; },
     corBadgeDocumentoAto(nomeArquivo) {
