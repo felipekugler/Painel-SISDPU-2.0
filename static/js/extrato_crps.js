@@ -88,3 +88,74 @@ function extratoCrpsApp(pajNorm) {
         },
     };
 }
+
+// Componente Alpine "Baixar íntegra do processo" — menu Consultas › E-sisrec da
+// página do PAJ (ver services/esisrec_integra_service.py). Modal com o nº do
+// processo → "Baixar íntegra" (extrato + página separadora por evento +
+// documentos, num PDF salvo em E-sisrec/ do PAJ) → "Ver a íntegra". A montagem
+// roda no servidor; aqui só acompanha por polling (sobrevive a fechar o modal).
+function esisrecIntegraApp(pajNorm) {
+    return {
+        pajNorm: pajNorm,
+        aberto: false,
+        numero: '',
+        estado: null,     // null | 'running' | 'ok' | 'erro'
+        etapa: '',
+        erro: '',
+        arquivo: '',
+        _pollTimer: null,
+
+        async init() {
+            await this.fetchStatus();
+            if (this.estado === 'running') this.startPolling();
+        },
+
+        abrir() {
+            this.aberto = true;
+            if (this.estado === 'erro') this.erro = '';
+            this.$nextTick(() => { const el = this.$refs.numeroIntegra; if (el) el.focus(); });
+        },
+
+        async fetchStatus() {
+            try {
+                const d = await (await fetch('/api/esisrec-integra/status/' + this.pajNorm)).json();
+                this.estado = d.estado || null;
+                this.etapa = d.etapa || '';
+                this.arquivo = d.arquivo || '';
+                if (d.estado === 'erro') this.erro = d.erro || 'Falha ao montar a íntegra.';
+                if (d.numero && !this.numero) this.numero = d.numero;
+            } catch (e) { /* mantém o estado atual */ }
+        },
+
+        urlArquivo() {
+            return '/api/esisrec-integra/arquivo/' + this.pajNorm + '?nome=' + encodeURIComponent(this.arquivo);
+        },
+
+        async iniciar() {
+            const n = (this.numero || '').replace(/\D/g, '');
+            if (!n) { this.erro = 'Informe o número do processo.'; return; }
+            this.erro = '';
+            try {
+                const resp = await fetch('/api/esisrec-integra/iniciar/' + this.pajNorm + '?numero=' + encodeURIComponent(n), { method: 'POST' });
+                const d = await resp.json().catch(() => ({}));
+                if (!d.ok) { this.erro = d.erro || 'Falha ao iniciar.'; return; }
+                this.estado = 'running'; this.etapa = 'Consultando o processo no e-Sisrec…'; this.arquivo = '';
+                this.startPolling();
+            } catch (e) {
+                this.erro = 'Falha de rede: ' + e;
+            }
+        },
+
+        startPolling() {
+            if (this._pollTimer) return;
+            this._pollTimer = setInterval(async () => {
+                await this.fetchStatus();
+                if (this.estado === 'running') return;
+                clearInterval(this._pollTimer);
+                this._pollTimer = null;
+                if (this.estado === 'ok') showToast('Íntegra do processo salva na pasta E-sisrec do PAJ', 'success');
+                else showToast('Erro ao montar a íntegra: ' + (this.erro || 'ver log do servidor'), 'error');
+            }, 2500);
+        },
+    };
+}

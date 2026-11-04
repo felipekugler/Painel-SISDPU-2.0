@@ -2687,18 +2687,38 @@ document.addEventListener('alpine:init', () => {
             </dialog>
         </div>
 
-        <!-- Baixar Extrato de Processo CRPS: Relatório de Andamento do e-Sisrec
+        <!-- E-sisrec (04/11/2026, pedido do usuário — antes "Baixar Extrato de
+             Processo CRPS" solto): submenu com "Extrato de processo CRPS" e
+             "Baixar íntegra do processo". Os subitens só disparam eventos; os
+             componentes (modal + indicador de andamento) ficam fora do gate do
+             menu, pela regra do topo do bloco. -->
+        <div class="w-full" x-data="{ subEsisrec: false }" x-show="$store.acoesIaMenu.aberto === 'consultas'">
+            <button type="button" class="btn btn-ghost btn-sm justify-between w-full normal-case font-normal whitespace-nowrap text-left"
+                    @click="subEsisrec = !subEsisrec"
+                    title="Processo de recurso no CRPS (e-Sisrec) — login automático com as credenciais do SAT Central">
+                <span>E-sisrec</span>
+                <span class="text-[10px] opacity-60" x-text="subEsisrec ? '▲' : '▼'"></span>
+            </button>
+            <div class="pl-3 flex flex-col" x-show="subEsisrec" x-cloak>
+                <button type="button" class="btn btn-ghost btn-xs justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                        @click="subEsisrec = false; $store.acoesIaMenu.aberto = null; window.dispatchEvent(new CustomEvent('abrir-extrato-crps'))"
+                        title="Gera o extrato do andamento do processo de recurso no CRPS (e-Sisrec) e salva na pasta E-sisrec do PAJ">
+                    Extrato de processo CRPS
+                </button>
+                <button type="button" class="btn btn-ghost btn-xs justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                        @click="subEsisrec = false; $store.acoesIaMenu.aberto = null; window.dispatchEvent(new CustomEvent('abrir-integra-esisrec'))"
+                        title="Monta um PDF com o extrato do processo e, em ordem cronológica, cada evento com seus documentos — salvo na pasta E-sisrec do PAJ">
+                    Baixar íntegra do processo
+                </button>
+            </div>
+        </div>
+
+        <!-- Extrato de processo CRPS: Relatório de Andamento do e-Sisrec
              (mesma automação do botão "Baixar Extrato do Processo" da página
              Consultar e-Sisrec), salvo em E-sisrec/ do PAJ, com opção de
              juntar ao SISDPU. Ver services/extrato_crps_service.py e
              static/js/extrato_crps.js. -->
-        <div class="contents" x-data="extratoCrpsApp('{{ paj_norm }}')" x-init="init()">
-            <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
-                    x-show="$store.acoesIaMenu.aberto === 'consultas' && juntada !== 'running'"
-                    @click="$store.acoesIaMenu.aberto = null; abrir()"
-                    title="Gera o extrato do andamento do processo de recurso no CRPS (e-Sisrec) e salva na pasta E-sisrec do PAJ — login automático com as credenciais do SAT Central">
-                Baixar Extrato de Processo CRPS
-            </button>
+        <div class="contents" x-data="extratoCrpsApp('{{ paj_norm }}')" x-init="init()" @abrir-extrato-crps.window="abrir()">
             <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="juntada === 'running'" disabled>
                 <span class="loading loading-spinner loading-xs"></span>
                 <span>Juntando extrato CRPS ao SISDPU…</span>
@@ -2706,7 +2726,7 @@ document.addEventListener('alpine:init', () => {
 
             <dialog class="modal" :open="aberto" @close="aberto = false">
                 <div class="modal-box max-w-lg">
-                    <h3 class="font-bold text-lg mb-3">Baixar Extrato de Processo CRPS</h3>
+                    <h3 class="font-bold text-lg mb-3">Extrato de processo CRPS</h3>
                     <form @submit.prevent="obter()" class="flex items-center gap-2">
                         <input type="text" x-ref="numeroCrps" x-model="numero" placeholder="Nº do processo (protocolo e-Sisrec)"
                                class="input input-sm input-bordered flex-1 font-mono" :disabled="obtendo" />
@@ -2730,6 +2750,52 @@ document.addEventListener('alpine:init', () => {
                                     <span x-show="juntada === 'running'" class="loading loading-spinner loading-xs"></span>
                                     <span x-text="juntada === 'ok' ? 'Juntado ao SISDPU' : 'Juntar ao SISDPU'"></span>
                                 </button>
+                            </div>
+                        </div>
+                    </template>
+
+                    <div class="modal-action">
+                        <button type="button" class="btn btn-sm" @click="aberto = false">Fechar</button>
+                    </div>
+                </div>
+                <form method="dialog" class="modal-backdrop"><button type="button" @click="aberto = false">fechar</button></form>
+            </dialog>
+        </div>
+
+        <!-- Baixar íntegra do processo (e-Sisrec): extrato + página separadora por
+             evento + documentos, em ordem cronológica, num PDF salvo em E-sisrec/
+             do PAJ. Ver services/esisrec_integra_service.py e
+             static/js/extrato_crps.js (esisrecIntegraApp). -->
+        <div class="contents" x-data="esisrecIntegraApp('{{ paj_norm }}')" x-init="init()" @abrir-integra-esisrec.window="abrir()">
+            <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="estado === 'running' && !aberto" @click="abrir()"
+                    title="Ver o andamento">
+                <span class="loading loading-spinner loading-xs"></span>
+                <span x-text="'Íntegra e-Sisrec: ' + etapa"></span>
+            </button>
+
+            <dialog class="modal" :open="aberto" @close="aberto = false">
+                <div class="modal-box max-w-lg">
+                    <h3 class="font-bold text-lg mb-3">Baixar íntegra do processo (e-Sisrec)</h3>
+                    <form @submit.prevent="iniciar()" class="flex items-center gap-2">
+                        <input type="text" x-ref="numeroIntegra" x-model="numero" placeholder="Nº do processo (protocolo e-Sisrec)"
+                               class="input input-sm input-bordered flex-1 font-mono" :disabled="estado === 'running'" />
+                        <button type="submit" class="btn btn-sm btn-primary" :disabled="estado === 'running'">
+                            <span x-show="estado === 'running'" class="loading loading-spinner loading-xs"></span>
+                            Baixar íntegra
+                        </button>
+                    </form>
+                    <p class="text-xs text-base-content/60 mt-2" x-show="estado === 'running'" x-text="etapa"></p>
+                    <p class="text-xs text-base-content/50 mt-1" x-show="estado === 'running'">Pode fechar esta janela — a montagem continua e avisa quando terminar.</p>
+                    <p class="text-xs text-error mt-2" x-show="erro" x-text="erro"></p>
+
+                    <template x-if="estado === 'ok' && arquivo">
+                        <div class="mt-4 border-t border-base-300 pt-3">
+                            <div class="text-sm">Íntegra salva na pasta <b>E-sisrec</b> dentro da pasta do PAJ:</div>
+                            <div class="text-xs font-mono truncate mt-1" x-text="arquivo" :title="arquivo"></div>
+                            <div class="text-xs text-base-content/60 mt-1" x-text="etapa"></div>
+                            <div class="flex gap-2 mt-3 justify-end">
+                                <a class="btn btn-sm btn-primary" target="_blank" rel="noopener" :href="urlArquivo()"
+                                   title="Abre o PDF numa nova aba">Ver a íntegra</a>
                             </div>
                         </div>
                     </template>

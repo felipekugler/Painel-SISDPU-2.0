@@ -6,6 +6,8 @@ caixa "e-Sisrec" do cabeçalho (ver ingestao.esisrec_client).
 - GET /api/esisrec/documento       → PDF de um documento do histórico (inline)
 - GET /api/esisrec/extrato         → extrato do processo ("Gerar Relatório Andamento")
 - GET /api/esisrec/abrir           → abre o processo na janela VISÍVEL do e-Sisrec
+- /api/extrato-crps/*              → extrato do processo salvo no PAJ (menu Consultas › E-sisrec)
+- /api/esisrec-integra/*           → íntegra do processo em PDF salva no PAJ (idem)
 """
 
 import contextlib
@@ -100,6 +102,32 @@ async def extrato_crps_juntar(paj_norm: PajNorm):
 @router.get("/api/extrato-crps/arquivo/{paj_norm}")
 async def extrato_crps_arquivo(paj_norm: PajNorm, nome: str):
     p = extrato_crps_service.caminho_arquivo(paj_norm, nome)
+    if not p:
+        return JSONResponse({"erro": "arquivo não encontrado"}, status_code=404)
+    return FileResponse(str(p), media_type="application/pdf", filename=p.name,
+                        content_disposition_type="inline")
+
+
+# --- "Baixar íntegra do processo" (menu Consultas › E-sisrec da página do PAJ)
+# Ver services/esisrec_integra_service.py.
+from services import esisrec_integra_service  # noqa: E402
+
+
+@router.post("/api/esisrec-integra/iniciar/{paj_norm}")
+async def esisrec_integra_iniciar(paj_norm: PajNorm, numero: str):
+    """Rota async de propósito: a montagem roda como task no loop principal."""
+    result = esisrec_integra_service.iniciar(paj_norm, numero)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 400)
+
+
+@router.get("/api/esisrec-integra/status/{paj_norm}")
+async def esisrec_integra_status(paj_norm: PajNorm):
+    return esisrec_integra_service.get_status(paj_norm)
+
+
+@router.get("/api/esisrec-integra/arquivo/{paj_norm}")
+async def esisrec_integra_arquivo(paj_norm: PajNorm, nome: str):
+    p = esisrec_integra_service.caminho_arquivo(paj_norm, nome)
     if not p:
         return JSONResponse({"erro": "arquivo não encontrado"}, status_code=404)
     return FileResponse(str(p), media_type="application/pdf", filename=p.name,
