@@ -734,6 +734,19 @@ def _montar_prompt(paj_exibicao: str, processo: str, criterio_area: str, caminho
     )
 
 
+def _slug_nome_tipo(tipo_id: str) -> str:
+    """Nome do tipo em forma de arquivo ("Recurso" → "recurso"), no lugar do
+    id interno de 8 caracteres hexadecimais que antes ia para o nome da minuta
+    (pedido do usuário, 04/11/2026). Sem acentos, só [a-z0-9-], até 60
+    caracteres — continua casando com `_RE_ARQUIVO_MINUTA`. Tipo sem nome ou
+    desconhecido cai no próprio id."""
+    import unicodedata
+    label = ((_tipo_por_id(tipo_id) or {}).get("label") or "").strip()
+    s = unicodedata.normalize("NFKD", label).encode("ascii", "ignore").decode().lower()
+    s = re.sub(r"[^a-z0-9]+", "-", s).strip("-")[:60].rstrip("-")
+    return s or re.sub(r"[^\w-]+", "-", tipo_id or "minuta")
+
+
 def formatar_e_salvar(paj_norm: str, tipo_slug: str, peticao_html: str) -> dict:
     """"Gerar arquivo (DOC/PDF)" — pega o texto ATUAL da caixa de edição (já
     revisado/ajustado manualmente pelo Defensor, ou o rascunho da IA sem
@@ -749,7 +762,7 @@ def formatar_e_salvar(paj_norm: str, tipo_slug: str, peticao_html: str) -> dict:
 
     pasta_pecas_ia = PAJS_DIR / paj_norm / "Peças IA"
     pasta_pecas_ia.mkdir(parents=True, exist_ok=True)
-    nome = f"minuta-{tipo_slug}-{datetime.now().strftime('%d-%m-%Y')}"
+    nome = f"minuta-{_slug_nome_tipo(tipo_slug)}-{datetime.now().strftime('%d-%m-%Y')}"
     docx_path = pasta_pecas_ia / f"{nome}.docx"
     pdf_path = pasta_pecas_ia / f"{nome}.pdf"
 
