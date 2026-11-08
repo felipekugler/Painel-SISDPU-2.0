@@ -1,0 +1,36 @@
+{#- Bloco ÚNICO de "juntar ao SISDPU" dos dossiês do menu Consultas da página
+    do PAJ (05/11/2026): Dossiê Seguro-Desemprego Web, Dossiê CadÚnico,
+    Extrato de processo CRPS e Íntegra do processo e-Sisrec. Espera um
+    componente com `...juntadaDossie(api, rotulo)` (static/js/dossie_juntada.js).
+
+    pasta     — nome da subpasta do PAJ onde o dossiê foi salvo
+    descricao — texto da movimentação no SISDPU (expressão Alpine) -#}
+{% macro bloco_juntada(pasta, descricao) %}
+<div>
+    <p class="text-sm mb-3">Salvo na pasta <b>{{ pasta }}</b> dentro da pasta do PAJ.</p>
+    <p class="text-sm mb-2" x-show="juntada !== 'ok'">Deseja juntar ao SISDPU? Será registrada uma movimentação
+        "Juntada de documento" com a descrição <b>"<span x-text="{{ descricao }}"></span>"</b>
+        e o(s) arquivo(s) abaixo como "Documentos do Assistido":</p>
+    <p class="text-sm mb-2 text-success" x-show="juntada === 'ok'">Juntado ao SISDPU com a descrição
+        <b>"<span x-text="{{ descricao }}"></span>"</b>.</p>
+    <ul class="text-xs mb-2 flex flex-col gap-2">
+        <template x-for="a in arquivos" :key="a">
+            <li class="flex flex-col items-start gap-1 border border-base-300 rounded p-2">
+                <span class="break-all" x-text="a"></span>
+                <a class="btn btn-xs btn-outline" target="_blank" rel="noopener" :href="urlArquivoDossie(a)"
+                   title="Abre o PDF numa nova aba, para conferir antes de juntar">Visualizar o arquivo</a>
+            </li>
+        </template>
+    </ul>
+    <p class="text-xs text-error mb-2" x-show="juntada === 'erro'" x-text="'Erro na juntada: ' + (erroJuntada || 'ver log do servidor')"></p>
+    <div class="flex gap-2 justify-end mt-3">
+        <button type="button" class="btn btn-sm" x-show="juntada === null" @click="dispensarJuntada()">Não juntar</button>
+        <button type="button" class="btn btn-sm btn-primary" x-show="juntada !== 'ok'" @click="juntar()"
+                :disabled="juntada === 'running'">
+            <span x-show="juntada === 'running'" class="loading loading-spinner loading-xs"></span>
+            <span x-text="juntada === 'running' ? 'Juntando ao SISDPU…' : (juntada === 'erro' ? 'Tentar de novo' : 'Juntar ao SISDPU')"></span>
+        </button>
+        <span class="badge badge-success gap-1 py-3" x-show="juntada === 'ok'">✓ Juntado ao SISDPU</span>
+    </div>
+</div>
+{% endmacro %}

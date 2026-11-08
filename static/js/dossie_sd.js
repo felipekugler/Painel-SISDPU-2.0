@@ -7,21 +7,20 @@
 // não for respondida (`juntada` null no back).
 function dossieSdApp(pajNorm) {
     return {
+        ...juntadaDossie('/api/dossie-sd', 'Dossiê'),  // juntada ao SISDPU — dossie_juntada.js
         pajNorm: pajNorm,
         status: 'idle',
         rotulo: '',
         erro: '',
         log: [],
-        arquivos: [],
-        juntada: null,
-        erroJuntada: '',
         mostrarSubmenu: false,
         perguntaJuntada: false,
         _pollTimer: null,
 
         async init() {
             await this.fetchStatus();
-            if (this.status === 'running' || this.juntada === 'running') this.startPolling();
+            if (this.status === 'running') this.startPolling();
+            else if (this.juntada === 'running') this._acompanharJuntada();
             else if (this.status === 'done' && this.juntada === null && this.arquivos.length) this.perguntaJuntada = true;
         },
 
@@ -65,46 +64,10 @@ function dossieSdApp(pajNorm) {
             this.startPolling();
         },
 
-        async juntar() {
-            this.perguntaJuntada = false;
-            let data;
-            try {
-                const resp = await fetch('/api/dossie-sd/juntar/' + this.pajNorm, { method: 'POST' });
-                data = await resp.json().catch(() => ({}));
-            } catch (e) {
-                showToast('Falha de rede: ' + e, 'error');
-                return;
-            }
-            if (!data.ok) {
-                showToast('Erro: ' + (data.erro || 'falha ao iniciar a juntada'), 'error');
-                return;
-            }
-            this.juntada = 'running';
-            this.startPolling();
-        },
-
-        async dispensarJuntada() {
-            this.perguntaJuntada = false;
-            this.juntada = 'dispensada';
-            try { await fetch('/api/dossie-sd/dispensar-juntada/' + this.pajNorm, { method: 'POST' }); } catch (e) { /* só evita repetir a pergunta */ }
-        },
-
         startPolling() {
             if (this._pollTimer) return;
             this._pollTimer = setInterval(async () => {
-                const eraJuntada = this.juntada === 'running';
                 await this.fetchStatus();
-                if (eraJuntada) {
-                    if (this.juntada === 'running') return;
-                    clearInterval(this._pollTimer);
-                    this._pollTimer = null;
-                    if (this.juntada === 'ok') {
-                        showToast('Dossiê juntado ao SISDPU com sucesso', 'success');
-                    } else {
-                        showToast('Erro ao juntar o dossiê ao SISDPU: ' + (this.erroJuntada || 'ver log do servidor'), 'error');
-                    }
-                    return;
-                }
                 if (this.status === 'done' || this.status === 'error') {
                     clearInterval(this._pollTimer);
                     this._pollTimer = null;

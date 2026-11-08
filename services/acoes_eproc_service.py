@@ -31,22 +31,37 @@ _log = logging.getLogger("acoes_eproc")
 # (no máx. 1 rascunho por PAJ de cada vez) + subpasta p/ anexos "Externo" já
 # enviados ao servidor (sem isso, o `File` do navegador não sobrevive a um
 # reload — só existe na memória da aba enquanto ela ficar aberta).
+# Desde 06/11/2026 o rascunho de um PAJ fica DENTRO da pasta dele
+# (`<PAJ>/Rascunhos do painel/peticao_eproc.json` + "Anexos da petição e-proc/",
+# ver `config.pasta_rascunhos_paj`); RASCUNHOS_DIR só para chave que não é PAJ.
 RASCUNHOS_DIR = Path(__file__).resolve().parents[1].parent / "dados" / "acoes_eproc_rascunhos"
+_ARQ_RASCUNHO_NO_PAJ = "peticao_eproc.json"
+_PASTA_ANEXOS_RASCUNHO_NO_PAJ = "Anexos da petição e-proc"
 
 
 def _rascunho_json(paj_norm: str) -> Path:
-    return RASCUNHOS_DIR / f"{paj_norm}.json"
+    pasta = config.pasta_rascunhos_paj(paj_norm)
+    return pasta / _ARQ_RASCUNHO_NO_PAJ if pasta else RASCUNHOS_DIR / f"{paj_norm}.json"
 
 
 def _rascunho_arquivos_dir(paj_norm: str) -> Path:
-    return RASCUNHOS_DIR / paj_norm
+    pasta = config.pasta_rascunhos_paj(paj_norm)
+    return pasta / _PASTA_ANEXOS_RASCUNHO_NO_PAJ if pasta else RASCUNHOS_DIR / paj_norm
+
+
+def _arquivos_rascunho_json() -> list[Path]:
+    """Todos os rascunhos: os de dentro das pastas dos PAJs + os avulsos."""
+    achados = list(Path(config.PAJS_DIR).glob(f"PAJ-*/{config.SUBPASTA_RASCUNHOS_PAJ}/{_ARQ_RASCUNHO_NO_PAJ}"))
+    if RASCUNHOS_DIR.exists():
+        achados += list(RASCUNHOS_DIR.glob("*.json"))
+    return achados
 
 
 def salvar_rascunho(paj_norm: str, dados: dict) -> dict:
     """Grava/sobrescreve o rascunho de petição do PAJ (1 por PAJ)."""
     if not paj_norm:
         return {"ok": False, "erro": "paj_norm vazio."}
-    RASCUNHOS_DIR.mkdir(parents=True, exist_ok=True)
+    _rascunho_json(paj_norm).parent.mkdir(parents=True, exist_ok=True)
     doc = dict(dados)
     doc["paj_norm"] = paj_norm
     doc["salvo_em"] = datetime.now().isoformat(timespec="seconds")
@@ -81,12 +96,10 @@ def listar_rascunhos() -> list[dict]:
     mas sempre usaram um PAJ de verdade como CHAVE quando havia um; cai pro
     formato dela (mesmo fallback do front, ver
     peticoes_pendentes.html:pajRealDe)."""
-    if not RASCUNHOS_DIR.exists():
-        return []
     from services import acoes_sisdpu_service
 
     itens = []
-    for f in RASCUNHOS_DIR.glob("*.json"):
+    for f in _arquivos_rascunho_json():
         try:
             doc = json.loads(f.read_text(encoding="utf-8"))
         except Exception:
@@ -487,6 +500,11 @@ def _anexo_relativo_ao_paj(paj_norm: str, caminho_absoluto: str) -> str | None:
     de Ações no Eproc, `dados/acoes_eproc_rascunhos/`, fora de `PAJS_DIR`)."""
     pasta_paj = (Path(config.PAJS_DIR) / paj_norm).resolve()
     p = Path(caminho_absoluto).resolve()
+    # Anexo da pasta do RASCUNHO (agora dentro da pasta do PAJ) conta como
+    # "fora": ela é apagada quando o rascunho é descartado, então o arquivo
+    # precisa ser copiado para "Anexos e-proc" como antes.
+    if _rascunho_arquivos_dir(paj_norm).resolve() in p.parents:
+        return None
     try:
         return str(p.relative_to(pasta_paj)).replace("\\", "/")
     except ValueError:

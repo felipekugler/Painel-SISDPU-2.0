@@ -1,23 +1,24 @@
-// Componente Alpine "Baixar Extrato de Processo CRPS" — menu Consultas da
-// página do PAJ (ver services/extrato_crps_service.py). Modal com o nº do
-// processo → "Obter extrato" (gera o Relatório de Andamento no e-Sisrec, sem
-// janela, e salva em E-sisrec/ do PAJ) → "Ver o extrato" / "Juntar ao SISDPU".
-// Juntada: mesmo polling de status do Dossiê SD (dossie_sd.js).
+// Componentes Alpine do submenu Consultas › E-sisrec da página do PAJ:
+// "Extrato de processo CRPS" (services/extrato_crps_service.py) e "Baixar
+// íntegra do processo" (services/esisrec_integra_service.py). Modal com o nº
+// do processo → gera o PDF e salva em E-sisrec/ do PAJ → mesma pergunta de
+// juntada ao SISDPU dos demais dossiês (dossie_juntada.js +
+// partials/dossie_juntada.html, 05/11/2026). Como nos dossiês SD/CadÚnico, a
+// pergunta reaparece após F5 enquanto não for respondida.
 function extratoCrpsApp(pajNorm) {
     return {
+        ...juntadaDossie('/api/extrato-crps', 'Extrato'),
         pajNorm: pajNorm,
         aberto: false,
         numero: '',
         obtendo: false,
         erro: '',
         arquivo: '',
-        juntada: null,
-        erroJuntada: '',
-        _pollTimer: null,
 
         async init() {
             await this.fetchStatus();
-            if (this.juntada === 'running') this.startPolling();
+            if (this.juntada === 'running') this._acompanharJuntada();
+            else if (this.arquivo && this.juntada === null) this.aberto = true;
         },
 
         abrir() {
@@ -30,14 +31,11 @@ function extratoCrpsApp(pajNorm) {
             try {
                 const d = await (await fetch('/api/extrato-crps/status/' + this.pajNorm)).json();
                 this.arquivo = d.arquivo || '';
+                this.arquivos = d.arquivos || (d.arquivo ? [d.arquivo] : []);
                 this.juntada = d.juntada === undefined ? null : d.juntada;
                 this.erroJuntada = d.erro_juntada || '';
                 if (d.numero && !this.numero) this.numero = d.numero;
             } catch (e) { /* mantém o estado atual */ }
-        },
-
-        urlArquivo() {
-            return '/api/extrato-crps/arquivo/' + this.pajNorm + '?nome=' + encodeURIComponent(this.arquivo);
         },
 
         async obter() {
@@ -49,8 +47,10 @@ function extratoCrpsApp(pajNorm) {
                 const d = await resp.json().catch(() => ({}));
                 if (d.ok) {
                     this.arquivo = d.arquivo;
+                    this.arquivos = [d.arquivo];
                     this.juntada = null;
-                    showToast('Extrato salvo na pasta E-sisrec do PAJ', 'success');
+                    this.erroJuntada = '';
+                    showToast('Extrato gerado com sucesso', 'success');
                 } else {
                     this.erro = d.erro || 'Falha ao obter o extrato.';
                 }
@@ -60,42 +60,12 @@ function extratoCrpsApp(pajNorm) {
                 this.obtendo = false;
             }
         },
-
-        async juntar() {
-            let d;
-            try {
-                const resp = await fetch('/api/extrato-crps/juntar/' + this.pajNorm, { method: 'POST' });
-                d = await resp.json().catch(() => ({}));
-            } catch (e) {
-                showToast('Falha de rede: ' + e, 'error');
-                return;
-            }
-            if (!d.ok) { showToast('Erro: ' + (d.erro || 'falha ao iniciar a juntada'), 'error'); return; }
-            this.juntada = 'running';
-            this.startPolling();
-        },
-
-        startPolling() {
-            if (this._pollTimer) return;
-            this._pollTimer = setInterval(async () => {
-                await this.fetchStatus();
-                if (this.juntada === 'running') return;
-                clearInterval(this._pollTimer);
-                this._pollTimer = null;
-                if (this.juntada === 'ok') showToast('Extrato juntado ao SISDPU com sucesso', 'success');
-                else showToast('Erro ao juntar o extrato ao SISDPU: ' + (this.erroJuntada || 'ver log do servidor'), 'error');
-            }, 3000);
-        },
     };
 }
 
-// Componente Alpine "Baixar íntegra do processo" — menu Consultas › E-sisrec da
-// página do PAJ (ver services/esisrec_integra_service.py). Modal com o nº do
-// processo → "Baixar íntegra" (extrato + página separadora por evento +
-// documentos, num PDF salvo em E-sisrec/ do PAJ) → "Ver a íntegra". A montagem
-// roda no servidor; aqui só acompanha por polling (sobrevive a fechar o modal).
 function esisrecIntegraApp(pajNorm) {
     return {
+        ...juntadaDossie('/api/esisrec-integra', 'Íntegra do processo'),
         pajNorm: pajNorm,
         aberto: false,
         numero: '',
@@ -108,6 +78,8 @@ function esisrecIntegraApp(pajNorm) {
         async init() {
             await this.fetchStatus();
             if (this.estado === 'running') this.startPolling();
+            else if (this.juntada === 'running') this._acompanharJuntada();
+            else if (this.estado === 'ok' && this.arquivo && this.juntada === null) this.aberto = true;
         },
 
         abrir() {
@@ -122,13 +94,12 @@ function esisrecIntegraApp(pajNorm) {
                 this.estado = d.estado || null;
                 this.etapa = d.etapa || '';
                 this.arquivo = d.arquivo || '';
+                this.arquivos = d.arquivos || (d.arquivo ? [d.arquivo] : []);
+                this.juntada = d.juntada === undefined ? null : d.juntada;
+                this.erroJuntada = d.erro_juntada || '';
                 if (d.estado === 'erro') this.erro = d.erro || 'Falha ao montar a íntegra.';
                 if (d.numero && !this.numero) this.numero = d.numero;
             } catch (e) { /* mantém o estado atual */ }
-        },
-
-        urlArquivo() {
-            return '/api/esisrec-integra/arquivo/' + this.pajNorm + '?nome=' + encodeURIComponent(this.arquivo);
         },
 
         async iniciar() {
@@ -139,7 +110,8 @@ function esisrecIntegraApp(pajNorm) {
                 const resp = await fetch('/api/esisrec-integra/iniciar/' + this.pajNorm + '?numero=' + encodeURIComponent(n), { method: 'POST' });
                 const d = await resp.json().catch(() => ({}));
                 if (!d.ok) { this.erro = d.erro || 'Falha ao iniciar.'; return; }
-                this.estado = 'running'; this.etapa = 'Consultando o processo no e-Sisrec…'; this.arquivo = '';
+                this.estado = 'running'; this.etapa = 'Consultando o processo no e-Sisrec…';
+                this.arquivo = ''; this.arquivos = []; this.juntada = null; this.erroJuntada = '';
                 this.startPolling();
             } catch (e) {
                 this.erro = 'Falha de rede: ' + e;
@@ -153,8 +125,12 @@ function esisrecIntegraApp(pajNorm) {
                 if (this.estado === 'running') return;
                 clearInterval(this._pollTimer);
                 this._pollTimer = null;
-                if (this.estado === 'ok') showToast('Íntegra do processo salva na pasta E-sisrec do PAJ', 'success');
-                else showToast('Erro ao montar a íntegra: ' + (this.erro || 'ver log do servidor'), 'error');
+                if (this.estado === 'ok') {
+                    showToast('Íntegra do processo gerada com sucesso', 'success');
+                    this.aberto = true;  // mesma pergunta de juntada dos demais dossiês
+                } else {
+                    showToast('Erro ao montar a íntegra: ' + (this.erro || 'ver log do servidor'), 'error');
+                }
             }, 2500);
         },
     };

@@ -1,5 +1,6 @@
 {% extends "base.html" %}
 {% from "partials/_macro_minimenu_processo.html" import itens_minimenu_processo %}
+{% from "partials/dossie_juntada.html" import bloco_juntada %}
 {% block title %}PAJ {{ dados.metadata.paj }} — {{ dados.metadata.assistido_caixa[:40] }}{% endblock %}
 
 {% block content %}
@@ -783,7 +784,7 @@
                         </td>
                         <td class="text-sm font-mono whitespace-nowrap align-middle">
                             {{ a.cpf or '—' }}
-                            {% if a.cpf %}{{ botao_copiar(a.cpf, 'CPF') }}{% endif %}
+                            {% if a.cpf %}{{ botao_copiar(a.cpf|replace('.', '')|replace('-', '')|replace(' ', ''), 'CPF') }}{% endif %}
                         </td>
                         <td class="whitespace-nowrap align-middle">{% if a.idPessoa %}{{ card_contatos(a.idPessoa, a.principal) }}{% endif %}</td>
                     </tr>
@@ -797,7 +798,7 @@
                         </td>
                         <td class="text-sm font-mono whitespace-nowrap align-middle">
                             {{ rl.cpf or '—' }}
-                            {% if rl.cpf %}{{ botao_copiar(rl.cpf, 'CPF') }}{% endif %}
+                            {% if rl.cpf %}{{ botao_copiar(rl.cpf|replace('.', '')|replace('-', '')|replace(' ', ''), 'CPF') }}{% endif %}
                         </td>
                         <td class="whitespace-nowrap align-middle">{% if rl.idPessoa %}{{ card_contatos(rl.idPessoa, false) }}{% endif %}</td>
                     </tr>
@@ -1366,7 +1367,17 @@ document.addEventListener('alpine:init', () => {
              Petição" — `orientacaoDiretiva` mora no x-data do container
              externo da seção pra todos conseguirem acessá-la. -->
 
-        <div class="px-2 pt-1 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-base-content/40"
+        <!-- Discutir o caso (06/11/2026): 1º item — abre o modal com as conversas do PAJ -->
+        <div class="contents">
+            <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                    x-show="$store.acoesIaMenu.aberto === 'analisar'"
+                    title="Conversa com Claude usando o PROMPT_MAX deste PAJ como contexto — tese, hipóteses, dúvidas (não produz peça)"
+                    @click="$store.acoesIaMenu.aberto = null; window.dispatchEvent(new CustomEvent('abrir-discutir-caso'))">
+                Discutir o caso
+            </button>
+        </div>
+
+        <div class="px-2 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-base-content/40"
              x-show="$store.acoesIaMenu.aberto === 'analisar'">Análise geral</div>
 
         <!-- Análise ampla (geral) — diagnóstico direto via PROMPT_MAX, sem
@@ -2505,29 +2516,18 @@ document.addEventListener('alpine:init', () => {
 
         <!-- Consultas: RPV/Precatório + Baixar Arquivos SAT. -->
 
-        <!-- Consulta RPV/Precatório: ONE-CLICK (pedido explícito do usuário,
-             2026-09-22 — nenhum dado digitado, tudo já está no processo/PAJ),
-             só aparece quando há processo judicial vinculado (sem processo não
-             há RPV/precatório a consultar). Verifica, no(s) processo(s)
-             vinculado(s), se cada RPV/Precatório paga (evento com documento
-             DEMTRANSF) já foi efetivamente depositada no banco (CEF hoje; BB
-             ainda sem suporte — sem caso real pra validar o formulário) e
-             registra automaticamente a movimentação correspondente no SISDPU
-             — ver services/consulta_rpv_service.py e static/js/consulta_rpv.js. -->
-        {% if dados.processos_judiciais %}
-        <div class="contents" x-data="consultaRpvApp('{{ paj_norm }}')" x-init="init()">
-            <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
-                    x-show="$store.acoesIaMenu.aberto === 'consultas' && status !== 'running'"
-                    @click="iniciar(); $store.acoesIaMenu.aberto = null"
-                    title="Verifica no site do banco depositário (CEF) se cada RPV/Precatório paga deste processo já foi depositada, e já registra a movimentação correspondente no SISDPU — um clique, sem preencher nada.">
-                Consulta RPV/Precatório
-            </button>
-            <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="status === 'running'" disabled>
-                <span class="loading loading-spinner loading-xs"></span>
-                <span>Consultando RPV/Precatório…</span>
-            </button>
-        </div>
-        {% endif %}
+        <!-- Baixar Arquivos SAT: antes um botão solto no cabeçalho da página
+             (coluna de ações rápidas) — migrou pra "Consultas" (pedido do
+             usuário, 2026-09-26). Sem x-data próprio (baixarArquivosSat() é
+             uma função global, ver static/js/app.js/paj_detail.html); o
+             feedback "Incluindo…" é escrito direto no innerHTML do próprio
+             botão clicado (ver função), então funciona independente do menu
+             estar aberto ou não. -->
+        <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left" x-show="$store.acoesIaMenu.aberto === 'consultas'"
+                onclick="window.dispatchEvent(new CustomEvent('sat-central-abrir'))" @click="$store.acoesIaMenu.aberto = null"
+                title="Escolha as pessoas do PAJ e os documentos para baixar do SAT Central para o acervo do Arquivos SAT (ou só abra o SAT para consultar à mão)">
+            Arquivos SAT Central
+        </button>
 
         <!-- Dossiê Seguro-Desemprego Web (skills /SD-Dossies, /SD-DossieVinculos,
              /SD-DossieRequerimentos) — automação direta, sem IA (pedido do
@@ -2580,23 +2580,9 @@ document.addEventListener('alpine:init', () => {
             <dialog class="modal" :open="perguntaJuntada" @close="perguntaJuntada = false">
                 <div class="modal-box max-w-lg">
                     <h3 class="font-bold text-lg mb-2"><span x-text="rotulo || 'Dossiê'"></span> gerado com sucesso</h3>
-                    <p class="text-sm mb-3">O dossiê foi salvo na pasta <b>Seguro Desemprego Web</b> dentro da pasta do PAJ.</p>
-                    <p class="text-sm mb-2">Deseja juntar ao SISDPU? Será registrada uma movimentação
-                        "Juntada de documento" com a descrição <b>"Dossiê do Seguro Desemprego Web"</b>
-                        e o(s) arquivo(s) abaixo como "Documentos do Assistido":</p>
-                    <ul class="text-xs mb-2 flex flex-col gap-2">
-                        <template x-for="a in arquivos" :key="a">
-                            <li class="flex flex-col items-start gap-1 border border-base-300 rounded p-2">
-                                <span class="break-all" x-text="a"></span>
-                                <a class="btn btn-xs btn-outline" target="_blank" rel="noopener"
-                                   :href="'/api/dossie-sd/arquivo/' + pajNorm + '?nome=' + encodeURIComponent(a)"
-                                   title="Abre o PDF numa nova aba, para conferir antes de juntar">Visualizar o arquivo</a>
-                            </li>
-                        </template>
-                    </ul>
+                    {{ bloco_juntada('Seguro Desemprego Web', "'Dossiê do Seguro Desemprego Web'") }}
                     <div class="modal-action">
-                        <button type="button" class="btn btn-sm" @click="dispensarJuntada()">Não juntar</button>
-                        <button type="button" class="btn btn-sm btn-primary" @click="juntar()">Juntar ao SISDPU</button>
+                        <button type="button" class="btn btn-sm" @click="perguntaJuntada = false">Fechar</button>
                     </div>
                 </div>
                 <form method="dialog" class="modal-backdrop"><button type="button" @click="perguntaJuntada = false">fechar</button></form>
@@ -2633,12 +2619,12 @@ document.addEventListener('alpine:init', () => {
                     </button>
                     <button type="button" class="btn btn-ghost btn-xs justify-start w-full normal-case font-normal whitespace-nowrap text-left"
                             @click="mostrarSubmenu = false; $store.acoesIaMenu.aberto = null; iniciar('folha')"
-                            title="Só a Folha Resumo (com a página de dados da família e dos integrantes)">
+                            title="Só a Folha Resumo — o PDF original do CadÚnico, sem capa nem compilação">
                         Só Folha Resumo
                     </button>
                     <button type="button" class="btn btn-ghost btn-xs justify-start w-full normal-case font-normal whitespace-nowrap text-left"
                             @click="mostrarSubmenu = false; $store.acoesIaMenu.aberto = null; iniciar('historico')"
-                            title="Só o Histórico da Família desde 01/01/1950 (com a página de dados da família e dos integrantes)">
+                            title="Só o Histórico da Família desde 01/01/1950 — o PDF original do CadÚnico, sem capa nem compilação">
                         Só Histórico da Família
                     </button>
                 </div>
@@ -2658,29 +2644,15 @@ document.addEventListener('alpine:init', () => {
             <dialog class="modal" :open="perguntaJuntada" @close="perguntaJuntada = false">
                 <div class="modal-box max-w-lg">
                     <h3 class="font-bold text-lg mb-2"><span x-text="rotulo || 'Dossiê CadÚnico'"></span> gerado com sucesso</h3>
-                    <p class="text-sm mb-3">O dossiê foi salvo na pasta <b>CadÚnico</b> dentro da pasta do PAJ
-                        (um arquivo por família encontrada).</p>
+                    <p class="text-xs text-base-content/60 mb-2">Um arquivo por família encontrada.</p>
                     <ul class="text-xs mb-3 flex flex-col gap-1" x-show="log.some(l => l.level === 'aviso' && !/login/i.test(l.msg))">
                         <template x-for="(l, i) in log.filter(l => l.level === 'aviso' && !/login/i.test(l.msg))" :key="i">
                             <li class="text-warning" x-text="'⚠ ' + l.msg"></li>
                         </template>
                     </ul>
-                    <p class="text-sm mb-2">Deseja juntar ao SISDPU? Será registrada uma movimentação
-                        "Juntada de documento" com a descrição <b>"<span x-text="movDescricao || 'Dossiê do CadÚnico'"></span>"</b>
-                        e o(s) arquivo(s) abaixo como "Documentos do Assistido":</p>
-                    <ul class="text-xs mb-2 flex flex-col gap-2">
-                        <template x-for="a in arquivos" :key="a">
-                            <li class="flex flex-col items-start gap-1 border border-base-300 rounded p-2">
-                                <span class="break-all" x-text="a"></span>
-                                <a class="btn btn-xs btn-outline" target="_blank" rel="noopener"
-                                   :href="'/api/dossie-cadunico/arquivo/' + pajNorm + '?nome=' + encodeURIComponent(a)"
-                                   title="Abre o PDF numa nova aba, para conferir antes de juntar">Visualizar o arquivo</a>
-                            </li>
-                        </template>
-                    </ul>
+                    {{ bloco_juntada('CadÚnico', "movDescricao || 'Dossiê do CadÚnico'") }}
                     <div class="modal-action">
-                        <button type="button" class="btn btn-sm" @click="dispensarJuntada()">Não juntar</button>
-                        <button type="button" class="btn btn-sm btn-primary" @click="juntar()">Juntar ao SISDPU</button>
+                        <button type="button" class="btn btn-sm" @click="perguntaJuntada = false">Fechar</button>
                     </div>
                 </div>
                 <form method="dialog" class="modal-backdrop"><button type="button" @click="perguntaJuntada = false">fechar</button></form>
@@ -2719,7 +2691,7 @@ document.addEventListener('alpine:init', () => {
              juntar ao SISDPU. Ver services/extrato_crps_service.py e
              static/js/extrato_crps.js. -->
         <div class="contents" x-data="extratoCrpsApp('{{ paj_norm }}')" x-init="init()" @abrir-extrato-crps.window="abrir()">
-            <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="juntada === 'running'" disabled>
+            <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="juntada === 'running' && !aberto" @click="abrir()">
                 <span class="loading loading-spinner loading-xs"></span>
                 <span>Juntando extrato CRPS ao SISDPU…</span>
             </button>
@@ -2738,21 +2710,10 @@ document.addEventListener('alpine:init', () => {
                     <p class="text-xs text-base-content/50 mt-2" x-show="obtendo">Acessando o e-Sisrec… a primeira consulta faz o login no GERID e leva cerca de 15 segundos.</p>
                     <p class="text-xs text-error mt-2" x-show="erro" x-text="erro"></p>
 
-                    <template x-if="arquivo && !obtendo">
-                        <div class="mt-4 border-t border-base-300 pt-3">
-                            <div class="text-sm">Extrato salvo na pasta <b>E-sisrec</b> dentro da pasta do PAJ:</div>
-                            <div class="text-xs font-mono truncate mt-1" x-text="arquivo" :title="arquivo"></div>
-                            <div class="flex gap-2 mt-3 justify-end">
-                                <a class="btn btn-sm btn-primary" target="_blank" rel="noopener" :href="urlArquivo()"
-                                   title="Abre o PDF numa nova aba">Ver o extrato</a>
-                                <button type="button" class="btn btn-sm btn-primary" @click="juntar()"
-                                        :disabled="juntada === 'running' || juntada === 'ok'">
-                                    <span x-show="juntada === 'running'" class="loading loading-spinner loading-xs"></span>
-                                    <span x-text="juntada === 'ok' ? 'Juntado ao SISDPU' : 'Juntar ao SISDPU'"></span>
-                                </button>
-                            </div>
-                        </div>
-                    </template>
+                    <div class="mt-4 border-t border-base-300 pt-3" x-show="arquivo && !obtendo">
+                        <h4 class="font-semibold mb-2">Extrato gerado com sucesso</h4>
+                        {{ bloco_juntada('E-sisrec', "'Extrato do Andamento do Processo no CRPS'") }}
+                    </div>
 
                     <div class="modal-action">
                         <button type="button" class="btn btn-sm" @click="aberto = false">Fechar</button>
@@ -2772,6 +2733,10 @@ document.addEventListener('alpine:init', () => {
                 <span class="loading loading-spinner loading-xs"></span>
                 <span x-text="'Íntegra e-Sisrec: ' + etapa"></span>
             </button>
+            <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="juntada === 'running' && !aberto" @click="abrir()">
+                <span class="loading loading-spinner loading-xs"></span>
+                <span>Juntando íntegra e-Sisrec ao SISDPU…</span>
+            </button>
 
             <dialog class="modal" :open="aberto" @close="aberto = false">
                 <div class="modal-box max-w-lg">
@@ -2788,17 +2753,11 @@ document.addEventListener('alpine:init', () => {
                     <p class="text-xs text-base-content/50 mt-1" x-show="estado === 'running'">Pode fechar esta janela — a montagem continua e avisa quando terminar.</p>
                     <p class="text-xs text-error mt-2" x-show="erro" x-text="erro"></p>
 
-                    <template x-if="estado === 'ok' && arquivo">
-                        <div class="mt-4 border-t border-base-300 pt-3">
-                            <div class="text-sm">Íntegra salva na pasta <b>E-sisrec</b> dentro da pasta do PAJ:</div>
-                            <div class="text-xs font-mono truncate mt-1" x-text="arquivo" :title="arquivo"></div>
-                            <div class="text-xs text-base-content/60 mt-1" x-text="etapa"></div>
-                            <div class="flex gap-2 mt-3 justify-end">
-                                <a class="btn btn-sm btn-primary" target="_blank" rel="noopener" :href="urlArquivo()"
-                                   title="Abre o PDF numa nova aba">Ver a íntegra</a>
-                            </div>
-                        </div>
-                    </template>
+                    <div class="mt-4 border-t border-base-300 pt-3" x-show="estado === 'ok' && arquivo">
+                        <h4 class="font-semibold">Íntegra do processo gerada com sucesso</h4>
+                        <p class="text-xs text-base-content/60 mb-2" x-text="etapa"></p>
+                        {{ bloco_juntada('E-sisrec', "'Íntegra do Processo de Recurso no CRPS (e-Sisrec)'") }}
+                    </div>
 
                     <div class="modal-action">
                         <button type="button" class="btn btn-sm" @click="aberto = false">Fechar</button>
@@ -2808,18 +2767,29 @@ document.addEventListener('alpine:init', () => {
             </dialog>
         </div>
 
-        <!-- Baixar Arquivos SAT: antes um botão solto no cabeçalho da página
-             (coluna de ações rápidas) — migrou pra "Consultas" (pedido do
-             usuário, 2026-09-26). Sem x-data próprio (baixarArquivosSat() é
-             uma função global, ver static/js/app.js/paj_detail.html); o
-             feedback "Incluindo…" é escrito direto no innerHTML do próprio
-             botão clicado (ver função), então funciona independente do menu
-             estar aberto ou não. -->
-        <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left" x-show="$store.acoesIaMenu.aberto === 'consultas'"
-                onclick="consultarSatManual('{{ paj_norm }}', this)" @click="$store.acoesIaMenu.aberto = null"
-                title="Abre a janela do SAT Central na consulta pelo CPF do assistido (login automático se preciso) para você resolver o CAPTCHA e consultar à mão">
-            Arquivos SAT Central
-        </button>
+        <!-- Consulta RPV/Precatório: ONE-CLICK (pedido explícito do usuário,
+             2026-09-22 — nenhum dado digitado, tudo já está no processo/PAJ),
+             só aparece quando há processo judicial vinculado (sem processo não
+             há RPV/precatório a consultar). Verifica, no(s) processo(s)
+             vinculado(s), se cada RPV/Precatório paga (evento com documento
+             DEMTRANSF) já foi efetivamente depositada no banco (CEF hoje; BB
+             ainda sem suporte — sem caso real pra validar o formulário) e
+             registra automaticamente a movimentação correspondente no SISDPU
+             — ver services/consulta_rpv_service.py e static/js/consulta_rpv.js. -->
+        {% if dados.processos_judiciais %}
+        <div class="contents" x-data="consultaRpvApp('{{ paj_norm }}')" x-init="init()">
+            <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                    x-show="$store.acoesIaMenu.aberto === 'consultas' && status !== 'running'"
+                    @click="iniciar(); $store.acoesIaMenu.aberto = null"
+                    title="Verifica no site do banco depositário (CEF) se cada RPV/Precatório paga deste processo já foi depositada, e já registra a movimentação correspondente no SISDPU — um clique, sem preencher nada.">
+                Consulta RPV/Precatório
+            </button>
+            <button type="button" class="btn btn-sm btn-outline gap-1.5" x-show="status === 'running'" disabled>
+                <span class="loading loading-spinner loading-xs"></span>
+                <span>Consultando RPV/Precatório…</span>
+            </button>
+        </div>
+        {% endif %}
 
         <!-- Organizar Pasta para Ajuizamento (skill /SISDPU-OrganizarArquivos):
              habilitado só depois que uma petição inicial existir na pasta do
@@ -2885,38 +2855,107 @@ document.addEventListener('alpine:init', () => {
                   title="Direcione a análise se já tiver uma linha definida pro caso — ex.: 'foque em tutela de urgência, já descartei acordo'. A IA usa isso como orientação, não como substituto da análise."></textarea>
     </div>
 
-    <!-- Peças / Discutir / Análise IA — agrupadas numa subseção retrátil,
-         fechada por padrão (pedido do usuário, 2026-10-06): esses 3 blocos
-         eram sempre visíveis, ocupando bastante espaço vertical; viraram uma
-         única seção que some até o Defensor clicar. Cada bloco por dentro
-         continua exatamente como antes (mesmo x-data/funções de cada um) —
-         só a CASCA ganhou um x-data próprio (abertoExtras) pra controlar a
-         visibilidade do conjunto; mesmo ícone/padrão de chevron das demais
-         seções retráteis da página (Movimentações, Narrativa etc.). -->
-    <div class="mt-3 pt-3 border-t border-base-300" x-data="{ abertoExtras: false }">
-        <button type="button" class="flex items-center gap-2 w-full text-left" @click="abertoExtras = !abertoExtras">
-            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="abertoExtras ? 'rotate-90' : ''"
+    <!-- Discutir o caso — 1º item de "Analisar PAJ" (06/11/2026, pedido do
+         usuário: antes era uma subseção sempre visível aqui dentro). Mesmo
+         componente discutirPaj() de sempre, agora num modal aberto pelo evento
+         abrir-discutir-caso; fica fora do gate do menu (regra do topo do bloco). -->
+    <div x-data="{ abertoDiscutir: false }" @abrir-discutir-caso.window="abertoDiscutir = true">
+        <dialog class="modal" :open="abertoDiscutir" @close="abertoDiscutir = false">
+            <div class="modal-box max-w-3xl">
+                <div x-data="discutirPaj('{{ paj_norm }}')"
+                     x-init="init()">
+                    <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
+                        <div>
+                            <h3 class="text-sm font-semibold">Discutir o caso</h3>
+                            <p class="text-xs text-base-content/50 mt-0.5">
+                                Modo conversa com Claude usando o PROMPT_MAX deste PAJ como contexto.
+                                Útil para explorar tese, testar hipótese, brainstorm estratégico,
+                                tirar dúvida — <strong>não produz peça</strong> (o Claude só elabora
+                                se você pedir explicitamente).
+                            </p>
+                        </div>
+                        <button class="btn btn-primary btn-sm shrink-0" @click="criarENovaAba()">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
+                            </svg>
+                            Nova conversa
+                        </button>
+                    </div>
+
+                    <template x-if="carregando">
+                        <p class="text-sm text-base-content/50">Carregando...</p>
+                    </template>
+
+                    <template x-if="!carregando && conversas.length === 0">
+                        <div class="text-center py-6 text-base-content/50">
+                            <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-2 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                            </svg>
+                            <p class="text-sm">Nenhuma conversa ainda neste PAJ.</p>
+                            <p class="text-xs mt-1">Clique em <strong>Nova conversa</strong> para começar.</p>
+                        </div>
+                    </template>
+
+                    <template x-if="!carregando && conversas.length > 0">
+                        <div class="space-y-2">
+                            <template x-for="c in conversas" :key="c.id">
+                                <div class="flex items-center gap-3 p-3 rounded-lg border border-base-300 hover:border-primary/40 hover:bg-base-300/40 transition-colors">
+                                    <div style="flex:1; min-width:0;">
+                                        <a :href="'/chat-livre?conv=' + c.id"
+                                           class="font-semibold text-sm hover:text-primary block truncate"
+                                           x-text="c.titulo"></a>
+                                        <div class="text-xs text-base-content/50 mt-0.5 flex items-center gap-2 flex-wrap">
+                                            <span x-text="formatarData(c.atualizado_em)"></span>
+                                            <span x-show="c.skill_slug"
+                                                  class="badge badge-xs badge-ghost"
+                                                  x-text="'/' + c.skill_slug"></span>
+                                            <span x-show="c.n_mensagens > 0"
+                                                  class="text-base-content/40"
+                                                  x-text="c.n_mensagens + ' mensagens'"></span>
+                                        </div>
+                                    </div>
+                                    <a :href="'/chat-livre?conv=' + c.id"
+                                       class="btn btn-sm btn-ghost"
+                                       title="Abrir conversa">
+                                        Abrir
+                                    </a>
+                                    <button class="btn btn-sm btn-ghost text-error"
+                                            @click="apagar(c)"
+                                            title="Apagar conversa">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" />
+                                        </svg>
+                                    </button>
+                                </div>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+                <div class="modal-action">
+                    <button type="button" class="btn btn-sm" @click="abertoDiscutir = false">Fechar</button>
+                </div>
+            </div>
+            <form method="dialog" class="modal-backdrop"><button type="button" @click="abertoDiscutir = false">fechar</button></form>
+        </dialog>
+    </div>
+</div>
+
+<!-- Peças jurídicas geradas com IA — seção PRÓPRIA da página, aberta por
+     padrão (06/11/2026, pedido do usuário: antes ficava dentro de "Ações com
+     IA", na subseção retrátil "Peças, Discutir e Análise IA"). Conteúdo igual
+     ao de antes (lista Jinja + verTxt/excluirArquivoPaj/abrirPastaPaj);
+     id="badge-pecas-count" preservado (excluirArquivoPaj atualiza o número). -->
+<div class="bg-base-200 border border-base-300 rounded-lg mb-4" x-data="{ aberto: true }">
+    <div class="flex items-center gap-2 px-4 py-3 flex-wrap">
+        <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
+            <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
                  fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
                 <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
             </svg>
-            <span class="text-sm font-semibold">Peças, Discutir e Análise IA</span>
+            <span class="text-lg font-semibold">Peças jurídicas geradas com IA</span>
+            <span id="badge-pecas-count" class="badge badge-primary badge-sm">{{ dados.pecas_judiciais|length }}</span>
         </button>
-        <div x-show="abertoExtras" x-cloak class="mt-1">
-    <!-- Peças judiciais geradas — antes era uma aba de "Análise IA + Peças";
-         virou subseção própria, sempre visível, posicionada ACIMA de
-         "Discutir o caso" (pedido do usuário, 2026-10-06). Nunca dependeu de
-         nenhum estado do analiseIaApp — era só list Jinja + funções globais
-         (verTxt/runDocgen/excluirArquivoPaj/abrirPastaPaj) — então sai de
-         dentro do x-data daquele bloco sem perder nada. id="badge-pecas-count"
-         preservado (excluirArquivoPaj() atualiza esse badge ao apagar um
-         arquivo). -->
-    <div class="mt-3 pt-3 border-t border-base-300">
-        <div class="flex items-start justify-between gap-3 mb-3 flex-wrap">
-            <h3 class="text-sm font-semibold">
-                Peças jurídicas geradas com IA
-                <span id="badge-pecas-count" class="badge badge-ghost badge-xs ml-1">{{ dados.pecas_judiciais|length }}</span>
-            </h3>
-            <button type="button"
+        <button type="button"
                     class="btn btn-sm btn-outline gap-1.5"
                     onclick="abrirPastaPaj('{{ paj_norm }}', this)"
                     title="Abre a pasta deste PAJ no Explorer (funciona só na máquina onde o painel está rodando)">
@@ -2925,7 +2964,8 @@ document.addEventListener('alpine:init', () => {
                 </svg>
                 Abrir pasta no Explorer
             </button>
-        </div>
+    </div>
+    <div x-show="aberto" x-cloak class="px-4 pb-4">
         {% if dados.pecas_judiciais %}
         <div class="overflow-x-auto rounded-lg border border-base-300">
             <table class="table table-sm">
@@ -2982,104 +3022,26 @@ document.addEventListener('alpine:init', () => {
         </div>
         {% endif %}
     </div>
+</div>
 
-    <!-- Discutir o caso: antes era uma aba escondida atrás de um botão em
-         "Outros" (dentro de um modal, junto com PROMPT_MAX) — virou uma
-         subseção sempre visível aqui dentro de "Ações com IA" (pedido do
-         usuário, 2026-09-28), pra que o Defensor veja de cara as conversas
-         já iniciadas neste PAJ e possa retomar uma ou abrir "Nova conversa"
-         sem precisar abrir modal nenhum. Mesmo componente discutirPaj() de
-         sempre — só mudou de onde ele mora na página (agora sempre montado,
-         não mais dentro de um <dialog> fechado) e por isso o listener
-         `@recarregar-conversas-paj.window` / a função global
-         carregarConversasPaj() (que existiam só pra "acordar" o componente
-         escondido ao abrir o modal) não fazem mais falta — removidos. -->
-    <div class="mt-3 pt-3 border-t border-base-300"
-         x-data="discutirPaj('{{ paj_norm }}')"
-         x-init="init()">
-        <div class="flex items-center justify-between mb-3 gap-2 flex-wrap">
-            <div>
-                <h3 class="text-sm font-semibold">Discutir o caso</h3>
-                <p class="text-xs text-base-content/50 mt-0.5">
-                    Modo conversa com Claude usando o PROMPT_MAX deste PAJ como contexto.
-                    Útil para explorar tese, testar hipótese, brainstorm estratégico,
-                    tirar dúvida — <strong>não produz peça</strong> (o Claude só elabora
-                    se você pedir explicitamente).
-                </p>
-            </div>
-            <button class="btn btn-primary btn-sm shrink-0" @click="criarENovaAba()">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 4v16m8-8H4" />
-                </svg>
-                Nova conversa
-            </button>
-        </div>
-
-        <template x-if="carregando">
-            <p class="text-sm text-base-content/50">Carregando...</p>
-        </template>
-
-        <template x-if="!carregando && conversas.length === 0">
-            <div class="text-center py-6 text-base-content/50">
-                <svg xmlns="http://www.w3.org/2000/svg" class="h-10 w-10 mx-auto mb-2 opacity-30" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                </svg>
-                <p class="text-sm">Nenhuma conversa ainda neste PAJ.</p>
-                <p class="text-xs mt-1">Clique em <strong>Nova conversa</strong> para começar.</p>
-            </div>
-        </template>
-
-        <template x-if="!carregando && conversas.length > 0">
-            <div class="space-y-2">
-                <template x-for="c in conversas" :key="c.id">
-                    <div class="flex items-center gap-3 p-3 rounded-lg border border-base-300 hover:border-primary/40 hover:bg-base-300/40 transition-colors">
-                        <div style="flex:1; min-width:0;">
-                            <a :href="'/chat-livre?conv=' + c.id"
-                               class="font-semibold text-sm hover:text-primary block truncate"
-                               x-text="c.titulo"></a>
-                            <div class="text-xs text-base-content/50 mt-0.5 flex items-center gap-2 flex-wrap">
-                                <span x-text="formatarData(c.atualizado_em)"></span>
-                                <span x-show="c.skill_slug"
-                                      class="badge badge-xs badge-ghost"
-                                      x-text="'/' + c.skill_slug"></span>
-                                <span x-show="c.n_mensagens > 0"
-                                      class="text-base-content/40"
-                                      x-text="c.n_mensagens + ' mensagens'"></span>
-                            </div>
-                        </div>
-                        <a :href="'/chat-livre?conv=' + c.id"
-                           class="btn btn-sm btn-ghost"
-                           title="Abrir conversa">
-                            Abrir
-                        </a>
-                        <button class="btn btn-sm btn-ghost text-error"
-                                @click="apagar(c)"
-                                title="Apagar conversa">
-                            <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6M1 7h22M9 7V4a1 1 0 011-1h4a1 1 0 011 1v3" />
-                            </svg>
-                        </button>
-                    </div>
-                </template>
-            </div>
-        </template>
-    </div>
-
-    <!-- Análise IA (diagnóstico por pretensão + reenvio p/ ajuste ou pedido de
-         petição inicial) — antes dividia uma aba com "Peças" (ver acima,
-         agora subseção própria); virou subseção sempre visível também
-         (pedido do usuário, 2026-10-06: tab bar com 1 item só não fazia mais
-         sentido). Sempre presente (não só em PAJs de BPC/LOAS): a rota
-         "Análise ampla" do dropdown cobre qualquer pretensão. id="secao-abas-paj"
-         preservado — é o alvo do scrollIntoView() disparado pelos itens de
-         "Analisar PAJ" mais acima nesta mesma seção (o nome ficou de quando
-         era uma seção com abas; manter o id evita quebrar essa referência). -->
-    <div id="secao-abas-paj" class="mt-3 pt-3 border-t border-base-300"
+<!-- Análise feita pela IA (Diagnóstico) — seção PRÓPRIA da página, FECHADA
+     por padrão (06/11/2026, pedido do usuário: antes ficava dentro de "Ações
+     com IA"). Abre sozinha quando um item de "Analisar PAJ" dispara a análise
+     (evento iniciar-analise-ia). id="secao-abas-paj" (alvo do scrollIntoView
+     dos itens do menu) agora fica no card. -->
+<div id="secao-abas-paj" class="bg-base-200 border border-base-300 rounded-lg mb-4"
+     x-data="{ aberto: false }" @iniciar-analise-ia.window="aberto = true">
+    <div
          x-data="analiseIaApp('{{ paj_norm }}', '{{ tipo_ia_padrao }}')"
          x-init="init()"
          @iniciar-analise-ia.window="iniciar($event.detail && $event.detail.tipo, $event.detail && $event.detail.orientacao)">
-        <div class="flex items-center gap-2 mb-3">
-            <h3 class="text-sm font-semibold">Análise feita pela IA (Diagnóstico)</h3>
+        <div class="flex items-center gap-2 px-4 py-3">
+            <button type="button" class="flex items-center gap-2 flex-1 text-left" @click="aberto = !aberto">
+                <svg class="w-4 h-4 shrink-0 transition-transform text-base-content/50" :class="aberto ? 'rotate-90' : ''"
+                     fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" d="m8.25 4.5 7.5 7.5-7.5 7.5" />
+                </svg>
+                <span class="text-lg font-semibold">Análise feita pela IA (Diagnóstico)</span>
             <span class="loading loading-spinner loading-xs text-warning" x-show="status === 'running'"></span>
             <span class="badge badge-sm"
                   :class="{
@@ -3089,7 +3051,9 @@ document.addEventListener('alpine:init', () => {
                       'badge-ghost': status === 'idle',
                   }"
                   x-text="status === 'running' ? 'em andamento' : (status === 'done' ? 'concluída' : (status === 'error' ? 'erro' : 'não iniciada'))"></span>
+            </button>
         </div>
+        <div x-show="aberto" x-cloak class="px-4 pb-4">
 
         <template x-if="status === 'idle'">
             <div class="alert text-sm">
@@ -3148,7 +3112,6 @@ document.addEventListener('alpine:init', () => {
                 </div>
             </div>
         </template>
-    </div>
         </div>
     </div>
 </div>
@@ -3438,6 +3401,40 @@ document.addEventListener('alpine:init', () => {
     <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
 </dialog>
 
+
+<!-- Consultas › Arquivos SAT Central (06/11/2026): modal grande com a página Arquivos SAT
+     em modo EMBUTIDO, reduzida a este PAJ (/sat?embed=1&paj=...): escolha de pessoas e
+     documentos, tabela dos baixados (excluir/recuperar), Baixar mais, Levantamento,
+     Reiniciar download e Anexar ao PAJ — a mesma lógica da página, sem duplicação.
+     Ao FECHAR (06/11/2026, pedido do usuário): relê o PAJ (forçado) e recarrega a
+     página, para aparecerem as movimentações de juntada feitas lá dentro. -->
+<div x-data="{ aberto: false, src: '', atualizando: false,
+               async fechar() {
+                   if (this.atualizando) return;
+                   this.atualizando = true; this.src = '';
+                   showToast('Atualizando o PAJ…', 'info');
+                   try { await atualizarMovimentacoesPaj('{{ paj_norm }}'); } catch (e) {}
+                   window.location.reload();
+               } }"
+     @sat-central-abrir.window="src = '/sat?embed=1&paj={{ paj_norm }}&t=' + Date.now(); aberto = true">
+    <div class="modal" :class="{'modal-open': aberto}">
+        <div class="modal-box p-0 flex flex-col overflow-hidden" style="width:94vw;max-width:94vw;height:92vh;max-height:92vh">
+            <div class="flex items-center justify-between px-5 py-3 border-b border-base-300">
+                <h3 class="font-bold text-lg">Arquivos SAT Central — {{ dados.metadata.paj }}</h3>
+                <div class="flex items-center gap-2">
+                    <a class="btn btn-ghost btn-sm" href="/sat" target="_blank" rel="noopener">Abrir a página Arquivos SAT</a>
+                    <button class="btn btn-sm" :disabled="atualizando" @click="fechar()">
+                        <span x-show="atualizando" class="loading loading-spinner loading-xs"></span>
+                        <span x-text="atualizando ? 'Atualizando o PAJ…' : 'Fechar'"></span>
+                    </button>
+                </div>
+            </div>
+            <template x-if="src">
+                <iframe :src="src" class="flex-1 w-full border-0 bg-base-300" title="Arquivos SAT Central"></iframe>
+            </template>
+        </div>
+    </div>
+</div>
 {% endblock %}
 
 {% block scripts %}

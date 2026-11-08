@@ -46,6 +46,10 @@ SUBPASTA_SAT = "Arquivos SAT"
 SUBPASTA_INSTITUIDOR = "Instituidor"  # dentro de "Arquivos SAT" (download/anexação à parte)
 SUBPASTA_COMPLEMENTAR = "Complementar"  # download complementar (anexado por movimentação)
 SUBPASTA_COMPLEMENTAR_INSTITUIDOR = "Complementar Instituidor"  # complementar do instituidor
+# Outras pessoas do PAJ (outros assistidos, representantes legais, CPF avulso) — 06/11/2026:
+# uma subpasta por CPF dentro de "Arquivos SAT/Outras pessoas", com `_pessoa.json`
+# {cpf, nome, papel}. Escopo "pessoa:<cpf11>"; inventário/log próprios; entram na anexação.
+SUBPASTA_PESSOAS = "Outras pessoas"
 # Originais dos PDFs compilados por tipo (espelha sat_client.SUBPASTA_ORIGINAIS_COMPILADOS).
 # Ficam fora da anexação; apagados só APÓS a conclusão da tramitação (ver processar_paj_stream).
 SUBPASTA_ORIGINAIS_COMPILADOS = "Compilados (originais)"
@@ -408,6 +412,17 @@ def _escopo_paths(paj_norm: str, escopo: str) -> dict:
     """Resolve pastas/rotulo/listagem conforme o escopo ('assistido' | 'instituidor').
     Assim o download/mescla complementar serve tanto o acervo do assistido (pasta principal)
     quanto o do instituidor (subpasta 'Instituidor')."""
+    if (escopo or "").startswith("pessoa:"):
+        cpf = escopo.split(":", 1)[1]
+        destino = pasta_pessoa(paj_norm, cpf)
+        info = _ler_pessoa(destino)
+        rot = " - ".join(x for x in ((info.get("papel") or "").upper(), info.get("nome") or cpf) if x)
+        return {
+            "destino": destino,
+            "complementar": destino / SUBPASTA_COMPLEMENTAR,
+            "listar": lambda pn, _d=destino: _listar_simples(_d),
+            "rotulo": f"{rot} - ",
+        }
     if escopo == "instituidor":
         return {
             "destino": pasta_instituidor(paj_norm),
@@ -421,6 +436,128 @@ def _escopo_paths(paj_norm: str, escopo: str) -> dict:
         "listar": listar_arquivos_sat,
         "rotulo": "",
     }
+
+
+def _cpf_dig(cpf: str) -> str:
+    return "".join(c for c in (cpf or "") if c.isdigit())
+
+
+def pasta_pessoa(paj_norm: str, cpf: str) -> Path:
+    """Subpasta de uma OUTRA pessoa do PAJ (por CPF) dentro de 'Arquivos SAT'."""
+    return pasta_arquivos_sat(paj_norm) / SUBPASTA_PESSOAS / _cpf_dig(cpf)
+
+
+def _ler_pessoa(pasta: Path) -> dict:
+    try:
+        return json.loads((pasta / "_pessoa.json").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001
+        return {}
+
+
+def registrar_pessoa(paj_norm: str, cpf: str, nome: str, papel: str) -> str:
+    """Cria/atualiza a subpasta da pessoa e devolve o escopo 'pessoa:<cpf11>'."""
+    dig = _cpf_dig(cpf)
+    pasta = pasta_pessoa(paj_norm, dig)
+    pasta.mkdir(parents=True, exist_ok=True)
+    (pasta / "_pessoa.json").write_text(json.dumps(
+        {"cpf": dig, "nome": (nome or "").strip(), "papel": (papel or "").strip()},
+        ensure_ascii=False, indent=2), encoding="utf-8")
+    return f"pessoa:{dig}"
+
+
+def listar_pessoas_registradas(paj_norm: str) -> list[dict]:
+    """Pessoas com subpasta própria em 'Outras pessoas' ({cpf, nome, papel, pasta})."""
+    base = pasta_arquivos_sat(paj_norm) / SUBPASTA_PESSOAS
+    if not base.is_dir():
+        return []
+    out = []
+    for d in sorted(base.iterdir()):
+        if d.is_dir():
+            info = _ler_pessoa(d)
+            out.append({"cpf": info.get("cpf") or d.name, "nome": info.get("nome", ""),
+                        "papel": info.get("papel", ""), "pasta": d})
+    return out
+
+
+def _listar_simples(pasta: Path) -> list[dict]:
+    out = []
+    for f in sorted(pasta.glob("*.pdf")) if pasta.is_dir() else []:
+        try:
+            tam = f.stat().st_size
+        except Exception:  # noqa: BLE001
+            tam = 0
+        out.append({"nome": f.name, "caminho": str(f), "tipo": "pdf", "tamanho": tam})
+    return out
+
+
+def listar_arquivos_pessoas(paj_norm: str) -> list[dict]:
+    """PDFs ATIVOS de todas as outras pessoas do PAJ (entram na anexação)."""
+    out: list[dict] = []
+    for ps in listar_pessoas_registradas(paj_norm):
+        out += _listar_simples(ps["pasta"])
+    return out
+
+
+def _fmt_cpf(dig: str) -> str:
+    return f"{dig[:3]}.{dig[3:6]}.{dig[6:9]}-{dig[9:]}" if len(dig) == 11 else dig
+
+
+def pessoas_do_paj(paj_norm: str) -> list[dict]:
+    """Pessoas que a consulta ao SAT pode buscar neste PAJ: assistidos (principal e
+    demais) e representantes legais do metadata, instituidor já baixado e pessoas já
+    registradas. Cada uma com `escopo` (assistido | instituidor | pessoa:<cpf>)."""
+    raw = (_ler_metadata(paj_norm).get("sisdpu_raw") or {})
+    cpf_princ = _cpf_dig(_cpf_do_paj(paj_norm))
+    out: list[dict] = []
+    vistos: set[str] = set()
+
+    def add(cpf, nome, papel, escopo):
+        dig = _cpf_dig(cpf)
+        if len(dig) != 11 or dig in vistos:
+            return
+        vistos.add(dig)
+        out.append({"cpf": _fmt_cpf(dig), "nome": (nome or "").strip(), "papel": papel,
+                    "escopo": escopo})
+
+    for a in raw.get("assistidos_pf") or []:
+        if _cpf_dig(a.get("cpf")) == cpf_princ:
+            add(cpf_princ, a.get("nome"), "Assistido", "assistido")
+    if cpf_princ and cpf_princ not in vistos:
+        add(cpf_princ, raw.get("assistido") or "", "Assistido", "assistido")
+    for a in raw.get("assistidos_pf") or []:
+        add(a.get("cpf"), a.get("nome"), "Assistido", f"pessoa:{_cpf_dig(a.get('cpf'))}")
+    for r in raw.get("representantes_legais") or []:
+        papel = "Representante legal" + (f" de {r['representado']}" if r.get("representado") else "")
+        add(r.get("cpf"), r.get("nome"), papel, f"pessoa:{_cpf_dig(r.get('cpf'))}")
+    cpf_i = _cpf_de_log(pasta_instituidor(paj_norm))
+    if cpf_i:
+        add(cpf_i, "", "Instituidor", "instituidor")
+    for ps in listar_pessoas_registradas(paj_norm):
+        add(ps["cpf"], ps["nome"], ps["papel"] or "Outra pessoa", f"pessoa:{_cpf_dig(ps['cpf'])}")
+    return out
+
+
+def garantir_paj_na_lista(paj_norm: str) -> bool:
+    """Põe o PAJ na lista da página Arquivos SAT (PAJs manuais) a partir do metadata
+    local, sem consultar o SISDPU. False se não há metadata (o chamador decide)."""
+    if any(x.get("paj_norm") == paj_norm for x in _ler_pajs_manuais()):
+        return True
+    meta = _ler_metadata(paj_norm)
+    raw = meta.get("sisdpu_raw") or {}
+    cpf = _cpf_do_paj(paj_norm)
+    if not meta or not cpf:
+        return False
+    url = raw.get("url", "") or ""
+    mid = re.search(r"[?&]id=(\d+)", url)
+    item = {
+        "paj_norm": paj_norm, "numero": meta.get("paj") or _norm_to_num(paj_norm),
+        "id_processo": mid.group(1) if mid else "", "cpf": cpf,
+        "assistido": (raw.get("assistido") or meta.get("assistido_caixa") or "").strip(),
+        "pretensao": meta.get("pretensaopura") or meta.get("pretensao", ""),
+        "narrativa": _html_para_texto(raw.get("narrativa") or ""), "url_detalhe": url,
+    }
+    _salvar_pajs_manuais(_ler_pajs_manuais() + [item])
+    return True
 
 
 def tem_instituidor(paj_norm: str) -> bool:
@@ -497,6 +634,12 @@ def listar_todos_arquivos_sat(paj_norm: str) -> list[dict]:
     out += _listar_pdfs_pasta(pasta_instituidor(paj_norm), "instituidor", ref_i, False)
     out += _listar_pdfs_pasta(pasta_excluidos(paj_norm), "assistido", ref_a, True)
     out += _listar_pdfs_pasta(pasta_excluidos_instituidor(paj_norm), "instituidor", ref_i, True)
+    for ps in listar_pessoas_registradas(paj_norm):
+        esc = f"pessoa:{_cpf_dig(ps['cpf'])}"
+        ref = " - ".join(x for x in (ps["papel"] or "Outra pessoa", ps["nome"],
+                                     f"CPF {_fmt_cpf(_cpf_dig(ps['cpf']))}") if x)
+        out += _listar_pdfs_pasta(ps["pasta"], esc, ref, False)
+        out += _listar_pdfs_pasta(ps["pasta"] / "Excluídos", esc, ref, True)
     return out
 
 
@@ -510,15 +653,25 @@ def _mover_pdf(origem: Path, destino_dir: Path) -> None:
 
 def _contagens(paj_norm: str) -> dict:
     return {"n_arquivos": len(listar_arquivos_sat(paj_norm)),
-            "n_instituidor": len(listar_arquivos_instituidor(paj_norm))}
+            "n_instituidor": len(listar_arquivos_instituidor(paj_norm)),
+            "n_pessoas": len(listar_arquivos_pessoas(paj_norm))}
+
+
+def _pastas_escopo(paj_norm: str, escopo: str) -> tuple[Path, Path]:
+    """(pasta ativa, lixeira 'Excluídos') do escopo: assistido | instituidor | pessoa:<cpf>."""
+    if (escopo or "").startswith("pessoa:"):
+        p = pasta_pessoa(paj_norm, escopo.split(":", 1)[1])
+        return p, p / "Excluídos"
+    if escopo == "instituidor":
+        return pasta_instituidor(paj_norm), pasta_excluidos_instituidor(paj_norm)
+    return pasta_arquivos_sat(paj_norm), pasta_excluidos(paj_norm)
 
 
 def excluir_arquivo_sat(paj_norm: str, nome: str, escopo: str = "assistido") -> dict:
     """SOFT DELETE: move o documento (do assistido OU do instituidor, conforme `escopo`)
     para a respectiva lixeira 'Excluídos'. Não some do disco; pode ser recuperado."""
-    inst = (escopo == "instituidor")
-    origem = (pasta_instituidor if inst else pasta_arquivos_sat)(paj_norm).resolve()
-    destino = pasta_excluidos_instituidor(paj_norm) if inst else pasta_excluidos(paj_norm)
+    origem, destino = _pastas_escopo(paj_norm, escopo)
+    origem = origem.resolve()
     alvo = (origem / Path(nome or "").name).resolve()
     if origem not in alvo.parents or not alvo.exists():
         return {"ok": False, "detalhe": "Arquivo não encontrado.", **_contagens(paj_norm)}
@@ -531,9 +684,8 @@ def excluir_arquivo_sat(paj_norm: str, nome: str, escopo: str = "assistido") -> 
 
 def recuperar_arquivo_sat(paj_norm: str, nome: str, escopo: str = "assistido") -> dict:
     """Traz o documento de volta da lixeira para a pasta de origem (assistido/instituidor)."""
-    inst = (escopo == "instituidor")
-    exc = (pasta_excluidos_instituidor(paj_norm) if inst else pasta_excluidos(paj_norm)).resolve()
-    destino = pasta_instituidor(paj_norm) if inst else pasta_arquivos_sat(paj_norm)
+    destino, exc = _pastas_escopo(paj_norm, escopo)
+    exc = exc.resolve()
     alvo = (exc / Path(nome or "").name).resolve()
     if exc not in alvo.parents or not alvo.exists():
         return {"ok": False, "detalhe": "Arquivo não encontrado em Excluídos.", **_contagens(paj_norm)}
@@ -698,6 +850,7 @@ def _item_pendencia_manual(mp: dict) -> dict:
         "url_detalhe": mp.get("url_detalhe", ""),
         "n_arquivos": len(arquivos),
         "n_instituidor": len(listar_arquivos_instituidor(pn)),
+        "n_pessoas": len(listar_arquivos_pessoas(pn)),
         "tem_pasta": _pasta_paj(pn).exists(),
         "sincronizado": bool(_ler_metadata(pn)),
         "tem_log": (pasta_arquivos_sat(pn) / "_log_download.json").exists(),
@@ -802,6 +955,7 @@ async def listar_pendentes() -> dict:
             "url_detalhe": it.get("url_detalhe", ""),
             "n_arquivos": len(arquivos),
             "n_instituidor": len(listar_arquivos_instituidor(paj_norm)),
+            "n_pessoas": len(listar_arquivos_pessoas(paj_norm)),
             "tem_pasta": _pasta_paj(paj_norm).exists(),
             "sincronizado": bool(meta),
             "tem_log": (pasta_arquivos_sat(paj_norm) / "_log_download.json").exists(),
@@ -926,7 +1080,7 @@ async def processar_paj_stream(
     # ASSISTIDO (pasta principal) + do INSTITUIDOR (subpasta), numa única movimentação.
     anexos_assist = listar_arquivos_sat(paj_norm)
     anexos_inst = listar_arquivos_instituidor(paj_norm)
-    anexos = anexos_assist + anexos_inst
+    anexos = anexos_assist + anexos_inst + listar_arquivos_pessoas(paj_norm)
     if not anexos:
         d = (f"Nenhum PDF em '{SUBPASTA_SAT}' para {num}. Baixe os documentos do SAT antes "
              f"de processar (pasta: {pasta_arquivos_sat(paj_norm)}).")

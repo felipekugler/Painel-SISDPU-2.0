@@ -262,11 +262,11 @@ function minutaIaApp(pajNorm, pajLabel) {
         },
         totalSelecionadosProcesso() {
             const d = this._dataProcesso();
-            return d ? d.selecionadosIA.size : 0;
+            return d && d.selecionadosIA ? d.selecionadosIA.size : 0;  // aba ainda não montada
         },
         totalSelecionadosPaj() {
             const d = this._dataPaj();
-            return d ? d.selecionadosIA.size : 0;
+            return d && d.selecionadosIA ? d.selecionadosIA.size : 0;  // aba ainda não montada
         },
 
         // Caixa compartilhada "Orientação diretiva para análise da IA" —
@@ -464,6 +464,7 @@ function minutaIaApp(pajNorm, pajLabel) {
                 const j = await resp.json();
                 if (!j.ok) { this.erroArquivo = j.erro || 'Falha ao gerar o arquivo.'; return; }
                 this.arquivos = j.arquivos || [];
+                if (j.aviso) alert('Atenção: ' + j.aviso);  // imagem do texto que não entrou no DOCX/PDF
             } catch (e) {
                 this.erroArquivo = 'Erro de rede: ' + e;
             } finally {

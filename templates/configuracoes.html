@@ -216,11 +216,11 @@
                     </template>
                     <form @submit.prevent="salvarCredenciais()" class="flex flex-col gap-3">
                         <label class="form-control">
-                            <span class="label-text text-xs mb-1"><span x-text="form.sistema === 'cadunico' ? 'CPF' : 'Usuário'"></span> <span class="text-error">*</span></span>
+                            <span class="label-text text-xs mb-1"><span x-text="form.sistema === 'cadunico' ? 'CPF' : (form.sistema === 'capsolver' ? 'E-mail da conta CapSolver' : 'Usuário')"></span> <span class="text-error">*</span></span>
                             <input type="text" class="input input-bordered input-sm" x-model="form.usuario" autocomplete="username" required>
                         </label>
                         <label class="form-control">
-                            <span class="label-text text-xs mb-1">Senha <span class="text-error">*</span></span>
+                            <span class="label-text text-xs mb-1"><span x-text="form.sistema === 'capsolver' ? 'Chave de API (CAP-…)' : 'Senha'"></span> <span class="text-error">*</span></span>
                             <input type="password" class="input input-bordered input-sm" x-model="form.senha" autocomplete="off" required>
                         </label>
                         <!-- Campos extras do sistema (ex.: CadÚnico → e-mail do código + seed do 2FA) -->
@@ -520,19 +520,32 @@
     <!-- Arquivos SAT Central — valores padrão da aba (caixa de tramitação + prazo + antirrobô) -->
     <div class="card bg-base-200 shadow" x-data="satCentralDefaults()" x-init="init()">
         <div class="card-body gap-5">
-            <h3 class="text-lg font-semibold text-base-content/80 border-b border-base-300 pb-2">
-                Arquivos SAT Central
-            </h3>
+            <div class="flex items-center justify-between gap-3 flex-wrap border-b border-base-300 pb-2">
+                <h3 class="text-lg font-semibold text-base-content/80">Arquivos SAT Central</h3>
+                <div class="flex items-center gap-3">
+                    <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
+                    <button class="btn btn-primary btn-sm" :disabled="salvando" @click="salvar()"
+                            title="Grava tramitação, consulta, CAPTCHA e compilação (tipos e processos têm botões próprios)">
+                        <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
+                        Salvar padrões
+                    </button>
+                </div>
+            </div>
             <p class="text-sm text-base-content/60">
                 Valores pré-carregados nos controles da aba <strong>Arquivos SAT</strong>
                 (podem ser ajustados pontualmente lá em cada operação).
             </p>
 
+            <section class="rounded-box bg-base-100 border border-base-300 p-4 flex flex-col gap-4">
+                <div>
+                    <h4 class="font-semibold">Preferências de tramitação</h4>
+                    <p class="text-xs text-base-content/50">Caixa e prazo usados por padrão ao anexar ao PAJ.</p>
+                </div>
             <!-- Caixa de tramitação padrão -->
             <div class="flex items-start justify-between gap-4">
                 <div class="min-w-0">
                     <p class="font-medium">Caixa de tramitação</p>
-                    <p class="text-sm text-base-content/60 mt-0.5">Caixa de grupo selecionada por padrão em "Tramitar para".</p>
+                    <p class="text-sm text-base-content/60 mt-0.5">Caixa oferecida como botão de atalho no diálogo "Anexar ao PAJ". O diálogo sempre abre em "Não tramitar" — clique na caixa para tramitar.</p>
                 </div>
                 <div class="flex flex-col items-end gap-1.5 shrink-0">
                     <input type="text" class="input input-bordered input-sm w-64" x-model="caixa"
@@ -570,8 +583,15 @@
                 </div>
             </div>
 
+            </section>
+
+            <section class="rounded-box bg-base-100 border border-base-300 p-4 flex flex-col gap-4">
+                <div>
+                    <h4 class="font-semibold">Preferências de consulta</h4>
+                    <p class="text-xs text-base-content/50">Ritmo das consultas ao SAT.</p>
+                </div>
             <!-- Tempo entre consultas -->
-            <div class="flex items-start justify-between gap-4 pt-2 border-t border-base-300">
+            <div class="flex items-start justify-between gap-4">
                 <div>
                     <p class="font-medium">Tempo entre consultas</p>
                     <p class="text-sm text-base-content/60 mt-0.5">Pausa preventiva entre cada consulta ao SAT, sorteada a cada consulta entre o mínimo e o máximo (iguais = pausa fixa).</p>
@@ -585,10 +605,25 @@
                 </div>
             </div>
 
+            <!-- Intervalo entre CPFs -->
+            <div class="flex items-start justify-between gap-4 pt-2 border-t border-base-300">
+                <div>
+                    <p class="font-medium">Intervalo entre CPFs</p>
+                    <p class="text-sm text-base-content/60 mt-0.5">Quanto esperar, depois de terminar um CPF, antes de consultar o próximo (e resolver um novo CAPTCHA). Sorteado a cada novo CPF entre o mínimo e o máximo (iguais = espera fixa; 0 = sem espera). Vale para o "Baixar selecionados" com várias pessoas e para downloads/levantamentos disparados em sequência.</p>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                    <span class="text-sm text-base-content/50">de</span>
+                    <input type="number" min="0" max="600" step="5" class="input input-bordered input-sm w-20" x-model.number="intervaloCpf">
+                    <span class="text-sm text-base-content/50">a</span>
+                    <input type="number" min="0" max="600" step="5" class="input input-bordered input-sm w-20" x-model.number="intervaloCpfMax">
+                    <span class="text-sm text-base-content/50">s</span>
+                </div>
+            </div>
+
             <!-- Espera após bloqueio -->
             <div class="flex items-start justify-between gap-4 pt-2 border-t border-base-300">
                 <div>
-                    <p class="font-medium">Tempo de espera após bloqueio</p>
+                    <p class="font-medium">Tempo de espera após bloqueio antirobô</p>
                     <p class="text-sm text-base-content/60 mt-0.5">Quanto esperar ao detectar a proteção antirobô, antes de re-tentar o documento.</p>
                 </div>
                 <div class="flex items-center gap-2 shrink-0">
@@ -597,8 +632,36 @@
                 </div>
             </div>
 
+            </section>
+
+            <section class="rounded-box bg-base-100 border border-base-300 p-4 flex flex-col gap-4">
+                <div>
+                    <h4 class="font-semibold">Preferências de CAPTCHA</h4>
+                    <p class="text-xs text-base-content/50">Resolução do CAPTCHA da consulta por CPF.</p>
+                </div>
+            <!-- CAPTCHA automático (CapSolver) -->
+            <div class="flex items-start justify-between gap-4">
+                <div>
+                    <p class="font-medium">Resolver CAPTCHA automaticamente (CapSolver)</p>
+                    <p class="text-sm text-base-content/60 mt-0.5">Na consulta por CPF, o painel pede ao CapSolver a resolução do "Não sou um robô", preenche e clica em Enviar. Só saem do painel o endereço da página e a chave pública do CAPTCHA — nenhum dado do assistido. Se falhar, volta ao modo manual (resolver na janela). A chave de API fica no cofre (seção Credenciais → "CapSolver (CAPTCHA do SAT)"; o cofre precisa estar destrancado).</p>
+                    <p class="text-sm mt-1" x-show="saldoMsg" :class="saldoErro ? 'text-error' : 'text-success'" x-text="saldoMsg"></p>
+                </div>
+                <div class="flex items-center gap-2 shrink-0">
+                    <button class="btn btn-ghost btn-xs" @click="testarCapsolver()" :disabled="testandoSaldo">
+                        <span x-show="testandoSaldo" class="loading loading-spinner loading-xs"></span>Testar chave / ver saldo</button>
+                    <input type="checkbox" class="toggle toggle-primary toggle-sm" x-model="captchaAuto">
+                </div>
+            </div>
+
+            </section>
+
+            <section class="rounded-box bg-base-100 border border-base-300 p-4 flex flex-col gap-4">
+                <div>
+                    <h4 class="font-semibold">Preferências de documentos</h4>
+                    <p class="text-xs text-base-content/50">O que baixar e como organizar.</p>
+                </div>
             <!-- Compilar documentos por tipo -->
-            <div class="flex items-start justify-between gap-4 pt-2 border-t border-base-300">
+            <div class="flex items-start justify-between gap-4">
                 <div>
                     <p class="font-medium">Compilar documentos por tipo</p>
                     <p class="text-sm text-base-content/60 mt-0.5">
@@ -619,13 +682,89 @@
                 </div>
             </div>
 
-            <div class="flex items-center gap-4 pt-2 border-t border-base-300">
-                <button class="btn btn-primary btn-sm" :disabled="salvando" @click="salvar()">
-                    <span x-show="salvando" class="loading loading-spinner loading-xs"></span>
-                    Salvar padrões
-                </button>
-                <p class="text-sm" :class="msgErro?'text-error':'text-success'" x-text="msg" x-show="msg"></p>
+            <!-- Tipos de documentos a baixar (por pretensão) -->
+            <div class="flex flex-col gap-2 pt-2 border-t border-base-300">
+                <div>
+                    <p class="font-medium">Tipos de documentos a baixar</p>
+                    <p class="text-sm text-base-content/60 mt-0.5">Documentos baixados por padrão em cada pretensão (e os sugeridos no "Baixar do SAT" do PAJ). Pretensão sem configuração própria usa o <strong>Padrão</strong>. O "Salvar tipos" grava a pretensão que estiver selecionada — ajuste e salve uma de cada vez.</p>
+                </div>
+                <div class="flex items-center gap-2 flex-wrap">
+                    <span class="text-sm font-medium">Pretensão:</span>
+                    <select class="select select-bordered select-sm max-w-md" x-model="tiposPret" @change="tiposSel = keysPara(tiposPret)">
+                        <option value="__padrao__">Padrão (todas as outras)</option>
+                        <option value="__instituidor__">◆ Instituidor (pensão por morte / auxílio-reclusão)</option>
+                        <template x-for="pr in tiposPretensoes" :key="pr">
+                            <option :value="pr" x-text="pr + (tiposPorPret[pr] ? ' ✓' : '')"></option>
+                        </template>
+                    </select>
+                    <button class="btn btn-xs btn-ghost" @click="tiposSel = tiposCatalogo.map(t => t.key)">Marcar todos</button>
+                    <button class="btn btn-xs btn-ghost" @click="tiposSel = []">Limpar</button>
+                    <span class="text-xs text-base-content/50 ml-auto" x-text="tiposSel.length + '/' + tiposCatalogo.length + ' marcados'"></span>
+                </div>
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-x-6 gap-y-3">
+                    <template x-for="g in tiposGrupos()" :key="g">
+                        <div>
+                            <div class="text-xs font-semibold text-base-content/60 mb-1" x-text="g"></div>
+                            <template x-for="t in tiposCatalogo.filter(x => x.grupo === g)" :key="t.key">
+                                <label class="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
+                                    <input type="checkbox" class="checkbox checkbox-sm" :value="t.key" x-model="tiposSel">
+                                    <span x-text="t.label"></span>
+                                </label>
+                            </template>
+                        </div>
+                    </template>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button class="btn btn-sm btn-primary" :disabled="salvandoTipos" @click="salvarTipos()">
+                        <span x-show="salvandoTipos" class="loading loading-spinner loading-xs"></span>
+                        Salvar tipos
+                    </button>
+                    <p class="text-sm" :class="tiposMsgErro ? 'text-error' : 'text-success'" x-show="tiposMsg" x-text="tiposMsg"></p>
+                </div>
             </div>
+
+            <!-- Processos administrativos a ignorar -->
+            <div class="flex flex-col gap-2 pt-2 border-t border-base-300">
+                <div>
+                    <p class="font-medium">Processos administrativos a ignorar</p>
+                    <p class="text-sm text-base-content/60 mt-0.5">Espécies de processo administrativo (coluna <strong>Serviço</strong> do PAT) que não devem ser baixadas. A comparação ignora acentos e maiúsculas e casa por trecho.</p>
+                </div>
+                <div class="flex items-center gap-2">
+                    <input type="text" class="input input-bordered input-sm flex-1" x-model="patNovo"
+                           placeholder="ex.: Alterar Local ou Forma de Pagamento" @keydown.enter.prevent="addPat()">
+                    <button class="btn btn-sm btn-outline" :disabled="!patNovo.trim()" @click="addPat()">Adicionar</button>
+                </div>
+                <div class="max-h-[300px] overflow-y-auto rounded-box border border-base-300">
+                    <table class="table table-sm">
+                        <thead class="sticky top-0 bg-base-200">
+                            <tr><th>Espécie (Serviço do PAT)</th><th class="w-12 text-right"></th></tr>
+                        </thead>
+                        <tbody>
+                            <template x-for="t in patOrdenados()" :key="t">
+                                <tr class="hover">
+                                    <td x-text="t"></td>
+                                    <td class="text-right">
+                                        <button class="btn btn-ghost btn-xs text-error px-1" title="Remover" @click="delPat(t)">✕</button>
+                                    </td>
+                                </tr>
+                            </template>
+                            <tr x-show="!patIgnorar.length">
+                                <td colspan="2" class="text-base-content/40">Nenhuma espécie ignorada.</td>
+                            </tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div class="flex items-center gap-3">
+                    <button class="btn btn-sm btn-primary" :disabled="salvandoPat" @click="salvarPat()">
+                        <span x-show="salvandoPat" class="loading loading-spinner loading-xs"></span>
+                        Salvar lista
+                    </button>
+                    <p class="text-sm" :class="patMsgErro ? 'text-error' : 'text-success'" x-show="patMsg" x-text="patMsg"></p>
+                </div>
+            </div>
+
+            </section>
+
         </div>
     </div>
 
@@ -890,9 +1029,9 @@
                 <template x-for="(o, i) in itens" :key="i">
                     <div class="cfg-of-row">
                         <input type="text" class="input input-sm input-bordered w-full" x-model="o.nome"
-                               placeholder="Ex: E. 04º OFÍCIO PREVIDENCIÁRIO">
+                               placeholder="Ex: E. 01º OFÍCIO PREVIDENCIÁRIO">
                         <input type="text" class="input input-sm input-bordered w-full uppercase" x-model="o.sigla"
-                               placeholder="Ex: PREV4">
+                               placeholder="Ex: PREV1">
                         <button class="btn btn-xs btn-ghost text-error" @click="remover(i)" title="Remover">✕</button>
                     </div>
                 </template>
@@ -2667,7 +2806,12 @@ function oficiosSiglas() {
 function satCentralDefaults() {
     return {
         caixa: '01 - PREV_DIVPREV', prazoModo: 'sem_prazo', prazoDias: 15,
-        tempoEntre: 5, tempoEntreMax: 15, esperaBloqueio: 45, compilar: true, compilarLimiar: 3,
+        tempoEntre: 5, tempoEntreMax: 15, intervaloCpf: 30, intervaloCpfMax: 60, captchaAuto: false,
+        patIgnorar: [], patNovo: '', salvandoPat: false, patMsg: '', patMsgErro: false,
+        salvandoTipos: false, tiposMsg: '', tiposMsgErro: false,
+        tiposCatalogo: [], tiposPadrao: null, tiposPorPret: {}, tiposInstituidor: null, tiposInstDefault: [],
+        tiposPretensoes: [], tiposPret: '__padrao__', tiposSel: [],
+        saldoMsg: '', saldoErro: false, testandoSaldo: false, esperaBloqueio: 45, compilar: true, compilarLimiar: 3,
         grupos: [], carregando: false, salvando: false, msg: '', msgErro: false,
         async init() {
             try {
@@ -2677,10 +2821,14 @@ function satCentralDefaults() {
                 if (r.prazo_dias) this.prazoDias = r.prazo_dias;
                 if (typeof r.tempo_entre === 'number') this.tempoEntre = r.tempo_entre;
                 if (typeof r.tempo_entre_max === 'number') this.tempoEntreMax = r.tempo_entre_max;
+                if (typeof r.captcha_auto === 'boolean') this.captchaAuto = r.captcha_auto;
+                if (typeof r.intervalo_cpf === 'number') this.intervaloCpf = r.intervalo_cpf;
+                if (typeof r.intervalo_cpf_max === 'number') this.intervaloCpfMax = r.intervalo_cpf_max;
                 if (typeof r.espera_bloqueio === 'number') this.esperaBloqueio = r.espera_bloqueio;
                 if (typeof r.compilar === 'boolean') this.compilar = r.compilar;
                 if (r.compilar_limiar) this.compilarLimiar = r.compilar_limiar;
             } catch (e) {}
+            this.carregarDocs();
         },
         async carregarGrupos() {
             this.carregando = true;
@@ -2699,6 +2847,8 @@ function satCentralDefaults() {
                     body: JSON.stringify({
                         caixa: this.caixa, prazo_modo: this.prazoModo, prazo_dias: this.prazoDias,
                         tempo_entre: this.tempoEntre, tempo_entre_max: this.tempoEntreMax, espera_bloqueio: this.esperaBloqueio,
+                        intervalo_cpf: this.intervaloCpf, intervalo_cpf_max: this.intervaloCpfMax,
+                        captcha_auto: this.captchaAuto,
                         compilar: this.compilar, compilar_limiar: this.compilarLimiar,
                     })})).json();
                 if (r.ok) {
@@ -2709,6 +2859,9 @@ function satCentralDefaults() {
                     this.tempoEntre = (typeof d.tempo_entre === 'number') ? d.tempo_entre : this.tempoEntre;
                     this.tempoEntreMax = (typeof d.tempo_entre_max === 'number') ? d.tempo_entre_max : this.tempoEntreMax;
                     this.esperaBloqueio = (typeof d.espera_bloqueio === 'number') ? d.espera_bloqueio : this.esperaBloqueio;
+                    if (typeof d.captcha_auto === 'boolean') this.captchaAuto = d.captcha_auto;
+                    if (typeof d.intervalo_cpf === 'number') this.intervaloCpf = d.intervalo_cpf;
+                    if (typeof d.intervalo_cpf_max === 'number') this.intervaloCpfMax = d.intervalo_cpf_max;
                     if (typeof d.compilar === 'boolean') this.compilar = d.compilar;
                     if (d.compilar_limiar) this.compilarLimiar = d.compilar_limiar;
                     this._msg('Padrões salvos.', false);
@@ -2717,6 +2870,74 @@ function satCentralDefaults() {
             finally { this.salvando = false; }
         },
         _msg(m, err) { this.msg = m; this.msgErro = err; setTimeout(() => this.msg = '', 3500); },
+        async carregarDocs() {
+            try { this.patIgnorar = (await (await fetch('/api/sat/pat-ignorar')).json()).itens || []; } catch (e) {}
+            try {
+                const j = await (await fetch('/api/sat/tipos')).json();
+                this.tiposCatalogo = j.tipos || [];
+                this.tiposPadrao = (j.padrao === undefined ? null : j.padrao);
+                this.tiposPorPret = j.por_pretensao || {};
+                this.tiposInstituidor = (j.instituidor === undefined ? null : j.instituidor);
+                this.tiposInstDefault = j.instituidor_default || [];
+                const set = new Set([...Object.keys(this.tiposPorPret), ...(j.pretensoes || [])]);
+                this.tiposPretensoes = [...set].sort((x, y) => x.localeCompare(y, 'pt-BR'));
+                this.tiposSel = this.keysPara(this.tiposPret);
+            } catch (e) {}
+        },
+        tiposGrupos() {
+            const g = []; this.tiposCatalogo.forEach(t => { if (!g.includes(t.grupo)) g.push(t.grupo); }); return g;
+        },
+        keysPara(pret) {
+            if (pret === '__instituidor__') return [...(this.tiposInstituidor || this.tiposInstDefault)];
+            if (pret !== '__padrao__' && this.tiposPorPret[pret]) return [...this.tiposPorPret[pret]];
+            return this.tiposPadrao === null ? this.tiposCatalogo.map(t => t.key) : [...this.tiposPadrao];
+        },
+        patOrdenados() {
+            return [...this.patIgnorar].sort((x, y) => x.localeCompare(y, 'pt-BR', { sensitivity: 'base' }));
+        },
+        delPat(t) { this.patIgnorar = this.patIgnorar.filter(x => x !== t); },
+        async salvarPat() {
+            this.salvandoPat = true;
+            try {
+                const r = await (await fetch('/api/sat/pat-ignorar', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({itens: this.patIgnorar})})).json();
+                if (r.ok) this.patIgnorar = r.itens || [];
+                this.patMsgErro = !r.ok;
+                this.patMsg = r.ok ? 'Lista salva.' : (r.erro || 'Erro ao salvar.');
+            } catch (e) { this.patMsgErro = true; this.patMsg = 'Erro de comunicação.'; }
+            finally { this.salvandoPat = false; setTimeout(() => this.patMsg = '', 3500); }
+        },
+        async salvarTipos() {
+            this.salvandoTipos = true;
+            try {
+                const r = await (await fetch('/api/sat/tipos', {method: 'POST', headers: {'Content-Type': 'application/json'},
+                    body: JSON.stringify({pretensao: this.tiposPret, keys: this.tiposSel})})).json();
+                if (r.ok) {
+                    this.tiposPadrao = (r.padrao === undefined ? null : r.padrao);
+                    this.tiposPorPret = r.por_pretensao || {};
+                    if (r.instituidor !== undefined) this.tiposInstituidor = r.instituidor;
+                }
+                const nome = this.tiposPret === '__padrao__' ? 'Padrão'
+                    : (this.tiposPret === '__instituidor__' ? 'Instituidor' : this.tiposPret);
+                this.tiposMsgErro = !r.ok;
+                this.tiposMsg = r.ok ? ('Tipos salvos para: ' + nome + '.') : (r.erro || 'Erro ao salvar.');
+            } catch (e) { this.tiposMsgErro = true; this.tiposMsg = 'Erro de comunicação.'; }
+            finally { this.salvandoTipos = false; setTimeout(() => this.tiposMsg = '', 3500); }
+        },
+        addPat() {
+            const t = (this.patNovo || '').trim();
+            if (t && !this.patIgnorar.some(x => x.toLowerCase() === t.toLowerCase())) this.patIgnorar.push(t);
+            this.patNovo = '';
+        },
+        async testarCapsolver() {
+            this.testandoSaldo = true; this.saldoMsg = '';
+            try {
+                const r = await (await fetch('/api/config/capsolver/saldo')).json();
+                this.saldoErro = !r.ok;
+                this.saldoMsg = r.ok ? ('Chave válida — saldo: US$ ' + Number(r.saldo || 0).toFixed(2)) : (r.erro || 'Falha ao testar.');
+            } catch (e) { this.saldoErro = true; this.saldoMsg = 'Erro de comunicação.'; }
+            finally { this.testandoSaldo = false; }
+        },
     };
 }
 

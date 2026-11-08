@@ -25,6 +25,7 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import AsyncIterator
 
+import config
 from config import PAJS_DIR
 from ingestao import sisdpu_client
 from ingestao import sisdpu_movtram as movtram
@@ -44,11 +45,24 @@ TIPOS_ANEXO_MOV_OK = {"doc", "docx", "odt", "png", "jpg", "jpeg", "gif", "pdf"}
 # `acoes_eproc.js` grava um rascunho AQUI automaticamente depois de um
 # "Peticionar" real confirmado no e-proc (se o usuário topar) — ver
 # `_receberPeticaoEproc` em `static/js/acoes_sisdpu.js`.
+# Desde 06/11/2026 o rascunho de um PAJ fica DENTRO da pasta dele
+# (`<PAJ>/Rascunhos do painel/movimentacao_sisdpu.json`, ver
+# `config.pasta_rascunhos_paj`); RASCUNHOS_DIR só para chave que não é PAJ.
 RASCUNHOS_DIR = Path(__file__).resolve().parents[1].parent / "dados" / "acoes_sisdpu_rascunhos"
+_ARQ_RASCUNHO_NO_PAJ = "movimentacao_sisdpu.json"
 
 
 def _rascunho_json(paj_norm: str) -> Path:
-    return RASCUNHOS_DIR / f"{paj_norm}.json"
+    pasta = config.pasta_rascunhos_paj(paj_norm)
+    return pasta / _ARQ_RASCUNHO_NO_PAJ if pasta else RASCUNHOS_DIR / f"{paj_norm}.json"
+
+
+def _arquivos_rascunho_json() -> list[Path]:
+    """Todos os rascunhos: os de dentro das pastas dos PAJs + os avulsos."""
+    achados = list(PAJS_DIR.glob(f"PAJ-*/{config.SUBPASTA_RASCUNHOS_PAJ}/{_ARQ_RASCUNHO_NO_PAJ}"))
+    if RASCUNHOS_DIR.exists():
+        achados += list(RASCUNHOS_DIR.glob("*.json"))
+    return achados
 
 
 _RE_NUMERO_PAJ = re.compile(r"^(\d{4})/(\d{3})-(\d{5})$")
@@ -77,7 +91,7 @@ def salvar_rascunho(paj_norm: str, dados: dict) -> dict:
 
     if not paj_norm:
         return {"ok": False, "erro": "paj_norm vazio."}
-    RASCUNHOS_DIR.mkdir(parents=True, exist_ok=True)
+    _rascunho_json(paj_norm).parent.mkdir(parents=True, exist_ok=True)
     doc = dict(dados)
     doc["paj_norm"] = paj_norm
     doc["salvo_em"] = datetime.now().isoformat(timespec="seconds")
@@ -112,12 +126,15 @@ def excluir_rascunho(paj_norm: str) -> dict:
 # "lancado_em"}]}. `tipo`: "sem" relatório / "com" relatório do PAJ / "ia"
 # (Despacho com IA). `lancado_em`: quando foi levado ao rascunho de "Ações no
 # SISDPU" pelo botão "Lançar no SISDPU".
+# Desde 06/11/2026: `<PAJ>/Rascunhos do painel/despachos.json`; DESPACHOS_DIR
+# (dados/despachos_paj) só para chave que não é PAJ e para o formato antigo.
 DESPACHOS_DIR = RASCUNHOS_DIR.parent / "despachos_paj"
 TIPOS_DESPACHO = ("sem", "com", "ia")
 
 
 def _despachos_json(paj_norm: str) -> Path:
-    return DESPACHOS_DIR / f"{paj_norm}.json"
+    pasta = config.pasta_rascunhos_paj(paj_norm)
+    return pasta / "despachos.json" if pasta else DESPACHOS_DIR / f"{paj_norm}.json"
 
 
 def _agora() -> str:
@@ -151,7 +168,7 @@ def _ler_despachos(paj_norm: str) -> list[dict]:
 
 
 def _gravar_despachos(paj_norm: str, itens: list[dict]) -> None:
-    DESPACHOS_DIR.mkdir(parents=True, exist_ok=True)
+    _despachos_json(paj_norm).parent.mkdir(parents=True, exist_ok=True)
     _despachos_json(paj_norm).write_text(
         json.dumps({"paj_norm": paj_norm, "itens": itens}, ensure_ascii=False, indent=2), encoding="utf-8")
 
@@ -236,12 +253,10 @@ def listar_rascunhos() -> list[dict]:
     Alimenta o badge "Eproc + SISDPU" da tabela de pendentes (pedido do
     usuário 2026-09-11 — sem ele, sair da página conjunta sem executar
     "perdia" o caminho de volta pra revisar os dois juntos)."""
-    if not RASCUNHOS_DIR.exists():
-        return []
     from services import acoes_eproc_service
 
     itens = []
-    for f in RASCUNHOS_DIR.glob("*.json"):
+    for f in _arquivos_rascunho_json():
         try:
             doc = json.loads(f.read_text(encoding="utf-8"))
         except Exception:
@@ -326,8 +341,14 @@ def salvar_anexo_externo(paj_norm: str, nome_original: str, conteudo: bytes) -> 
         return {"ok": False, "detalhe": f'Formato ".{ext or "?"}" não é aceito pelo SISDPU nos anexos de movimentação. Aceitos: {aceitos}.'}
     pasta = _pasta_anexos_externos(paj_norm)
     pasta.mkdir(parents=True, exist_ok=True)
-    ref = f"{uuid.uuid4().hex[:12]}_{nome_original}"
-    caminho = pasta / ref
+    # Cada arquivo numa subpasta própria, com o NOME ORIGINAL (06/11/2026): antes
+    # o código único ia como prefixo do nome ("15a430366e77_Íntegra….pdf") e
+    # chegava assim ao SISDPU. `ref` = "<código>/<nome>".
+    nome_original = Path(nome_original).name
+    sub = uuid.uuid4().hex[:12]
+    (pasta / sub).mkdir(parents=True, exist_ok=True)
+    ref = f"{sub}/{nome_original}"
+    caminho = pasta / sub / nome_original
     caminho.write_bytes(conteudo)
     return {"ok": True, "ref": ref, "nome": nome_original, "tamanho": caminho.stat().st_size, "tipo": ext}
 
@@ -360,10 +381,14 @@ def remover_anexo_externo(paj_norm: str, ref: str) -> dict:
     seguro)."""
     caminho = _resolver_anexo_externo(paj_norm, ref)
     if caminho:
+        pasta = _pasta_anexos_externos(paj_norm)
         with contextlib.suppress(Exception):
             caminho.unlink()
+        if caminho.parent != pasta:  # subpasta própria do arquivo (formato novo)
+            with contextlib.suppress(Exception):
+                caminho.parent.rmdir()
         with contextlib.suppress(Exception):
-            caminho.parent.rmdir()
+            pasta.rmdir()
     return {"ok": True}
 
 
@@ -548,18 +573,23 @@ async def executar_stream(
 
 
 async def _pasta_para_lixeira_se_arquivado(paj_norm: str, fases: list, resultado: dict) -> AsyncIterator[dict]:
-    """Arquivamento gravado (fase "Arquivado…") → pasta do PAJ para a Lixeira do
-    Windows, por ÚLTIMO (depois de movimentar/tramitar/concluir) — decisão do
-    Defensor 11/10/2026, ver services/paj_lixeira_service. Marca o resultado com
-    `paj_na_lixeira` para a tela não reler nem reabrir o PAJ (iria recriar a pasta)."""
+    """Arquivamento gravado (fase "Arquivado…") → AGENDA a pasta do PAJ para a
+    Lixeira do Windows daqui a 2 dias (decisão do Defensor 11/10/2026, postergada
+    em 06/11/2026 — ver services/paj_lixeira_service). A tela volta normalmente à
+    página do PAJ, atualizada. "Paj desarquivado" cancela o agendamento."""
     from services import paj_lixeira_service
 
-    if not paj_norm or not any(paj_lixeira_service.fase_de_arquivamento(f) for f in fases):
+    if not paj_norm:
         return
-    r = await asyncio.to_thread(paj_lixeira_service.enviar_paj_para_lixeira, paj_norm)
+    if any(paj_lixeira_service.fase_de_desarquivamento(f) for f in fases):
+        if paj_lixeira_service.cancelar(paj_norm, "PAJ desarquivado"):
+            yield _ev("ok", "PAJ desarquivado: envio da pasta à Lixeira cancelado.")
+    if not any(paj_lixeira_service.fase_de_arquivamento(f) for f in fases):
+        return
+    r = await asyncio.to_thread(paj_lixeira_service.agendar, paj_norm)
     yield _ev("ok" if r.get("ok") else "erro", f"PAJ arquivado: {r.get('detalhe', '')}")
     if r.get("ok"):
-        resultado["paj_na_lixeira"] = True
+        resultado["lixeira_em"] = r.get("lixeira_em")
 
 
 async def _executar_um_item_stream(
@@ -632,7 +662,9 @@ async def _executar_um_item_stream(
                 if origem == "externo":
                     arq = _resolver_anexo_externo(paj_norm, ref)
                     if arq:
-                        nome = arq.name.split("_", 1)[-1] if "_" in arq.name else arq.name
+                        # formato novo: o arquivo já tem o nome original; o antigo
+                        # (anexo enviado antes de 06/11/2026) tem "<código>_" na frente.
+                        nome = arq.name if "/" in ref else arq.name.split("_", 1)[-1]
                         anexos_ctx.append({"nome": nome, "caminho": str(arq), "tipo": arq.suffix.lstrip(".").lower(),
                                             "descricao": descricao_item or nome, "tipo_arquivo": tipo_arquivo_item})
                         refs_externos_usados.append(ref)

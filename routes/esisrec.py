@@ -99,6 +99,11 @@ async def extrato_crps_juntar(paj_norm: PajNorm):
     return JSONResponse(result, status_code=200 if result.get("ok") else 400)
 
 
+@router.post("/api/extrato-crps/dispensar-juntada/{paj_norm}")
+async def extrato_crps_dispensar(paj_norm: PajNorm):
+    return extrato_crps_service.dispensar_juntada(paj_norm)
+
+
 @router.get("/api/extrato-crps/arquivo/{paj_norm}")
 async def extrato_crps_arquivo(paj_norm: PajNorm, nome: str):
     p = extrato_crps_service.caminho_arquivo(paj_norm, nome)
@@ -123,6 +128,18 @@ async def esisrec_integra_iniciar(paj_norm: PajNorm, numero: str):
 @router.get("/api/esisrec-integra/status/{paj_norm}")
 async def esisrec_integra_status(paj_norm: PajNorm):
     return esisrec_integra_service.get_status(paj_norm)
+
+
+@router.post("/api/esisrec-integra/juntar/{paj_norm}")
+async def esisrec_integra_juntar(paj_norm: PajNorm):
+    """Rota async de propósito: a juntada roda no loop principal (sessão SISDPU)."""
+    result = esisrec_integra_service.juntar(paj_norm)
+    return JSONResponse(result, status_code=200 if result.get("ok") else 400)
+
+
+@router.post("/api/esisrec-integra/dispensar-juntada/{paj_norm}")
+async def esisrec_integra_dispensar(paj_norm: PajNorm):
+    return esisrec_integra_service.dispensar_juntada(paj_norm)
 
 
 @router.get("/api/esisrec-integra/arquivo/{paj_norm}")

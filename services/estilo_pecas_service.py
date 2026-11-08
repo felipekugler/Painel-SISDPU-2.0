@@ -1,8 +1,8 @@
 r"""Padrão pessoal de redação do Defensor para peças/despachos gerados por IA.
 
 Regras que NÃO estão em nenhum playbook público (ex.: `teses-dpu`) nem em
-`CLAUDE.md` do workspace Ofício Geral — que, neste painel (OFICIO_GERAL =
-PREV4-Painel), nem sequer existe como arquivo. Por isso ficam centralizadas
+`CLAUDE.md` do workspace Ofício Geral — que, neste painel (pasta de trabalho
+OFICIO_GERAL), nem sequer existe como arquivo. Por isso ficam centralizadas
 AQUI, em código, como única fonte de verdade compartilhada pelos dois motores
 de elaboração do painel:
 

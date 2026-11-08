@@ -2667,10 +2667,8 @@ async def baixar_todos_arquivos(
     else:
         _log("[fetch] iniciando servidor local na porta 8765...")
 
-        # Tenta em ordem: projeto local, depois PREV4
+        # Servidor de download que acompanha o projeto (.claude/download_server.py).
         server_path = Path(__file__).resolve().parents[1] / ".claude" / "download_server.py"
-        if not server_path.exists():
-            server_path = Path("C:/Claude/DPU/PREV4/.claude/download_server.py")
 
         if not server_path.exists():
             _log(f"[fetch] ERRO: servidor {server_path} não encontrado")

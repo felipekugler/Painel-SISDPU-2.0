@@ -39,12 +39,15 @@ from pathlib import Path
 
 from config import PAJS_DIR
 from services import historico
-from services.dossie_sd_service import _dados_assistido, _id_processo_local, _ler_meta
+from services import juntada_dossie_service
+from services.dossie_sd_service import _dados_assistido
 
 SUBPASTA = "CadÚnico"
 # tipos do submenu (pedido do usuário, 2026-10-09): completo | só Folha Resumo
-# | só Histórico da Família. Todos levam capa + página de dados (com os
-# motivos de exclusão lidos da tela — os PDFs dos motivos só no completo).
+# | só Histórico da Família. Só o COMPLETO é compilado (capa + página de dados
+# + documentos + motivos de exclusão). "Só Folha Resumo" e "Só Histórico da
+# Família" salvam o PDF OFICIAL CRU, do jeito que o CadÚnico emite — é esse
+# arquivo que vai para a pasta e para a juntada (pedido do usuário, 06/11/2026).
 TIPOS = {
     "completo": {"rotulo": "Dossiê CadÚnico Completo", "arquivo": "Dossiê CadÚnico",
                  "titulo": "Dossiê do Cadastro Único (CadÚnico)",
@@ -197,9 +200,10 @@ async def _coletar_familia(page, cpf: str, fam_busca: dict, log, tipo: str = "co
                 partes.append((f"Formulário Suplementar {n}", sup))
 
     # motivos de exclusão ANTES do histórico (o histórico sai da Visualizar
-    # Família). Em todos os tipos: data/motivo vão para a tabela de
-    # integrantes; o PDF de cada motivo só entra no completo.
-    exclusoes = await cad.baixar_motivos_exclusao(page, com_pdf=completo)
+    # Família). Só no completo: data/motivo vão para a tabela de integrantes
+    # da capa e o PDF de cada motivo entra no dossiê. Os tipos "só" saem crus
+    # (sem capa), então não precisam deles.
+    exclusoes = await cad.baixar_motivos_exclusao(page, com_pdf=True) if completo else []
     _anotar_exclusoes(dados.get("integrantes") or [], exclusoes)
     n_excl = sum(1 for i in dados.get("integrantes") or [] if i.get("excluido"))
     n_pdf = sum(1 for e in exclusoes if e.get("pdf"))
@@ -318,10 +322,20 @@ async def _executar(paj_norm: str, sess: dict) -> None:
     cfg = TIPOS[sess["tipo"]]
     for dados, partes, avisos in coletas:
         cod = dados.get("codigo_familiar") or "?"
+        destino = destino_dir / _nome_arquivo(cod, nome, cfg["arquivo"])
+        if sess["tipo"] != "completo":
+            # PDF oficial cru (sem capa/página de dados) — ver TIPOS
+            destino_dir.mkdir(parents=True, exist_ok=True)
+            destino.write_bytes(partes[0][1])
+            sess["arquivos"].append(destino.name)
+            log("ok", f"Família {cod}: {cfg['rotulo']} (arquivo original do CadÚnico) "
+                      f"salvo em {SUBPASTA}/{destino.name}")
+            for a in avisos:
+                log("aviso", f"Família {cod}: {a}")
+            continue
         log("info", f"Família {cod}: montando o PDF…")
         capa = {"titulo": cfg["titulo"], "paj": paj_label, "nome": nome, "cpf": cpf_fmt,
                 "emitido_em": emitido, "familia": dados, "avisos": avisos}
-        destino = destino_dir / _nome_arquivo(cod, nome, cfg["arquivo"])
         res = await asyncio.to_thread(_montar, destino, capa, partes)
         arq = Path(res.get("arquivo") or "").name
         if not arq:
@@ -390,82 +404,16 @@ def _sessao_final(paj_norm: str) -> dict | None:
 
 
 def dispensar_juntada(paj_norm: str) -> dict:
-    sess = _sessao_final(paj_norm)
-    if sess and sess.get("juntada") is None:
-        sess["juntada"] = "dispensada"
-    return {"ok": True}
-
-
-async def _juntar(paj_norm: str, sess: dict) -> None:
-    from ingestao import sisdpu_movtram as movtram
-    from services import acoes_sisdpu_service, sat_service
-
-    def log(level: str, msg: str) -> None:
-        sess["log"].append({"level": level, "msg": msg,
-                            "ts": datetime.now().isoformat(timespec="seconds")})
-
-    try:
-        meta = _ler_meta(paj_norm)
-        paj_label = (meta.get("paj") or "").strip()
-        pasta = PAJS_DIR / paj_norm / SUBPASTA
-        anexos = [{"nome": n, "caminho": str(pasta / n), "tipo": "pdf"}
-                  for n in sess.get("arquivos") or [] if (pasta / n).is_file()]
-        if not anexos:
-            raise RuntimeError(f"PDF do dossiê não encontrado em {SUBPASTA}/.")
-        id_proc, eventos, erro = await acoes_sisdpu_service._resolver_id_processo(
-            _id_processo_local(meta), paj_label)
-        for ev in eventos:
-            log(ev.get("level") or "info", ev.get("msg") or "")
-        if not id_proc:
-            raise RuntimeError(erro or "id do PAJ no SISDPU não encontrado.")
-        log("info", "Movimentando no SISDPU (juntada de documento)…")
-        pajs = [{"id": id_proc, "numero": paj_label}]
-        mv, exc, eventos = await acoes_sisdpu_service.com_auto_reconexao(
-            lambda: movtram.movimentar_paj(pajs, sess["mov_descricao"], sat_service.FASE_MOV, anexos,
-                                           sat_service.TIPO_ARQUIVO, False))
-        for ev in eventos:
-            log(ev.get("level") or "info", ev.get("msg") or "")
-        if exc is not None:
-            raise RuntimeError(f"{type(exc).__name__}: {exc}")
-        if not (mv or {}).get("ok"):
-            raise RuntimeError((mv or {}).get("detalhe") or "falha na movimentação")
-        sess["juntada"] = "ok"
-        sess["mov_seq"] = mv.get("mov_seq")
-        log("ok", "Juntado ao SISDPU" + (f" (movimentação {mv['mov_seq']})." if mv.get("mov_seq") else "."))
-        with contextlib.suppress(Exception):
-            historico.registrar(paj_norm, "dossie_cadunico_juntada", status="ok",
-                                resumo=f"{len(anexos)} arquivo(s) juntado(s) ao SISDPU")
-        with contextlib.suppress(Exception):
-            from services import historico_painel
-
-            historico_painel.registrar({
-                "paj": paj_label, "paj_norm": paj_norm,
-                "url_detalhe": (meta.get("sisdpu_raw") or {}).get("url", ""),
-                "assistido": meta.get("assistido_caixa") or "",
-                "origem": "cadunico",
-                "atividade": f"Juntada: {sess['mov_descricao']}",
-                "movimentacao": sat_service.FASE_MOV, "tramitado_para": "",
-                "concluido": False,
-                "detalhe": f"{len(anexos)} arquivo(s) juntado(s).",
-            })
-    except Exception as e:  # noqa: BLE001
-        sess["juntada"] = "erro"
-        sess["erro_juntada"] = f"{e}"[:400]
-        log("erro", f"Juntada ao SISDPU: {sess['erro_juntada']}")
-        with contextlib.suppress(Exception):
-            historico.registrar(paj_norm, "dossie_cadunico_juntada", status="error",
-                                resumo=sess["erro_juntada"])
+    return juntada_dossie_service.dispensar(_sessao_final(paj_norm))
 
 
 def juntar(paj_norm: str) -> dict:
-    """Dispara a juntada como task no loop CORRENTE — chamar de uma rota async
-    (loop principal do uvicorn, o mesmo da sessão do SISDPU)."""
+    """Dispara a juntada (rotina única em `juntada_dossie_service`) — chamar
+    de uma rota async (loop principal do uvicorn, o da sessão do SISDPU)."""
     sess = _sessao_final(paj_norm)
-    if not sess or sess.get("status") != "done" or not sess.get("arquivos"):
+    if not sess or sess.get("status") != "done":
         return {"ok": False, "erro": "Nenhum dossiê recém-gerado para juntar neste PAJ."}
-    if sess.get("juntada") in ("running", "ok"):
-        return {"ok": False, "erro": "A juntada deste dossiê já foi feita ou está em andamento."}
-    sess["juntada"] = "running"
-    sess.pop("erro_juntada", None)
-    asyncio.get_running_loop().create_task(_juntar(paj_norm, sess))
-    return {"ok": True}
+    return juntada_dossie_service.disparar(
+        paj_norm, sess, pasta=PAJS_DIR / paj_norm / SUBPASTA, descricao=sess.get("mov_descricao") or "",
+        origem="cadunico", atividade=f"Juntada: {sess.get('mov_descricao') or ''}",
+        chave_historico="dossie_cadunico_juntada")

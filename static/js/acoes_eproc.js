@@ -554,6 +554,7 @@ function acoesEprocBlock(cfg) {
                 const j = await resp.json();
                 if (!j.ok) { this.erroIncluirAnexo = j.erro || 'Falha ao formatar a petição.'; return; }
                 this._inserirOuAtualizarAnexoPeticao(j.arquivo, j.tamanho);
+                if (j.aviso) alert('Atenção: ' + j.aviso);  // imagem do texto que não entrou no DOCX/PDF
             } catch (e) {
                 this.erroIncluirAnexo = 'Erro de rede: ' + e;
             } finally {
@@ -890,8 +891,12 @@ function acoesEprocBlock(cfg) {
         // item na lista, já com o nome preenchido (sem precisar reabrir nada depois).
         // O atributo `accept` do input já sugere ao SO só os formatos aceitos; ainda
         // assim revalida aqui (o usuário pode escolher "todos os arquivos" no diálogo).
-        adicionarExterno() {
-            if (this.$refs.inputExterno) this.$refs.inputExterno.click();
+        // Abre a janela "Abrir" do Windows já na pasta do PAJ (seletor_arquivos.js);
+        // sem PAJ ou se ela falhar, cai no seletor do navegador, como antes.
+        async adicionarExterno() {
+            const arqs = await escolherArquivosNaPastaDoPaj(this.pajNorm, 'Adicionar Externo — petição no e-proc');
+            if (arqs === null) { if (this.$refs.inputExterno) this.$refs.inputExterno.click(); return; }
+            if (arqs.length) this.onArquivosExternos({ target: { files: arqs, value: '' } });
         },
         onArquivosExternos(ev) {
             const arquivos = Array.from((ev.target && ev.target.files) || []);

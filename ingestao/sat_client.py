@@ -457,8 +457,43 @@ async def peek() -> dict:
 # de documento inexistente), é (quase) certeza de proteção ANTIROBÔ. Para os documentos
 # que SEMPRE existem (flag `garantido`) o silêncio = antirobô com CERTEZA. Recuperação:
 # pausar (45s FIXO, sem progressão — decisão do usuário 2026-07-21) e re-tentar SÓ o doc.
-_MAX_TENT = 3
+# 2 tentativas por documento (original + 1 re-tentativa) — decisão do usuário 2026-10-30.
+_MAX_TENT = 2
 _PAUSA_BLOQUEIO_MS = 45000  # 45s fixos ao detectar bloqueio antirobô (era 30s)
+
+# "Encerrar fluxo" (30/10/2026, pedido do Defensor): ao ver o antirobô no modal, o usuário
+# pode encerrar a rotina corrente MANTENDO o que já foi baixado. O pedido é checado nas
+# pausas (ritmo e espera após bloqueio); a rotina sai por _EncerrarFluxo e fecha como
+# download parcial (o restante fica para o "Baixar mais").
+_ENCERRAR: dict = {"pedido": False}
+
+
+class _EncerrarFluxo(BaseException):
+    # BaseException: atravessa os `suppress(Exception)`/`except Exception` internos.
+    pass
+
+
+def pedir_encerramento() -> bool:
+    """Pede o encerramento da rotina corrente (download/levantamento). True se havia rotina."""
+    if not _ROTINA_ATIVA:
+        return False
+    _ENCERRAR["pedido"] = True
+    return True
+
+
+def _checar_encerrar() -> None:
+    if _ENCERRAR["pedido"]:
+        raise _EncerrarFluxo()
+
+
+async def _esperar(page, ms: int) -> None:
+    """wait_for_timeout em fatias de 0,5s, atendendo um pedido de encerramento no meio."""
+    _checar_encerrar()
+    while ms > 0:
+        fatia = min(500, ms)
+        await page.wait_for_timeout(fatia)
+        ms -= fatia
+        _checar_encerrar()
 
 # Ritmo entre consultas: delay APÓS cada consulta (campo "Tempo entre consultas", padrão
 # 5 a 15s — sorteado a cada consulta entre o mínimo e o máximo). É este ritmo (e não esperas fixas ad-hoc) que governa as transições entre docs/
@@ -558,16 +593,14 @@ def _inv_add(key: str, sub: str, nome: str, status: str, rotulo: str = "") -> No
 async def _ritmo(page) -> None:
     """Aplica o ritmo entre consultas: delay APÓS cada consulta, sorteado entre o mínimo e o
     máximo do "Tempo entre consultas"."""
-    ms = random.randint(_RITMO_MS, max(_RITMO_MS, _RITMO_MAX_MS))
-    if ms > 0:
-        await page.wait_for_timeout(ms)
+    await _esperar(page, random.randint(_RITMO_MS, max(_RITMO_MS, _RITMO_MAX_MS)))
 
 
 # Catálogo dos tipos de documentos que a rotina sabe baixar (key estável, rótulo, grupo).
 # A seleção POR PRETENSÃO (config) filtra o download por essas keys.
-_G1 = "Grupo 1 — CNIS / Declarações (1 clique)"
-_G2 = "Grupo 2 — modais"
-_GP = "PAT"
+_G1 = "Grupo 1 — documentos únicos"
+_G2 = "Grupo 2 — grupos de documentos"
+_GP = "PAT — processos administrativos"
 TIPOS_DOCUMENTOS = [
     {"key": "cnis_atividades", "label": "CNIS - Atividades", "grupo": _G1},
     {"key": "cnis_dados_cadastrais", "label": "CNIS - Dados Cadastrais", "grupo": _G1},
@@ -603,6 +636,55 @@ _ROTULO_ARQ = ""
 def _final_nome(base: str) -> str:
     """Nome final do PDF (com o prefixo/rótulo do download corrente)."""
     return sat_utils.nome_final(_ROTULO_ARQ + base) + ".pdf"
+
+
+# Período do HISCRE (06/11/2026, pedido do usuário): datas "De"/"até" (MM/AAAA)
+# escolhidas na linha do HISCRE da seleção de documentos. Definido no início de
+# cada download por `baixar_cidadao_stream` (ver `periodo_hiscre`).
+_HISCRE_PERIODO: tuple[str, str] | None = None
+
+
+def _mes_ano(txt: str) -> tuple[int, int] | None:
+    """'MM/AAAA', 'MMAAAA', 'MM-AAAA' ou 'AAAA-MM' → (mês, ano); None se vazio/inválido."""
+    d = (txt or "").strip()
+    m = re.fullmatch(r"(\d{1,2})\s*[/\-.]?\s*(\d{4})", d)
+    if m:
+        mes, ano = int(m.group(1)), int(m.group(2))
+    else:
+        m = re.fullmatch(r"(\d{4})-(\d{1,2})", d)
+        if not m:
+            return None
+        ano, mes = int(m.group(1)), int(m.group(2))
+    return (mes, ano) if 1 <= mes <= 12 and 1900 <= ano <= 2100 else None
+
+
+def periodo_hiscre(de: str = "", ate: str = "") -> tuple[str, str]:
+    """Período de consulta do HISCRE em 'MM/AAAA':
+      - nada informado → últimos 5 anos (mês atual − 5 anos até o mês atual);
+      - só o início → do início até o mês atual;
+      - início e fim → exatamente o período informado;
+      - só o fim → 5 anos antes do fim até o fim.
+    Levanta ValueError para data inválida ou início depois do fim."""
+    from datetime import date
+    hoje = date.today()
+    i, f = _mes_ano(de), _mes_ano(ate)
+    if (de or "").strip() and not i:
+        raise ValueError(f"Data inicial do HISCRE inválida: {de!r} (use MM/AAAA).")
+    if (ate or "").strip() and not f:
+        raise ValueError(f"Data final do HISCRE inválida: {ate!r} (use MM/AAAA).")
+    if not f:
+        f = (hoje.month, hoje.year)
+    if not i:
+        i = (f[0], f[1] - 5)
+    if (i[1], i[0]) > (f[1], f[0]):
+        raise ValueError("No HISCRE, a data inicial é posterior à final.")
+    return f"{i[0]:02d}/{i[1]}", f"{f[0]:02d}/{f[1]}"
+
+
+def _nome_hiscre() -> str:
+    """'HISCRE MMAAAA - MMAAAA.pdf' (início - fim do período consultado)."""
+    de, ate = _HISCRE_PERIODO or periodo_hiscre()
+    return _final_nome(f"HISCRE {de.replace('/', '')} - {ate.replace('/', '')}")
 
 
 # Grupo 1 = abrem direto com 1 clique em "Consultar". (rótulo, prefixo, GARANTIDO, key).
@@ -856,23 +938,37 @@ async def _baixar_aba(ctx, nova, caminho: str) -> bool:
 
 
 async def _clicar_abre_aba(page, ctx, fn_click, out, reg, nome_doc="documento",
-                           alvo_norm="", garantido=False):
+                           alvo_norm="", garantido=False, espera_aba_s: float = 8):
     """Executa fn_click() (async → bool de clicou) e aguarda um dos 3 desfechos:
     'aba' (abriu o PDF), 'sem_dados' (banner que MENCIONA o documento) ou 'bloqueio'
     (SILÊNCIO = antirobô → pausa e re-tenta). Gerador: yield-a os avisos ao vivo e
-    grava o resultado em out['nova']/out['desfecho']."""
+    grava o resultado em out['nova']/out['desfecho'].
+
+    `espera_aba_s` = quanto esperar pela aba do PDF após o clique (PAT: 30 s — processos
+    grandes, como recursos, demoram a ser montados pelo SAT). Aba que abrir ATRASADA
+    (durante a pausa do antirobô ou antes do novo clique) é aproveitada: conta qualquer
+    aba surgida desde o 1º clique, sem clicar de novo nem fechá-la (08/11/2026)."""
     nova, desfecho, msg = None, "bloqueio", ""
     antes_ini = set(ctx.pages)
+
+    def _aba_nova():
+        novas = [p for p in ctx.pages if p not in antes_ini]
+        return novas[0] if novas else None
+
     for tentativa in range(1, _MAX_TENT + 1):
-        antes = set(ctx.pages)
+        nova = _aba_nova()  # aba do clique anterior que abriu atrasada?
+        if nova:
+            desfecho = "aba"
+            yield reg(f"  ✓ {nome_doc}: o PDF abriu com atraso — aproveitando", "muted")
+            break
         await page.evaluate(_JS_MARCAR_BANNERS)  # marca banners RESIDUAIS como vistos
         clicou = await fn_click()
         if clicou:
-            for _ in range(16):  # ~8s
+            for _ in range(max(1, int(espera_aba_s * 2))):  # fatias de 0,5 s
                 await page.wait_for_timeout(500)
-                novas = [p for p in ctx.pages if p not in antes]
-                if novas:  # abriu o PDF numa aba nova → prioridade sobre banner
-                    nova, desfecho = novas[0], "aba"
+                nova = _aba_nova()
+                if nova:  # abriu o PDF numa aba nova → prioridade sobre banner
+                    desfecho = "aba"
                     break
                 # QUALQUER mensagem NOVA (não residual) = motivo EXPRESSO → NÃO é antirobô.
                 # 'sem_dados' (ausência) ou 'indisponivel' (outro motivo). O antirobô só
@@ -890,13 +986,23 @@ async def _clicar_abre_aba(page, ctx, fn_click, out, reg, nome_doc="documento",
             yield reg(f"  🛡 proteção antirobô{cert} ativada em {nome_doc} — aguardando "
                       f"{_PAUSA_BLOQUEIO_MS // 1000}s e re-tentando "
                       f"({tentativa}/{_MAX_TENT - 1})", "muted")
-            await page.wait_for_timeout(_PAUSA_BLOQUEIO_MS)
+            # pausa em fatias, de olho numa aba que abra atrasada (sai na hora se abrir)
+            ms = _PAUSA_BLOQUEIO_MS
+            while ms > 0 and not _aba_nova():
+                await _esperar(page, min(500, ms))
+                ms -= 500
+    # última chance: a aba do último clique abriu bem no fim da espera?
+    if desfecho == "bloqueio" and _aba_nova():
+        nova, desfecho = _aba_nova(), "aba"
+        yield reg(f"  ✓ {nome_doc}: o PDF abriu com atraso — aproveitando", "muted")
     # fecha abas órfãs (algum PDF que abriu mas não virou desfecho 'aba')
     if desfecho != "aba":
         for p in list(ctx.pages):
             if p not in antes_ini:
                 with contextlib.suppress(Exception):
                     await p.close()
+    if desfecho != "aba":
+        nova = None
     out["nova"], out["desfecho"], out["msg"] = nova, desfecho, msg
     await _ritmo(page)  # ritmo: delay entre consultas
 
@@ -953,7 +1059,7 @@ async def _abrir_modal(page, label, out, reg, nome_doc="documento",
             yield reg(f"  🛡 proteção antirobô{cert} ativada em {nome_doc} — aguardando "
                       f"{_PAUSA_BLOQUEIO_MS // 1000}s e re-tentando "
                       f"({tentativa}/{_MAX_TENT - 1})", "muted")
-            await page.wait_for_timeout(_PAUSA_BLOQUEIO_MS)
+            await _esperar(page, _PAUSA_BLOQUEIO_MS)
 
 
 # Grupo 2 = abrem em MODAL. tipo "tabela": linhas com "Abrir PDF"; "hiscre": form de datas.
@@ -1114,17 +1220,15 @@ async def _baixar_modal_tabela(page, ctx, cfg, nome, pasta_destino, salvos, pula
 
 
 async def _baixar_hiscre(page, ctx, pasta_destino, salvos, pulados, reg):
-    """HISCRE: preenche De = (mês atual − 5 anos) e até = mês atual (MM/AAAA) e confirma."""
-    from datetime import date
-    hoje = date.today()
-    de = f"{hoje.month:02d}/{hoje.year - 5}"
-    ate = f"{hoje.month:02d}/{hoje.year}"
+    """HISCRE: preenche De/até (MM/AAAA) com o período escolhido — padrão, os últimos
+    5 anos (ver `periodo_hiscre`) — e confirma."""
+    de, ate = _HISCRE_PERIODO or periodo_hiscre()
     with contextlib.suppress(Exception):
         await page.evaluate(_JS_CAMPO_MODAL, [0, de])
         await page.wait_for_timeout(250)
         await page.evaluate(_JS_CAMPO_MODAL, [1, ate])
         await page.wait_for_timeout(250)
-    nome_arq = _final_nome("HISCRE 5 anos")
+    nome_arq = _nome_hiscre()
     out = {}
     async for ev in _clicar_abre_aba(
             page, ctx,
@@ -1171,9 +1275,9 @@ async def _grupo2_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg, s
             continue
         # HISCRE é um único arquivo determinístico: se já está no acervo, pula ANTES de
         # abrir o modal (retomada). Os demais (modais-tabela) checam por linha adiante.
-        if cfg["tipo"] == "hiscre" and _ja_no_acervo(_final_nome("HISCRE 5 anos")):
-            _inv_add(cfg["key"], "", _final_nome("HISCRE 5 anos"), "baixado")
-            yield reg("  ⏭ HISCRE: já baixado — pulando", "muted")
+        if cfg["tipo"] == "hiscre" and _ja_no_acervo(_nome_hiscre()):
+            _inv_add(cfg["key"], "", _nome_hiscre(), "baixado")
+            yield reg("  ⏭ HISCRE: já baixado para este período — pulando", "muted")
             continue
         alvo = _norm(cfg.get("titulo") or cfg["label"])
         garantido = cfg.get("garantido", False)
@@ -1294,7 +1398,7 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
             out = {}
             async for ev in _clicar_abre_aba(
                     page, ctx, (lambda idx=i: page.evaluate(_JS_ABRIR_PDF_LINHA, idx)),
-                    out, reg, nome_doc=f"tarefa {prot}", garantido=True):
+                    out, reg, nome_doc=f"tarefa {prot}", garantido=True, espera_aba_s=30):
                 yield ev
             nova, desf, msg = out["nova"], out["desfecho"], out.get("msg", "")
             if desf == "aba" and nova:
@@ -1443,6 +1547,105 @@ async def _reaproveitar_consulta(page, dig: str) -> bool:
         return False
 
 
+# Intervalo entre CPFs (08/11/2026): espera, sorteada entre mínimo e máximo
+# (Configurações → Arquivos SAT), entre o FIM da rotina de um CPF e a consulta do
+# próximo (novo CAPTCHA). Desconta o tempo já decorrido desde o fim da última rotina.
+_ULTIMO_CPF = {"fim": 0.0, "consultou": False}
+
+
+def _intervalo_cpf_cfg() -> tuple[int, int]:
+    try:
+        from services import config_painel_service as _cfgp
+        d = _cfgp.get_sat_central_defaults()
+        return int(d.get("intervalo_cpf", 30)), int(d.get("intervalo_cpf_max", 60))
+    except Exception:  # noqa: BLE001
+        return 30, 60
+
+
+def _fim_rotina_cpf() -> None:
+    """Chamado no `finally` das rotinas: marca o fim se houve consulta por CPF."""
+    if _ULTIMO_CPF["consultou"]:
+        _ULTIMO_CPF["fim"] = time.monotonic()
+        _ULTIMO_CPF["consultou"] = False
+
+
+async def _aguardar_intervalo_cpf(page, reg):
+    if not _ULTIMO_CPF["fim"]:
+        return
+    mn, mx = _intervalo_cpf_cfg()
+    alvo = random.randint(mn, max(mn, mx))
+    restante = alvo - (time.monotonic() - _ULTIMO_CPF["fim"])
+    if restante >= 1:
+        yield reg(f"Intervalo entre CPFs: aguardando {round(restante)} s antes de consultar o novo CPF…", "info")
+        await _esperar(page, int(restante * 1000))
+
+
+# CAPTCHA automático (08/11/2026): reCAPTCHA v2 padrão no diálogo PrimeFaces
+# idFormRecaptcha:dgCaptcha; token do CapSolver no <textarea g-recaptcha-response>
+# e clique em "Enviar" (idFormRecaptcha:chkCaptcha). Qualquer falha → modo manual.
+_JS_CAPTCHA_VISIVEL = r"""()=>{
+  const d = document.getElementById('idFormRecaptcha:dgCaptcha');
+  if (!d || getComputedStyle(d).display === 'none') return null;
+  const g = d.querySelector('.g-recaptcha[data-sitekey]');
+  return g ? g.dataset.sitekey : '';
+}"""
+_JS_CAPTCHA_PREENCHER = r"""(token)=>{
+  const d = document.getElementById('idFormRecaptcha:dgCaptcha') || document;
+  const ts = d.querySelectorAll('textarea[name="g-recaptcha-response"]');
+  ts.forEach(t => { t.value = token; t.innerHTML = token; });
+  return ts.length;
+}"""
+_SITEKEY_SAT = "6Leuh4keAAAAABYvivS5hMUbeUfWsvJBd072IcSn"  # conferida em 08/11/2026 (fallback)
+
+
+def _captcha_auto_ativo() -> bool:
+    try:
+        from services import config_painel_service as _cfgp
+        return bool(_cfgp.get_sat_central_defaults().get("captcha_auto"))
+    except Exception:  # noqa: BLE001
+        return False
+
+
+async def _resolver_captcha_auto(page, reg, out: dict):
+    """Tenta resolver o CAPTCHA pelo CapSolver. out["resolvido"] = True se os dados do
+    cidadão apareceram; senão o chamador cai no modo manual."""
+    from ingestao import captcha_solver
+    out["resolvido"] = False
+    if not captcha_solver.chave_api():
+        yield reg("CAPTCHA automático ligado, mas a chave do CapSolver não está disponível "
+                  "(cofre trancado ou sem cadastro) — resolva na janela.", "erro")
+        return
+    sitekey = None
+    for _ in range(40):  # até ~20 s para o diálogo do CAPTCHA (ou os dados) aparecer
+        with contextlib.suppress(Exception):
+            if await page.evaluate(_JS_TEM_CONSULTAR):
+                out["resolvido"] = True  # o SAT não pediu CAPTCHA desta vez
+                return
+            sitekey = await page.evaluate(_JS_CAPTCHA_VISIVEL)
+        if sitekey is not None:
+            break
+        await page.wait_for_timeout(500)
+    if sitekey is None:
+        yield reg("CAPTCHA automático: o diálogo do CAPTCHA não apareceu — resolva na janela.", "erro")
+        return
+    yield reg("CAPTCHA: resolvendo automaticamente pelo CapSolver…", "info")
+    res = await captcha_solver.resolver_recaptcha_v2(page.url, sitekey or _SITEKEY_SAT)
+    if not res.get("ok"):
+        yield reg(f"CAPTCHA automático falhou ({res.get('erro')}) — resolva na janela.", "erro")
+        return
+    try:
+        n = await page.evaluate(_JS_CAPTCHA_PREENCHER, res["token"])
+        if not n:
+            raise RuntimeError("campo do CAPTCHA não encontrado")
+        await page.click('[id="idFormRecaptcha:chkCaptcha"]', timeout=10000)
+        await page.wait_for_function(_JS_TEM_CONSULTAR, timeout=30000)
+    except Exception as e:  # noqa: BLE001
+        yield reg(f"CAPTCHA automático não foi aceito pelo SAT ({str(e)[:80]}) — resolva na janela.", "erro")
+        return
+    out["resolvido"] = True
+    yield reg(f"✓ CAPTCHA resolvido automaticamente ({res.get('segundos', 0)} s).", "ok")
+
+
 async def _abrir_consulta_cpf(page, cpf: str, reg, out: dict):
     """Abre o SAT, confere a sessão e consulta o CPF (o usuário resolve o CAPTCHA
     na janela). `out["ok"]` = True quando os dados do cidadão aparecem; senão já
@@ -1455,6 +1658,8 @@ async def _abrir_consulta_cpf(page, cpf: str, reg, out: dict):
         yield reg("Reaproveitando a consulta do levantamento — sem nova consulta por CPF e sem CAPTCHA.", "ok")
         out["ok"] = True
         return
+    async for ev in _aguardar_intervalo_cpf(page, reg):
+        yield ev
     with contextlib.suppress(Exception):
         await page.bring_to_front()
         await page.goto(SAT_CONSULTA, wait_until="domcontentloaded", timeout=60000)
@@ -1474,13 +1679,19 @@ async def _abrir_consulta_cpf(page, cpf: str, reg, out: dict):
     except Exception as e:  # noqa: BLE001
         yield {"done": True, "resultado": {"ok": False, "detalhe": f"Falha ao iniciar a consulta: {e}"}}
         return
-    yield reg("⚠ Resolva o CAPTCHA na JANELA do SAT e clique em 'Enviar'. Aguardando… (até 3 min)", "info")
+    auto: dict = {}
+    if _captcha_auto_ativo():
+        async for ev in _resolver_captcha_auto(page, reg, auto):
+            yield ev
+    if not auto.get("resolvido"):
+        yield reg("⚠ Resolva o CAPTCHA na JANELA do SAT e clique em 'Enviar'. Aguardando… (até 3 min)", "info")
     try:
         await page.wait_for_function(_JS_TEM_CONSULTAR, timeout=180000)
     except Exception:
         yield {"done": True, "resultado": {"ok": False,
                "detalhe": "Não detectei os dados do cidadão (CAPTCHA não resolvido a tempo?)."}}
         return
+    _ULTIMO_CPF["consultou"] = True
     await page.wait_for_timeout(800)
     out["ok"] = True
 
@@ -1588,7 +1799,7 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                                 delay_s: float = 5.0, bloqueio_s: float = 45.0,
                                 delay_max_s: float | None = None, tipos=None, pretensao="", rotulo="", alvos=None,
                                 nbs=None, protocolos=None, compilar=False, compilar_limiar=3,
-                                pat_ignorar=None, pasta_acervo=None):
+                                pat_ignorar=None, pasta_acervo=None, hiscre_de="", hiscre_ate=""):
     """Consulta o CPF no SAT (usuário resolve o CAPTCHA na janela) e baixa o Grupo 1
     (1 clique), o Grupo 2 (modais: CCON, CRER, HISCRE, HISCONSIGNADOS, LAUDO MEDICO) e
     o PAT (2ª Via dos Processos, com deduplicação). `delay_s` = ritmo preventivo entre
@@ -1603,11 +1814,14 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
     `pasta_acervo` = pasta do acervo final para VERIFICAÇÃO PRÉVIA (pula docs já presentes;
     permite RETOMAR downloads interrompidos); None = usa `pasta_destino`. O log é gravado
     INCREMENTALMENTE (a cada documento) — uma interrupção deixa o inventário parcial em disco.
+    `hiscre_de`/`hiscre_ate` = período do HISCRE (MM/AAAA; vazios = últimos 5 anos —
+    regras em `periodo_hiscre`).
     Gera eventos SSE; termina com {'done':True,'resultado':{...}}."""
     global _RITMO_MS, _RITMO_MAX_MS, _PAUSA_BLOQUEIO_MS, _ROTULO_ARQ, _INVENTARIO, _ALVOS
     global _NB_FILTRO, _PROTOCOLO_FILTRO, _SOMENTE_PAT, _COMPILAR, _COMPILAR_LIMIAR, _PAT_IGNORAR, _PASTA_ACERVO, _LOG_PERSIST
-    global _ETAPA_ATUAL
+    global _ETAPA_ATUAL, _HISCRE_PERIODO
     _ETAPA_ATUAL = ""
+    _HISCRE_PERIODO = periodo_hiscre(hiscre_de, hiscre_ate)  # ValueError antes de abrir o SAT
     concluiu = False  # só True quando a rotina chega ao fim (ver `finally`)
     _RITMO_MS = max(0, int(float(delay_s) * 1000))
     _RITMO_MAX_MS = max(_RITMO_MS, int(float(delay_max_s if delay_max_s is not None else delay_s) * 1000))
@@ -1657,6 +1871,7 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
 
     _ROTINA_ATIVA.clear()
     _ROTINA_ATIVA.update(tipo="download", nome=nome, desde=_dt.now().isoformat(timespec="seconds"))
+    _ENCERRAR["pedido"] = False
     browser, page = await _connect()
     ctx = page.context
     try:
@@ -1718,7 +1933,7 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                     yield reg(f"  🛡 proteção antirobô{cert} ativada em {prefixo} — aguardando "
                               f"{_PAUSA_BLOQUEIO_MS // 1000}s e re-tentando "
                       f"({tentativa}/{_MAX_TENT - 1})", "muted")
-                    await page.wait_for_timeout(_PAUSA_BLOQUEIO_MS)
+                    await _esperar(page, _PAUSA_BLOQUEIO_MS)
             if desfecho == "aba" and nova:
                 with contextlib.suppress(Exception):
                     await nova.wait_for_load_state("domcontentloaded", timeout=15000)
@@ -1778,8 +1993,17 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
         concluiu = True
         yield {"done": True, "resultado": {"ok": True, "detalhe": det,
                "salvos": salvos, "pulados": pulados, "pasta": pasta_destino}}
+    except _EncerrarFluxo:
+        # encerrado pelo usuário: mantém o baixado; `concluiu` fica False → o log sai
+        # parcial/interrompido e o "Baixar mais" oferece o que faltou.
+        det = f"Fluxo encerrado pelo usuário — {len(salvos)} documento(s) baixado(s) mantido(s)."
+        yield reg(f"■ {det}", "novo")
+        yield {"done": True, "resultado": {"ok": True, "encerrado": True, "detalhe": det,
+               "salvos": salvos, "pulados": pulados, "pasta": pasta_destino}}
     finally:
+        _ENCERRAR["pedido"] = False
         _ROTINA_ATIVA.clear()
+        _fim_rotina_cpf()
         # Log já foi gravado INCREMENTALMENTE a cada documento; aqui grava a versão FINAL
         # (marcando parcial=False). Se a rotina foi interrompida (perda de conexão), o
         # parcial gravado no último _inv_add permanece em disco para permitir a retomada.
@@ -1836,6 +2060,7 @@ async def levantar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
 
     _ROTINA_ATIVA.clear()
     _ROTINA_ATIVA.update(tipo="levantamento", nome=nome, desde=ts_ini)
+    _ENCERRAR["pedido"] = False
     browser, page = await _connect()
     try:
         out_c: dict = {}
@@ -1937,8 +2162,14 @@ async def levantar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                f"Levantamento concluído: {n_disp} documento(s) disponível(is) no SAT, "
                f"além dos {len(_GRUPO1)} do Grupo 1 a verificar. Escolha no \"Baixar mais\" — a consulta "
                f"fica aberta {_CONSULTA_VALIDADE_S // 60} min (sem novo CAPTCHA).", "consulta_aberta": True}}
+    except _EncerrarFluxo:
+        yield reg("■ Levantamento encerrado pelo usuário (fica incompleto).", "novo")
+        yield {"done": True, "resultado": {"ok": False, "encerrado": True,
+               "detalhe": "Levantamento encerrado pelo usuário."}}
     finally:
+        _ENCERRAR["pedido"] = False
         _ROTINA_ATIVA.clear()
+        _fim_rotina_cpf()
         with contextlib.suppress(Exception):
             import json as _json
             # Um levantamento COMPLETO anterior nunca é perdido (25/10/2026): o novo só

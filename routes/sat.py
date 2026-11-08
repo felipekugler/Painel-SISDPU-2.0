@@ -36,7 +36,16 @@ router = APIRouter()
 @router.get("/sat", response_class=HTMLResponse)
 async def pagina_sat(request: Request):
     template = request.app.state.jinja.get_template("sat.html")
-    html = template.render(request=request, ambiente=getattr(request.app.state, "ambiente", {}))
+    # Modo EMBUTIDO (06/11/2026): `?embed=1&paj=PAJ-...` — a página Arquivos SAT reduzida a
+    # UM PAJ, sem menu lateral, aberta num modal da página do PAJ (Consultas › Arquivos SAT
+    # Central). Mesmas tabelas/ações; o PAJ entra na lista de manuais pelo metadata local.
+    embed_paj = ""
+    if request.query_params.get("embed") and request.query_params.get("paj"):
+        embed_paj = request.query_params["paj"]
+        with __import__("contextlib").suppress(Exception):
+            sat_service.garantir_paj_na_lista(embed_paj)
+    html = template.render(request=request, ambiente=getattr(request.app.state, "ambiente", {}),
+                           embed_paj=embed_paj)
     return HTMLResponse(html)
 
 
@@ -49,6 +58,13 @@ async def api_pendentes():
 async def api_pendentes_manuais():
     """SÓ os PAJs manuais salvos (sem ler a caixa) — pré-carga rápida ao abrir a aba."""
     return JSONResponse(sat_service.listar_pendentes_manuais())
+
+
+@router.post("/api/sat/encerrar-fluxo", response_class=JSONResponse)
+async def encerrar_fluxo():
+    """Encerra a rotina do SAT em curso (download/levantamento) mantendo o já baixado."""
+    from ingestao import sat_client
+    return JSONResponse({"ok": sat_client.pedir_encerramento()})
 
 
 @router.post("/api/sat/pendentes/manual", response_class=JSONResponse)
@@ -362,12 +378,17 @@ async def api_tipos_get():
         instituidor = _cfg.get_sat_tipos_instituidor()  # type: ignore[name-defined]
     except Exception:  # noqa: BLE001
         pass
+    pretensoes: list = []
+    with __import__("contextlib").suppress(Exception):
+        from services import rotina_dossie_sd_service
+        pretensoes = rotina_dossie_sd_service.pretensoes_conhecidas()
     return JSONResponse({
         "tipos": sat_client.TIPOS_DOCUMENTOS,
         "padrao": padrao,  # None = todos
         "por_pretensao": por_pretensao,
         "instituidor": instituidor,  # None = usar o default abaixo
         "instituidor_default": sat_client.TIPOS_INSTITUIDOR_DEFAULT,
+        "pretensoes": pretensoes,  # pretensões vistas nos PAJs (Configurações → Arquivos SAT)
     })
 
 
@@ -567,3 +588,106 @@ async def api_grupos(id: str = ""):
     else:
         grupos = await sat_service.listar_grupos()  # MCP: catálogo de destinos
     return JSONResponse({"grupos": grupos, "padrao": sat_service.GRUPO_PADRAO})
+
+# ---------------------------------------------------------------------------
+# Consulta "Arquivos SAT Central" da página do PAJ (06/11/2026): o Defensor marca
+# PESSOAS do PAJ (assistidos, representantes, instituidor, CPF avulso) e TIPOS de
+# documento; o painel baixa para o ACERVO da página Arquivos SAT (cada pessoa no seu
+# escopo) e põe o PAJ na lista de lá, onde segue "Anexar ao PAJ"/"Baixar mais".
+# ---------------------------------------------------------------------------
+_SAT_COMUNS = ["cnis_vinculos", "cnis_remuneracoes", "declaracao_beneficios", "crer",
+               "carta_concessao", "laudo_medico", "laudo_social", "pat"]
+
+
+@router.get("/api/sat/{paj_norm}/consulta-pessoas", response_class=JSONResponse)
+async def api_consulta_pessoas(paj_norm: str):
+    """Pessoas do PAJ + catálogo de documentos + sugeridos pela pretensão (fallback: comuns)."""
+    from ingestao import sat_client
+    meta = sat_service._ler_metadata(paj_norm)
+    pret = meta.get("pretensaopura") or meta.get("pretensao", "")
+    todos = sat_client.TIPOS_KEYS
+    sugeridos = list(_SAT_COMUNS)
+    with __import__("contextlib").suppress(Exception):
+        sugeridos = [k for k in _cfg.resolver_sat_tipos(pret, todos) if k in todos]  # type: ignore[name-defined]
+    return JSONResponse({"pessoas": sat_service.pessoas_do_paj(paj_norm),
+                         "tipos": sat_client.TIPOS_DOCUMENTOS,
+                         "sugeridos": sugeridos, "pretensao": pret})
+
+
+async def _stream_baixar_selecao(paj_norm: str, pessoas: list[dict], tipos: list[str],
+                                 nbs: str, delay: float, delay_max: float | None,
+                                 bloqueio: float, hiscre_de: str = "", hiscre_ate: str = "",
+                                 protocolos: str = ""):
+    from ingestao import sat_client
+
+    def log(msg, level="info"):
+        return {"event": "log", "data": json.dumps({"level": level, "msg": msg}, ensure_ascii=False)}
+
+    if not sat_service.garantir_paj_na_lista(paj_norm):
+        r = await sat_service.add_paj_manual(sat_service._norm_to_num(paj_norm))
+        if not r.get("ok"):
+            yield log(f"Não consegui incluir o PAJ na página Arquivos SAT: {r.get('erro')}", "erro")
+            yield {"event": "done", "data": json.dumps({"ok": False, "detalhe": r.get("erro")}, ensure_ascii=False)}
+            return
+    resumo, encerrado = [], False
+    for i, ps in enumerate(pessoas, 1):
+        cpf, nome = ps.get("cpf", ""), (ps.get("nome") or "").strip()
+        escopo = ps.get("escopo") or ""
+        if not escopo.startswith(("assistido", "instituidor")):
+            escopo = sat_service.registrar_pessoa(paj_norm, cpf, nome, ps.get("papel") or "Outra pessoa")
+        paths = sat_service._escopo_paths(paj_norm, escopo)
+        destino = paths["destino"]
+        # acervo já existe → baixa na subpasta complementar (pula o já presente) e mescla
+        # depois, sem sobrescrever o log/inventário do 1º download.
+        complementar = (destino / "_log_download.json").exists()
+        pasta = paths["complementar"] if complementar else destino
+        if complementar:
+            import shutil
+            shutil.rmtree(pasta, ignore_errors=True)
+        yield log(f"━━ {i}/{len(pessoas)} · {ps.get('papel') or 'Pessoa'}: {nome or cpf} (CPF {cpf}) ━━", "novo")
+        res: dict = {}
+        try:
+            async for ev in sat_client.baixar_cidadao_stream(
+                    cpf, nome, str(pasta), delay_s=delay, bloqueio_s=bloqueio,
+                    delay_max_s=delay_max, tipos=tipos, rotulo=paths["rotulo"],
+                    nbs=_parse_nbs(nbs), protocolos=_parse_nbs(protocolos),
+                    pasta_acervo=str(destino), hiscre_de=hiscre_de, hiscre_ate=hiscre_ate):
+                if ev.get("done"):
+                    res = ev.get("resultado", {}) or {}
+                else:
+                    yield {"event": "log", "data": json.dumps(ev, ensure_ascii=False)}
+        except Exception as e:  # noqa: BLE001
+            res = {"ok": False, "detalhe": str(e)}
+            yield log(str(e), "erro")
+        if complementar:
+            with __import__("contextlib").suppress(Exception):
+                sat_service.mesclar_complementar_pendente(paj_norm, escopo)
+        n = len(res.get("salvos") or [])
+        resumo.append({"cpf": cpf, "nome": nome, "papel": ps.get("papel"), "baixados": n,
+                       "ok": bool(res.get("ok")), "detalhe": res.get("detalhe", "")})
+        yield log(f"  → {nome or cpf}: {n} documento(s) baixado(s)", "ok" if res.get("ok") else "erro")
+        if res.get("encerrado"):
+            encerrado = True
+            break
+    total = sum(r["baixados"] for r in resumo)
+    yield {"event": "done", "data": json.dumps(
+        {"ok": True, "encerrado": encerrado, "total": total, "pessoas": resumo,
+         "detalhe": f"{total} documento(s) baixado(s) para o acervo do Arquivos SAT."},
+        ensure_ascii=False)}
+
+
+@router.get("/api/sat/{paj_norm}/baixar-selecao")
+async def baixar_selecao(paj_norm: str, pessoas: str, tipos: str = "", nbs: str = "",
+                         delay: float = 5.0, delay_max: float | None = None,
+                         bloqueio: float = 45.0, hiscre_de: str = "", hiscre_ate: str = "",
+                         protocolos: str = ""):
+    """SSE: baixa os `tipos` (csv de keys) para cada pessoa de `pessoas` (JSON
+    [{cpf, nome, papel, escopo}]) — uma consulta por CPF (CAPTCHA a cada uma).
+    `hiscre_de`/`hiscre_ate` (MM/AAAA, opcionais) = período do HISCRE."""
+    try:
+        lst = [x for x in json.loads(pessoas) if len("".join(c for c in x.get("cpf", "") if c.isdigit())) == 11]
+    except Exception:  # noqa: BLE001
+        lst = []
+    tks = [t for t in (tipos or "").split(",") if t]
+    return EventSourceResponse(_stream_baixar_selecao(paj_norm, lst, tks, nbs, delay, delay_max, bloqueio,
+                                                      hiscre_de, hiscre_ate, protocolos))

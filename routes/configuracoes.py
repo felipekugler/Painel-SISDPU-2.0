@@ -60,6 +60,13 @@ async def get_sat_central():
     return JSONResponse(config_painel_service.get_sat_central_defaults())
 
 
+@router.get("/api/config/capsolver/saldo")
+async def capsolver_saldo():
+    """Testa a chave de API do CapSolver (cofre) e devolve o saldo."""
+    from ingestao import captcha_solver
+    return JSONResponse(await captcha_solver.saldo())
+
+
 @router.post("/api/config/sat-central")
 async def set_sat_central(request: Request):
     body = await request.json()

@@ -546,6 +546,17 @@ async def movimentar_paj(
     Retorna {ok, status, detalhe, pajs, anexos, mov_seq}.
     `tipo_ficha`: só a fonte SIS-DPU 2.0 usa (rótulo da ficha — "etapa" para a
     Etapa do PAJ)."""
+    # Limite de 9 MB por anexo do SISDPU (06/11/2026): PDF maior é comprimido e,
+    # se preciso, dividido em partes ANTES de enviar — ver
+    # services/limite_anexo_sisdpu.py. Vale para as duas fontes abaixo.
+    if anexos:
+        import asyncio as _asyncio
+
+        from services import limite_anexo_sisdpu
+        try:
+            anexos = await _asyncio.to_thread(limite_anexo_sisdpu.ajustar_anexos, anexos)
+        except limite_anexo_sisdpu.AnexoGrandeDemais as e:
+            return {"ok": False, "status": "falha", "detalhe": str(e)}
     # Fonte "SIS-DPU 2.0 (MCP)": grava pelo MCP, com a ficha aprovada no modal
     # padrão do painel (ingestao/sisdpu2_movtram.py). Mesmo retorno.
     from ingestao import sisdpu2_movtram

@@ -6,22 +6,19 @@ Extrato do Processo" da página Consultar e-Sisrec (`esisrec_client.
 baixar_extrato`, headless, login GERID com a credencial do SAT Central) e salva
 o PDF na subpasta `E-sisrec/` do PAJ.
 
-Depois, opcionalmente, junta ao SISDPU — mesma movimentação da juntada do
-Dossiê SD / SAT Central (fase "Juntada de documento", anexo como "Documentos
-do Assistido", sem tramitar nem concluir), com a descrição "Extrato do
-Andamento do Processo no CRPS". A juntada roda como task no loop PRINCIPAL do
-painel (onde vive a sessão do SISDPU); o front faz polling de `get_status`."""
+Depois, opcionalmente, junta ao SISDPU pela rotina única dos dossiês
+(`juntada_dossie_service`), com a descrição "Extrato do Andamento do Processo
+no CRPS"; o front faz polling de `get_status`."""
 
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import re
 from datetime import datetime
 from pathlib import Path
 
 from config import PAJS_DIR
-from services import historico
+from services import historico, juntada_dossie_service
 
 SUBPASTA = "E-sisrec"
 MOV_DESCRICAO = "Extrato do Andamento do Processo no CRPS"
@@ -63,70 +60,20 @@ async def obter(paj_norm: str, numero: str) -> dict:
     pasta.mkdir(parents=True, exist_ok=True)
     nome = f"Extrato Andamento CRPS {digitos} {datetime.now():%Y-%m-%d}.pdf"
     (pasta / nome).write_bytes(corpo)
-    _estado[paj_norm] = {"arquivo": nome, "numero": digitos, "juntada": None}
+    _estado[paj_norm] = {"arquivo": nome, "arquivos": [nome], "numero": digitos, "juntada": None}
     with contextlib.suppress(Exception):
         historico.registrar(paj_norm, "extrato_crps", status="done",
                             resumo=f"Extrato do processo {digitos} salvo em {SUBPASTA}/{nome}")
     return {"ok": True, "arquivo": nome}
 
 
-async def _juntar(paj_norm: str, sess: dict) -> None:
-    from ingestao import sisdpu_movtram as movtram
-    from services import acoes_sisdpu_service, sat_service
-    from services.dossie_sd_service import _id_processo_local, _ler_meta
-
-    try:
-        meta = _ler_meta(paj_norm)
-        paj_label = (meta.get("paj") or "").strip()
-        p = caminho_arquivo(paj_norm, sess.get("arquivo", ""))
-        if not p:
-            raise RuntimeError(f"PDF do extrato não encontrado em {SUBPASTA}/.")
-        anexos = [{"nome": p.name, "caminho": str(p), "tipo": "pdf"}]
-        id_proc, _eventos, erro = await acoes_sisdpu_service._resolver_id_processo(
-            _id_processo_local(meta), paj_label)
-        if not id_proc:
-            raise RuntimeError(erro or "id do PAJ no SISDPU não encontrado.")
-        pajs = [{"id": id_proc, "numero": paj_label}]
-        mv, exc, _eventos = await acoes_sisdpu_service.com_auto_reconexao(
-            lambda: movtram.movimentar_paj(pajs, MOV_DESCRICAO, sat_service.FASE_MOV, anexos,
-                                           sat_service.TIPO_ARQUIVO, False))
-        if exc is not None:
-            raise RuntimeError(f"{type(exc).__name__}: {exc}")
-        if not (mv or {}).get("ok"):
-            raise RuntimeError((mv or {}).get("detalhe") or "falha na movimentação")
-        sess["juntada"] = "ok"
-        with contextlib.suppress(Exception):
-            historico.registrar(paj_norm, "extrato_crps_juntada", status="ok",
-                                resumo=f"{p.name} juntado ao SISDPU")
-        with contextlib.suppress(Exception):
-            from services import historico_painel
-
-            historico_painel.registrar({
-                "paj": paj_label, "paj_norm": paj_norm,
-                "url_detalhe": (meta.get("sisdpu_raw") or {}).get("url", ""),
-                "assistido": meta.get("assistido_caixa") or "",
-                "origem": "e-sisrec",
-                "atividade": "Juntada do Extrato do Andamento do Processo no CRPS",
-                "movimentacao": sat_service.FASE_MOV, "tramitado_para": "",
-                "concluido": False,
-                "detalhe": p.name,
-            })
-    except Exception as e:  # noqa: BLE001
-        sess["juntada"] = "erro"
-        sess["erro_juntada"] = f"{e}"[:400]
-        with contextlib.suppress(Exception):
-            historico.registrar(paj_norm, "extrato_crps_juntada", status="error",
-                                resumo=sess["erro_juntada"])
-
-
 def juntar(paj_norm: str) -> dict:
-    """Dispara a juntada como task no loop CORRENTE — chamar de uma rota async."""
-    sess = _estado.get(paj_norm)
-    if not sess or not sess.get("arquivo"):
-        return {"ok": False, "erro": "Nenhum extrato obtido para juntar neste PAJ."}
-    if sess.get("juntada") in ("running", "ok"):
-        return {"ok": False, "erro": "A juntada deste extrato já foi feita ou está em andamento."}
-    sess["juntada"] = "running"
-    sess.pop("erro_juntada", None)
-    asyncio.get_running_loop().create_task(_juntar(paj_norm, sess))
-    return {"ok": True}
+    """Dispara a juntada — chamar de uma rota async (loop principal)."""
+    return juntada_dossie_service.disparar(
+        paj_norm, _estado.get(paj_norm), pasta=PAJS_DIR / paj_norm / SUBPASTA, descricao=MOV_DESCRICAO,
+        origem="e-sisrec", atividade="Juntada do Extrato do Andamento do Processo no CRPS",
+        chave_historico="extrato_crps_juntada")
+
+
+def dispensar_juntada(paj_norm: str) -> dict:
+    return juntada_dossie_service.dispensar(_estado.get(paj_norm))

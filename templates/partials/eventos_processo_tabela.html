@@ -28,7 +28,7 @@
   <input type="checkbox" checked aria-label="Expandir/recolher Eventos" />
   <div class="collapse-title text-sm font-semibold flex items-center gap-2">
     Eventos
-    <span class="badge badge-ghost badge-sm" x-text="resultado.qtd_eventos"></span>
+    <span class="badge badge-ghost badge-sm" x-text="resultado ? resultado.qtd_eventos : 0"></span>
   </div>
   <div class="collapse-content">
     <div class="flex items-center justify-end gap-2 mb-2" x-show="!modoSelecao && eventosComDocPendente().length">
@@ -51,7 +51,7 @@
           </tr>
         </thead>
         <tbody>
-          <template x-for="ev in (resultado.eventos || [])" :key="ev.numero">
+          <template x-for="ev in ((resultado && resultado.eventos) || [])" :key="ev.numero">
             <tr :id="'ev-' + ev.numero" :class="corEvento(ev) ? 'linha-intim' : ''"
                 :style="corEvento(ev) ? ('background-color:' + corEvento(ev)) : ''">
               <td class="text-xs tnum" x-text="ev.numero"></td>
@@ -97,7 +97,7 @@
           </template>
         </tbody>
         <tfoot>
-          <tr x-show="!todosEventos && (resultado.eventos || []).length >= eventosLimit">
+          <tr x-show="!todosEventos && ((resultado && resultado.eventos) || []).length >= eventosLimit">
             <td colspan="5" class="text-center py-1">
               <button type="button" class="btn btn-ghost btn-xs gap-1" @click="mostrarMaisEventos()" :disabled="carregando">
                 <span x-show="carregando" class="loading loading-spinner loading-xs"></span>

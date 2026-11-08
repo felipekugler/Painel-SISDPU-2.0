@@ -55,6 +55,7 @@ SISTEMAS = {
     "eproc_jmu": "e-proc JMU",
     "sat": "SAT Central (GERID)",
     "cadunico": "CadÚnico (Login CAIXA)",
+    "capsolver": "CapSolver (CAPTCHA do SAT)",  # usuário = e-mail da conta; senha = chave de API
 }
 
 # Campos além de usuário/senha, por sistema. Os marcados como `secreto` nunca

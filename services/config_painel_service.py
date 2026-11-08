@@ -90,6 +90,10 @@ SAT_PRAZO_MODO_DEFAULT = "sem_prazo"  # "sem_prazo" | "dias"
 SAT_PRAZO_DIAS_DEFAULT = 15           # dias de prazo quando o modo é "dias"
 SAT_TEMPO_ENTRE_DEFAULT = 5           # segundos entre consultas ao SAT (mínimo)
 SAT_TEMPO_ENTRE_MAX_DEFAULT = 15      # máximo — cada pausa é sorteada entre mínimo e máximo
+SAT_INTERVALO_CPF_DEFAULT = 30        # segundos de espera antes de consultar um NOVO CPF (mínimo)
+SAT_INTERVALO_CPF_MAX_DEFAULT = 60    # máximo — sorteado entre mínimo e máximo a cada novo CPF
+SAT_INTERVALO_CPF_LIMITE = 600        # teto aceito (10 min)
+SAT_CAPTCHA_AUTO_DEFAULT = False     # resolver o CAPTCHA da consulta por CPF pelo CapSolver
 SAT_ESPERA_BLOQUEIO_DEFAULT = 45      # segundos de espera ao detectar antirobô
 SAT_COMPILAR_DEFAULT = True           # compilar por tipo (CCON/CRER/Laudos) quando > limiar
 SAT_COMPILAR_LIMIAR_DEFAULT = 3       # compilar só quando houver MAIS de N docs do tipo
@@ -116,6 +120,15 @@ def get_sat_central_defaults() -> dict:
     except Exception:
         entre_max = SAT_TEMPO_ENTRE_MAX_DEFAULT
     try:
+        cpf_min = int(raw.get("sat_intervalo_cpf", SAT_INTERVALO_CPF_DEFAULT))
+    except Exception:
+        cpf_min = SAT_INTERVALO_CPF_DEFAULT
+    cpf_min = min(SAT_INTERVALO_CPF_LIMITE, max(0, cpf_min))
+    try:
+        cpf_max = int(raw.get("sat_intervalo_cpf_max", SAT_INTERVALO_CPF_MAX_DEFAULT))
+    except Exception:
+        cpf_max = SAT_INTERVALO_CPF_MAX_DEFAULT
+    try:
         bloqueio = int(raw.get("sat_espera_bloqueio", SAT_ESPERA_BLOQUEIO_DEFAULT))
     except Exception:
         bloqueio = SAT_ESPERA_BLOQUEIO_DEFAULT
@@ -130,6 +143,9 @@ def get_sat_central_defaults() -> dict:
         "prazo_dias": min(365, max(1, dias)),
         "tempo_entre": entre,
         "tempo_entre_max": min(60, max(entre, entre_max)),
+        "captcha_auto": bool(raw.get("sat_captcha_auto", SAT_CAPTCHA_AUTO_DEFAULT)),
+        "intervalo_cpf": cpf_min,
+        "intervalo_cpf_max": min(SAT_INTERVALO_CPF_LIMITE, max(cpf_min, cpf_max)),
         "espera_bloqueio": min(300, max(0, bloqueio)),
         "compilar": bool(compilar),
         "compilar_limiar": min(50, max(1, limiar)),
@@ -158,6 +174,14 @@ def set_sat_central_defaults(d: dict) -> dict:
             raw["sat_tempo_entre_max"] = min(60, max(0, int(d.get("tempo_entre_max"))))
         except Exception:
             pass
+    if "captcha_auto" in d:
+        raw["sat_captcha_auto"] = bool(d.get("captcha_auto"))
+    for chave, campo in (("intervalo_cpf", "sat_intervalo_cpf"), ("intervalo_cpf_max", "sat_intervalo_cpf_max")):
+        if chave in d:
+            try:
+                raw[campo] = min(SAT_INTERVALO_CPF_LIMITE, max(0, int(d.get(chave))))
+            except Exception:
+                pass
     if "espera_bloqueio" in d:
         try:
             raw["sat_espera_bloqueio"] = min(300, max(0, int(d.get("espera_bloqueio"))))

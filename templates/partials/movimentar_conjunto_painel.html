@@ -371,12 +371,14 @@
           <div class="text-sm border-t border-base-300 pt-2" x-show="pajNorm">
             A execução no SISDPU continua na aba própria do card à direita (progresso mostrado ali).
           </div>
-          <div class="text-xs text-base-content/50">Feche este resumo e confira os dois cards acima.</div>
+          <div class="text-xs text-base-content/50" x-show="resultadoEproc && resultadoEproc.provavel_sucesso">
+            <span class="loading loading-spinner loading-xs align-middle"></span> Voltando à página do PAJ, atualizada…
+          </div>
         </div>
       </template>
 
       <div class="modal-action">
-        <button type="button" class="btn btn-sm" @click="modalResumoAberto = false"
+        <button type="button" class="btn btn-sm" @click="modalResumoAberto = false; if (etapaConjunta === 'concluido') voltarAoPaj()"
                 x-show="etapaConjunta !== 'executando'"
                 x-text="etapaConjunta === 'concluido' ? 'Fechar' : 'Cancelar'"></button>
         <button type="button" class="btn btn-sm btn-error" @click="confirmarExecucaoConjunta()"

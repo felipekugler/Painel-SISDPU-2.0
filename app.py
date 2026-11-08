@@ -47,6 +47,7 @@ from routes.qualificacao import router as qualificacao_router
 from routes.paj import router as paj_router
 from routes.eproc_consulta import router as eproc_consulta_router
 from routes.esisrec import router as esisrec_router
+from routes.seletor_arquivos import router as seletor_arquivos_router
 from routes.sei_web import router as sei_web_router
 from routes.eproc_mcp import router as eproc_mcp_router
 from routes.pipeline_monitor import router as pipeline_monitor_router
@@ -311,6 +312,7 @@ app.include_router(prazos_router)
 app.include_router(eproc_mcp_router)
 app.include_router(eproc_consulta_router)
 app.include_router(esisrec_router)
+app.include_router(seletor_arquivos_router)
 app.include_router(sei_web_router)
 app.include_router(watchlist_router)
 app.include_router(pipeline_monitor_router)
@@ -366,6 +368,17 @@ async def _startup_rotinas_automaticas() -> None:
     from services import rotina_dossie_sd_service
 
     asyncio.create_task(rotina_dossie_sd_service.laco())
+
+
+@app.on_event("startup")
+async def _startup_lixeira_agendada() -> None:
+    """PAJ arquivado → pasta para a Lixeira 2 dias depois (services/paj_lixeira_service):
+    confere a agenda ao subir e a cada hora."""
+    import asyncio
+
+    from services import paj_lixeira_service
+
+    asyncio.create_task(paj_lixeira_service.laco())
 
 
 @app.on_event("startup")

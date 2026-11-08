@@ -786,4 +786,9 @@ def formatar_e_salvar(paj_norm: str, tipo_slug: str, peticao_html: str) -> dict:
     with _lock:
         st = _status.setdefault(paj_norm, {"status": "done"})
         st["arquivos_gerados"] = sorted(set(st.get("arquivos_gerados") or []) | {docx_path.name, pdf_path.name})
-    return {"ok": True, "arquivos": [docx_path.name, pdf_path.name]}
+    res = {"ok": True, "arquivos": [docx_path.name, pdf_path.name]}
+    from services.peticao_ia_service import aviso_imagens_ilegiveis
+    aviso = aviso_imagens_ilegiveis(peticao_html)
+    if aviso:
+        res["aviso"] = aviso
+    return res

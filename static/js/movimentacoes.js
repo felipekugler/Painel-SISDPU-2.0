@@ -431,12 +431,17 @@ function tabelaMovimentacoes() {
             if (!this.filtroUsuarioTodos) {
                 resultado = resultado.filter(mov => {
                     if (!mov.usuario) return false;
-                    const regexServidor = /servidor|terceirizado|estagiário|SERVIDOR|TERCEIRIZADO|ESTAGIÁRIO/i;
-                    const regexDefensor = /defensor|Defensor/i;
-                    const regexSistema = /sisdpu|sistema|SISDPU|SISTEMA/i;
-                    const isServidor = regexServidor.test(mov.usuario);
-                    const isDefensor = regexDefensor.test(mov.usuario);
-                    const isSistema = regexSistema.test(mov.usuario);
+                    // Dois formatos de "Usuário": o do SISDPU antigo (palavras
+                    // "Servidor"/"Defensor"/"Sistema" no texto) e o do SIS-DPU
+                    // 2.0 (06/11/2026), com o código do perfil entre parênteses:
+                    // "(d) Nome" = Defensor; "(s-prev)", "(e-atend)", "(t-prev)",
+                    // "(t)" = servidor/estagiário/terceirizado; "Automático" e
+                    // "(z) <caixa>" (fila/caixa, não pessoa) = Sistema.
+                    const u = mov.usuario.trim();
+                    const perfil = ((u.match(/^\(([a-z]+)(?:-[^)]*)?\)/i) || [])[1] || '').toLowerCase();
+                    const isServidor = /servidor|terceirizado|estagiário/i.test(u) || ['s', 'e', 't'].includes(perfil);
+                    const isDefensor = /defensor/i.test(u) || perfil === 'd';
+                    const isSistema = /sisdpu|sistema|^autom[aá]tico/i.test(u) || perfil === 'z';
                     if (this.filtroUsuarioServidor && isServidor) return true;
                     if (this.filtroUsuarioDefensor && isDefensor) return true;
                     if (this.filtroUsuarioSistema && isSistema) return true;

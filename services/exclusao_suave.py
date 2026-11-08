@@ -54,7 +54,9 @@ _thread: threading.Thread | None = None
 
 
 def _raizes() -> list[Path]:
-    return [Path(config.OFICIO_GERAL).resolve(), DADOS_DIR.resolve(), (_PROJETO / "logs").resolve()]
+    # PAJS_DIR à parte: pode ficar fora de OFICIO_GERAL (PAJS_DIR no .env).
+    return [Path(config.OFICIO_GERAL).resolve(), Path(config.PAJS_DIR).resolve(),
+            DADOS_DIR.resolve(), (_PROJETO / "logs").resolve()]
 
 
 def _permitido(caminho: Path) -> bool:

@@ -806,8 +806,12 @@ function acoesSisdpuBlock(cfg) {
             return (nome || '').replace(/\.[a-z0-9]+$/i, '');
         },
         // "Adicionar Externo" — abre o seletor de arquivo do sistema (o caso comum).
-        adicionarAnexoExterno() {
-            if (this.$refs.inputAnexoExterno) this.$refs.inputAnexoExterno.click();
+        // Abre a janela "Abrir" do Windows já na pasta do PAJ (seletor_arquivos.js);
+        // sem PAJ ou se ela falhar, cai no seletor do navegador, como antes.
+        async adicionarAnexoExterno() {
+            const arqs = await escolherArquivosNaPastaDoPaj(this.pajNorm, 'Adicionar Externo — movimentação no SISDPU');
+            if (arqs === null) { if (this.$refs.inputAnexoExterno) this.$refs.inputAnexoExterno.click(); return; }
+            if (arqs.length) await this.onArquivosExternosEscolhidos({ target: { files: arqs, value: '' } });
         },
         async onArquivosExternosEscolhidos(ev) {
             const arquivos = Array.from((ev.target && ev.target.files) || []);
@@ -1084,7 +1088,9 @@ function acoesSisdpuBlock(cfg) {
                 // SEM esperar onExecutado, o reload derrubava a sincronização de
                 // movimentações no meio do caminho e a tabela continuava desatualizada.
                 await this.onExecutado(resultadoEnriquecido, this._progressoPos());
-                if (res.ok) { if (res.paj_na_lixeira) window.location.href = '/'; else if (this.aposExecutarIrPara) window.location.href = this.aposExecutarIrPara; else window.location.reload(); }
+                // Sempre volta à página do PAJ, atualizada (06/11/2026) — inclusive após arquivar: a pasta só vai
+                // para a Lixeira 2 dias depois (services/paj_lixeira_service).
+                if (res.ok) { if (this.aposExecutarIrPara) window.location.href = this.aposExecutarIrPara; else window.location.reload(); }
             });
             es.onerror = () => {
                 this.exec = false; es.close();
@@ -1203,7 +1209,9 @@ function acoesSisdpuBlock(cfg) {
                     };
                 });
                 await this.onExecutado({ ...res, fila: true, itens }, this._progressoPos());
-                if (res.ok) { if (res.paj_na_lixeira) window.location.href = '/'; else if (this.aposExecutarIrPara) window.location.href = this.aposExecutarIrPara; else window.location.reload(); }
+                // Sempre volta à página do PAJ, atualizada (06/11/2026) — inclusive após arquivar: a pasta só vai
+                // para a Lixeira 2 dias depois (services/paj_lixeira_service).
+                if (res.ok) { if (this.aposExecutarIrPara) window.location.href = this.aposExecutarIrPara; else window.location.reload(); }
             });
             es.onerror = () => {
                 this.exec = false; es.close();

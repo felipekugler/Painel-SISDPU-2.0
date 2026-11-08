@@ -13,6 +13,10 @@ extrato, ver `extrato_crps_service`). Formato definido com o Defensor
   3. sem tarja no canto das páginas, sem página de fechamento e sem tabela de
      histórico no fim.
 
+Depois, opcionalmente, junta ao SISDPU pela rotina única dos dossiês
+(`juntada_dossie_service`, 05/11/2026), com a descrição "Íntegra do Processo
+de Recurso no CRPS (e-Sisrec)".
+
 Leitura e downloads pela mesma automação headless da página Consultar
 e-Sisrec (`ingestao.esisrec_client`, login GERID com a credencial do SAT
 Central). As páginas entram em A4 retrato com a mesma normalização do "Baixar
@@ -31,10 +35,13 @@ from pathlib import Path
 import fitz  # PyMuPDF
 
 from config import PAJS_DIR
-from services import historico
+from services import historico, juntada_dossie_service
 from services.extrato_crps_service import SUBPASTA
 
-# {paj_norm: {"estado": "running"|"ok"|"erro", "etapa", "numero", "arquivo", "erro"}}
+MOV_DESCRICAO = "Íntegra do Processo de Recurso no CRPS (e-Sisrec)"
+
+# {paj_norm: {"estado": "running"|"ok"|"erro", "etapa", "numero", "arquivo",
+#             "arquivos", "erro", "juntada", "erro_juntada"}}
 _estado: dict[str, dict] = {}
 
 _IMAGENS = {"jpg", "jpeg", "png", "gif", "bmp", "tif", "tiff"}
@@ -102,7 +109,7 @@ async def _montar(paj_norm: str, numero: str, sess: dict) -> None:
         nome = f"Íntegra e-Sisrec {protocolo} {datetime.now():%Y-%m-%d}.pdf"
         (pasta / nome).write_bytes(pdf)
         faltando = total - len(baixados)
-        sess.update(estado="ok", arquivo=nome,
+        sess.update(estado="ok", arquivo=nome, arquivos=[nome], juntada=None,
                     etapa=f"{total} documento(s), {len(eventos)} evento(s)"
                           + (f" — {faltando} documento(s) não baixado(s)" if faltando else ""))
         with contextlib.suppress(Exception):
@@ -112,6 +119,21 @@ async def _montar(paj_norm: str, numero: str, sess: dict) -> None:
         sess.update(estado="erro", erro=f"{e}"[:400])
         with contextlib.suppress(Exception):
             historico.registrar(paj_norm, "esisrec_integra", status="error", resumo=sess["erro"])
+
+
+def juntar(paj_norm: str) -> dict:
+    """Dispara a juntada — chamar de uma rota async (loop principal)."""
+    sess = _estado.get(paj_norm)
+    if not sess or sess.get("estado") != "ok":
+        return {"ok": False, "erro": "Nenhuma íntegra montada para juntar neste PAJ."}
+    return juntada_dossie_service.disparar(
+        paj_norm, sess, pasta=PAJS_DIR / paj_norm / SUBPASTA, descricao=MOV_DESCRICAO,
+        origem="e-sisrec", atividade="Juntada da Íntegra do Processo de Recurso no CRPS",
+        chave_historico="esisrec_integra_juntada")
+
+
+def dispensar_juntada(paj_norm: str) -> dict:
+    return juntada_dossie_service.dispensar(_estado.get(paj_norm))
 
 
 def _gerar_pdf(extrato: bytes, eventos: list[dict], baixados: dict) -> bytes:

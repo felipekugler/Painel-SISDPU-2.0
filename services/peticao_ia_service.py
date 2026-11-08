@@ -604,7 +604,11 @@ def incluir_nos_anexos(paj_norm: str, peticao_html: str) -> dict:
     pdf_rascunho = pasta_rascunho / f"{nome}.pdf"
     shutil.copyfile(pdf_path, pdf_rascunho)
 
-    return {"ok": True, "arquivo": f"{nome}.pdf", "tamanho": pdf_rascunho.stat().st_size}
+    res = {"ok": True, "arquivo": f"{nome}.pdf", "tamanho": pdf_rascunho.stat().st_size}
+    aviso = aviso_imagens_ilegiveis(peticao_html)
+    if aviso:
+        res["aviso"] = aviso
+    return res
 
 
 # Paragráfos do bloco de assinatura, pra RETIRAR do texto vindo da caixa (se o
@@ -645,6 +649,109 @@ _RE_LINHA_SEM_RECUO = re.compile(
     r"^(EXCELENT[ÍI]SSIM[OA].*|EXM[OA]\b.*|Autos\s+n[ºo°]\s.*|Processo(\s+n[ºo°.]*)?\s*:?\s*[\d\[].*|PAJ[:\s].*)$",
     re.IGNORECASE,
 )
+
+
+# Área útil da página do padrão DPU (A4, margens 3 cm/2 cm laterais e 4,5 cm/
+# 2 cm topo/base — `peticao_base.novo_documento`), com folga.
+_IMG_LARGURA_MAX_CM = 16.0
+_IMG_ALTURA_MAX_CM = 21.0
+
+
+def _bytes_da_imagem(src: str) -> bytes | None:
+    """Conteúdo de um `<img src>` do editor: imagem colada/arrastada no Quill
+    vem embutida como `data:image/...;base64,...`; também aceita um arquivo do
+    próprio PAJ servido pelo painel (`/files/<paj>/<caminho>`)."""
+    import base64
+    from urllib.parse import unquote, urlparse
+
+    src = (src or "").strip()
+    if src.startswith("data:image/") and ";base64," in src:
+        try:
+            return base64.b64decode(src.split(";base64,", 1)[1])
+        except Exception:  # noqa: BLE001
+            return None
+    caminho = unquote(urlparse(src).path)
+    m = re.match(r"^/files/(PAJ-\d{4}-\d{3}-\d{5})/(.+)$", caminho)
+    if m:
+        from services import paj_service
+        arq, _ct = paj_service.ler_arquivo(m.group(1), m.group(2))
+        if arq:
+            return Path(arq).read_bytes()
+    return None
+
+
+def _ler_imagem(img) -> tuple[bytes, float, float] | None:
+    """(conteúdo pronto para o Word, largura px, altura px) de um `<img>` do
+    editor, ou None se não der para ler. WEBP e outros formatos que o Word
+    não abre direto viram PNG; o atributo `width` do editor, se houver, manda
+    na largura."""
+    import io
+
+    from PIL import Image
+
+    dados = _bytes_da_imagem(img.get("src") or "")
+    if not dados:
+        return None
+    try:
+        with Image.open(io.BytesIO(dados)) as im:
+            larg_px, alt_px = im.size
+            if (im.format or "").upper() not in ("PNG", "JPEG", "GIF", "BMP", "TIFF"):
+                buf = io.BytesIO()
+                im.convert("RGBA" if "A" in im.getbands() else "RGB").save(buf, "PNG")
+                dados = buf.getvalue()
+    except Exception:  # noqa: BLE001
+        return None
+    with contextlib.suppress(Exception):
+        if img.get("width"):
+            w = float(str(img.get("width")).rstrip("px"))
+            alt_px, larg_px = alt_px * w / larg_px, w
+    return dados, float(larg_px), float(alt_px)
+
+
+def contar_imagens_ilegiveis(peticao_html: str) -> int:
+    """Quantas imagens do texto do editor NÃO vão entrar no DOCX/PDF (não deu
+    para ler o conteúdo) — para avisar o Defensor (06/11/2026)."""
+    from bs4 import BeautifulSoup
+
+    imgs = BeautifulSoup(peticao_html or "", "html.parser").find_all("img")
+    return sum(1 for img in imgs if _ler_imagem(img) is None)
+
+
+def aviso_imagens_ilegiveis(peticao_html: str) -> str:
+    n = contar_imagens_ilegiveis(peticao_html)
+    if not n:
+        return ""
+    if n == 1:
+        inicio = "1 imagem do texto não pôde ser lida e ficou de fora do DOCX/PDF."
+    else:
+        inicio = f"{n} imagens do texto não puderam ser lidas e ficaram de fora do DOCX/PDF."
+    return inicio + " Cole a imagem de novo no texto (de preferência como PNG ou JPG) e gere o arquivo outra vez."
+
+
+def _inserir_imagens(doc, imagens, par, Cm) -> None:
+    """Cada `<img>` do bloco vira um parágrafo centralizado com a imagem, no
+    tamanho natural (96 dpi) limitado à área útil da página — 06/11/2026,
+    pedido do usuário: prints colados no editor da minuta sumiam do DOCX/PDF.
+    Formatos que o Word não lê direto (WEBP etc.) são convertidos para PNG;
+    imagem ilegível é ignorada (nunca derruba a geração)."""
+    import io
+
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+
+    for img in imagens or []:
+        lida = _ler_imagem(img)
+        if not lida:
+            continue  # contada em `contar_imagens_ilegiveis` (aviso na tela)
+        dados, larg_px, alt_px = lida
+        try:
+            larg_cm = larg_px / 96 * 2.54
+            alt_cm = alt_px / 96 * 2.54
+            escala = min(1.0, _IMG_LARGURA_MAX_CM / larg_cm, _IMG_ALTURA_MAX_CM / alt_cm)
+            p = par(doc, fi=Cm(0))
+            p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+            p.add_run().add_picture(io.BytesIO(dados), width=Cm(larg_cm * escala))
+        except Exception:  # noqa: BLE001
+            continue
 
 
 def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, data: str | None = None,
@@ -706,7 +813,11 @@ def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, da
     for bloco in blocos:
         runs = _extrair_runs(bloco, NavigableString)
         texto_puro = "".join(run[0] for run in runs).strip()
+        imagens = bloco.find_all("img") if hasattr(bloco, "find_all") else []
         if not texto_puro:
+            # Parágrafo só com imagem (print colado no editor) — antes era
+            # descartado junto com os parágrafos vazios (06/11/2026).
+            _inserir_imagens(doc, imagens, par, Cm)
             continue
         if _RE_LINHA_ASSINATURA.match(texto_puro):
             continue  # descartado — assinatura() reconstrói no final
@@ -780,6 +891,7 @@ def _html_para_docx(peticao_html: str, docx_path: Path, termos: bool = False, da
             if texto:
                 escrever_run(p, texto, bold=bold, italic=italic, underline=underline, small=eh_citacao,
                              color=RGBColor(*COR_TESE_RGB) if azul else None)
+        _inserir_imagens(doc, imagens, par, Cm)
     assinatura(doc, termos=termos, data=data, blanks_apos_data=quebras_assinatura)
     salvar(doc, str(docx_path))
 

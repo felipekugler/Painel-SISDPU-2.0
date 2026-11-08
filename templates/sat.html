@@ -3,10 +3,20 @@
 
 {% block title %}Arquivos SAT Central{% endblock %}
 
+{% block content_class %}{% if embed_paj %}p-3 w-full{% else %}p-6 lg:p-8 w-full{% endif %}{% endblock %}
+{% block head %}{% if embed_paj %}
+<style>
+/* Modo embutido (modal da página do PAJ): sem menu lateral nem barra do topo. */
+aside.sidebar, .toggle-sidebar { display: none !important; }
+.main-content { margin-left: 0 !important; }
+</style>
+{% endif %}{% endblock %}
+
 {% block content %}
 
 <div x-data="satPage()" x-init="init()">
 
+    {% if not embed_paj %}
     <div class="flex items-center justify-between mb-2">
         <h2 class="text-2xl font-bold">
             Arquivos SAT Central
@@ -27,76 +37,100 @@
 
     <!-- Status/login do SAT: selo "SAT" do topo (a barra "Sessão SAT" saiu em
          17/10/2026). A sessão é conferida na hora de baixar (`sessaoAtiva`). -->
+    {% endif %}
 
-    <!-- O que baixar (barra inteira) + tempos do download -->
+    {% if embed_paj %}
+    <!-- Modo embutido: escolha de PESSOAS do PAJ e DOCUMENTOS para baixar (06/11/2026). -->
     <div class="card bg-base-200 shadow mb-4">
         <div class="card-body py-3">
-            <div class="flex items-center gap-2 flex-wrap">
-                <span class="text-sm font-medium mr-1">O que baixar:</span>
-                <button class="btn btn-xs btn-outline" @click="abrirTipos()">Escolher documentos</button>
-                <button class="btn btn-xs btn-outline" @click="abrirPatIgnorar()"
-                        title="Espécies de processo administrativo (PAT) que não devem ser baixadas">Ignorar</button>
-                <label class="flex items-center gap-1.5 text-sm cursor-pointer ml-auto"
-                       title="Quanto esperar ao detectar a proteção antirobô, antes de re-tentar o documento.">
-                    <span class="font-medium">Espera após bloqueio:</span>
-                    <input type="number" min="0" max="300" step="5"
-                           class="input input-bordered input-xs w-16" x-model.number="esperaBloqueio">
-                    <span class="text-xs text-base-content/50">s</span>
-                </label>
+            <div class="flex items-center gap-2 mb-1">
+                <h3 class="font-semibold">Baixar do SAT</h3>
+                <span class="text-xs text-base-content/50">uma consulta por pessoa — um CAPTCHA por CPF (automático se o CapSolver estiver ligado nas Configurações)</span>
+                <button class="btn btn-ghost btn-xs ml-auto" :disabled="rodando" @click="soAbrirSat($event.currentTarget)"
+                        title="Abre a janela do SAT na consulta do CPF do assistido para consultar à mão (nada é baixado)">Só abrir o SAT</button>
+            </div>
+            <div class="grid grid-cols-1 lg:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] gap-x-8 gap-y-3">
+                <div>
+                    <p class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1">Pessoas</p>
+                    <template x-for="ps in selPessoas" :key="ps.cpf">
+                        <label class="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
+                            <input type="checkbox" class="checkbox checkbox-sm" x-model="ps.sel">
+                            <span class="font-medium whitespace-nowrap" x-text="ps.nome || '(sem nome)'"></span>
+                            <span class="badge badge-sm badge-ghost whitespace-nowrap" x-text="ps.papel"></span>
+                            <span class="text-xs text-base-content/50 font-mono whitespace-nowrap" x-text="ps.cpf"></span>
+                        </label>
+                    </template>
+                    <div class="flex flex-wrap items-center gap-1.5 mt-2">
+                        <input type="text" class="input input-bordered input-xs w-32 font-mono" placeholder="CPF" x-model="selNovo.cpf">
+                        <input type="text" class="input input-bordered input-xs w-44" placeholder="Nome" x-model="selNovo.nome">
+                        <select class="select select-bordered select-xs" x-model="selNovo.papel">
+                            <option value="Instituidor">Instituidor</option>
+                            <option value="Outra pessoa">Outra pessoa</option>
+                        </select>
+                        <button class="btn btn-xs btn-outline" @click="selAdicionarPessoa()">Adicionar</button>
+                    </div>
+                    <p class="text-xs text-error mt-1" x-show="selNovoErro" x-text="selNovoErro"></p>
+                    <div class="flex items-center gap-2 mt-3">
+                        <span class="text-xs text-base-content/60">Filtrar por NB:</span>
+                        <input type="text" class="input input-bordered input-xs w-56 font-mono" placeholder="opcional — ex.: 726.015.826-4" x-model="selNbs">
+                    </div>
+                </div>
+                <div>
+                    <div class="flex items-center gap-1 mb-1">
+                        <p class="text-xs font-semibold uppercase tracking-wide text-base-content/50">Documentos</p>
+                        <button class="btn btn-ghost btn-xs ml-2" @click="selTipos = selSugeridos.slice()">Sugeridos p/ a pretensão</button>
+                        <button class="btn btn-ghost btn-xs" @click="selTipos = []">Limpar</button>
+                    </div>
+                    <div class="sm:columns-2 gap-x-6">
+                        <template x-for="t in tiposCatalogo" :key="t.key">
+                            <div class="break-inside-avoid">
+                                <label class="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
+                                    <input type="checkbox" class="checkbox checkbox-sm" :value="t.key" x-model="selTipos">
+                                    <span class="whitespace-nowrap" x-text="t.label"></span>
+                                </label>
+                                <!-- Período do HISCRE (06/11/2026): em branco = últimos 5 anos;
+                                     só o início = até o mês atual; os dois = período exato. -->
+                                <div x-show="t.key === 'hiscre'" class="flex items-center gap-1.5 pl-7 pb-1 text-xs"
+                                     title="Em branco: últimos 5 anos. Só a data inicial: dela até o mês atual. As duas: o período exato.">
+                                    <span class="text-base-content/60">De</span>
+                                    <input type="text" inputmode="numeric" maxlength="7" placeholder="MM/AAAA"
+                                           class="input input-bordered input-xs w-20 font-mono"
+                                           x-model="selHiscreDe" @input="selHiscreDe = mascaraMesAno($event.target.value)">
+                                    <span class="text-base-content/60">até</span>
+                                    <input type="text" inputmode="numeric" maxlength="7" placeholder="MM/AAAA"
+                                           class="input input-bordered input-xs w-20 font-mono"
+                                           x-model="selHiscreAte" @input="selHiscreAte = mascaraMesAno($event.target.value)">
+                                </div>
+                                <!-- Filtro por protocolo (08/11/2026): só vale para as Tarefas PAT -->
+                                <div x-show="t.key === 'pat'" class="flex flex-col gap-1 pl-7 pb-1 text-xs"
+                                     title="Um ou mais protocolos do PAT, separados por vírgula. Baixa só essas tarefas (vale para todas as pessoas marcadas); o protocolo indicado é baixado mesmo que a espécie esteja na lista de ignorados.">
+                                    <span class="text-base-content/60 whitespace-nowrap">Filtrar por protocolo:</span>
+                                    <input type="text" class="input input-bordered input-xs w-full min-w-[18rem] font-mono" placeholder="opcional — ex.: 1915479324, 507811094"
+                                           x-model="selProtocolos" @change="selMarcarPatSeProtocolo()">
+                                </div>
+                            </div>
+                        </template>
+                    </div>
+                </div>
+            </div>
+            <div class="flex justify-end mt-2">
+                <button class="btn btn-primary btn-sm" :disabled="rodando || !selPessoas.some(p => p.sel) || !selTipos.length"
+                        @click="baixarSelecao()"
+                        x-text="'Baixar selecionados (' + selPessoas.filter(p => p.sel).length + ' pessoa(s) · ' + selTipos.length + ' doc.)'"></button>
             </div>
         </div>
     </div>
+    {% endif %}
 
-    <!-- Tramitar para + Prazo (barra inteira). Padrão = "Não tramitar" (só anexa) -->
-    <div class="card bg-base-200 shadow mb-4">
-        <div class="card-body py-3">
-            <div class="flex items-center gap-2 flex-wrap">
-                <span class="text-sm font-medium mr-1">Tramitar para:</span>
-                <button class="btn btn-xs" :class="grupoSel===NAO_TRAMITAR ? 'btn-primary' : 'btn-outline'"
-                        @click="grupoSel=NAO_TRAMITAR"
-                        title="Não tramita para nenhuma caixa — movimenta (anexa os documentos) e conclui o trâmite, se houver">Não tramitar</button>
-                <template x-for="g in caixasRapidas()" :key="g">
-                    <button class="btn btn-xs" :class="grupoSel===g ? 'btn-primary' : 'btn-outline'"
-                            @click="grupoSel=g" x-text="g"></button>
-                </template>
-                <button class="btn btn-xs btn-ghost" @click="carregarGrupos()" :disabled="carregandoGrupos">
-                    <span x-show="carregandoGrupos" class="loading loading-spinner loading-xs"></span>
-                    outra caixa…
-                </button>
-                <select data-busca x-show="grupos.length" class="select select-bordered select-xs" x-model="grupoSel">
-                    <template x-for="g in grupos" :key="g"><option :value="g" x-text="g"></option></template>
-                </select>
-                <template x-if="grupoSel!==NAO_TRAMITAR">
-                    <span class="flex items-center gap-2 flex-wrap">
-                        <span class="mx-2 text-base-content/30">|</span>
-                        <span class="text-sm font-medium mr-1">Prazo:</span>
-                        <label class="flex items-center gap-1.5 text-sm cursor-pointer">
-                            <input type="radio" class="sat-radio" :checked="!comPrazo" @change="comPrazo=false">
-                            sem prazo
-                        </label>
-                        <label class="flex items-center gap-1.5 text-sm cursor-pointer">
-                            <input type="radio" class="sat-radio" :checked="comPrazo" @change="comPrazo=true">
-                            em
-                            <input type="number" min="1" max="365" class="input input-bordered input-xs w-16"
-                                   x-model.number="prazoDias" @focus="comPrazo=true">
-                            dias
-                        </label>
-                        <span class="text-xs text-base-content/50" x-show="comPrazo" x-text="'(conclui até ' + dataPrazo() + ')'"></span>
-                    </span>
-                </template>
-                <span class="text-xs text-base-content/50" x-show="grupoSel===NAO_TRAMITAR">
-                    Sem tramitar para nenhuma caixa — movimenta (anexa os documentos) e conclui o trâmite (exceto PAJ manual, que não conclui).
-                </span>
-            </div>
-        </div>
-    </div>
+    <!-- (08/11/2026) Barras "O que baixar" e "Tramitar para" removidas: os padrões ficam em
+         Configurações → Arquivos SAT e a caixa/prazo são escolhidos no diálogo "Anexar ao PAJ". -->
 
     <!-- Pendências -->
     <div class="card bg-base-200 shadow mb-6">
         <div class="card-body p-0">
             <div class="flex items-center justify-between px-4 pt-3 gap-2 flex-wrap">
-                <h3 class="font-semibold text-base-content/80">Pendências</h3>
-                <div class="flex items-center gap-2 flex-wrap">
+                <h3 class="font-semibold text-base-content/80" x-text="embedPaj ? 'Documentos baixados e ações' : 'Pendências'"></h3>
+                <div class="flex items-center gap-2 flex-wrap" x-show="!embedPaj">
                     <div class="flex items-center gap-1">
                         <input type="text" class="input input-bordered input-sm w-44"
                                placeholder="AAAA/UUU-NNNNN" x-model="manualPaj"
@@ -116,16 +150,48 @@
             </div>
             <p class="px-4 pt-1 text-sm" x-show="manualMsg"
                :class="manualMsgErro ? 'text-error' : 'text-success'" x-text="manualMsg"></p>
+            <!-- Modo embutido: barra de ações do PAJ no lugar da linha da tabela -->
+            <template x-if="embedPaj">
+                <div class="px-4 pt-2 pb-1">
+                    <template x-for="p in pendentes" :key="p.paj_norm">
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <span class="badge badge-success gap-1 whitespace-nowrap" x-show="((p.n_arquivos||0)+(p.n_instituidor||0)+(p.n_pessoas||0)) > 0"
+                                  x-text="((p.n_arquivos||0)+(p.n_instituidor||0)+(p.n_pessoas||0)) + ' arquivo(s) ativo(s)'"></span>
+                            <span class="badge badge-ghost whitespace-nowrap" x-show="((p.n_arquivos||0)+(p.n_instituidor||0)+(p.n_pessoas||0)) === 0">Nenhum documento baixado</span>
+                            <span x-show="p.interrompido" class="badge badge-warning whitespace-nowrap cursor-pointer" @click="verLogDownload(p)">download interrompido</span>
+                            <span x-show="p.levantamento_em" class="text-xs text-base-content/50">levantado ✓</span>
+                            <button x-show="p.tem_log || logsDownload[p.paj_norm]" class="btn btn-ghost btn-xs" @click="verLogDownload(p)"
+                                    title="Ver log do último download">📄 log</button>
+                            <div class="ml-auto flex items-center gap-1 flex-wrap">
+                                <button x-show="p.n_arquivos > 0 || p.levantamento_em" class="btn btn-sm btn-outline" :disabled="rodando || !p.cpf"
+                                        @click="abrirBaixarMais(p, 'pendente')"
+                                        title="Baixar mais documentos do assistido/instituidor (escolher o que baixar)">Baixar mais</button>
+                                <button class="btn btn-sm btn-ghost" :disabled="rodando || !p.cpf" @click="levantar(p)"
+                                        title="Levantamento: lista tudo o que existe no SAT para o CPF, SEM baixar">Levantamento</button>
+                                <button x-show="p.n_arquivos > 0 || p.interrompido || p.levantamento_em" class="btn btn-sm btn-ghost text-error"
+                                        :disabled="rodando || !p.cpf" @click="reiniciarDownload(p)"
+                                        title="Manda para a Lixeira tudo o que foi baixado/levantado do SAT para este PAJ e recomeça o download completo">Reiniciar download</button>
+                                <button class="btn btn-sm btn-primary" :disabled="rodando || ((p.n_arquivos||0)+(p.n_instituidor||0)+(p.n_pessoas||0)) === 0"
+                                        @click="abrirAnexar(p)"
+                                        title="Anexa ao PAJ TODOS os documentos ativos da tabela (assistido, instituidor e outras pessoas)">Anexar ao PAJ</button>
+                            </div>
+                        </div>
+                    </template>
+                    <p x-show="!pendentes.length" class="text-sm text-base-content/50">
+                        Este PAJ não está na lista de pendências (já anexado?). Veja o histórico abaixo.
+                    </p>
+                </div>
+            </template>
             <div class="overflow-x-auto">
                 <table class="table table-sm">
-                    <thead>
+                    <thead x-show="!embedPaj">
                         <tr>
                             <th>PAJ</th><th>Assistido</th><th>CPF</th><th>Pretensão</th><th>Documentos</th><th>Log</th><th class="text-right">Ação</th>
                         </tr>
                     </thead>
                     <template x-for="p in pendentes" :key="p.paj_norm">
                         <tbody>
-                            <tr class="hover">
+                            <tr class="hover" x-show="!embedPaj">
                                 <td class="font-mono whitespace-nowrap">
                                     <button class="link" style="color:var(--accent)"
                                             title="Escolher onde abrir o PAJ"
@@ -156,14 +222,14 @@
                                 </td>
                                 <td>
                                     <div class="inline-flex items-center gap-1.5">
-                                        <span x-show="((p.n_arquivos||0)+(p.n_instituidor||0)) > 0"
+                                        <span x-show="((p.n_arquivos||0)+(p.n_instituidor||0)+(p.n_pessoas||0)) > 0"
                                               class="badge badge-success badge-sm gap-1 whitespace-nowrap cursor-pointer"
                                               @click="toggleDocs(p)"
-                                              :title="docsAbertos[p.paj_norm] ? 'Ocultar documentos' : 'Ver documentos baixados (assistido + instituidor)'">
-                                            <span x-text="((p.n_arquivos||0)+(p.n_instituidor||0)) + ' arquivo(s)'"></span>
+                                              :title="docsAbertos[p.paj_norm] ? 'Ocultar documentos' : 'Ver documentos baixados (assistido, instituidor e outras pessoas)'">
+                                            <span x-text="((p.n_arquivos||0)+(p.n_instituidor||0)+(p.n_pessoas||0)) + ' arquivo(s)'"></span>
                                             <span class="text-[10px]" x-text="docsAbertos[p.paj_norm] ? '▲' : '▼'"></span>
                                         </span>
-                                        <span x-show="((p.n_arquivos||0)+(p.n_instituidor||0)) === 0" class="badge badge-ghost badge-sm whitespace-nowrap">Aguardando download</span>
+                                        <span x-show="((p.n_arquivos||0)+(p.n_instituidor||0)+(p.n_pessoas||0)) === 0" class="badge badge-ghost badge-sm whitespace-nowrap">Aguardando download</span>
                                         <!-- ponto vermelho: houve falha no download (clique abre o log) -->
                                         <span x-show="p.tem_falha" class="sat-falha-dot" @click.stop="verLogDownload(p)"
                                               title="Houve falha no último download — clique para ver o log"></span>
@@ -198,12 +264,12 @@
                                             title="Pensão por morte / auxílio-reclusão: baixar documentos do instituidor (2ª consulta, CPF do instituidor)">
                                         Docs do instituidor
                                     </button>
-                                    <button x-show="((p.n_arquivos||0)+(p.n_instituidor||0)) > 0" class="btn btn-sm btn-outline ml-1" :disabled="rodando"
+                                    <button x-show="((p.n_arquivos||0)+(p.n_instituidor||0)+(p.n_pessoas||0)) > 0" class="btn btn-sm btn-outline ml-1" :disabled="rodando"
                                             @click="abrirAnexar(p)"
                                             :title="'Anexa ao PAJ TODOS os documentos ativos na tabela (assistido + instituidor). ' + (grupoSel===NAO_TRAMITAR ? (p.manual ? 'Só movimenta (sem tramitar e sem concluir).' : 'Movimenta e conclui o trâmite (sem tramitar).') : (p.manual ? 'Movimenta → tramita (sem concluir — não há trâmite na caixa).' : 'Movimenta → tramita → conclui.'))">Anexar ao PAJ</button>
                                 </td>
                             </tr>
-                            <tr x-show="narrativaAberta[p.paj_norm]">
+                            <tr x-show="narrativaAberta[p.paj_norm] && !embedPaj">
                                 <td class="bg-base-100"></td>
                                 <td colspan="6" class="bg-base-100">
                                     <div class="nb-filtro-box flex items-center gap-2 mb-2 flex-wrap">
@@ -232,8 +298,8 @@
                                 </td>
                             </tr>
                             <tr x-show="docsAbertos[p.paj_norm]">
-                                <td class="bg-base-100"></td>
-                                <td colspan="6" class="bg-base-100">
+                                <td class="bg-base-100" x-show="!embedPaj"></td>
+                                <td :colspan="embedPaj ? 7 : 6" class="bg-base-100">
                                     <table class="table table-xs w-full sat-docs">
                                         <thead><tr class="text-[11px] text-base-content/50">
                                             <th>Documento</th><th class="w-52">Referência</th><th class="w-20">Tamanho</th>
@@ -254,7 +320,7 @@
                                                     </td>
                                                     <td class="whitespace-nowrap">
                                                         <span class="badge badge-sm"
-                                                              :class="a.escopo==='instituidor' ? 'badge-info' : 'badge-ghost'"
+                                                              :class="a.escopo==='instituidor' ? 'badge-info' : (a.escopo.startsWith('pessoa:') ? 'badge-secondary badge-outline' : 'badge-ghost')"
                                                               x-text="a.referencia"></span>
                                                     </td>
                                                     <td class="whitespace-nowrap tabular-nums" :class="a.excluido ? 'line-through' : ''" x-text="fmtTam(a.tamanho)"></td>
@@ -293,9 +359,9 @@
     </div>
 
     <!-- Histórico -->
-    <div class="card bg-base-200 shadow">
+    <div class="card bg-base-200 shadow" x-show="!embedPaj || historico.length">
         <div class="card-body p-0">
-            <h3 class="font-semibold text-base-content/80 px-4 pt-3">PAJs Concluídos</h3>
+            <h3 class="font-semibold text-base-content/80 px-4 pt-3" x-text="embedPaj ? 'Anexações já feitas neste PAJ' : 'PAJs Concluídos'"></h3>
             <div class="overflow-x-auto">
                 <table class="table table-sm">
                     <thead>
@@ -405,6 +471,10 @@
                 </template>
             </div>
             <div class="modal-action">
+                <button class="btn btn-warning" x-show="rodando && sseTipo==='download' && antiroboNoLog()"
+                        :disabled="encerrando" @click="encerrarFluxo()"
+                        title="Encerra a rotina mantendo os documentos já baixados; o que faltou fica no 'Baixar mais'."
+                        x-text="encerrando ? 'Encerrando…' : 'Encerrar fluxo'"></button>
                 <button class="btn btn-error btn-outline" x-show="rodando && sseTipo==='download'"
                         @click="cancelarDownload()">Cancelar download</button>
                 <button class="btn" @click="sseFechar()" :disabled="!sseFechavel">Fechar</button>
@@ -698,75 +768,6 @@
         <div class="modal-backdrop" @click="amModal=false"></div>
     </div>
 
-    <!-- Modal: escolher tipos de documentos por pretensão -->
-    <div class="modal" :class="{'modal-open': tiposModal}">
-        <div class="modal-box max-w-[50vw]">
-            <h3 class="font-bold text-lg mb-2">Tipos de documentos a baixar</h3>
-            <div class="flex items-center gap-2 mb-3 flex-wrap">
-                <span class="text-sm font-medium">Pretensão:</span>
-                <select data-busca class="select select-bordered select-sm" x-model="tiposPretSel" @change="onTiposPretChange()">
-                    <option value="__padrao__">Padrão (todas as outras)</option>
-                    <option value="__instituidor__">◆ Instituidor (pensão por morte / auxílio-reclusão)</option>
-                    <template x-for="pr in tiposPretensoes" :key="pr"><option :value="pr" x-text="pr"></option></template>
-                </select>
-                <span class="mx-1 text-base-content/30">|</span>
-                <button class="btn btn-xs btn-ghost" @click="tiposMarcarTodos(true)">Marcar todos</button>
-                <button class="btn btn-xs btn-ghost" @click="tiposMarcarTodos(false)">Limpar</button>
-                <span class="text-xs text-base-content/50 ml-auto" x-text="tiposSel.length + '/' + tiposCatalogo.length + ' marcados'"></span>
-            </div>
-            <div class="max-h-[340px] overflow-y-auto space-y-3 pr-1">
-                <template x-for="grupo in tiposGrupos()" :key="grupo">
-                    <div>
-                        <div class="text-xs font-semibold text-base-content/60 mb-1" x-text="grupo"></div>
-                        <template x-for="t in tiposDoGrupo(grupo)" :key="t.key">
-                            <label class="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
-                                <input type="checkbox" class="checkbox checkbox-sm" :value="t.key" x-model="tiposSel">
-                                <span x-text="t.label"></span>
-                            </label>
-                        </template>
-                    </div>
-                </template>
-            </div>
-            <div class="modal-action items-center">
-                <span class="text-xs text-success mr-auto" x-show="tiposMsg" x-text="tiposMsg"></span>
-                <button class="btn btn-primary btn-sm" @click="salvarTipos()">Salvar</button>
-                <button class="btn btn-sm" @click="tiposModal=false">Fechar</button>
-            </div>
-        </div>
-        <div class="modal-backdrop" @click="tiposModal=false"></div>
-    </div>
-
-    <!-- Modal: ignorar espécies de processo administrativo (PAT) -->
-    <div class="modal" :class="{'modal-open': patIgnorarModal}">
-        <div class="modal-box max-w-xl">
-            <h3 class="font-bold text-lg mb-1">Processos administrativos a ignorar</h3>
-            <p class="text-sm text-base-content/70 mb-3">
-                Espécies de processo administrativo (coluna <strong>Serviço</strong> do PAT) que
-                <strong>não devem ser baixadas</strong>. A comparação ignora acentos e maiúsculas
-                (casa por trecho). Vá cadastrando novas espécies conforme forem surgindo.
-            </p>
-            <div class="flex items-center gap-2 mb-2">
-                <input type="text" class="input input-bordered input-sm flex-1" x-model="patIgnorarNovo"
-                       placeholder="ex.: Alterar Local ou Forma de Pagamento" @keydown.enter="addPatIgnorar()">
-                <button class="btn btn-sm btn-primary" :disabled="!patIgnorarNovo.trim()" @click="addPatIgnorar()">Adicionar</button>
-            </div>
-            <div class="max-h-[300px] overflow-y-auto space-y-1 pr-1">
-                <template x-for="(t, i) in patIgnorar" :key="i">
-                    <div class="flex items-center gap-2 text-sm py-0.5 border-b border-base-300">
-                        <span class="flex-1" x-text="t"></span>
-                        <button class="btn btn-ghost btn-xs text-error px-1" @click="delPatIgnorar(i)" title="Remover">✕</button>
-                    </div>
-                </template>
-                <div x-show="patIgnorar.length === 0" class="text-sm text-base-content/40 py-2">Nenhuma espécie ignorada.</div>
-            </div>
-            <div class="modal-action items-center">
-                <span class="text-xs text-success mr-auto" x-show="patIgnorarMsg" x-text="patIgnorarMsg"></span>
-                <button class="btn btn-primary btn-sm" @click="salvarPatIgnorar()">Salvar</button>
-                <button class="btn btn-sm" @click="patIgnorarModal=false">Fechar</button>
-            </div>
-        </div>
-        <div class="modal-backdrop" @click="patIgnorarModal=false"></div>
-    </div>
 
     <!-- Modal de log do histórico -->
     <div class="modal" :class="{'modal-open': logAberto}">
@@ -921,7 +922,7 @@ function satPage() {
         logAberto: false, logAtual: [],
         baixarModal: false, baixarLista: [], copiado: false,
         sessaoOk: false, sessaoBusy: false, naoLogadoModal: false,
-        tempoEntre: 5, tempoEntreMax: 15, esperaBloqueio: 45,
+        tempoEntre: 5, tempoEntreMax: 15, esperaBloqueio: 45, encerrando: false,
         logsDownload: {}, logDlAberto: false, logDlItens: [], logDlTitulo: '',
         docsAbertos: {}, docsArquivos: {},
         narrativaAberta: {}, narrativas: {},
@@ -937,9 +938,17 @@ function satPage() {
         amModal: false, amAlvo: null, amLista: [], amSel: [], amCarregando: false,
         menuAbertoPaj: null,
         menuAbertoPajLabel: '',
+        embedPaj: {{ (embed_paj or '')|tojson }},
+        selPessoas: [], selTipos: [], selSugeridos: [], selNbs: '', selProtocolos: '',
+        selHiscreDe: '', selHiscreAte: '',  // período do HISCRE (MM/AAAA; vazio = últimos 5 anos)
+        selNovo: { cpf: '', nome: '', papel: 'Instituidor' }, selNovoErro: '',
         posMenu: { top: 0, left: 0 },
 
         async init() {
+            // "Encerrar fluxo": quando a rotina termina após o pedido, volta à página.
+            this.$watch('sseFechavel', (v) => {
+                if (v && this.encerrando) { this.encerrando = false; this.sseFechar(); }
+            });
             // Sessão do SAT: conferida só na hora de baixar (`sessaoAtiva`) — o selo
             // "SAT" do topo já mostra o estado e reconecta (17/10/2026).
             await this.carregarPrefs();
@@ -947,14 +956,125 @@ function satPage() {
             // A busca na CAIXA não é automática (só pelo botão "Verificar PAJs pendentes").
             // Mas os PAJs adicionados MANUALMENTE são carregados do store local (rápido,
             // sem tocar o SISDPU) para persistirem visíveis ao reabrir a aba.
-            this.carregarManuais();
+            await this.carregarManuais();
             this.carregarHistorico();
+            if (this.embedPaj) await this.initEmbed();
         },
         async carregarManuais() {
             try {
                 const j = await (await fetch('/api/sat/pendentes/manuais')).json();
-                this.pendentes = j.itens || [];
+                this.pendentes = (j.itens || []).filter(p => !this.embedPaj || p.paj_norm === this.embedPaj);
             } catch (e) {}
+        },
+        // ---- Modo embutido (modal da página do PAJ) ----
+        async initEmbed() {
+            this.verificado = true;
+            if (!this.pendentes.length) {
+                // sem metadata local: inclui pelo SISDPU (mesmo fluxo do "Adicionar PAJ")
+                this.manualPaj = this.embedPaj.replace(/^PAJ-(\d{4})-(\d{3})-(\d+)$/, '$1/$2-$3');
+                await this.adicionarManual();
+                await this.carregarManuais();
+            }
+            const p = this.pendentes[0];
+            if (p) { await this.carregarArquivos(p); this.docsAbertos[p.paj_norm] = true; }
+            try {
+                const j = await (await fetch(`/api/sat/${encodeURIComponent(this.embedPaj)}/consulta-pessoas`)).json();
+                this.selPessoas = (j.pessoas || []).map(x => ({ ...x, sel: x.escopo === 'assistido' }));
+                this.selSugeridos = j.sugeridos || [];
+                let ult = null;
+                try { ult = JSON.parse(localStorage.getItem('satCentralTipos') || 'null'); } catch (e) {}
+                this.selTipos = Array.isArray(ult) && ult.length ? ult : this.selSugeridos.slice();
+            } catch (e) {}
+        },
+        selAdicionarPessoa() {
+            const dig = (this.selNovo.cpf || '').replace(/\D/g, '');
+            if (dig.length !== 11) { this.selNovoErro = 'CPF inválido.'; return; }
+            if (this.selPessoas.some(p => p.cpf.replace(/\D/g, '') === dig)) { this.selNovoErro = 'CPF já está na lista.'; return; }
+            const inst = this.selNovo.papel === 'Instituidor';
+            if (inst && this.selPessoas.some(p => p.escopo === 'instituidor')) { this.selNovoErro = 'Já há um instituidor neste PAJ.'; return; }
+            const cpf = dig.replace(/(\d{3})(\d{3})(\d{3})(\d{2})/, '$1.$2.$3-$4');
+            this.selPessoas.push({ cpf, nome: this.selNovo.nome.trim(), papel: this.selNovo.papel,
+                                   escopo: inst ? 'instituidor' : '', sel: true });
+            this.selNovo = { cpf: '', nome: '', papel: 'Instituidor' }; this.selNovoErro = '';
+        },
+        async soAbrirSat(btn) {
+            // mesma consulta manual do botão antigo da página do PAJ (nada é baixado)
+            const orig = btn ? btn.innerHTML : null;
+            if (btn) btn.innerHTML = '<span class="loading loading-spinner loading-xs"></span> Abrindo o SAT…';
+            try {
+                const d = await (await fetch('/api/sat/consulta-manual/' + encodeURIComponent(this.embedPaj), { method: 'POST' })).json();
+                showToast(d.detalhe || (d.ok ? 'Janela do SAT aberta.' : 'Não foi possível abrir a consulta no SAT.'),
+                          d.ok ? (d.logado ? 'success' : 'info') : (d.ocupado ? 'warning' : 'error'));
+            } catch (e) { showToast('Falha de rede: ' + e, 'error'); }
+            finally { if (btn && orig !== null) btn.innerHTML = orig; }
+        },
+        // "MMAAAA" digitado → "MM/AAAA"
+        mascaraMesAno(v) {
+            const d = String(v || '').replace(/\D/g, '').slice(0, 6);
+            return d.length > 2 ? d.slice(0, 2) + '/' + d.slice(2) : d;
+        },
+        // Confere o período do HISCRE antes de abrir o SAT; devolve a mensagem de erro ou ''.
+        erroPeriodoHiscre() {
+            if (!this.selTipos.includes('hiscre')) return '';
+            const ler = (s, rot) => {
+                if (!s) return null;
+                const m = /^(\d{2})\/(\d{4})$/.exec(s);
+                if (!m || +m[1] < 1 || +m[1] > 12) throw rot + ' do HISCRE inválida: use MM/AAAA.';
+                return +m[2] * 100 + +m[1];
+            };
+            try {
+                const de = ler(this.selHiscreDe, 'Data inicial');
+                const ate = ler(this.selHiscreAte, 'Data final');
+                const hoje = new Date(), atual = hoje.getFullYear() * 100 + hoje.getMonth() + 1;
+                if (de && de > (ate || atual)) return 'No HISCRE, a data inicial é posterior à final.';
+            } catch (msg) { return msg; }
+            return '';
+        },
+        selMarcarPatSeProtocolo() {
+            // protocolo só filtra o PAT: indicado o protocolo, garante "Tarefas PAT" marcado
+            if ((this.selProtocolos || '').trim() && !this.selTipos.includes('pat')) this.selTipos.push('pat');
+        },
+        async baixarSelecao() {
+            const erroHiscre = this.erroPeriodoHiscre();
+            if (erroHiscre) { alert(erroHiscre); return; }
+            if (!(await this.sessaoAtiva())) { this.naoLogadoModal = true; return; }
+            try { localStorage.setItem('satCentralTipos', JSON.stringify(this.selTipos)); } catch (e) {}
+            const delay = Math.max(0, Number(this.tempoEntre) || 0);
+            const delayMax = Math.max(delay, Number(this.tempoEntreMax) || 0);
+            const bloqueio = Math.max(0, Number(this.esperaBloqueio) || 0);
+            const pessoas = this.selPessoas.filter(p => p.sel).map(p => ({ cpf: p.cpf, nome: p.nome, papel: p.papel, escopo: p.escopo }));
+            const url = `/api/sat/${encodeURIComponent(this.embedPaj)}/baixar-selecao`
+                + `?pessoas=${encodeURIComponent(JSON.stringify(pessoas))}`
+                + `&tipos=${encodeURIComponent(this.selTipos.join(','))}`
+                + `&nbs=${encodeURIComponent(this.selNbs || '')}`
+                + `&protocolos=${encodeURIComponent(this.selProtocolos || '')}`
+                + `&delay=${delay}&delay_max=${delayMax}&bloqueio=${bloqueio}`
+                + (this.selTipos.includes('hiscre')
+                    ? `&hiscre_de=${encodeURIComponent(this.selHiscreDe || '')}&hiscre_ate=${encodeURIComponent(this.selHiscreAte || '')}`
+                    : '');
+            this.rodando = true; this.sseTipo = 'download';
+            this.sseLog = []; this.sseStatus = '— baixando do SAT'; this.sseFechavel = false; this.sseAberto = true;
+            const es = new EventSource(url); this._es = es;
+            es.addEventListener('log', (ev) => { try { this.sseLog.push(JSON.parse(ev.data)); } catch (e) {} });
+            es.addEventListener('done', async (ev) => {
+                let res = {}; try { res = JSON.parse(ev.data); } catch (e) {}
+                if (res.detalhe) this.sseLog.push({ level: res.ok ? 'ok' : 'erro', msg: res.detalhe });
+                this.sseStatus = res.encerrado ? '— encerrado' : (res.ok ? '— concluído ✓' : '— com aviso');
+                this.sseFechavel = true; this.rodando = false; es.close(); this._es = null;
+                await this.carregarManuais();
+                const p = this.pendentes[0];
+                if (p) { await this.refreshDocs(p); this.docsAbertos[p.paj_norm] = true; }
+                // pessoas novas (CPF avulso) passam a ter subpasta própria → recarrega a lista
+                try {
+                    const j = await (await fetch(`/api/sat/${encodeURIComponent(this.embedPaj)}/consulta-pessoas`)).json();
+                    const sel = new Set(this.selPessoas.filter(x => x.sel).map(x => x.cpf));
+                    this.selPessoas = (j.pessoas || []).map(x => ({ ...x, sel: sel.has(x.cpf) }));
+                } catch (e) {}
+            });
+            es.onerror = () => {
+                this.sseStatus = '— erro de conexão'; this.sseFechavel = true; this.rodando = false;
+                es.close(); this._es = null;
+            };
         },
         async carregarTipos() {
             try {
@@ -1386,6 +1506,10 @@ function satPage() {
             } catch (e) {}
         },
         async recarregar() {
+            if (this.embedPaj) {  // modo embutido: só este PAJ, sem ler a caixa do SISDPU
+                await this.carregarManuais(); await this.carregarHistorico();
+                await this.reidratarDocsAbertos(); return;
+            }
             if (window.garantirCofre && !(await window.garantirCofre())) return;
             this.carregando = true;
             try {
@@ -1446,7 +1570,7 @@ function satPage() {
         async carregarHistorico() {
             try {
                 const j = await (await fetch('/api/sat/historico')).json();
-                this.historico = j.registros || [];
+                this.historico = (j.registros || []).filter(r => !this.embedPaj || r.paj_norm === this.embedPaj);
             } catch (e) {}
             await this.reidratarDocsAbertos();
         },
@@ -1501,6 +1625,7 @@ function satPage() {
                 this.docsArquivos[p.paj_norm] = arqs;
                 p.n_arquivos = arqs.filter(a => a.escopo === 'assistido' && !a.excluido).length;
                 p.n_instituidor = arqs.filter(a => a.escopo === 'instituidor' && !a.excluido).length;
+                p.n_pessoas = arqs.filter(a => (a.escopo || '').startsWith('pessoa:') && !a.excluido).length;
             } catch (e) {}
         },
         // Re-hidrata as sub-tabelas de documentos que estiverem ABERTAS. Após recarregar as
@@ -1543,6 +1668,7 @@ function satPage() {
                 await this.carregarArquivos(p);
                 if (typeof j.n_arquivos === 'number') p.n_arquivos = j.n_arquivos;
                 if (typeof j.n_instituidor === 'number') p.n_instituidor = j.n_instituidor;
+                if (typeof j.n_pessoas === 'number') p.n_pessoas = j.n_pessoas;
             } catch (e) {}
         },
         async recuperar(p, nome, escopo) {
@@ -1554,6 +1680,7 @@ function satPage() {
                 await this.carregarArquivos(p);
                 if (typeof j.n_arquivos === 'number') p.n_arquivos = j.n_arquivos;
                 if (typeof j.n_instituidor === 'number') p.n_instituidor = j.n_instituidor;
+                if (typeof j.n_pessoas === 'number') p.n_pessoas = j.n_pessoas;
             } catch (e) {}
         },
         async baixar(p) {
@@ -1666,7 +1793,7 @@ function satPage() {
             delete this.docsArquivos[p.paj_norm];
             this.docsAbertos[p.paj_norm] = false;
             delete this.logsDownload[p.paj_norm];
-            p.n_arquivos = 0; p.n_instituidor = 0; p.interrompido = null; p.levantamento_em = '';
+            p.n_arquivos = 0; p.n_instituidor = 0; p.n_pessoas = 0; p.interrompido = null; p.levantamento_em = '';
             p.tem_log = false; p.tem_falha = false;
             return this.baixar(p);
         },
@@ -1772,6 +1899,18 @@ function satPage() {
             if (this._es) { this._es.close(); this._es = null; }
             this.sseAberto = false;
             this.recarregar();
+        },
+        antiroboNoLog() {
+            return this.sseLog.some(l => /antirob/i.test(l.msg || ''));
+        },
+        async encerrarFluxo() {
+            // Encerra a rotina do SAT mantendo o baixado (escolha manual após o antirobô).
+            this.encerrando = true;
+            this.sseLog.push({ level: 'novo', msg: '■ Encerrando o fluxo — aguardando a rotina parar com segurança…' });
+            try {
+                const j = await (await fetch('/api/sat/encerrar-fluxo', { method: 'POST' })).json();
+                if (!j.ok) { this.encerrando = false; this.sseLog.push({ level: 'erro', msg: 'Nenhuma rotina do SAT em curso para encerrar.' }); }
+            } catch (e) { this.encerrando = false; this.sseLog.push({ level: 'erro', msg: 'Falha ao pedir o encerramento.' }); }
         },
         cancelarDownload() {
             // fecha o stream (o backend detecta a desconexão e interrompe a rotina)

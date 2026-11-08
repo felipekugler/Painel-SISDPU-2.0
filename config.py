@@ -13,8 +13,28 @@ OFICIO_GERAL = Path(
         str(Path.home() / "Desktop" / "Ofício Geral"),
     )
 )
-PAJS_DIR = OFICIO_GERAL / "PAJs"
+# Pasta dos PAJs: por padrão <OFICIO_GERAL>/PAJs; PAJS_DIR no .env a põe em
+# outro lugar (06/11/2026 — no Painel 2.0, C:\Claude\DPU\PAJs, fora da pasta
+# do painel). O resto do workspace (perfis dos navegadores automáticos,
+# históricos, retornos) continua em OFICIO_GERAL.
+PAJS_DIR = Path(os.getenv("PAJS_DIR") or str(OFICIO_GERAL / "PAJs"))
 PECAS_FEITAS_DIR = OFICIO_GERAL / "Peças Feitas"
+
+# Rascunhos e despachos do painel ligados a UM PAJ (petição e movimentação
+# gravadas para depois, despachos do "Minutar Despacho") ficam DENTRO da pasta
+# do PAJ, nesta subpasta (06/11/2026, pedido do usuário: tudo do caso num lugar
+# só). Antes ficavam em dados/ do painel; chaves que não são número de PAJ
+# (rascunho sem PAJ) continuam lá.
+SUBPASTA_RASCUNHOS_PAJ = "Rascunhos do painel"
+
+
+def pasta_rascunhos_paj(paj_norm: str) -> Path | None:
+    """`<PAJ>/Rascunhos do painel/`, ou None se `paj_norm` não for um número
+    de PAJ (`PAJ-AAAA-UUU-NNNNN`)."""
+    import re as _re
+    if not _re.fullmatch(r"PAJ-\d{4}-\d{3}-\d{5}", paj_norm or ""):
+        return None
+    return PAJS_DIR / paj_norm / SUBPASTA_RASCUNHOS_PAJ
 
 # Porta do servidor do painel. 8001 e' a do Painel 1.0; o Painel SISDPU 2.0
 # roda em paralelo noutra porta (PAINEL_PORT=8002 no .env dele), para os dois

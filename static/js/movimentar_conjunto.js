@@ -248,6 +248,15 @@ function movimentarConjuntoApp(cfg) {
       }
     },
 
+    // Página do PAJ, recarregada (mesmo destino do card do SISDPU: aposExecutarIrPara).
+    voltarAoPaj() {
+      if (this._voltando || !this.pajNorm) return;
+      this._voltando = true;
+      const alvo = '/paj/' + this.pajNorm;
+      if (window.location.pathname === alvo) window.location.reload();
+      else window.location.href = alvo;
+    },
+
     async confirmarExecucaoConjunta() {
       this.etapaConjunta = 'executando';
       this.erroExecucao = '';
@@ -345,6 +354,9 @@ function movimentarConjuntoApp(cfg) {
         }
         this.etapaConjunta = 'concluido';
         this.modalResumoAberto = true;
+        // Sem SISDPU a executar: volta sozinho à página do PAJ, atualizada (06/11/2026),
+        // depois de alguns segundos para ler o resultado — ou já, pelo botão Fechar.
+        if (jConf.provavel_sucesso) setTimeout(() => this.voltarAoPaj(), 4000);
       } catch (e) {
         this.erroExecucao = 'Erro de rede: ' + e;
         this.etapaConjunta = 'resumo';
