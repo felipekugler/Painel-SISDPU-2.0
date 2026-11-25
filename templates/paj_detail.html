@@ -254,31 +254,33 @@
     'ban': 'M18.364 18.364A9 9 0 0 0 5.636 5.636m12.728 12.728A9 9 0 0 1 5.636 5.636m12.728 12.728L5.636 5.636',
     'hourglass': 'M6.75 3h10.5M6.75 21h10.5M7.5 3v3.75a4.5 4.5 0 0 0 9 0V3M7.5 21v-3.75a4.5 4.5 0 0 1 9 0V21',
     'pause': 'M15.75 5.25v13.5m-7.5-13.5v13.5',
+    'sparkles': 'M9.813 15.904 9 18.75l-.813-2.846a4.5 4.5 0 0 0-3.09-3.09L2.25 12l2.846-.813a4.5 4.5 0 0 0 3.09-3.09L9 5.25l.813 2.846a4.5 4.5 0 0 0 3.09 3.09L15.75 12l-2.846.813a4.5 4.5 0 0 0-3.09 3.09ZM18.259 8.715 18 9.75l-.259-1.035a3.375 3.375 0 0 0-2.455-2.456L14.25 6l1.036-.259a3.375 3.375 0 0 0 2.455-2.456L18 2.25l.259 1.035a3.375 3.375 0 0 0 2.456 2.456L21.75 6l-1.035.259a3.375 3.375 0 0 0-2.456 2.456Z',
     'circle-check': 'M9 12.75 11.25 15 15 9.75M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',
     'file-text': 'M19.5 14.25v-2.625a3.375 3.375 0 0 0-3.375-3.375h-1.5A1.125 1.125 0 0 1 13.5 7.125v-1.5a3.375 3.375 0 0 0-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 0 0-9-9Z',
     'folder-check': 'M2.25 12.75V12A2.25 2.25 0 0 1 4.5 9.75h15A2.25 2.25 0 0 1 21.75 12v.75m-8.69-6.44-2.12-2.12a1.5 1.5 0 0 0-1.061-.44H4.5A2.25 2.25 0 0 0 2.25 6v12a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9a2.25 2.25 0 0 0-2.25-2.25h-5.379a1.5 1.5 0 0 1-1.06-.44Z',
     'gavel': 'M12 3v17.25m0 0c-1.472 0-2.882.265-4.185.75M12 20.25c1.472 0 2.882.265 4.185.75M18.75 4.97A48.416 48.416 0 0 0 12 4.5c-2.291 0-4.545.16-6.75.47m13.5 0c1.01.143 2.01.317 3 .52m-3-.52 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.988 5.988 0 0 1-2.031.352 5.988 5.988 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L18.75 4.971Zm-16.5.52c.99-.203 1.99-.377 3-.52m0 0 2.62 10.726c.122.499-.106 1.028-.589 1.202a5.989 5.989 0 0 1-2.031.352 5.989 5.989 0 0 1-2.031-.352c-.483-.174-.711-.703-.59-1.202L5.25 4.971Z',
     'coins': 'M12 6v12m-3-2.818.879.659c1.171.879 3.07.879 4.242 0 1.172-.879 1.172-2.303 0-3.182C13.536 12.219 12.768 12 12 12c-.725 0-1.45-.22-2.003-.659-1.106-.879-1.106-2.303 0-3.182s2.9-.879 4.006 0l.415.33M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Z',
 } %}
+{% set _ocioso_ia = etapa.chave == 'analisado_ia' or (etapa.chave == 'em_analise' and etapa.base == 'analisado_ia') %}
 {% set badge_etapa = 'border-radius:4px; background: rgba(255,255,255,0.28); color: inherit; border-color: rgba(0,0,0,0.12);' %}
 <div class="alert rounded-b-none border-b-0 mb-0 flex flex-wrap items-center gap-2"
      style="background: {{ etapa.cor_fundo }}; color: {{ etapa.cor_texto }};{% if etapa.chave == 'diligencia' %} border: 1px solid #EF9F27; border-bottom: 0;{% else %} border-color: transparent;{% endif %}"
      data-etapa="{{ etapa.chave }}"
-     {% if etapa.chave in ('aguardando_analise', 'em_analise') %}
+     {% if etapa.chave in ('aguardando_analise', 'em_analise', 'analisado_ia') %}
      {# "Aguardando análise" ⇄ "Em análise" em tempo real: a análise por IA desta
         página avisa quando começa/termina (evento analise-ia-status, 16/10/2026) #}
      x-data="{ emAnalise: {{ 'true' if etapa.chave == 'em_analise' else 'false' }} }"
      @analise-ia-status.window="if ($event.detail.paj === '{{ paj_norm }}') emAnalise = $event.detail.running"
      {# "Em análise" no amarelo do selo "Em andamento" (badge-warning do tema) #}
      :style="emAnalise ? { background: 'oklch(var(--wa))', color: 'oklch(var(--wac))' }
-                       : { background: '#D3D1C7', color: '#2C2C2A' }"
+                       : {{ "{ background: '#FACC15', color: '#422006' }" if _ocioso_ia else "{ background: '#D3D1C7', color: '#2C2C2A' }" }}"
      {% endif %}>
-    {% if etapa.chave in ('aguardando_analise', 'em_analise') %}
+    {% if etapa.chave in ('aguardando_analise', 'em_analise', 'analisado_ia') %}
     <span class="loading loading-spinner loading-sm shrink-0" x-show="emAnalise"></span>
     <svg class="w-5 h-5 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" x-show="!emAnalise">
-        <path stroke-linecap="round" stroke-linejoin="round" d="{{ _icones['inbox'] }}"></path>
+        <path stroke-linecap="round" stroke-linejoin="round" d="{{ _icones['sparkles' if _ocioso_ia else 'inbox'] }}"></path>
     </svg>
-    <span class="font-bold" x-text="emAnalise ? 'Em análise' : 'Aguardando análise'">{{ etapa.rotulo }}</span>
+    <span class="font-bold" x-text="emAnalise ? 'Em análise' : '{{ 'Analisado pela IA' if _ocioso_ia else 'Aguardando análise' }}'">{{ etapa.rotulo }}</span>
     {% else %}
     {% if etapa.icone == 'spinner' %}
     <span class="loading loading-spinner loading-sm shrink-0"></span>
@@ -2529,6 +2531,54 @@ document.addEventListener('alpine:init', () => {
             Arquivos SAT Central
         </button>
 
+        <!-- Relatório de ações judiciais anteriores (2026-11-10): busca no e-proc (MCP)
+             pelo CPF do assistido, mostra a PRÉVIA num modal de conferência e, ao
+             confirmar, grava "Juntada de documento" no SISDPU com o relatório em HTML
+             (sem PDF) — passa pela ficha de aprovação padrão do SIS-DPU 2.0. Ver
+             services/acoes_anteriores_service.py e acoesAnterioresApp() em app.js. -->
+        <div class="contents" x-data="acoesAnterioresApp('{{ paj_norm }}')">
+            <button type="button" class="btn btn-ghost btn-sm justify-start w-full normal-case font-normal whitespace-nowrap text-left"
+                    x-show="$store.acoesIaMenu.aberto === 'consultas'"
+                    @click="$store.acoesIaMenu.aberto = null; consultar()"
+                    title="Pesquisa no e-proc (JFPR e TRF4), pelo CPF do assistido, os processos judiciais anteriores e gera a movimentação no SISDPU com o relatório">
+                Relatório de ações judiciais anteriores
+            </button>
+            <template x-teleport="body">
+                <div class="modal" :class="{ 'modal-open': aberto }">
+                    <div class="modal-box flex flex-col" style="width:min(56rem,94vw);max-width:94vw;max-height:88vh">
+                        <h3 class="font-bold text-lg mb-1">Relatório de ações judiciais anteriores</h3>
+                        <p class="text-xs text-base-content/60 mb-3">
+                            Confira o relatório. Ao confirmar, ele vai para o SISDPU como movimentação
+                            "Juntada de documento", em texto (sem PDF) — antes de gravar, o painel mostra a ficha de aprovação.
+                        </p>
+                        <div x-show="carregando" class="flex items-center gap-2 py-8 justify-center text-sm text-base-content/60">
+                            <span class="loading loading-spinner loading-sm"></span>
+                            Consultando o e-proc pelo CPF do assistido (1ª e 2ª instância)…
+                        </div>
+                        <div x-show="!carregando && erro" class="alert alert-error text-sm py-2" x-text="erro"></div>
+                        <div x-show="!carregando && erros.length" class="alert alert-warning text-xs py-2 mb-2">
+                            <div>
+                                <div class="font-semibold">A busca falhou em uma das instâncias — o relatório está incompleto e não pode ser gravado.</div>
+                                <template x-for="e in erros" :key="e"><div x-text="e"></div></template>
+                            </div>
+                        </div>
+                        <div x-show="!carregando && html" class="flex-1 min-h-0 overflow-y-auto rounded border border-base-300 bg-base-100 p-4 text-sm mov-desc-cell"
+                             x-html="html"></div>
+                        <div class="modal-action mt-3">
+                            <button type="button" class="btn btn-sm btn-ghost" @click="fechar()" :disabled="gravando">Cancelar</button>
+                            <button type="button" class="btn btn-sm" @click="consultar()" :disabled="carregando || gravando"
+                                    title="Refaz a consulta no e-proc">Consultar de novo</button>
+                            <button type="button" class="btn btn-sm btn-primary" @click="movimentar()"
+                                    :disabled="carregando || gravando || !html || erros.length > 0">
+                                <span x-show="gravando" class="loading loading-spinner loading-xs"></span>
+                                <span x-text="gravando ? 'Aguardando a ficha de aprovação…' : 'Movimentar no SISDPU'"></span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            </template>
+        </div>
+
         <!-- Dossiê Seguro-Desemprego Web (skills /SD-Dossies, /SD-DossieVinculos,
              /SD-DossieRequerimentos) — automação direta, sem IA (pedido do
              usuário, 2026-10-02): loga no GERID do MTE com as credenciais/seed
@@ -3360,10 +3410,14 @@ document.addEventListener('alpine:init', () => {
 <!-- Modal do "Baixar PAJ Completo" (pedido do Defensor, 21/10/2026): PAJ
      completo (padrão, comportamento de sempre) ou recorte com movimentações
      específicas ("135-142", "120, 135-138"). Ver abrirDownloadPaj() em app.js
-     e services/download_completo_service.py (gerar_pdf_consolidado(seqs=...)). -->
+     e services/download_completo_service.py (gerar_pdf_consolidado(seqs=...)).
+     08/11/2026: no recorte, um selo por documento (todos marcados; clicar tira
+     do arquivo) e a opção "Apenas arquivos crus" (sem capa nem tarjas). -->
 <dialog id="modal-download-paj" class="modal">
-    <div class="modal-box max-w-md">
-        <h3 class="font-bold text-lg mb-3">Gerar arquivo do PAJ</h3>
+    <div class="modal-box flex flex-col"
+         style="width:60vw;max-width:60vw;min-width:min(28rem,94vw);height:60vh;min-height:min(30rem,92vh);max-height:92vh">
+        <h3 class="font-bold text-lg mb-3 shrink-0">Gerar arquivo do PAJ</h3>
+        <div class="flex-1 min-h-0 flex flex-col overflow-y-auto pr-1">
         <label class="flex items-start gap-2 cursor-pointer mb-2">
             <input type="radio" name="download-paj-modo" value="completo" class="radio radio-sm mt-0.5" checked
                    onchange="atualizarModoDownloadPaj()">
@@ -3374,7 +3428,7 @@ document.addEventListener('alpine:init', () => {
             <input type="radio" name="download-paj-modo" value="recorte" class="radio radio-sm mt-0.5"
                    onchange="atualizarModoDownloadPaj()">
             <span><span class="font-medium">Movimentações específicas</span>
-                <span class="block text-xs text-base-content/60">Só as movimentações informadas, com descrição e anexos.</span></span>
+                <span class="block text-xs text-base-content/60">Só as movimentações informadas, com todos ou só alguns dos seus documentos.</span></span>
         </label>
         <input id="download-paj-movs" type="text" disabled
                class="input input-bordered input-sm w-full mt-2"
@@ -3382,23 +3436,60 @@ document.addEventListener('alpine:init', () => {
                oninput="previaDownloadPaj()"
                onkeydown="if (event.key === 'Enter') { event.preventDefault(); gerarDownloadPaj(); }">
         <div id="download-paj-previa" class="text-xs mt-1 min-h-[1.25rem]"></div>
-        <div class="mt-3 pt-3 border-t border-base-300">
-            <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1.5">Ao final do arquivo</div>
-            <label class="flex items-center gap-2 cursor-pointer mb-1">
-                <input id="download-paj-fim" type="checkbox" class="checkbox checkbox-sm" checked>
-                <span class="text-sm">Página "Fim das movimentações"</span>
-            </label>
-            <label class="flex items-center gap-2 cursor-pointer">
-                <input id="download-paj-historico" type="checkbox" class="checkbox checkbox-sm" checked>
-                <span class="text-sm">Histórico de movimentações (tabela)</span>
-            </label>
+        <div id="download-paj-docs-bloco" class="hidden mt-2 flex-1 min-h-[8rem] flex-col">
+            <div class="flex items-center justify-between mb-1">
+                <span class="text-xs text-base-content/60">Documentos — clique no selo para tirar do arquivo (ou para devolver); clique na sequência para marcar/desmarcar todos dela.</span>
+                <span class="text-xs whitespace-nowrap ml-2">
+                    <a class="link link-hover" onclick="marcarTodosDocsDownloadPaj(true)">todos</a> ·
+                    <a class="link link-hover" onclick="marcarTodosDocsDownloadPaj(false)">nenhum</a>
+                </span>
+            </div>
+            <div id="download-paj-docs" class="flex-1 min-h-[6rem] overflow-y-auto rounded-lg border border-base-300 divide-y divide-base-300"></div>
         </div>
-        <div class="modal-action">
+        </div>
+        <div class="mt-3 pt-3 border-t border-base-300 shrink-0 grid gap-x-6 gap-y-2 sm:grid-cols-2">
+            <label class="flex items-start gap-2 cursor-pointer">
+                <input id="download-paj-crus" type="checkbox" class="checkbox checkbox-sm mt-0.5" onchange="atualizarCrusDownloadPaj()">
+                <span><span class="text-sm font-medium">Apenas arquivos crus</span>
+                    <span class="block text-xs text-base-content/60">Só os documentos, unidos num PDF, sem capa, narrativa, páginas separadoras, tarjas nem histórico.</span></span>
+            </label>
+            <div id="download-paj-finais">
+                <div class="text-xs font-semibold uppercase tracking-wide text-base-content/50 mb-1.5">Ao final do arquivo</div>
+                <label class="flex items-center gap-2 cursor-pointer mb-1">
+                    <input id="download-paj-fim" type="checkbox" class="checkbox checkbox-sm" checked>
+                    <span class="text-sm">Página "Fim das movimentações"</span>
+                </label>
+                <label class="flex items-center gap-2 cursor-pointer">
+                    <input id="download-paj-historico" type="checkbox" class="checkbox checkbox-sm" checked>
+                    <span class="text-sm">Histórico de movimentações (tabela)</span>
+                </label>
+            </div>
+        </div>
+        <div class="modal-action shrink-0">
             <button type="button" class="btn btn-sm btn-ghost" onclick="document.getElementById('modal-download-paj').close()">Cancelar</button>
             <button type="button" id="download-paj-gerar" class="btn btn-sm btn-primary" onclick="gerarDownloadPaj()">Gerar PDF</button>
         </div>
     </div>
     <form method="dialog" class="modal-backdrop"><button>fechar</button></form>
+</dialog>
+
+<!-- Nome do arquivo (08/11/2026): depois de gerado o PDF do modal acima, o
+     Defensor confirma ou muda o nome antes de salvar. Ver pedirNomeArquivoPdf()
+     em app.js. -->
+<dialog id="modal-nome-pdf" class="modal">
+    <div class="modal-box max-w-3xl">
+        <h3 class="font-bold text-lg mb-1">Salvar PDF</h3>
+        <p class="text-xs text-base-content/60 mb-3">O PDF está pronto. Confirme ou altere o nome do arquivo.</p>
+        <div class="join w-full">
+            <input id="modal-nome-pdf-input" type="text" class="input input-bordered input-sm join-item flex-1"
+                   onkeydown="if (event.key === 'Enter') { event.preventDefault(); document.getElementById('modal-nome-pdf-ok').click(); }">
+            <span class="join-item btn btn-sm btn-disabled no-animation">.pdf</span>
+        </div>
+        <div class="modal-action">
+            <button type="button" id="modal-nome-pdf-cancelar" class="btn btn-sm btn-ghost">Cancelar</button>
+            <button type="button" id="modal-nome-pdf-ok" class="btn btn-sm btn-primary">Salvar</button>
+        </div>
+    </div>
 </dialog>
 
 

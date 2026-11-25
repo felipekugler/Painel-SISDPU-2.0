@@ -212,19 +212,35 @@ function acoesSisdpuBlock(cfg) {
         // lugar em vez de acrescentar).
         fila: [], editandoFilaIndice: null,
 
-        async init() {
+        // Fases/caixas (favoritas, frequentes, todas) e despachos padrão das
+        // Configurações › SISDPU. 10/11/2026: relido também quando a aba volta a
+        // ficar visível — a lista era lida só ao abrir a página, e uma caixa
+        // marcada como favorita depois (ex.: "01 - PREV_SAT") não aparecia no
+        // dropdown de uma página do PAJ que já estava aberta. Não mexe na
+        // fase/caixa já escolhida no formulário.
+        async carregarPreferencias(inicial) {
             try {
-                const j = await (await fetch('/api/acoes-sisdpu/preferencias')).json();
+                const j = await (await fetch('/api/acoes-sisdpu/preferencias', { cache: 'no-store' })).json();
                 this.fasesFav = j.fases_favoritas || [];
                 this.fasesFreq = j.fases_frequentes || [];
                 this.fasesTodas = j.fases_todas || [];
                 this.caixasFav = j.caixas_favoritas || [];
                 this.caixasFreq = j.caixas_frequentes || [];
                 this.caixasTodas = j.caixas_todas || [];
-                if (!this.fase) this.fase = j.fase_padrao || '';
-                if (!this.grupo) this.grupo = j.caixa_padrao || '';
+                if (inicial && !this.fase) this.fase = j.fase_padrao || '';
+                if (inicial && !this.grupo) this.grupo = j.caixa_padrao || '';
                 this.modelosDespacho = j.modelos_despacho || [];
             } catch (e) {}
+        },
+
+        async init() {
+            await this.carregarPreferencias(true);
+            if (!this._ouvindoPreferencias) {
+                this._ouvindoPreferencias = true;
+                document.addEventListener('visibilitychange', () => {
+                    if (document.visibilityState === 'visible') this.carregarPreferencias(false);
+                });
+            }
             await this.carregarDocsPaj();
             // Só quando o chamador optou pelo modelo lista (`modoListaTramitacoes`) E o
             // valor ainda não foi calculado (`null` — PAJ sincronizado só por caminho
@@ -511,7 +527,15 @@ function acoesSisdpuBlock(cfg) {
             const base = this.fasesDropdown();
             return (this.fase && !base.includes(this.fase)) ? [this.fase, ...base] : base;
         },
-        caixasDropdown() { return this.caixasFav.length ? this.caixasFav : this.caixasTodas; },
+        // Ordem alfabética (10/11/2026), ignorando acento/maiúscula e o espaço
+        // antes do hífen — "01 - PREV_SAT" e "01- PREV_AJUIZADOS" entram juntas
+        // entre as "01-PREV…", e não em dois blocos separados.
+        caixasDropdown() {
+            const base = this.caixasFav.length ? this.caixasFav : this.caixasTodas;
+            const chave = (c) => String(c).replace(/\s*-\s*/g, '-');
+            const col = new Intl.Collator('pt-BR', { sensitivity: 'base', numeric: true });
+            return [...base].sort((x, y) => col.compare(chave(x), chave(y)));
+        },
         // "Urgente": tramita para o MESMO DIA da movimentação — reaproveita o campo de
         // data explícita (prazoData), que já tem precedência sobre o prazo em dias.
         hojeISO() {

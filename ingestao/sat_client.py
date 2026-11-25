@@ -539,6 +539,13 @@ _COMPILAR_LIMIAR = 3
 # NÃO é baixado (skip ANTES do clique). Setado no início de cada download principal.
 _PAT_IGNORAR: list[str] = []
 
+# Associação manual de espécies de PAT por PRETENSÃO (Configurações → Tipos de
+# documentos a baixar → "Tarefas PAT"): None = sem associação própria p/ esta pretensão
+# (baixa TODAS as não ignoradas, comportamento de sempre); lista = baixa só as espécies
+# dela (ainda respeitando _PAT_IGNORAR e o filtro por protocolo). Setado no início de
+# cada download principal (ver `services.config_painel_service.resolver_sat_pat_filtro`).
+_PAT_FILTRO: list[str] | None = None
+
 # Pasta do ACERVO (destino final dos PDFs) usada para VERIFICAÇÃO PRÉVIA: se o documento
 # já existe lá, pula o download (evita re-baixar/sobrescrever e permite RETOMAR um download
 # interrompido no meio de uma categoria). Setado no início de cada download.
@@ -558,6 +565,24 @@ def _pat_ignorado(servico: str) -> bool:
     ignorados configurada — nesse caso a tarefa NÃO é baixada."""
     s = _norm(servico)
     return bool(s) and any(_norm(t) in s for t in _PAT_IGNORAR if str(t).strip())
+
+
+def _pat_fora_do_filtro(servico: str) -> bool:
+    """True se há associação de PAT própria para esta pretensão (_PAT_FILTRO não-None)
+    e o Serviço NÃO está nela — nesse caso a tarefa não é baixada para esta pretensão."""
+    if _PAT_FILTRO is None:
+        return False
+    s = _norm(servico)
+    return not any(_norm(t) == s for t in _PAT_FILTRO)
+
+
+def _registrar_pat_descoberto(servico: str) -> None:
+    """Acrescenta a espécie ao catálogo "retro alimentável" se for nova — chamado para
+    TODA tarefa PAT revelada (baixada, ignorada ou fora do filtro da pretensão), tanto
+    no download quanto no levantamento. Nunca interrompe a rotina por falha aqui."""
+    with contextlib.suppress(Exception):
+        from services import config_painel_service as _cfgp
+        _cfgp.registrar_sat_pat_servico(servico)
 
 
 def _ja_no_acervo(nome_arq: str) -> bool:
@@ -1371,6 +1396,7 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
             if _ALVOS is not None and f"pat|{prot}" not in _ALVOS and "pat|" not in _ALVOS:
                 continue
             servico = cells[prot_i + 1] if prot_i + 1 < len(cells) else ""
+            _registrar_pat_descoberto(servico)  # catálogo "retro alimentável" — toda tarefa revelada conta
             # Filtro inicial por PROTOCOLO (indicado pelo usuário): pula tarefas de
             # protocolo não indicado — REGISTRA no log. Só se aplica ao PAT.
             protocolo_indicado = _PROTOCOLO_FILTRO is not None and prot in _PROTOCOLO_FILTRO
@@ -1394,6 +1420,16 @@ async def _pat_stream(page, ctx, nome, pasta_destino, salvos, pulados, reg):
                 pulados.append(f"PAT {servico} (protocolo {prot}) — ignorado (espécie na lista de ignorados)")
                 yield reg(f"  – tarefa {prot} ({servico}): ignorada (espécie de processo "
                           f"administrativo na lista de ignorados)", "muted")
+                continue
+            # Associação por PRETENSÃO (espécies escolhidas em Configurações p/ esta
+            # pretensão): um protocolo indicado EXPLICITAMENTE pelo usuário também
+            # sobrepõe (mesmo critério do item acima).
+            if not protocolo_indicado and _pat_fora_do_filtro(servico):
+                _inv_add("pat", prot, "", "nao_filtrado_pretensao", rotulo=servico)
+                pulados.append(f"PAT {servico} (protocolo {prot}) — fora da associação "
+                               f"de PAT desta pretensão")
+                yield reg(f"  – tarefa {prot} ({servico}): fora da associação de PAT "
+                          f"configurada para esta pretensão", "muted")
                 continue
             out = {}
             async for ev in _clicar_abre_aba(
@@ -1799,7 +1835,8 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                                 delay_s: float = 5.0, bloqueio_s: float = 45.0,
                                 delay_max_s: float | None = None, tipos=None, pretensao="", rotulo="", alvos=None,
                                 nbs=None, protocolos=None, compilar=False, compilar_limiar=3,
-                                pat_ignorar=None, pasta_acervo=None, hiscre_de="", hiscre_ate=""):
+                                pat_ignorar=None, pat_filtro=None, pasta_acervo=None,
+                                hiscre_de="", hiscre_ate=""):
     """Consulta o CPF no SAT (usuário resolve o CAPTCHA na janela) e baixa o Grupo 1
     (1 clique), o Grupo 2 (modais: CCON, CRER, HISCRE, HISCONSIGNADOS, LAUDO MEDICO) e
     o PAT (2ª Via dos Processos, com deduplicação). `delay_s` = ritmo preventivo entre
@@ -1810,7 +1847,10 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
     filtro). `protocolos` = coleção de protocolos (qualquer formato) p/ filtrar SÓ o PAT
     (None/vazio = sem filtro — baixa todas as tarefas). `compilar`/`compilar_limiar` =
     compilar por tipo quando > limiar (só no download principal). `pat_ignorar` = espécies
-    de PAT (Serviço) a NÃO baixar.
+    de PAT (Serviço) a NÃO baixar (global, qualquer pretensão). `pat_filtro` = espécies de
+    PAT associadas à PRETENSÃO atual (None = sem associação própria — baixa todas as não
+    ignoradas, igual a sempre; lista = baixa só essas, ainda respeitando `pat_ignorar` e o
+    filtro por protocolo).
     `pasta_acervo` = pasta do acervo final para VERIFICAÇÃO PRÉVIA (pula docs já presentes;
     permite RETOMAR downloads interrompidos); None = usa `pasta_destino`. O log é gravado
     INCREMENTALMENTE (a cada documento) — uma interrupção deixa o inventário parcial em disco.
@@ -1818,7 +1858,8 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
     regras em `periodo_hiscre`).
     Gera eventos SSE; termina com {'done':True,'resultado':{...}}."""
     global _RITMO_MS, _RITMO_MAX_MS, _PAUSA_BLOQUEIO_MS, _ROTULO_ARQ, _INVENTARIO, _ALVOS
-    global _NB_FILTRO, _PROTOCOLO_FILTRO, _SOMENTE_PAT, _COMPILAR, _COMPILAR_LIMIAR, _PAT_IGNORAR, _PASTA_ACERVO, _LOG_PERSIST
+    global _NB_FILTRO, _PROTOCOLO_FILTRO, _SOMENTE_PAT, _COMPILAR, _COMPILAR_LIMIAR
+    global _PAT_IGNORAR, _PAT_FILTRO, _PASTA_ACERVO, _LOG_PERSIST
     global _ETAPA_ATUAL, _HISCRE_PERIODO
     _ETAPA_ATUAL = ""
     _HISCRE_PERIODO = periodo_hiscre(hiscre_de, hiscre_ate)  # ValueError antes de abrir o SAT
@@ -1835,6 +1876,7 @@ async def baixar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
     _COMPILAR = bool(compilar)
     _COMPILAR_LIMIAR = max(1, int(compilar_limiar or 3))
     _PAT_IGNORAR = list(pat_ignorar) if pat_ignorar else []  # espécies de PAT a não baixar
+    _PAT_FILTRO = list(pat_filtro) if pat_filtro else None  # associação por pretensão (None = todas)
     _ROTULO_ARQ = rotulo or ""  # prefixo dos nomes (ex.: "INSTITUIDOR - ")
     _INVENTARIO = []  # zera o inventário estruturado desta rodada
     _ALVOS = set(alvos) if alvos else None  # subitens específicos (download complementar)
@@ -2140,6 +2182,7 @@ async def levantar_cidadao_stream(cpf: str, nome: str, pasta_destino: str,
                         continue
                     vistos.add(cells[prot_i])
                     servico = cells[prot_i + 1] if prot_i + 1 < len(cells) else ""
+                    _registrar_pat_descoberto(servico)  # catálogo "retro alimentável"
                     add("pat", cells[prot_i], "disponivel", rotulo=servico)
                 if not await page.evaluate(_JS_PAG_PROX):
                     break

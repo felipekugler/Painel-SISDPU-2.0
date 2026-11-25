@@ -41,6 +41,13 @@ ETAPAS = [
     # selo "Em andamento" de Análises e Iniciais (`badge-warning` do tema —
     # variáveis do DaisyUI, acompanham claro/escuro; 17/10/2026).
     ("em_analise", "Em análise", 0, False, "oklch(var(--wa))", "oklch(var(--wac))", "spinner"),
+    # Automática (17/11/2026, pedido do Defensor): a análise por IA do painel
+    # TERMINOU (analise_pretensao.json com status "done" — a mesma regra do
+    # "SIM" da coluna Análise do dashboard), mas o Defensor ainda não marcou
+    # Inviável/Diligência/Viável. Antes, o PAJ voltava a "Aguardando análise" e
+    # ficava igual aos que nunca foram analisados. Amarelo cheio (distinto do
+    # amarelo do tema do "Em análise" e do amarelo-claro da Diligência).
+    ("analisado_ia", "Analisado pela IA", 0.5, False, "#FACC15", "#422006", "sparkles"),
     ("inviavel", "Analisado – Inviável", 1, True, "#F7C1C1", "#791F1F", "ban"),
     ("diligencia", "Analisado – Em diligência", 1, True, "#FDF0B8", "#633806", "hourglass"),
     ("viavel", "Analisado – Viável", 2, True, "#C0DD97", "#173404", "circle-check"),
@@ -83,8 +90,9 @@ def opcoes_manuais() -> list[dict]:
 
 
 def opcoes_todas() -> list[dict]:
-    # "Em análise" é só um estado passageiro (análise rodando) — não se escolhe
-    return [{"chave": e[0], "rotulo": e[1]} for e in ETAPAS if e[0] != "em_analise"]
+    # "Em análise" (análise rodando) e "Analisado pela IA" (análise do painel
+    # concluída) são deduzidas da pasta do PAJ — não se escolhem
+    return [{"chave": e[0], "rotulo": e[1]} for e in ETAPAS if e[0] not in ("em_analise", "analisado_ia")]
 
 
 def _analise_em_andamento(paj_norm: str) -> dict | None:
@@ -182,6 +190,16 @@ def calcular(paj_norm: str, metadata: dict | None = None) -> dict:
 
     # 3) evidências automáticas
     evid: list[tuple[str, datetime, str]] = []
+    ap = _ler_json(pasta / "analise_pretensao.json")
+    if isinstance(ap, dict) and ap.get("status") == "done":
+        d_ap = _dt_iso(ap.get("atualizado_em"))
+        if d_ap is None:  # arquivo antigo sem data: vale a do próprio arquivo
+            try:
+                d_ap = datetime.fromtimestamp((pasta / "analise_pretensao.json").stat().st_mtime)
+            except OSError:
+                d_ap = None
+        if d_ap:
+            evid.append(("analisado_ia", d_ap, ""))
     m = _dt_iso((_ler_json(pasta / MARCADOR_MINUTA) or {}).get("em"))
     if m:
         evid.append(("elaborando_minuta", m, ""))
@@ -224,13 +242,14 @@ def calcular(paj_norm: str, metadata: dict | None = None) -> dict:
     if melhor:
         atual = melhor
     chave, d, seq, det = atual
-    # Só "Aguardando análise" vira "Em análise": numa etapa à frente, uma nova
-    # análise/ajuste pela IA não faz o PAJ parecer que voltou atrás.
-    if chave == "aguardando_analise":
+    # Só "Aguardando análise" / "Analisado pela IA" viram "Em análise" (nova
+    # rodada): numa etapa à frente, uma nova análise/ajuste pela IA não faz o
+    # PAJ parecer que voltou atrás.
+    if chave in ("aguardando_analise", "analisado_ia"):
         rodando = _analise_em_andamento(paj_norm)
         if rodando:
             return {**info("em_analise"), "arquivado": False, "desde": rodando.get("iniciado_em") or "",
-                    "mov_seq": None, "detalhe": ""}
+                    "mov_seq": None, "detalhe": "", "base": chave}
     return {**info(chave), "arquivado": False, "desde": d.isoformat(timespec="seconds") if d else "",
             "mov_seq": seq, "detalhe": det}
 

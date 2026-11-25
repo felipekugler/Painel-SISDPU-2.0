@@ -501,9 +501,12 @@ function baixarDocumentosSeqPaj(pajNorm, seq) {
  * Fonte SIS-DPU 2.0 (MCP): sem modal de sincronização — releitura incremental
  * silenciosa pelo MCP (a mesma da abertura da página do PAJ). Vale para todos os
  * chamadores: pós-gravação, mera ciência, queda de conexão e o ícone da tabela. */
-async function atualizarMovimentacoesPajMcp(pajNorm) {
+async function atualizarMovimentacoesPajMcp(pajNorm, opcoes) {
     try {
-        const r = await fetch('/api/sisdpu2/ao-vivo/paj/' + encodeURIComponent(pajNorm) + '?forcar=true', { method: 'POST' });
+        // `completo` (botão "Atualizar movimentações", 09/11/2026): relê o
+        // histórico inteiro — pega movimentação editada no SIS-DPU 2.0.
+        const completo = opcoes && opcoes.completo ? '&completo=true' : '';
+        const r = await fetch('/api/sisdpu2/ao-vivo/paj/' + encodeURIComponent(pajNorm) + '?forcar=true' + completo, { method: 'POST' });
         const d = await r.json().catch(() => ({}));
         if (!d.ok) {
             showToast('Não foi possível atualizar as movimentações: ' + (d.motivo || 'erro'), 'error');
@@ -555,8 +558,8 @@ async function releituraPosGravacaoMcp(pajNorm, progresso) {
     }
 }
 
-function atualizarMovimentacoesPaj(pajNorm) {
-    if (window.PAINEL_FONTE_SISDPU_MCP) return atualizarMovimentacoesPajMcp(pajNorm);
+function atualizarMovimentacoesPaj(pajNorm, opcoes) {
+    if (window.PAINEL_FONTE_SISDPU_MCP) return atualizarMovimentacoesPajMcp(pajNorm, opcoes);
     return new Promise(function(resolve) {
         let url = '/api/sync/paj/' + encodeURIComponent(pajNorm) + '/movimentacoes';
 
@@ -627,20 +630,15 @@ async function baixarPajCompleto(pajNorm, btn, opcoes) {
         return;
     }
 
-    const restaurarIcone = trocarIconePorSpinner(btn);
+    let restaurarIcone = trocarIconePorSpinner(btn);
     try {
         const resp = await fetch('/api/paj/' + encodeURIComponent(pajNorm) + '/download-completo'
             + (opcoes ? '?' + opcoes.replace(/^&/, '') : ''));
         if (!resp.ok) throw new Error('HTTP ' + resp.status);
+        _avisoOmitidosDownloadPaj(resp);
         const blob = await resp.blob();
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = pajNorm + ' - Download Completo.pdf';
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
+        restaurarIcone(); restaurarIcone = () => {};
+        await _salvarBlobDownloadPaj(blob, _nomeDownloadPaj(resp, pajNorm + ' - Download Completo.pdf'));
     } catch (e) {
         showToast('Não foi possível gerar o PDF completo do PAJ', 'error');
     } finally {
@@ -652,8 +650,13 @@ async function baixarPajCompleto(pajNorm, btn, opcoes) {
    em baixarPajCompleto(), sem mudança) ou recorte com movimentações
    específicas ("135-142", "120, 135-138"). No recorte, só os anexos das
    movimentações escolhidas precisam estar baixados; se faltar, oferece baixar
-   só esses (SIS-DPU 2.0) em vez da sincronização completa. */
-const _downloadPaj = { pajNorm: '', btn: null, timer: null, previaOk: false };
+   só esses (SIS-DPU 2.0) em vez da sincronização completa.
+
+   08/11/2026: no recorte, a prévia lista um selo por documento de cada
+   movimentação, todos marcados; clicar no selo tira o documento do arquivo
+   (`excluidos`, chaves "<seq>:<posição>" do servidor). "Apenas arquivos
+   crus": só os documentos, sem capa, separadoras, tarjas nem histórico. */
+const _downloadPaj = { pajNorm: '', btn: null, timer: null, previaOk: false, detalhe: [], excluidos: new Set() };
 
 function abrirDownloadPaj(pajNorm, btn) {
     _downloadPaj.pajNorm = pajNorm;
@@ -661,14 +664,30 @@ function abrirDownloadPaj(pajNorm, btn) {
     const modal = document.getElementById('modal-download-paj');
     if (!modal) { baixarPajCompleto(pajNorm, btn); return; }
     atualizarModoDownloadPaj();
+    atualizarCrusDownloadPaj();
     modal.showModal();
 }
 
+function _crusDownloadPaj() {
+    const c = document.getElementById('download-paj-crus');
+    return !!(c && c.checked);
+}
+
 // "Ao final do arquivo" (ambos marcados por padrão) -> parâmetros da URL.
+// Com "Apenas arquivos crus" nada entra além dos documentos.
 function _opcoesFinaisDownloadPaj() {
+    if (_crusDownloadPaj()) return '&crus=true&fim=false&historico=false';
     const fim = document.getElementById('download-paj-fim');
     const hist = document.getElementById('download-paj-historico');
     return '&fim=' + (!fim || fim.checked) + '&historico=' + (!hist || hist.checked);
+}
+
+function atualizarCrusDownloadPaj() {
+    const crus = _crusDownloadPaj();
+    const bloco = document.getElementById('download-paj-finais');
+    if (!bloco) return;
+    bloco.classList.toggle('opacity-40', crus);
+    bloco.querySelectorAll('input').forEach(i => { i.disabled = crus; });
 }
 
 function _modoDownloadPaj() {
@@ -681,7 +700,83 @@ function atualizarModoDownloadPaj() {
     const input = document.getElementById('download-paj-movs');
     input.disabled = !recorte;
     if (recorte) { input.focus(); previaDownloadPaj(); }
-    else document.getElementById('download-paj-previa').textContent = '';
+    else {
+        document.getElementById('download-paj-previa').textContent = '';
+        _renderDocsDownloadPaj([]);
+    }
+}
+
+// Chaves desmarcadas que ainda existem no recorte atual (as de movimentações
+// que saíram do campo não vão para o servidor).
+function _excluidosDownloadPaj() {
+    const validas = new Set(_downloadPaj.detalhe.flatMap(m => m.docs.map(d => d.chave)));
+    return [..._downloadPaj.excluidos].filter(k => validas.has(k));
+}
+
+const _ESC_HTML = { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' };
+function _escHtml(t) {
+    return String(t == null ? '' : t).replace(/[&<>"']/g, c => _ESC_HTML[c]);
+}
+
+function _renderDocsDownloadPaj(detalhe) {
+    _downloadPaj.detalhe = detalhe || [];
+    const bloco = document.getElementById('download-paj-docs-bloco');
+    const alvo = document.getElementById('download-paj-docs');
+    if (!bloco || !alvo) return;
+    // display direto (e não a classe `hidden`): o bloco é flex, para a lista
+    // de selos ocupar a altura que sobra no modal.
+    bloco.style.display = _downloadPaj.detalhe.length ? 'flex' : 'none';
+    alvo.innerHTML = _downloadPaj.detalhe.map(m => {
+        const selos = m.docs.length ? m.docs.map(d => {
+            const fora = _downloadPaj.excluidos.has(d.chave);
+            const cls = fora
+                ? 'bg-base-200 text-base-content/40 line-through border-base-300'
+                : (d.baixado ? 'badge-primary' : 'badge-warning');
+            const dica = d.descricao + (d.baixado ? '' : ' (ainda não baixado)')
+                + (fora ? ' — fora do arquivo (clique para incluir)' : ' — no arquivo (clique para tirar)');
+            return '<button type="button" class="badge badge-sm h-auto py-0.5 text-left border ' + cls + '"'
+                + ' data-chave="' + _escHtml(d.chave) + '" title="' + _escHtml(dica) + '"'
+                + ' onclick="alternarDocDownloadPaj(this.dataset.chave)">'
+                + (fora ? '' : '✓ ') + _escHtml(d.descricao) + '</button>';
+        }).join(' ') : '<span class="text-xs text-base-content/40">sem documentos</span>';
+        return '<div class="flex gap-2 px-2 py-1.5 items-start">'
+            + '<button type="button" class="text-xs font-mono font-semibold whitespace-nowrap pt-0.5 hover:text-primary"'
+            + ' title="Marcar/desmarcar todos os documentos desta sequência"'
+            + ' onclick="alternarSeqDownloadPaj(' + m.seq + ')">Seq. ' + m.seq + '</button>'
+            + '<div class="flex-1 min-w-0"><div class="text-[11px] text-base-content/50 truncate">'
+            + _escHtml([m.data, m.fase].filter(Boolean).join(' · ')) + '</div>'
+            + '<div class="flex flex-wrap gap-1 mt-0.5">' + selos + '</div></div></div>';
+    }).join('');
+    _resumoDocsDownloadPaj();
+}
+
+function _resumoDocsDownloadPaj() {
+    const total = _downloadPaj.detalhe.reduce((n, m) => n + m.docs.length, 0);
+    const fora = _excluidosDownloadPaj().length;
+    const alvo = document.getElementById('download-paj-gerar');
+    if (alvo && !alvo.disabled) alvo.textContent = (_modoDownloadPaj() === 'recorte' && total)
+        ? 'Gerar PDF (' + (total - fora) + ' de ' + total + ' documento' + (total === 1 ? '' : 's') + ')'
+        : 'Gerar PDF';
+}
+
+function alternarDocDownloadPaj(chave) {
+    if (_downloadPaj.excluidos.has(chave)) _downloadPaj.excluidos.delete(chave);
+    else _downloadPaj.excluidos.add(chave);
+    _renderDocsDownloadPaj(_downloadPaj.detalhe);
+}
+
+function alternarSeqDownloadPaj(seq) {
+    const m = _downloadPaj.detalhe.find(x => x.seq === seq);
+    if (!m || !m.docs.length) return;
+    const todosDentro = m.docs.every(d => !_downloadPaj.excluidos.has(d.chave));
+    m.docs.forEach(d => todosDentro ? _downloadPaj.excluidos.add(d.chave) : _downloadPaj.excluidos.delete(d.chave));
+    _renderDocsDownloadPaj(_downloadPaj.detalhe);
+}
+
+function marcarTodosDocsDownloadPaj(marcar) {
+    _downloadPaj.detalhe.forEach(m => m.docs.forEach(d =>
+        marcar ? _downloadPaj.excluidos.delete(d.chave) : _downloadPaj.excluidos.add(d.chave)));
+    _renderDocsDownloadPaj(_downloadPaj.detalhe);
 }
 
 function previaDownloadPaj() {
@@ -689,7 +784,11 @@ function previaDownloadPaj() {
     _downloadPaj.previaOk = false;
     const alvo = document.getElementById('download-paj-previa');
     const movs = document.getElementById('download-paj-movs').value.trim();
-    if (!movs) { alvo.className = 'text-xs mt-1 min-h-[1.25rem] text-base-content/50'; alvo.textContent = 'Informe as movimentações.'; return; }
+    if (!movs) {
+        alvo.className = 'text-xs mt-1 min-h-[1.25rem] text-base-content/50'; alvo.textContent = 'Informe as movimentações.';
+        _renderDocsDownloadPaj([]);
+        return;
+    }
     _downloadPaj.timer = setTimeout(async () => {
         try {
             const r = await (await fetch('/api/paj/' + encodeURIComponent(_downloadPaj.pajNorm)
@@ -706,11 +805,72 @@ function previaDownloadPaj() {
             if (avisos.length) txt += ' — ' + avisos.join('; ');
             alvo.className = 'text-xs mt-1 min-h-[1.25rem] ' + (avisos.length || !r.movimentacoes ? 'text-warning' : 'text-base-content/70');
             alvo.textContent = txt;
+            _renderDocsDownloadPaj(r.detalhe || []);
         } catch (e) {
             alvo.className = 'text-xs mt-1 min-h-[1.25rem] text-error';
             alvo.textContent = 'Não foi possível conferir as movimentações.';
+            _renderDocsDownloadPaj([]);
         }
     }, 300);
+}
+
+/* Nome do arquivo (08/11/2026): com o PDF já gerado, pergunta o nome
+   (sugere o padrão, sem ".pdf" — a extensão é fixa). null = cancelou. */
+function pedirNomeArquivoPdf(padrao) {
+    const dlg = document.getElementById('modal-nome-pdf');
+    const base = String(padrao || 'arquivo.pdf').replace(/\.pdf$/i, '');
+    if (!dlg) return Promise.resolve(base + '.pdf');
+    const input = document.getElementById('modal-nome-pdf-input');
+    const ok = document.getElementById('modal-nome-pdf-ok');
+    const cancelar = document.getElementById('modal-nome-pdf-cancelar');
+    input.value = base;
+    return new Promise(resolve => {
+        let resposta = null;
+        const fim = () => {
+            ok.onclick = cancelar.onclick = null;
+            dlg.removeEventListener('close', fim);
+            resolve(resposta);
+        };
+        ok.onclick = () => {
+            // Caracteres que o Windows não aceita em nome de arquivo.
+            const nome = input.value.replace(/[\\/:*?"<>|]+/g, '-').replace(/\.pdf$/i, '').trim();
+            if (!nome) { input.focus(); return; }
+            resposta = nome + '.pdf';
+            dlg.close();
+        };
+        cancelar.onclick = () => dlg.close();
+        dlg.addEventListener('close', fim);
+        dlg.showModal();
+        input.focus();
+        input.select();
+    });
+}
+
+async function _salvarBlobDownloadPaj(blob, nomePadrao) {
+    const nome = await pedirNomeArquivoPdf(nomePadrao);
+    if (!nome) { showToast('PDF não salvo', 'info'); return false; }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nome;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+    return true;
+}
+
+function _nomeDownloadPaj(resp, padrao) {
+    const cd = resp.headers.get('Content-Disposition') || '';
+    const m = cd.match(/filename\*=UTF-8''([^;]+)/i);
+    return m ? decodeURIComponent(m[1]) : padrao;
+}
+
+// "Apenas arquivos crus": o que não pôde entrar (não baixado, formato não
+// mesclável) fica de fora sem página de aviso — avisa aqui.
+function _avisoOmitidosDownloadPaj(resp) {
+    const n = parseInt(resp.headers.get('X-Documentos-Omitidos') || '0', 10);
+    if (n > 0) showToast(n + ' documento(s) ficaram de fora do arquivo cru (não baixados ou formato que não vira PDF)', 'warning');
 }
 
 async function gerarDownloadPaj() {
@@ -723,18 +883,25 @@ async function gerarDownloadPaj() {
     }
     const movs = document.getElementById('download-paj-movs').value.trim();
     if (!movs) { showToast('Informe as movimentações (ex.: 135-142)', 'warning'); return; }
+    const excluidos = _excluidosDownloadPaj();
+    const totalDocs = _downloadPaj.detalhe.reduce((n, m) => n + m.docs.length, 0);
+    if (_crusDownloadPaj() && totalDocs && excluidos.length >= totalDocs) {
+        showToast('Nenhum documento marcado — marque ao menos um', 'warning'); return;
+    }
+    const qExcluir = excluidos.length ? '&excluir=' + encodeURIComponent(excluidos.join(',')) : '';
     const base = '/api/paj/' + encodeURIComponent(pajNorm);
     const botao = document.getElementById('download-paj-gerar');
     const textoBotao = botao.textContent;
     botao.disabled = true;
     try {
-        let v = await fetch(base + '/recorte/verificar?movs=' + encodeURIComponent(movs));
+        const urlVerificar = base + '/recorte/verificar?movs=' + encodeURIComponent(movs) + qExcluir;
+        let v = await fetch(urlVerificar);
         let st = await v.json();
         if (!v.ok) { showToast(st.erro || 'Movimentações inválidas', 'error'); return; }
         if (!st.completo) {
             const baixar = confirm('Faltam ' + st.faltando + ' anexo(s) das movimentações ' + st.faltando_movs.join(', ')
                 + ' que ainda não foram baixados. Baixar só esses agora?\n\n(Cancelar gera o PDF sem eles — '
-                + 'cada um aparece como "não encontrado".)');
+                + (_crusDownloadPaj() ? 'ficam de fora do arquivo.)' : 'cada um aparece como "não encontrado".)'));
             if (baixar) {
                 botao.textContent = 'Baixando anexos…';
                 const b = await (await fetch(base + '/recorte/baixar-anexos', {
@@ -742,36 +909,28 @@ async function gerarDownloadPaj() {
                     body: JSON.stringify({ movs }),
                 })).json();
                 if (!b.ok) { showToast(b.erro || 'Falha ao baixar os anexos', 'error'); return; }
-                st = await (await fetch(base + '/recorte/verificar?movs=' + encodeURIComponent(movs))).json();
+                st = await (await fetch(urlVerificar)).json();
                 if (!st.completo) showToast('Ainda faltam ' + st.faltando + ' anexo(s) — o PDF sai sem eles', 'warning');
             }
         }
         botao.textContent = 'Gerando PDF…';
-        const resp = await fetch(base + '/download-completo?movs=' + encodeURIComponent(movs) + _opcoesFinaisDownloadPaj());
+        const resp = await fetch(base + '/download-completo?movs=' + encodeURIComponent(movs) + qExcluir + _opcoesFinaisDownloadPaj());
         if (!resp.ok) {
             let erro = 'Não foi possível gerar o PDF';
             try { erro = (await resp.json()).erro || erro; } catch (e) { /* corpo não-JSON */ }
             showToast(erro, 'error');
             return;
         }
+        _avisoOmitidosDownloadPaj(resp);
         const blob = await resp.blob();
-        const cd = resp.headers.get('Content-Disposition') || '';
-        const m = cd.match(/filename\*=UTF-8''([^;]+)/i);
-        const nome = m ? decodeURIComponent(m[1]) : pajNorm + ' - Movimentações.pdf';
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = nome;
-        document.body.appendChild(a);
-        a.click();
-        a.remove();
-        URL.revokeObjectURL(url);
-        modal.close();
+        botao.textContent = 'PDF pronto';
+        if (await _salvarBlobDownloadPaj(blob, _nomeDownloadPaj(resp, pajNorm + ' - Movimentações.pdf'))) modal.close();
     } catch (e) {
         showToast('Não foi possível gerar o PDF do recorte', 'error');
     } finally {
         botao.disabled = false;
         botao.textContent = textoBotao;
+        _resumoDocsDownloadPaj();
     }
 }
 
@@ -2494,3 +2653,89 @@ document.addEventListener('input', function(e) {
         _buscaDebounce = setTimeout(function() { _buscaFetch(q); }, 250);
     }
 });
+
+
+/* ── Relatório de ações judiciais anteriores (Ações com IA › Consultas) ──────────
+   Consulta o e-proc (MCP) pelo CPF do assistido → prévia num modal de conferência →
+   "Movimentar no SISDPU" grava a Juntada de documento com o relatório em HTML (a
+   requisição aguarda a ficha de aprovação padrão do SIS-DPU 2.0, aberta por
+   ficha_mcp.js). Ver services/acoes_anteriores_service.py. */
+function acoesAnterioresApp(pajNorm) {
+    return {
+        aberto: false, carregando: false, gravando: false,
+        html: '', erro: '', erros: [], n: 0,
+        async consultar() {
+            this.aberto = true; this.carregando = true;
+            this.html = ''; this.erro = ''; this.erros = [];
+            try {
+                const r = await fetch(`/api/paj/${encodeURIComponent(pajNorm)}/acoes-anteriores/consultar`, { method: 'POST' });
+                const j = await r.json();
+                if (!r.ok || !j.ok) { this.erro = j.erro || 'Falha na consulta ao e-proc.'; return; }
+                this.html = j.html || ''; this.erros = j.erros || []; this.n = j.n || 0;
+            } catch (e) {
+                this.erro = 'Falha de rede na consulta ao e-proc.';
+            } finally { this.carregando = false; }
+        },
+        fechar() { if (!this.gravando) this.aberto = false; },
+        async movimentar() {
+            this.gravando = true;
+            try {
+                const r = await fetch(`/api/paj/${encodeURIComponent(pajNorm)}/acoes-anteriores/movimentar`, {
+                    method: 'POST', headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ html: this.html }),
+                });
+                const j = await r.json();
+                if (!r.ok || !j.ok) { showToast('Movimentação não gravada: ' + (j.detalhe || 'falha'), 'error'); return; }
+                showToast('Relatório juntado ao SISDPU' + (j.mov_seq ? ` (movimentação ${j.mov_seq}).` : '.'), 'success');
+                this.aberto = false;
+                if (typeof atualizarMovimentacoesPaj === 'function') atualizarMovimentacoesPaj(pajNorm);
+            } catch (e) {
+                showToast('Falha de rede ao movimentar.', 'error');
+            } finally { this.gravando = false; }
+        },
+    };
+}
+
+/* ── Minimenu nos números de processo dentro das descrições de movimentação ─────
+   Link de processo (classe "processo-eproc" ou texto no formato NPU) numa
+   .mov-desc-cell abre o minimenu "Consultar processo (MCP) / Abrir no navegador",
+   em vez de seguir o link (que, no próprio SISDPU, abre a consulta pública do e-proc). */
+(function () {
+    const NPU = /^\d{7}-\d{2}\.\d{4}\.\d\.\d{2}\.\d{4}$/;
+    let menu = null;
+    function fecharMenu() { if (menu) { menu.remove(); menu = null; } }
+    function abrirMenu(a, numero) {
+        fecharMenu();
+        menu = document.createElement('ul');
+        menu.className = 'menu menu-sm bg-base-200 rounded-box shadow-lg border border-base-300 p-1';
+        menu.style.cssText = 'position:fixed;z-index:1000;min-width:13rem';
+        const itens = [
+            ['Consultar processo (MCP)', () => consultarProcessoMcp(numero)],
+            ['Abrir no navegador', () => abrirProcessoNavegador(numero, a)],
+        ];
+        for (const [rotulo, fn] of itens) {
+            const li = document.createElement('li');
+            const b = document.createElement('a');
+            b.textContent = rotulo;
+            b.addEventListener('click', (ev) => { ev.preventDefault(); ev.stopPropagation(); fecharMenu(); fn(); });
+            li.appendChild(b); menu.appendChild(li);
+        }
+        document.body.appendChild(menu);
+        const r = a.getBoundingClientRect();
+        const top = Math.min(r.bottom + 2, window.innerHeight - menu.offsetHeight - 8);
+        const left = Math.min(r.left, window.innerWidth - menu.offsetWidth - 8);
+        menu.style.top = top + 'px'; menu.style.left = left + 'px';
+    }
+    document.addEventListener('click', (ev) => {
+        if (menu && !menu.contains(ev.target)) fecharMenu();
+        const a = ev.target.closest && ev.target.closest('.mov-desc-cell a');
+        if (!a) return;
+        const texto = (a.textContent || '').trim();
+        const numero = a.dataset.numero || (NPU.test(texto) ? texto : '');
+        if (!numero && !a.classList.contains('processo-eproc')) return;
+        ev.preventDefault(); ev.stopPropagation();
+        abrirMenu(a, numero || texto);
+    }, true);
+    document.addEventListener('keydown', (ev) => { if (ev.key === 'Escape') fecharMenu(); });
+    window.addEventListener('scroll', fecharMenu, true);
+})();

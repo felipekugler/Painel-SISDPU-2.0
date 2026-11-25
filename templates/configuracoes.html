@@ -690,7 +690,8 @@
                 </div>
                 <div class="flex items-center gap-2 flex-wrap">
                     <span class="text-sm font-medium">Pretensão:</span>
-                    <select class="select select-bordered select-sm max-w-md" x-model="tiposPret" @change="tiposSel = keysPara(tiposPret)">
+                    <select class="select select-bordered select-sm max-w-md" x-model="tiposPret"
+                            @change="tiposSel = keysPara(tiposPret); patPretSel = [...(patPorPretensao[tiposPret] || [])]">
                         <option value="__padrao__">Padrão (todas as outras)</option>
                         <option value="__instituidor__">◆ Instituidor (pensão por morte / auxílio-reclusão)</option>
                         <template x-for="pr in tiposPretensoes" :key="pr">
@@ -714,6 +715,38 @@
                         </div>
                     </template>
                 </div>
+
+                <!-- Associação de espécies de PAT por pretensão — só faz sentido quando "Tarefas PAT"
+                     está marcada e a pretensão não é a seleção do Instituidor. -->
+                <div x-show="tiposSel.includes('pat') && tiposPret !== '__instituidor__'" x-cloak
+                     class="rounded-box bg-base-200 border border-base-300 p-3 flex flex-col gap-2 mt-1">
+                    <div class="flex items-center gap-2 flex-wrap">
+                        <span class="font-medium text-sm">Tarefas PAT (2ª Via dos Processos) — quais baixar nesta pretensão</span>
+                        <span class="mx-1 text-base-content/30">|</span>
+                        <button class="btn btn-xs btn-ghost" @click="patPretSel = [...patFiltrada]">Marcar todas</button>
+                        <button class="btn btn-xs btn-ghost" @click="patPretSel = []">Limpar (baixa todas)</button>
+                        <span class="text-xs text-base-content/50 ml-auto"
+                              x-text="patPretSel.length ? (patPretSel.length + '/' + patFiltrada.length + ' espécies associadas') : 'sem associação — baixa TODAS as não ignoradas'"></span>
+                    </div>
+                    <p class="text-xs text-base-content/60">
+                        Vazio = comportamento padrão (baixa qualquer tarefa PAT que não esteja na lista "a
+                        ignorar"). Marcando espécies aqui, só elas são baixadas PARA ESTA PRETENSÃO — ex.:
+                        evita baixar PAT de aposentadoria num caso de salário-maternidade. O catálogo abaixo é
+                        "retro alimentável": cresce sozinho a cada consulta que revelar uma espécie nova.
+                    </p>
+                    <div class="max-h-[220px] overflow-y-auto flex flex-col gap-y-0.5 pr-1">
+                        <template x-for="s in patFiltrada" :key="s">
+                            <label class="flex items-center gap-2 text-sm py-0.5 cursor-pointer">
+                                <input type="checkbox" class="checkbox checkbox-xs" :value="s" x-model="patPretSel">
+                                <span x-text="s"></span>
+                            </label>
+                        </template>
+                        <div x-show="!patFiltrada.length" class="text-sm text-base-content/40 py-2">
+                            Catálogo ainda vazio — vai se formando conforme as consultas ao SAT revelarem tarefas PAT.
+                        </div>
+                    </div>
+                </div>
+
                 <div class="flex items-center gap-3">
                     <button class="btn btn-sm btn-primary" :disabled="salvandoTipos" @click="salvarTipos()">
                         <span x-show="salvandoTipos" class="loading loading-spinner loading-xs"></span>
@@ -1719,13 +1752,15 @@
     <div class="cfg-panel" data-panel="rotinas">
     <div class="card bg-base-200 shadow"
          x-data="{
-            est: null, cand: [], hist: [], conhecidas: [], nova: '', msg: '', salvando: false,
+            est: null, cand: [], hist: [], conhecidas: [], nova: '', novaUnidade: '', msg: '', salvando: false,
+            caixasConhecidas: {},
             async init() { await this.atualizar(); setInterval(() => this.atualizar(true), 5000); },
             async atualizar(leve) {
                 try {
                     const e = await (await fetch('/api/rotinas/dossie-sd/estado')).json();
                     this.est = e.estado; this.cand = e.candidatos || [];
                     this.conhecidas = e.pretensoes_conhecidas || [];
+                    this.caixasConhecidas = e.caixas_conhecidas || {};
                     this.hist = (await (await fetch('/api/rotinas/dossie-sd/historico')).json()).historico || [];
                 } catch (e) {}
             },
@@ -1749,6 +1784,25 @@
                 this.nova = '';
             },
             async remover(t) { await this.salvar({ incluir_pretensoes: this.incluidas().filter((x) => x !== t) }); },
+            // Unidades habilitadas (12/11/2026): só PAJs AAAA/UUU-NNNNN dessas unidades
+            unidades() { return (this.est && this.est.incluir_unidades) || []; },
+            async adicionarUnidade() {
+                const u = (this.novaUnidade || '').replace(/\D/g, '');
+                if (!u) return;
+                await this.salvar({ incluir_unidades: [...this.unidades(), u] });
+                this.novaUnidade = '';
+            },
+            async removerUnidade(u) { await this.salvar({ incluir_unidades: this.unidades().filter((x) => x !== u) }); },
+            // Caixas habilitadas (17/11/2026): login da sessão MCP que leu a caixa
+            caixasHabilitadas() { return (this.est && this.est.incluir_caixas) || []; },
+            listaCaixas() {
+                const ids = new Set([...Object.keys(this.caixasConhecidas || {}), ...this.caixasHabilitadas()]);
+                return [...ids].sort().map((id) => ({ id, ...(this.caixasConhecidas[id] || {}) }));
+            },
+            async alternarCaixa(id, marcada) {
+                const atuais = this.caixasHabilitadas().filter((x) => x !== id);
+                await this.salvar({ incluir_caixas: marcada ? [...atuais, id] : atuais });
+            },
             async executar() {
                 const r = await (await fetch('/api/rotinas/dossie-sd/executar', { method: 'POST' })).json();
                 this.msg = r.ok ? 'Execução disparada.' : (r.erro || 'Falha.');
@@ -1803,6 +1857,51 @@
                             <span class="text-xs text-base-content/60">— de segunda a sexta; nos fins de semana a caixa não é monitorada
                             ("Executar agora" ainda funciona).</span></span>
                     </label>
+                    <!-- Unidades HABILITADAS (12/11/2026): só os PAJs dessas unidades passam pela rotina -->
+                    <div class="flex flex-col gap-2">
+                        <span class="text-sm"><strong>Unidades habilitadas</strong>
+                            <span class="text-xs text-base-content/60">— só os PAJs destas unidades (o "UUU" de AAAA/UUU-NNNNN) passam pela rotina;
+                            os PAJs de outras unidades nem entram na fila.</span></span>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <template x-for="u in unidades()" :key="u">
+                                <span class="badge badge-lg gap-1 tnum">
+                                    <span x-text="u"></span>
+                                    <button type="button" class="btn btn-ghost btn-xs px-1 text-error" :disabled="salvando"
+                                            @click="removerUnidade(u)" :title="'Remover a unidade ' + u">✕</button>
+                                </span>
+                            </template>
+                            <span class="text-sm text-warning" x-show="!unidades().length">
+                                Nenhuma unidade habilitada — a rotina não processa nenhum PAJ.</span>
+                        </div>
+                        <div class="flex items-center gap-2 flex-wrap">
+                            <input type="text" inputmode="numeric" maxlength="3" class="input input-bordered input-sm w-28 tnum"
+                                   x-model="novaUnidade" @keydown.enter.prevent="adicionarUnidade()" placeholder="Ex.: 029">
+                            <button type="button" class="btn btn-sm" :disabled="salvando || !(novaUnidade || '').replace(/\D/g, '')"
+                                    @click="adicionarUnidade()">Adicionar</button>
+                        </div>
+                    </div>
+                    <!-- Caixas HABILITADAS (17/11/2026): vale junto com a unidade — ver
+                         ingestao/caixa_sessao.py e rotina_dossie_sd_service.candidatos -->
+                    <div class="flex flex-col gap-2">
+                        <span class="text-sm"><strong>Caixas habilitadas</strong>
+                            <span class="text-xs text-base-content/60">— só os PAJs que estão numa destas caixas de entrada passam pela rotina.
+                            Vale junto com as unidades: um PAJ de unidade habilitada numa caixa não habilitada fica de fora, e vice-versa.</span></span>
+                        <div class="flex flex-col gap-1">
+                            <template x-for="c in listaCaixas()" :key="c.id">
+                                <label class="flex items-center gap-2 cursor-pointer text-sm">
+                                    <input type="checkbox" class="checkbox checkbox-sm" :disabled="salvando"
+                                           :checked="caixasHabilitadas().includes(c.id)"
+                                           @change="alternarCaixa(c.id, $event.target.checked)">
+                                    <span><strong x-text="c.id"></strong>
+                                        <span class="text-base-content/60" x-text="(c.unidade ? ' — unidade ' + c.unidade : '') + (c.visto_em ? ' · última leitura ' + dataHora(c.visto_em) : '')"></span></span>
+                                </label>
+                            </template>
+                        </div>
+                        <span class="text-xs text-base-content/50" x-show="listaCaixas().length">
+                            A caixa é identificada pelo login com que o painel se conectou ao SIS-DPU 2.0. Uma caixa aparece aqui depois da primeira leitura.</span>
+                        <span class="text-sm text-warning" x-show="!caixasHabilitadas().length">
+                            Nenhuma caixa habilitada — a rotina não processa nenhum PAJ.</span>
+                    </div>
                     <!-- Pretensões HABILITADAS: só os PAJs com pretensão desta lista passam pela rotina -->
                     <div class="flex flex-col gap-2">
                         <span class="text-sm"><strong>Pretensões habilitadas</strong>
@@ -2811,6 +2910,8 @@ function satCentralDefaults() {
         salvandoTipos: false, tiposMsg: '', tiposMsgErro: false,
         tiposCatalogo: [], tiposPadrao: null, tiposPorPret: {}, tiposInstituidor: null, tiposInstDefault: [],
         tiposPretensoes: [], tiposPret: '__padrao__', tiposSel: [],
+        // Associação de espécies de Tarefas PAT por pretensão (ver "Tarefas PAT" acima).
+        patFiltrada: [], patPorPretensao: {}, patPretSel: [],
         saldoMsg: '', saldoErro: false, testandoSaldo: false, esperaBloqueio: 45, compilar: true, compilarLimiar: 3,
         grupos: [], carregando: false, salvando: false, msg: '', msgErro: false,
         async init() {
@@ -2883,6 +2984,15 @@ function satCentralDefaults() {
                 this.tiposPretensoes = [...set].sort((x, y) => x.localeCompare(y, 'pt-BR'));
                 this.tiposSel = this.keysPara(this.tiposPret);
             } catch (e) {}
+            try {
+                const jp = await (await fetch('/api/sat/pat-catalogo')).json();
+                this.patFiltrada = jp.filtrada || [];
+            } catch (e) {}
+            try {
+                const jp2 = await (await fetch('/api/sat/pat-por-pretensao')).json();
+                this.patPorPretensao = jp2.por_pretensao || {};
+            } catch (e) {}
+            this.patPretSel = [...(this.patPorPretensao[this.tiposPret] || [])];
         },
         tiposGrupos() {
             const g = []; this.tiposCatalogo.forEach(t => { if (!g.includes(t.grupo)) g.push(t.grupo); }); return g;
@@ -2922,7 +3032,16 @@ function satCentralDefaults() {
                 this.tiposMsgErro = !r.ok;
                 this.tiposMsg = r.ok ? ('Tipos salvos para: ' + nome + '.') : (r.erro || 'Erro ao salvar.');
             } catch (e) { this.tiposMsgErro = true; this.tiposMsg = 'Erro de comunicação.'; }
-            finally { this.salvandoTipos = false; setTimeout(() => this.tiposMsg = '', 3500); }
+            if (this.tiposPret !== '__instituidor__') {
+                try {
+                    const rp = await (await fetch('/api/sat/pat-por-pretensao', {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ pretensao: this.tiposPret, servicos: this.patPretSel })
+                    })).json();
+                    if (rp.ok) this.patPorPretensao = rp.por_pretensao || {};
+                } catch (e) {}
+            }
+            this.salvandoTipos = false; setTimeout(() => this.tiposMsg = '', 3500);
         },
         addPat() {
             const t = (this.patNovo || '').trim();

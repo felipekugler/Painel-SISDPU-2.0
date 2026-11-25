@@ -10,6 +10,7 @@ from urllib.parse import quote
 from services.download_completo_service import (
     descrever_selecao,
     gerar_pdf_consolidado,
+    interpretar_exclusoes,
     interpretar_selecao,
     previa_selecao,
     verificar_selecao,
@@ -209,28 +210,45 @@ async def api_sincronizacao_completa(paj_norm: PajNorm):
 
 
 @router.get("/api/paj/{paj_norm}/download-completo")
-def api_download_completo(paj_norm: PajNorm, movs: str = "", fim: bool = True, historico: bool = True):
+def api_download_completo(paj_norm: PajNorm, movs: str = "", fim: bool = True, historico: bool = True,
+                          excluir: str = "", crus: bool = False):
     """Gera sob demanda (sem persistir em disco) um PDF unico com capa,
     historico de movimentacoes e todos os anexos do PAJ. Sincrono de proposito
     (roda em threadpool) — mesclar PDFs e' CPU-bound e nao deve travar o event
     loop.
 
     `movs` (opcional, ex.: "135-142" ou "120, 135-138"): recorte só com essas
-    movimentações (ver modal do botão "Baixar PAJ Completo")."""
+    movimentações (ver modal do botão "Baixar PAJ Completo").
+    `excluir` ("135:0,140:2"): documentos desmarcados no modal (08/11/2026).
+    `crus`: "Apenas arquivos crus" — só os documentos, sem capa nem tarjas;
+    o cabeçalho X-Documentos-Omitidos diz quantos não puderam entrar."""
     seqs = None
-    nome_arquivo = f"{paj_norm} - Download Completo.pdf"
+    sufixo = ""
     if movs.strip():
         seqs, invalidos = interpretar_selecao(movs)
         if invalidos or not seqs:
             return JSONResponse({"erro": f"Movimentações inválidas: {', '.join(invalidos) or movs}"}, status_code=400)
-        nome_arquivo = f"{paj_norm} - Movimentações {descrever_selecao(seqs)}.pdf"
-    pdf_bytes = gerar_pdf_consolidado(paj_norm, seqs, pagina_fim=fim, historico=historico)
+        sufixo = f"Movimentações {descrever_selecao(seqs)}"
+    if crus:
+        nome_arquivo = f"{paj_norm} - Arquivos crus" + (f" - {sufixo}" if sufixo else "") + ".pdf"
+    else:
+        nome_arquivo = f"{paj_norm} - {sufixo or 'Download Completo'}.pdf"
+    stats: dict = {}
+    pdf_bytes = gerar_pdf_consolidado(paj_norm, seqs, pagina_fim=fim, historico=historico,
+                                      excluir=interpretar_exclusoes(excluir), crus=crus, stats_out=stats)
     if pdf_bytes is None:
         return JSONResponse({"erro": "PAJ não encontrado"}, status_code=404)
+    if crus and not pdf_bytes:
+        return JSONResponse({"erro": "Nenhum documento selecionado pôde ser incorporado (não baixado ou formato não mesclável)."},
+                            status_code=400)
     return Response(
         content=pdf_bytes,
         media_type="application/pdf",
-        headers={"Content-Disposition": f"attachment; filename*=UTF-8''{quote(nome_arquivo)}"},
+        headers={
+            "Content-Disposition": f"attachment; filename*=UTF-8''{quote(nome_arquivo)}",
+            "X-Documentos-Omitidos": str(len(stats.get("omitidos") or [])),
+            "Access-Control-Expose-Headers": "Content-Disposition, X-Documentos-Omitidos",
+        },
     )
 
 
@@ -244,11 +262,11 @@ async def api_recorte_previa(paj_norm: PajNorm, movs: str = ""):
 
 
 @router.get("/api/paj/{paj_norm}/recorte/verificar", response_class=JSONResponse)
-async def api_recorte_verificar(paj_norm: PajNorm, movs: str = ""):
+async def api_recorte_verificar(paj_norm: PajNorm, movs: str = "", excluir: str = ""):
     seqs, invalidos = interpretar_selecao(movs)
     if invalidos or not seqs:
         return JSONResponse({"erro": f"Movimentações inválidas: {', '.join(invalidos) or movs}"}, status_code=400)
-    r = verificar_selecao(paj_norm, seqs)
+    r = verificar_selecao(paj_norm, seqs, interpretar_exclusoes(excluir))
     if r is None:
         return JSONResponse({"erro": "PAJ não encontrado"}, status_code=404)
     return r

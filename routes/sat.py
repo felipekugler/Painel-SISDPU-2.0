@@ -188,19 +188,24 @@ async def _stream_baixar(paj_norm: str, cpf: str, nome: str, delay: float,
         compilar, compilar_limiar = bool(_d.get("compilar", True)), int(_d.get("compilar_limiar", 3))
     except Exception:  # noqa: BLE001
         pass
-    # espécies de PAT a ignorar (lista configurável)
+    # espécies de PAT a ignorar (lista configurável) + associação de PAT por pretensão
     pat_ignorar = []
     try:
         pat_ignorar = _cfg.get_sat_pat_ignorar()  # type: ignore[name-defined]
     except Exception:  # noqa: BLE001
         pat_ignorar = []
+    pat_filtro = None
+    try:
+        pat_filtro = _cfg.resolver_sat_pat_filtro(pretensao)  # type: ignore[name-defined]
+    except Exception:  # noqa: BLE001
+        pat_filtro = None
     try:
         async for ev in sat_client.baixar_cidadao_stream(
                 cpf, nome, pasta, delay_s=delay, bloqueio_s=bloqueio, delay_max_s=delay_max,
                 tipos=tipos, pretensao=pretensao, nbs=_parse_nbs(nbs),
                 protocolos=_parse_nbs(protocolos),
                 compilar=compilar, compilar_limiar=compilar_limiar,
-                pat_ignorar=pat_ignorar):
+                pat_ignorar=pat_ignorar, pat_filtro=pat_filtro):
             if ev.get("done"):
                 yield {"event": "done", "data": json.dumps(ev.get("resultado", {}), ensure_ascii=False)}
             else:
@@ -363,6 +368,47 @@ async def api_pat_ignorar_set(request: Request):
     except Exception as e:  # noqa: BLE001
         return JSONResponse({"ok": False, "erro": str(e)}, status_code=500)
     return JSONResponse({"ok": True, "itens": itens})
+
+
+@router.get("/api/sat/pat-catalogo", response_class=JSONResponse)
+async def api_pat_catalogo_get():
+    """Catálogo de espécies de Tarefas PAT: `completa` (tudo já conhecido — cresce
+    sozinho a cada consulta), `ignoradas` (lista "a ignorar") e `filtrada` (completa
+    menos as ignoradas — é a oferecida para associar por pretensão)."""
+    try:
+        return JSONResponse({
+            "completa": _cfg.get_sat_pat_catalogo(),  # type: ignore[name-defined]
+            "ignoradas": _cfg.get_sat_pat_ignorar(),  # type: ignore[name-defined]
+            "filtrada": _cfg.get_sat_pat_filtrada(),  # type: ignore[name-defined]
+        })
+    except Exception:  # noqa: BLE001
+        return JSONResponse({"completa": [], "ignoradas": [], "filtrada": []})
+
+
+@router.get("/api/sat/pat-por-pretensao", response_class=JSONResponse)
+async def api_pat_por_pretensao_get():
+    """{pretensao: [espécies de PAT associadas]} — ausente/vazio = sem associação
+    própria (baixa todas as não ignoradas)."""
+    try:
+        por = _cfg.get_sat_pat_por_pretensao()  # type: ignore[name-defined]
+    except Exception:  # noqa: BLE001
+        por = {}
+    return JSONResponse({"por_pretensao": por})
+
+
+@router.post("/api/sat/pat-por-pretensao", response_class=JSONResponse)
+async def api_pat_por_pretensao_set(request: Request):
+    """Salva a associação de espécies de PAT de 1 pretensão. Body: {pretensao, servicos}."""
+    body = await request.json()
+    pretensao = str(body.get("pretensao", "") or "")
+    servicos = body.get("servicos") or []
+    if not isinstance(servicos, list):
+        servicos = []
+    try:
+        por_pretensao = _cfg.set_sat_pat_por_pretensao(pretensao, [str(s) for s in servicos])  # type: ignore[name-defined]
+    except Exception as e:  # noqa: BLE001
+        return JSONResponse({"ok": False, "erro": str(e)}, status_code=500)
+    return JSONResponse({"ok": True, "por_pretensao": por_pretensao})
 
 
 @router.get("/api/sat/tipos", response_class=JSONResponse)

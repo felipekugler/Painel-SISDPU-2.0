@@ -299,7 +299,34 @@ def _locais_como_raw(paj: str) -> list[dict]:
              "descricao_retorno": m.get("descricao_retorno") or ""}
         if m.get("id_movimentacao"):
             r["id_movimentacao"] = m["id_movimentacao"]
+        r["_n_docs"] = len(m.get("documentos") or [])  # ver _atualizar_editadas
         out.append(r)
+    return out
+
+
+def _atualizar_editadas(locais: list[dict], ultimas: dict) -> list[dict]:
+    """Movimentação EDITADA no SIS-DPU 2.0 depois da última leitura (09/11/2026,
+    PAJ 2026/029-03582, seq 15: despacho completado no mesmo dia). A leitura
+    incremental só trazia as movimentações NOVAS e mantinha o texto antigo das
+    já conhecidas. A capa já traz as mais recentes (`ultimasMovimentacoes`)
+    com o conteúdo atual — sem custo extra: troca a local pela versão de lá,
+    mantendo o Seq. Se a quantidade de arquivos mudou, marca para os anexos
+    dela serem conferidos de novo (`extrair_documentos_por_seq`)."""
+    if not ultimas:
+        return locais
+    out = []
+    for loc in locais:
+        m = ultimas.get(loc.get("id_movimentacao"))
+        if not m:
+            out.append(loc)
+            continue
+        nova = _mov_raw(m, int(loc["seq"]))
+        if not nova.get("descricao_retorno"):
+            nova["descricao_retorno"] = loc.get("descricao_retorno") or ""
+        qtd = m.get("quantidadeArquivos")
+        if nova["tem_anexo_icone"] and qtd is not None and int(qtd) != loc.get("_n_docs", 0):
+            nova["_reconferir_anexos"] = True
+        out.append(nova)
     return out
 
 
@@ -319,7 +346,9 @@ def _incremental(id_processo: int, capa: dict, locais: list[dict]) -> Optional[l
     ultimas = {m.get("id"): m for m in capa.get("ultimasMovimentacoes") or []}
     if novos == 0:
         topo = max(capa.get("ultimasMovimentacoes") or [{}], key=_ordem)
-        return locais if (not topo or _br(topo.get("dataHora")) == locais[0]["data"][:19]) else None
+        if topo and _br(topo.get("dataHora")) != locais[0]["data"][:19]:
+            return None
+        return _atualizar_editadas(locais, ultimas)
     r = sis2.chamar("paj_movimentacoes", {"idProcesso": id_processo, "limite": min(novos + 1, 500), "pagina": 1})
     itens = sorted((r or {}).get("itens") or [], key=_ordem) if isinstance(r, dict) else []
     if len(itens) != novos + 1 or _br(itens[0].get("dataHora")) != locais[0]["data"][:19]:
@@ -331,7 +360,7 @@ def _incremental(id_processo: int, capa: dict, locais: list[dict]) -> Optional[l
             raw["tem_anexo_icone"] = True  # sem indicador nesta lista: confere os anexos dela
         novas.append(raw)
     novas.reverse()
-    return novas + locais
+    return novas + _atualizar_editadas(locais, ultimas)
 
 
 _ficha_lida_em: dict = {}  # idPessoa -> "AAAA-MM-DD" da última leitura da ficha
@@ -593,7 +622,7 @@ async def extrair_documentos_por_seq(seqs_conhecidos=None, deve_cancelar=None, l
     com_docs, sem_docs, pulados, total = [], [], [], 0
     for mov in det["movimentacoes"]:
         seq = str(mov["seq"])
-        if seq in conhecidos:
+        if seq in conhecidos and not mov.get("_reconferir_anexos"):
             pulados.append(seq)
             continue
         if not mov.get("tem_anexo_icone"):

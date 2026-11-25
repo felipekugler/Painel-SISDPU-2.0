@@ -29,6 +29,7 @@ from config import (
 )
 from ingestao import ocr, parser, sisdpu_client, sisdpu_movtram
 from ingestao.sisdpu2_fonte import ProxyFonte
+from ingestao import caixa_sessao as caixa_sessao_mod
 from services import gravacao_protegida
 import contextlib
 
@@ -1139,7 +1140,17 @@ async def _processar_paj_pos_detalhamento(
             metadata["seqs_sem_documento_confirmado"] = meta_antiga["seqs_sem_documento_confirmado"]
 
     if via_busca_global:
-        if fora_da_caixa_confirmado:
+        _cx_atual = None
+        _cx_paj = caixa_sessao_mod.caixas_do_paj(meta_antiga)
+        if fora_da_caixa_confirmado and _cx_paj:
+            _cx_atual = ((await caixa_sessao_mod.identificar()) or {}).get("id")
+        if fora_da_caixa_confirmado and _cx_atual and [c for c in _cx_paj if c != _cx_atual]:
+            # Separação por caixa (17/11/2026): "não está na caixa" vale só para a
+            # caixa da sessão; o PAJ segue em outra — não sai do dashboard.
+            if "em_caixa_atual" in meta_antiga:
+                metadata["em_caixa_atual"] = meta_antiga["em_caixa_atual"]
+            meta_antiga = {**meta_antiga, "caixas": [c for c in _cx_paj if c != _cx_atual]}
+        elif fora_da_caixa_confirmado:
             # Chamador (rodar_paj_unico) ja checou a caixa momentos antes e
             # confirmou que o PAJ nao esta la — nao preserva o `True` antigo
             # (ficaria "em caixa" pra sempre, mesmo tendo saido de verdade).
@@ -1166,12 +1177,19 @@ async def _processar_paj_pos_detalhamento(
             "arquivado_em",
             "n_anexos_removidos",
             "anexos_removidos_em",
+            "caixas",  # busca global não diz em que caixa o PAJ está (17/11/2026)
         ):
             if k in meta_antiga:
                 metadata[k] = meta_antiga[k]
     else:
         # Marca explicitamente: este PAJ esta na caixa atual
         metadata["em_caixa_atual"] = True
+        # ...e EM QUAL caixa (login da sessão MCP) — ver ingestao/caixa_sessao.py.
+        # Mantém as caixas em que ele já estava: um PAJ pode estar em mais de uma.
+        from ingestao import caixa_sessao
+
+        _caixa = await caixa_sessao.identificar()
+        caixa_sessao.marcar(metadata, (_caixa or {}).get("id"), meta_antiga.get("caixas"))
         # Etiqueta SISDPU (rotulo livre aplicado pelo Defensor na caixa, tipo "Aleg finais")
         etiqueta = (item.get("etiqueta") or "").strip()
         metadata["etiqueta_sisdpu"] = etiqueta
@@ -1615,6 +1633,20 @@ async def atualizar_tramitacoes_paj_mcp(
     novas = _agrupar_tramitacoes_por_paj(res["itens"]).get(paj_norm, [])
 
     meta = json.loads(meta_path.read_text(encoding="utf-8"))
+    # Separação por caixa (17/11/2026): esta leitura só vê a caixa da sessão.
+    # Sem trâmite aqui, um PAJ de OUTRA caixa não "sai" — fica como está.
+    caixa = await caixa_sessao_mod.identificar()
+    caixa_id = (caixa or {}).get("id")
+    caixas = caixa_sessao_mod.caixas_do_paj(meta)
+    if not novas and caixa_id and caixas and caixa_id not in caixas:
+        return novas
+    if not novas and caixa_id and len(caixas) > 1:
+        meta["caixas"] = [c for c in caixas if c != caixa_id]
+        log(f"  [tramitacoes] {paj_norm}: saiu da caixa {caixa_id}, segue em {', '.join(meta['caixas'])}")
+        await _escrever_texto_com_retry(meta_path, json.dumps(meta, ensure_ascii=False, indent=2, default=str))
+        return novas
+    if novas:
+        caixa_sessao_mod.marcar(meta, caixa_id)
     antes = meta.get("tramitacoes_caixa")
     ids_antes = {t.get("id_tramite") for t in (antes or [])}
     if not paj_ja_lido and any(t.get("id_tramite") not in ids_antes for t in novas):
@@ -1636,9 +1668,53 @@ async def atualizar_tramitacoes_paj_mcp(
     return novas
 
 
+async def _caixa_para_reconciliar(log: Callable[[str], None]) -> tuple[bool, str | None]:
+    """(pode_reconciliar, caixa_id). Fonte MCP: a reconciliação só roda sabendo
+    QUAL caixa foi lida — sem isso, PAJs de outra caixa seriam dados como
+    concluídos. Fonte legada (sem MCP): (True, None), regra antiga."""
+    if not caixa_sessao_mod.fonte_mcp():
+        return True, None
+    caixa = await caixa_sessao_mod.identificar()
+    if not caixa:
+        log("[caixa] não foi possível identificar a caixa da sessão — reconciliação NÃO executada")
+        return False, None
+    log(f"[caixa] caixa lida: {caixa['rotulo']}")
+    return True, caixa["id"]
+
+
+def _marcar_caixa_em(pajs_na_caixa: set[str], caixa_id: str | None, log: Callable[[str], None]) -> int:
+    """Garante a marcação `caixas` em todo PAJ lido na caixa — inclusive os que
+    a sync pulou por "sem tramitação nova" (esses não passam por
+    _processar_paj_pos_detalhamento) e os lidos só pelo "Atualizar" rápido.
+    Só marca: quem decide se o PAJ aparece no dashboard (em_caixa_atual)
+    continua sendo o fluxo de sempre (que considera trâmites recém-concluídos
+    pelo painel)."""
+    if not caixa_id:
+        return 0
+    n = 0
+    for paj_norm in pajs_na_caixa:
+        meta_path = PAJS_DIR / paj_norm / "metadata.json"
+        if not meta_path.exists():
+            continue
+        try:
+            meta = json.loads(meta_path.read_text(encoding="utf-8"))
+        except Exception:
+            continue
+        if caixa_id in caixa_sessao_mod.caixas_do_paj(meta):
+            continue
+        caixa_sessao_mod.marcar(meta, caixa_id)
+        try:
+            _escrever_texto_com_retry_sync(meta_path, json.dumps(meta, ensure_ascii=False, indent=2, default=str))
+            n += 1
+        except Exception as e:
+            log(f"  [warn] falha ao marcar a caixa de {paj_norm}: {e}")
+    return n
+
+
 def _reconciliar_concluidos(
     pajs_na_caixa: set[str],
     log: Callable[[str], None],
+    caixa_id: str | None = None,
 ) -> int:
     """Marca em_caixa_atual=False para pastas PAJs/PAJ-* que nao estao na
     caixa atual. Aqui "concluido" significa apenas "saiu da caixa de entrada"
@@ -1684,8 +1760,28 @@ def _reconciliar_concluidos(
         if meta.get("via_watchlist") and meta.get("em_caixa_atual") is not True:
             continue
 
+        # Separação por caixa (17/11/2026, ver ingestao/caixa_sessao.py): a leitura
+        # da caixa X só diz quem saiu da caixa X. PAJ marcado só com OUTRA caixa
+        # fica intacto (antes, conectar com o login da CCR "concluía" os PAJs da
+        # 029 e mandava os anexos deles para a Lixeira — 12/11/2026). PAJ sem
+        # marcação (anterior a esta mudança) segue a regra antiga.
+        if caixa_id:
+            caixas = caixa_sessao_mod.caixas_do_paj(meta)
+            if caixas and caixa_id not in caixas:
+                continue
+            if len(caixas) > 1:
+                # saiu desta caixa, mas continua em outra: só tira a marcação
+                meta["caixas"] = [c for c in caixas if c != caixa_id]
+                try:
+                    _escrever_texto_com_retry_sync(meta_path, json.dumps(meta, ensure_ascii=False, indent=2, default=str))
+                    log(f"  [caixa] {pasta.name}: saiu da caixa {caixa_id}, segue em {', '.join(meta['caixas'])}")
+                except Exception as e:
+                    log(f"  [warn] falha ao atualizar {pasta.name}: {e}")
+                continue
+
         # Transicao ativo -> concluido
         agora = datetime.now().isoformat(timespec="seconds")
+        meta.pop("caixas", None)  # fora de todas as caixas
         meta["em_caixa_atual"] = False
         meta["concluido_em"] = agora
         meta["tramitacoes_caixa"] = []  # saiu da caixa por completo — zero tramitacoes
@@ -1764,8 +1860,13 @@ async def atualizar_caixa(log_callback: Callable[[str], None]) -> dict:
         return {"ok": False, "total_caixa": 0, "removidos": 0,
                 "mensagem": "caixa vazia ou ilegível — nada foi marcado como concluído"}
 
+    pode, caixa_id = await _caixa_para_reconciliar(log)
+    if not pode:
+        return {"ok": False, "total_caixa": len(pajs_na_caixa), "removidos": 0,
+                "mensagem": "caixa da sessão não identificada — nada foi marcado como concluído"}
+    _marcar_caixa_em(pajs_na_caixa, caixa_id, log)
     log("[atualizar] reconciliando PAJs que saíram da caixa...")
-    removidos = _reconciliar_concluidos(pajs_na_caixa, log)
+    removidos = _reconciliar_concluidos(pajs_na_caixa, log, caixa_id)
     if removidos:
         log(f"[atualizar] {removidos} PAJ(s) saíram da caixa e foram removidos do dashboard")
     else:
@@ -2002,7 +2103,10 @@ async def rodar(
 
     # Reconciliacao: PAJs no disco fora da caixa sao marcados em_caixa_atual=False.
     log("[sync] reconciliando PAJs concluídos (fora da caixa)...")
-    concluidos = _reconciliar_concluidos(pajs_na_caixa, log)
+    pode, caixa_id = await _caixa_para_reconciliar(log)
+    if pode:
+        _marcar_caixa_em(pajs_na_caixa, caixa_id, log)
+    concluidos = _reconciliar_concluidos(pajs_na_caixa, log, caixa_id) if pode else 0
     resumo["concluidos"] = concluidos
     if concluidos:
         log(f"[sync] {concluidos} PAJ(s) marcados como concluídos")

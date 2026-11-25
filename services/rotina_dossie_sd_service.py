@@ -41,7 +41,23 @@ TEMPO_MAX_DOSSIE = 900
 TEMPO_MAX_JUNTADA = 900
 
 PADRAO = {"ativa": False, "pre_aprovar": True, "incluir_pretensoes": [], "ativada_em": None,
-          "intervalo_min": INTERVALO_SEG // 60, "apenas_dias_uteis": True}
+          "intervalo_min": INTERVALO_SEG // 60, "apenas_dias_uteis": True,
+          # Unidades HABILITADAS (código "UUU" de AAAA/UUU-NNNNN): só os PAJs dessas
+          # unidades passam pela rotina; lista vazia = nenhum PAJ (pedido do Defensor,
+          # 2026-11-12, depois que PAJs da unidade 043 entraram na rotina sem querer)
+          "incluir_unidades": [],
+          # Caixas HABILITADAS (login da sessão MCP que leu a caixa — ver
+          # ingestao/caixa_sessao.py): só os PAJs que estão numa destas caixas passam
+          # pela rotina; lista vazia = nenhum PAJ. Vale JUNTO com a unidade: um PAJ
+          # 029 na caixa da CCR fica de fora, e um PAJ 043 na caixa do 4º Ofício
+          # também (pedido do Defensor, 17/11/2026)
+          "incluir_caixas": []}
+
+
+def _unidade(paj_norm: str) -> str:
+    """'PAJ-2026-043-06092' → '043'."""
+    m = re.match(r"PAJ-\d{4}-(\d{3})-", paj_norm or "")
+    return m.group(1) if m else ""
 _execucao: dict = {"rodando": False, "paj": "", "etapa": "", "ultimo_ciclo": None, "aguardando": ""}
 _gatilho = asyncio.Event()
 _forcar = {"proximo": False}  # "Executar agora": roda mesmo em fim de semana
@@ -95,12 +111,24 @@ def set_config(novo: dict) -> dict:
         vistos_ = set()
         cfg["incluir_pretensoes"] = [t.strip() for t in termos
                                      if str(t).strip() and not (_norm(t) in vistos_ or vistos_.add(_norm(t)))]
+    if "incluir_unidades" in novo:
+        us = novo["incluir_unidades"] or []
+        if isinstance(us, str):
+            us = us.split(",")
+        cfg["incluir_unidades"] = sorted({re.sub(r"\D", "", str(u)).zfill(3)[-3:]
+                                          for u in us if re.sub(r"\D", "", str(u))})
+    if "incluir_caixas" in novo:
+        cs = novo["incluir_caixas"] or []
+        if isinstance(cs, str):
+            cs = cs.split(",")
+        cfg["incluir_caixas"] = sorted({str(c).strip().lower() for c in cs if str(c).strip()})
+    cfg.pop("excluir_unidades", None)  # versão de 12/11/2026 (lista de exclusão)
     cfg.pop("excluir_pretensoes", None)  # versão anterior (lista de exclusão)
     if cfg["ativa"] and not atual["ativa"]:
         # ligou agora: o que já está na caixa fica como "anterior à ativação"
         cfg["ativada_em"] = datetime.now().isoformat(timespec="seconds")
         estado = _ler_json(_ARQ_ESTADO, {"vistos": {}})
-        for pn, _d, _p in _candidatos_brutos():
+        for pn, _d, _p, _c in _candidatos_brutos():
             estado["vistos"].setdefault(pn, {"em": cfg["ativada_em"], "resultado": "anterior"})
         _gravar_json(_ARQ_ESTADO, estado)
     raw = config_painel_service._ler_raw()
@@ -144,8 +172,9 @@ def _data_br(s: str) -> datetime | None:
     return None
 
 
-def _candidatos_brutos() -> list[tuple[str, datetime | None, str]]:
-    """PAJs na caixa com trâmite "Abertura de PAJ": (paj_norm, data do envio, pretensão)."""
+def _candidatos_brutos() -> list[tuple[str, datetime | None, str, list[str]]]:
+    """PAJs na caixa com trâmite "Abertura de PAJ": (paj_norm, data do envio,
+    pretensão, caixas em que o PAJ está)."""
     out = []
     for p in PAJS_DIR.iterdir():
         if not p.is_dir():
@@ -156,7 +185,8 @@ def _candidatos_brutos() -> list[tuple[str, datetime | None, str]]:
         trs = [t for t in m.get("tramitacoes_caixa") or [] if _norm(t.get("descricao")) == "abertura de paj"]
         if trs or _norm(m.get("desc_mov_caixa")) == "abertura de paj":
             data = _data_br(trs[0].get("data_envio")) if trs else None
-            out.append((p.name, data, m.get("pretensaopura") or m.get("pretensao") or ""))
+            out.append((p.name, data, m.get("pretensaopura") or m.get("pretensao") or "",
+                        [str(c) for c in (m.get("caixas") or []) if c]))
     return out
 
 
@@ -183,9 +213,13 @@ def candidatos() -> list[dict]:
     vistos = _ler_json(_ARQ_ESTADO, {"vistos": {}})["vistos"]
     ativada = datetime.fromisoformat(cfg["ativada_em"]) if cfg.get("ativada_em") else None
     out = []
-    for pn, data, pret in sorted(_candidatos_brutos(), key=lambda x: x[1] or datetime.min):
-        if pn in vistos:
-            continue
+    unidades = set(cfg.get("incluir_unidades") or [])
+    caixas_ok = set(cfg.get("incluir_caixas") or [])
+    for pn, data, pret, caixas in sorted(_candidatos_brutos(), key=lambda x: x[1] or datetime.min):
+        if pn in vistos or _unidade(pn) not in unidades:
+            continue  # unidade não habilitada: fica fora da fila (nem entra no histórico)
+        if not caixas_ok.intersection(caixas):
+            continue  # não está numa caixa habilitada (ou ainda sem caixa conhecida): idem
         if ativada and data and data < ativada:
             continue
         out.append({"paj_norm": pn, "pretensao": pret, "habilitada_por": _habilitada(pret, cfg["incluir_pretensoes"])})
@@ -288,6 +322,10 @@ async def ciclo() -> dict:
     feitos = 0
     try:
         for c in candidatos():
+            if not get_config()["ativa"]:
+                # desligada no meio do ciclo: para antes do próximo PAJ (antes, o ciclo
+                # seguia a fila inteira mesmo com a rotina desligada — 2026-11-12)
+                break
             pn = c["paj_norm"]
             if not c["habilitada_por"]:
                 _registrar(pn, "ignorado", "Pretensão não habilitada para a rotina"

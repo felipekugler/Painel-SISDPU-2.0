@@ -11,8 +11,10 @@ router = APIRouter()
 
 @router.get("/api/rotinas/dossie-sd/estado", response_class=JSONResponse)
 async def api_rotina_dossie_sd_estado():
+    from ingestao import caixa_sessao
     return {"ok": True, "estado": rotina.estado(), "candidatos": rotina.candidatos(),
-            "pretensoes_conhecidas": rotina.pretensoes_conhecidas()}
+            "pretensoes_conhecidas": rotina.pretensoes_conhecidas(),
+            "caixas_conhecidas": caixa_sessao.conhecidas()}
 
 
 @router.post("/api/rotinas/dossie-sd/config", response_class=JSONResponse)

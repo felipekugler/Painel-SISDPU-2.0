@@ -107,7 +107,11 @@ def _assinatura_paj(paj_norm: str) -> tuple:
     except Exception:  # noqa: BLE001
         return ()
     movs = (m.get("detalhes_sisdpu") or {}).get("movimentacoes") or []
-    return (len(movs), sum(len(mv.get("documentos") or []) for mv in movs),
+    # Texto/fase das movimentações também: uma movimentação EDITADA no SIS-DPU
+    # 2.0 (mesma quantidade) tem de recarregar a página (09/11/2026).
+    conteudo = hash(tuple((str(mv.get("seq")), mv.get("descricao") or "", mv.get("fases") or "",
+                           mv.get("descricao_retorno") or "") for mv in movs))
+    return (len(movs), sum(len(mv.get("documentos") or []) for mv in movs), conteudo,
             m.get("pretensao"), len(m.get("telefones") or []),
             tuple(sorted(t.get("id_tramite", "") for t in m.get("tramitacoes_caixa") or [])),
             m.get("em_caixa_atual"))
@@ -131,9 +135,12 @@ def _paj_de(paj_norm: str) -> str:
     return f"{a}/{u}-{n}"
 
 
-async def atualizar_paj(paj_norm: str, forcar: bool = False) -> dict:
+async def atualizar_paj(paj_norm: str, forcar: bool = False, completo: bool = False) -> dict:
     """`forcar`: releitura pedida logo depois de uma gravação (ou pelo ícone da
-    tabela) — ignora o intervalo mínimo entre leituras do mesmo PAJ."""
+    tabela) — ignora o intervalo mínimo entre leituras do mesmo PAJ.
+    `completo` (09/11/2026, botão "Atualizar movimentações"): relê o histórico
+    INTEIRO em vez do incremental — pega também movimentação antiga editada
+    no SIS-DPU 2.0. Custa ~1 registro por movimentação; só a pedido."""
     if not ativo():
         return {"ok": False, "motivo": "inativo"}
     if _fracao_consumida() >= LIMITE_ABERTURA:
@@ -145,7 +152,7 @@ async def atualizar_paj(paj_norm: str, forcar: bool = False) -> dict:
     linhas: list[str] = []
 
     async def _rodar():
-        t1 = fonte.MODO.set("paj")
+        t1 = fonte.MODO.set("completo" if completo else "paj")
         t2 = fonte.CAIXA_EM_CACHE_SERVE.set(True)
         try:
             # Busca global: lê o PAJ esteja ou não na caixa, sem reler a caixa

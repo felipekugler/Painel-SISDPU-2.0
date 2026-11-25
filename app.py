@@ -60,6 +60,7 @@ from routes.valor_causa import router as valor_causa_router
 from routes.watchlist import router as watchlist_router
 from routes.rotinas import router as rotinas_router
 from routes.banco_teses import router as banco_teses_router
+from routes.acoes_anteriores import router as acoes_anteriores_router
 from services.ambiente_service import verificar_ambiente
 from config import PAINEL_NOME, PAINEL_PORT
 
@@ -327,6 +328,7 @@ app.include_router(oficio_sei_router)
 app.include_router(sisdpu2_mcp_router)
 app.include_router(peticao_inicial_router)
 app.include_router(qualificacao_router)
+app.include_router(acoes_anteriores_router)
 app.include_router(rotinas_router)
 app.include_router(banco_teses_router)
 

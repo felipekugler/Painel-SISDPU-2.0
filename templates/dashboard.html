@@ -915,6 +915,7 @@ function dashboardApp() {
         // Filtro por etapa: várias ao mesmo tempo (21/10/2026), ex.: Ajuizado +
         // Cumprimento de sentença.
         filtroEtapas: [],
+        _vistoEmAnalise: {},
         busca: '',
         // Padrão: Descrição crescente (pedido do usuário 2026-09-19) — como a
         // página inteira recarrega tanto ao abrir o painel quanto ao final de
@@ -1137,14 +1138,20 @@ function dashboardApp() {
             const e = (p && p.etapa) || {};
             if (e.arquivado) return e;
             const rodando = this.analiseEmAndamento(p.paj_norm);
+            if (rodando) this._vistoEmAnalise[p.paj_norm] = true;
             // "Em análise": amarelo do selo "Em andamento" (badge-warning do tema).
-            if (e.chave === 'aguardando_analise' && rodando) {
-                return { ...e, chave: 'em_analise', rotulo: 'Em análise', icone: 'spinner',
+            if ((e.chave === 'aguardando_analise' || e.chave === 'analisado_ia') && rodando) {
+                return { ...e, chave: 'em_analise', rotulo: 'Em análise', icone: 'spinner', ordem: 0,
                          cor_fundo: 'oklch(var(--wa))', cor_texto: 'oklch(var(--wac))' };
             }
+            // Terminou a análise vista rodando nesta tela → "Analisado pela IA"
+            // (17/11/2026); a etapa exata volta com a próxima leitura da lista.
             if (e.chave === 'em_analise' && this._analiseStatusLido && !rodando) {
-                return { ...e, chave: 'aguardando_analise', rotulo: 'Aguardando análise', icone: 'inbox',
-                         cor_fundo: '#D3D1C7', cor_texto: '#2C2C2A' };
+                return (this._vistoEmAnalise[p.paj_norm] || e.base === 'analisado_ia')
+                    ? { ...e, chave: 'analisado_ia', rotulo: 'Analisado pela IA', icone: 'sparkles', ordem: 0.5,
+                        cor_fundo: '#FACC15', cor_texto: '#422006' }
+                    : { ...e, chave: 'aguardando_analise', rotulo: 'Aguardando análise', icone: 'inbox', ordem: 0,
+                        cor_fundo: '#D3D1C7', cor_texto: '#2C2C2A' };
             }
             return e;
         },

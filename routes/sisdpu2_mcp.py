@@ -99,9 +99,9 @@ async def api_ao_vivo_estado():
 
 
 @router.post("/api/sisdpu2/ao-vivo/paj/{paj_norm}", response_class=JSONResponse)
-async def api_ao_vivo_paj(paj_norm: str, forcar: bool = False):
+async def api_ao_vivo_paj(paj_norm: str, forcar: bool = False, completo: bool = False):
     from services import ao_vivo_service
-    return await ao_vivo_service.atualizar_paj(paj_norm, forcar=forcar)
+    return await ao_vivo_service.atualizar_paj(paj_norm, forcar=forcar, completo=completo)
 
 
 @router.post("/api/sisdpu2/ao-vivo/paj/{paj_norm}/anexos", response_class=JSONResponse)

@@ -316,7 +316,7 @@ function tabelaMovimentacoes() {
             if (this.atualizando || !this.pajNorm) return;
             this.atualizando = true;
             try {
-                const dados = await atualizarMovimentacoesPaj(this.pajNorm);
+                const dados = await atualizarMovimentacoesPaj(this.pajNorm, { completo: true });
                 if (dados) {
                     this.movs = dados.movimentacoes || [];
                     this.anexos = dados.anexos_sisdpu || [];

@@ -297,17 +297,59 @@ def interpretar_selecao(texto: str) -> tuple[set[int], list[str]]:
     return seqs, invalidos
 
 
+def chave_item(seq, indice: int) -> str:
+    """Identifica um documento dentro do recorte: "<seq>:<posição na
+    sequência>", na MESMA ordem de `_montar_grupos` — é a chave que o modal
+    devolve em `excluir` quando o Defensor desmarca o selo do documento."""
+    return f"{seq}:{indice}"
+
+
+def interpretar_exclusoes(texto: str) -> set[str]:
+    """"135:0,135:2,140:1" -> {"135:0", "135:2", "140:1"} (documentos
+    desmarcados no modal, que ficam fora do arquivo)."""
+    return {p.strip() for p in (texto or "").split(",") if re.fullmatch(r"\s*\d+:\d+\s*", p)}
+
+
+def _aplicar_exclusoes(grupos: dict[int, list[dict]], excluir: set[str] | None) -> dict[int, list[dict]]:
+    if not excluir:
+        return grupos
+    return {s: [it for i, it in enumerate(itens) if chave_item(s, i) not in excluir]
+            for s, itens in grupos.items()}
+
+
 def previa_selecao(paj_norm: str, texto: str) -> dict | None:
     """Prévia do modal: quantas movimentações/documentos o recorte terá e
-    quantos anexos já estão em disco. None se o PAJ não existir."""
+    quantos anexos já estão em disco. None se o PAJ não existir.
+
+    `detalhe` (08/11/2026): cada movimentação do recorte com os seus
+    documentos (chave, descrição, tipo, baixado) — o modal mostra um selo por
+    documento, todos marcados, e o Defensor clica para tirar do arquivo."""
     dados = ler_paj(paj_norm)
     if not dados:
         return None
     pedidas, invalidos = interpretar_selecao(texto)
-    existentes = {int(m["seq"]) for m in dados["movimentacoes"] if str(m.get("seq", "")).strip().isdigit()}
+    movs_por_seq = {int(m["seq"]): m for m in dados["movimentacoes"] if str(m.get("seq", "")).strip().isdigit()}
+    existentes = set(movs_por_seq)
     grupos, _orfaos = _montar_grupos(dados["movimentacoes"], dados["anexos_sisdpu"])
     validas = pedidas & existentes
     itens = [it for s in validas for it in grupos.get(s, [])]
+    detalhe = []
+    for s in sorted(validas):
+        mov = movs_por_seq.get(s) or {}
+        detalhe.append({
+            "seq": s,
+            "data": (mov.get("data_original") or mov.get("data") or "").split(" ")[0],
+            "fase": _truncar(_limpar_fase(mov.get("fases", "")), 90),
+            "docs": [
+                {
+                    "chave": chave_item(s, i),
+                    "descricao": it["descricao"],
+                    "tipo": (it["anexo"] or {}).get("tipo", "") if it.get("anexo") else "",
+                    "baixado": bool(it.get("anexo")),
+                }
+                for i, it in enumerate(grupos.get(s, []))
+            ],
+        })
     return {
         "movimentacoes": len(validas),
         "descricao": descrever_selecao(validas),
@@ -317,6 +359,7 @@ def previa_selecao(paj_norm: str, texto: str) -> dict | None:
         "baixados": sum(1 for it in itens if it.get("anexo")),
         "seq_min": min(existentes) if existentes else None,
         "seq_max": max(existentes) if existentes else None,
+        "detalhe": detalhe,
     }
 
 
@@ -1022,14 +1065,47 @@ def _anexar_item(doc: fitz.Document, paj_norm: str, rotulo_seq: str, pasta: Path
         return STATUS_ERRO_UNIFICACAO
 
 
-def verificar_selecao(paj_norm: str, seqs: set[int]) -> dict | None:
+def _anexar_item_cru(doc: fitz.Document, pasta: Path, item: dict) -> str:
+    """"Apenas arquivos crus" (08/11/2026): o documento entra como está —
+    páginas do PDF copiadas sem normalizar para A4 e sem tarja; imagem numa
+    página A4 sem tarja. O que não puder entrar (não baixado, formato não
+    mesclável, erro) fica de fora em vez de virar página informativa com
+    referências ao PAJ — o chamador conta e o front avisa."""
+    anexo = item.get("anexo")
+    if not anexo:
+        return STATUS_NAO_ENCONTRADO
+    caminho = pasta / anexo["caminho"]
+    tipo = anexo["tipo"]
+    n_antes = doc.page_count
+    try:
+        if tipo == "pdf":
+            with fitz.open(caminho) as src:
+                doc.insert_pdf(src)
+            return STATUS_UNIFICADO
+        if tipo in IMAGENS_EXT:
+            fitz.Pixmap(str(caminho))  # valida antes de criar a página
+            page = _nova_pagina(doc)
+            page.insert_image(fitz.Rect(MARGEM, MARGEM, A4.width - MARGEM, A4.height - MARGEM),
+                              filename=str(caminho), keep_proportion=True)
+            return STATUS_UNIFICADO
+        return STATUS_NAO_CONVERTIDO
+    except Exception:  # noqa: BLE001 - anexo isolado nao pode derrubar o PDF inteiro
+        while doc.page_count > n_antes:  # sem página pela metade
+            doc.delete_page(doc.page_count - 1)
+        log.warning("arquivos crus %s: falha ao incorporar %s", pasta.name, anexo["nome"], exc_info=True)
+        return STATUS_ERRO_UNIFICACAO
+
+
+def verificar_selecao(paj_norm: str, seqs: set[int], excluir: set[str] | None = None) -> dict | None:
     """Recorte: só os anexos das movimentações escolhidas precisam estar em
     disco (não exige a sincronização completa do PAJ). `faltando_movs` = seqs
-    com documento ainda não baixado — o front oferece baixar só esses."""
+    com documento ainda não baixado — o front oferece baixar só esses.
+    Documentos desmarcados no modal (`excluir`) não contam."""
     dados = ler_paj(paj_norm)
     if not dados:
         return None
     grupos, _orfaos = _montar_grupos(dados["movimentacoes"], dados["anexos_sisdpu"])
+    grupos = _aplicar_exclusoes(grupos, excluir)
     total = faltando = 0
     faltando_movs: list[int] = []
     for s in sorted(seqs & set(grupos)):
@@ -1088,8 +1164,34 @@ def verificar_sincronizacao_completa(paj_norm: str) -> dict | None:
     }
 
 
+def _gerar_pdf_crus(pasta: Path, grupos: dict[int, list[dict]], orfaos: dict[str, list[dict]],
+                    stats_out: dict | None) -> bytes:
+    """Só os documentos, na ordem das movimentações: sem capa, narrativa,
+    separadoras, tarjas, página de fim nem histórico."""
+    doc = fitz.open()
+    contagem = {STATUS_UNIFICADO: 0, STATUS_NAO_CONVERTIDO: 0, STATUS_NAO_ENCONTRADO: 0, STATUS_ERRO_UNIFICACAO: 0}
+    omitidos: list[str] = []
+    for itens in [grupos[s] for s in sorted(grupos)] + list(orfaos.values()):
+        for item in itens:
+            status = _anexar_item_cru(doc, pasta, item)
+            contagem[status] += 1
+            if status != STATUS_UNIFICADO:
+                omitidos.append(item["descricao"])
+    if stats_out is not None:
+        stats_out.update({"documentos": contagem[STATUS_UNIFICADO], "omitidos": omitidos})
+    if doc.page_count == 0:
+        doc.close()
+        return b""
+    pdf_bytes = doc.tobytes(garbage=4, deflate=True)
+    doc.close()
+    pdf_bytes, _n = comprimir_pdf_bytes(pdf_bytes)
+    return pdf_bytes
+
+
 def gerar_pdf_consolidado(paj_norm: str, seqs: set[int] | None = None,
-                          pagina_fim: bool = True, historico: bool = True) -> bytes | None:
+                          pagina_fim: bool = True, historico: bool = True,
+                          excluir: set[str] | None = None, crus: bool = False,
+                          stats_out: dict | None = None) -> bytes | None:
     """Monta e retorna (em memoria) o PDF consolidado do PAJ. None se o PAJ
     nao existir.
 
@@ -1099,7 +1201,15 @@ def gerar_pdf_consolidado(paj_norm: str, seqs: set[int] | None = None,
     A capa indica o recorte.
 
     `pagina_fim` / `historico` (modal, ambos marcados por padrão): incluir ou
-    não, no final, a página "Fim das movimentações" e a tabela do histórico."""
+    não, no final, a página "Fim das movimentações" e a tabela do histórico.
+
+    `excluir` (08/11/2026): chaves "<seq>:<posição>" dos documentos
+    desmarcados no modal — ficam fora do arquivo (e da lista da separadora).
+
+    `crus` (08/11/2026): "Apenas arquivos crus" — só os documentos, sem capa,
+    narrativa, separadoras, tarjas, fim nem histórico (ver `_gerar_pdf_crus`).
+    `stats_out` recebe {"documentos", "omitidos"}; bytes vazios = nada
+    incorporável."""
     dados = ler_paj(paj_norm)
     if not dados:
         return None
@@ -1120,6 +1230,9 @@ def gerar_pdf_consolidado(paj_norm: str, seqs: set[int] | None = None,
         orfaos = {}
         movs = [m for m in movs if str(m.get("seq", "")).strip().isdigit() and int(m["seq"]) in seqs]
         recorte = descrever_selecao(grupos)
+    grupos = _aplicar_exclusoes(grupos, excluir)
+    if crus:
+        return _gerar_pdf_crus(pasta, grupos, orfaos, stats_out)
 
     inicio = datetime.now()
 

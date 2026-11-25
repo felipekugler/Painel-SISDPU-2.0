@@ -281,6 +281,155 @@ def resolver_sat_tipos(pretensao: str, todos: list[str]) -> list[str]:
     return pad if pad is not None else list(todos)
 
 
+# --- Catálogo de espécies de Tarefas PAT (2ª Via dos Processos) ---
+# Portado do Painel SAT Central (10/11/2026) — os dois painéis ficam alinhados neste
+# recurso. Lista "retro alimentável": cresce sozinha a cada consulta ao SAT que revele
+# uma espécie (campo "Serviço" das tarefas do PAT) ainda não catalogada — ver
+# `registrar_sat_pat_servico`, chamada pelo ingestao.sat_client (_pat_stream e o PAT do
+# levantamento) a cada tarefa encontrada, baixada ou não. Semente = espécies já
+# observadas nas consultas feitas até 10/11/2026 (PAINEL SISDPU 2.0 + Painel SAT
+# Central) + as informadas pelo Defensor — mas é só ponto de partida: o catálogo real
+# é o gravado em `sat_pat_catalogo` assim que a 1ª espécie nova aparecer.
+SAT_PAT_CATALOGO_SEED = [
+    "Acertos para análise", "Acertos para Análise - BI Urbano",
+    "Acertos para Marcação de Perícia Médica", "Acertos pós-pericia SIBE - Urbano",
+    "Acréscimo de 25%", "Aguardando Migração de Informações - CadÚnico", "Alta a Pedido",
+    "Alterar Local ou Forma de Pagamento", "Análise de Acórdão",
+    "Análise de Descontos de Entidades Associativas",
+    "Aposentadoria da Pessoa com Deficiência por Idade",
+    "Aposentadoria da Pessoa com Deficiência por Tempo de Contribuição",
+    "Aposentadoria por Idade Rural", "Aposentadoria por Idade Urbana",
+    "Aposentadoria por Tempo de Contribuição", "Atualizar Cadastro e/ou Benefício",
+    "Atualizar Dados Cadastrais", "Atualizar Dados do Imposto de Renda",
+    "Atualizar Procurador e Representante Legal",
+    "Autorizacao de Pagamento - Cadastro e encaminhamento no APWeb",
+    "Auxílio por incapacidade temporária - Análise Documental - AIT", "Auxílio-Acidente",
+    "Auxílio-Doença - Urbano (Acerto Pós-perícia)", "Auxílio-Reclusão Rural",
+    "Auxílio-Reclusão Urbano", "Avaliação Social BPC/LOAS - Inicial (presencial)",
+    "Avaliação Social BPC/LOAS - Inicial (remota)",
+    "Avaliação Social BPC/LOAS - Reavaliação (presencial)", "Benefício Assistencial ao Idoso",
+    "Benefício Assistencial à Pessoa com Deficiência", "Benefício por Incapacidade",
+    "Bloquear/Desbloquear Benefício para Empréstimo Consignado",
+    "Bloqueio/desbloqueio de Mensalidade de Entidade Associativa ou Sindicato",
+    "Cadastrar Consignação em Benefício por Ordem Judicial",
+    "Cadastrar ou Atualizar Dependentes para Salário-Família",
+    "Cadastrar/Alterar/Excluir Pensão Alimentícia",
+    "Certidão de Inexistência de Dependentes Habilitados à Pensão por Morte",
+    "Certidão de Tempo de Contribuição",
+    "Contrarrazões do Recurso Especial/Incidente - INSS",
+    "Cumprimento de Acórdão com Implantação de Benefício",
+    "Cumprimento de Acórdão sem Implantação de Benefício", "Cópia de Processo",
+    "Cópia de Processo - Entidade Conveniada",
+    "Excluir Mensalidade de Associação ou Sindicato no Benefício",
+    "Instrução de Processo de Recurso", "Pagamento de Benefício Não Recebido",
+    "Pagamento de Valor não Recebido até a Data do Óbito do Beneficiário",
+    "Parcela Única e Pensão Especial - Síndrome Congênita do Zika Vírus",
+    "Parecer da Área Técnica - Sistemas SABI", "Parecer de Área Técnica - RD",
+    "Pedido de Prorrogação de Benefício por Incapacidade",
+    "Pensão Especial - Dependentes de Vítimas do Feminicídio",
+    "Pensão Especial - Síndrome da Talidomida", "Pensão por Morte Rural",
+    "Pensão por Morte Urbana", "Reavaliações de deficiência",
+    "Recurso Especial ou Incidente (Alteração de Acórdão)", "Recurso Ordinário (Inicial)",
+    "Renovar Declaração de Cárcere/Reclusão", "Revisão - Entidade Conveniada",
+    "Revisão de Certidão de Tempo de Contribuição", "Salário-Maternidade Rural",
+    "Salário-Maternidade Urbano", "Solicitar Contestação de NTEP",
+    "Solicitar Desistência/Encerramento/Renúncia de Benefício",
+    "Solicitar Emissão de Pagamento não Recebido",
+    "Solicitar Ressarcimento de Despesas com Deslocamento para Avaliações Social e/ou "
+    "Médico – BPC",
+    "Solicitação de Correção de Erro Formal em Tarefa", "Suporte Técnico - AIS",
+    "Suporte Técnico - RD",
+    "Suspender o Benefício Assistencial à Pessoa com Deficiência para Inclusão no "
+    "Mercado de Trabalho",
+]
+
+
+def _norm_pat(s: str) -> str:
+    """Normaliza (sem acento, minúsculo) p/ comparar espécies de PAT — mesmo critério
+    já usado pela lista "a ignorar" (casa por trecho lá; aqui é igualdade exata)."""
+    import unicodedata
+    s = unicodedata.normalize("NFD", s or "")
+    return "".join(c for c in s if not unicodedata.combining(c)).strip().lower()
+
+
+def get_sat_pat_catalogo() -> list[str]:
+    """Catálogo COMPLETO de espécies de Tarefas PAT já conhecidas (semente + as que
+    foram sendo reveladas em consultas reais), em ordem alfabética."""
+    v = _ler_raw().get("sat_pat_catalogo")
+    base = [str(x) for x in v] if isinstance(v, list) and v else list(SAT_PAT_CATALOGO_SEED)
+    vistos: dict[str, str] = {}
+    for s in base:
+        vistos.setdefault(_norm_pat(s), s)
+    return sorted(vistos.values(), key=lambda s: s.lower())
+
+
+def registrar_sat_pat_servico(servico: str) -> bool:
+    """Acrescenta ao catálogo se for uma espécie NOVA (comparação sem acento/maiúsculas).
+    True se acrescentou. Chamada a cada tarefa PAT revelada numa consulta ou levantamento
+    (baixada, ignorada ou não) — é isso que torna o catálogo "retro alimentável"."""
+    s = (servico or "").strip()
+    if not s:
+        return False
+    raw = _ler_raw()
+    atual = raw.get("sat_pat_catalogo")
+    atual = [str(x) for x in atual] if isinstance(atual, list) and atual else list(SAT_PAT_CATALOGO_SEED)
+    if any(_norm_pat(x) == _norm_pat(s) for x in atual):
+        return False
+    atual.append(s)
+    raw["sat_pat_catalogo"] = atual
+    _salvar_raw(raw)
+    return True
+
+
+def get_sat_pat_filtrada() -> list[str]:
+    """Catálogo completo MENOS as espécies "a ignorar" (substring normalizada, mesmo
+    critério do download) — é a lista oferecida para associar manualmente as tarefas
+    PAT de cada pretensão em Configurações."""
+    ignoradas = [_norm_pat(x) for x in get_sat_pat_ignorar() if str(x).strip()]
+    return [s for s in get_sat_pat_catalogo()
+            if not any(i in _norm_pat(s) for i in ignoradas)]
+
+
+def get_sat_pat_por_pretensao() -> dict:
+    """{pretensao: [espécies selecionadas]} — associação manual feita em Configurações
+    ("Tarefas PAT (2ª Via dos Processos)" dentro de Tipos de documentos a baixar)."""
+    v = _ler_raw().get("sat_pat_por_pretensao", {})
+    if not isinstance(v, dict):
+        return {}
+    return {str(k): [str(x) for x in (val or [])] for k, val in v.items()}
+
+
+def set_sat_pat_por_pretensao(pretensao: str, servicos: list[str]) -> dict:
+    """Salva a seleção de espécies de PAT para 1 pretensão. Lista vazia = sem associação
+    própria (some do dict) — nesse caso baixa TODAS as espécies não ignoradas (ver
+    `resolver_sat_pat_filtro`), igual ao comportamento de hoje."""
+    raw = _ler_raw()
+    d = raw.get("sat_pat_por_pretensao")
+    if not isinstance(d, dict):
+        d = {}
+    pretensao = (pretensao or "").strip()
+    servicos = [str(s).strip() for s in (servicos or []) if str(s).strip()]
+    if pretensao:
+        if servicos:
+            d[pretensao] = servicos
+        else:
+            d.pop(pretensao, None)
+    raw["sat_pat_por_pretensao"] = d
+    _salvar_raw(raw)
+    return d
+
+
+def resolver_sat_pat_filtro(pretensao: str) -> list[str] | None:
+    """Espécies de PAT a baixar p/ a pretensão informada. None = sem associação própria
+    configurada — baixa TODAS as espécies não ignoradas (comportamento de hoje,
+    inalterado enquanto o Defensor não associar nada para essa pretensão)."""
+    pretensao = (pretensao or "").strip()
+    por = get_sat_pat_por_pretensao()
+    if pretensao and pretensao in por and por[pretensao]:
+        return por[pretensao]
+    return None
+
+
 # --- Preferências SISDPU: fases de movimentação e caixas de tramitação ---
 # Listas COMPLETAS importadas do SISDPU (raramente mudam) + curadoria do usuário:
 #   favoritas -> preenchem o DROPDOWN da console de despacho (Retornos);
