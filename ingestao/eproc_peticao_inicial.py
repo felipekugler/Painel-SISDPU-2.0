@@ -129,6 +129,78 @@ async def _digitar(page, seletor: str, texto: str) -> None:
     await campo.type(texto, delay=25)
 
 
+_SEL_UPLOAD = "input.qq-upload-input"
+
+
+async def _campo_upload_presente(page, timeout_ms: int) -> bool:
+    decorrido = 0
+    while True:
+        with contextlib.suppress(Exception):
+            if await page.locator(_SEL_UPLOAD).count():
+                return True
+        if decorrido >= timeout_ms:
+            return False
+        await page.wait_for_timeout(500)
+        decorrido += 500
+
+
+async def _garantir_apoio_ia(page, passos: list) -> str:
+    """"Apoio por Inteligência Artificial" (`#btnPredicao`) virou PREFERÊNCIA
+    DO USUÁRIO gravada no servidor (achado em 25/11/2026, PAJ 2026/029-03982):
+    - ligada → a etapa 1 pede o upload (Fine Uploader) ANTES do endereçamento;
+    - desligada → a etapa 1 não tem upload nenhum e os documentos vão para a
+      última etapa ("... >> Partes Autoras >> Documentos").
+    Ligar (`alternarConfigPredicaoIA` do e-proc) abre um confirm() NATIVO
+    "... Deseja habilitar?" — o hook único do painel DISPENSA diálogos, então
+    o clique era cancelado em silêncio e a automação esperava 30 s por um
+    `input.qq-upload-input` que nunca vinha. Agora o clique vai com o diálogo
+    ACEITO, espera o recarregamento e confere o campo de upload. Se o e-proc
+    pedir o termo de adesão da IA, PARA: aceitar termo é do Defensor.
+    Devolve "" ou a mensagem de erro."""
+    ia = page.locator("#btnPredicao")
+    if not await ia.count():
+        if await _campo_upload_presente(page, 5000):
+            return ""
+        return ('O e-proc não mostrou o controle "Apoio por Inteligência Artificial" nem o campo de envio de '
+                "documentos na etapa 1 — o assistente de Petição Inicial pode ter mudado. Confira a janela do e-proc.")
+
+    if not await ia.is_checked():
+        async with ec._com_dialogo_aceito(page):
+            with contextlib.suppress(Exception):
+                await page.locator("label[for='btnPredicao']").first.click(timeout=5000)
+            # o e-proc grava a preferência e RECARREGA a página (ou abre o termo)
+            for _ in range(40):
+                await page.wait_for_timeout(500)
+                if await page.locator("#modalTermoAdesaoIAPeticaoInicial:visible").count():
+                    break
+                with contextlib.suppress(Exception):
+                    if await page.locator("#btnPredicao").is_checked() and await page.locator(_SEL_UPLOAD).count():
+                        break
+            dialogo = getattr(page, "_eproc_ultimo_dialogo", "")
+        with contextlib.suppress(Exception):
+            await page.wait_for_load_state("domcontentloaded", timeout=15000)
+        if await page.locator("#modalTermoAdesaoIAPeticaoInicial:visible").count():
+            return ('O e-proc pediu o aceite do "Termo de adesão" do Apoio por Inteligência Artificial. '
+                    "Aceite o termo na janela do e-proc (o painel não aceita termos por você) e prepare de novo.")
+        ligado = False
+        with contextlib.suppress(Exception):
+            ligado = await page.locator("#btnPredicao").is_checked()
+        if not ligado:
+            return ('Não consegui ligar o "Apoio por Inteligência Artificial" na Petição Inicial do e-proc'
+                    + (f' (aviso do e-proc: "{dialogo}")' if dialogo else "")
+                    + ". Sem ele o e-proc não pede os documentos na etapa 1. Ligue o botão na janela do e-proc "
+                      "(confirmando a pergunta) e prepare de novo.")
+        _log_passo(passos, 'Apoio por Inteligência Artificial estava desligado no e-proc — ligado (preferência gravada).')
+    else:
+        _log_passo(passos, "Apoio por Inteligência Artificial ligado.")
+
+    if not await _campo_upload_presente(page, 20000):
+        return ('O "Apoio por Inteligência Artificial" está ligado, mas o campo de envio de documentos (Fine '
+                "Uploader) não apareceu na etapa 1 — o e-proc pode ter mudado o assistente. Página atual: "
+                + (await _titulo(page) or page.url) + ".")
+    return ""
+
+
 async def _limpar_documentos_pendentes(page, passos: list) -> dict:
     """Sobras de uma preparação anterior abandonada ficam na tabela
     "Documentos selecionados e ainda não utilizados" e seriam juntadas de novo
@@ -162,7 +234,10 @@ async def _upload_e_tipos(page, documentos: list[dict], passos: list) -> str:
     total = sum(c.stat().st_size for c in caminhos)
 
     if total <= _LIMITE_LOTE_BYTES:
-        await page.locator("input.qq-upload-input").first.set_input_files([str(c) for c in caminhos])
+        if not await _campo_upload_presente(page, 10000):
+            return ("O campo de envio de documentos sumiu da etapa 1 do e-proc (página: "
+                    + (await _titulo(page) or page.url) + ") — confira a janela do e-proc e prepare de novo.")
+        await page.locator(_SEL_UPLOAD).first.set_input_files([str(c) for c in caminhos], timeout=60000)
         decorrido = 0
         while decorrido < 240000:
             classes = await page.evaluate(
@@ -944,10 +1019,9 @@ async def preparar(plano: dict) -> dict:
                 return {"ok": False, "passos": passos, "erro": f"Tela inicial do peticionamento não abriu ({await _titulo(page)})."}
             _log_passo(passos, "Tela \"Petição Inicial\" aberta.")
 
-            ia = page.locator("#btnPredicao")
-            if await ia.count() and not await ia.is_checked():
-                await _marcar_radio(page, "btnPredicao")  # mesmo cuidado dos controles estilizados
-            _log_passo(passos, "Apoio por Inteligência Artificial ligado.")
+            erro = await _garantir_apoio_ia(page, passos)
+            if erro:
+                return {"ok": False, "passos": passos, "erro": erro, "etapa": await _titulo(page)}
 
             # Sempre apaga os pendentes e envia tudo de novo — segurança preferida
             # pelo Defensor à conferência dos já enviados (29/10/2026).

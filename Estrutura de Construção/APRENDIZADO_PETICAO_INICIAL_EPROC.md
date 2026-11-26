@@ -15,6 +15,17 @@ Informações Adicionais (5ª = confirmação, presumivelmente).
    DEVE ficar LIGADO (regra do Defensor): o e-proc lê a petição inicial e
    sugere os assuntos na etapa seguinte. Vem ligado por padrão; o botão deve
    garantir `checked` mesmo assim.
+   **Atualização 25/11/2026 (PAJ 2026/029-03982):** o toggle virou uma
+   PREFERÊNCIA DO USUÁRIO gravada no servidor (`configuracao-predicao-id`).
+   Desligado, a etapa 1 NÃO tem upload (breadcrumb "... >> Partes Autoras >>
+   Documentos": documentos só no fim). Ligar = `alternarConfigPredicaoIA`:
+   `confirm()` nativo "... Deseja habilitar?" → POST da preferência →
+   verifica o aceite do termo (`#modalTermoAdesaoIAPeticaoInicial` se nunca
+   aceito) → `location.reload()` → upload volta à etapa 1. O hook do painel
+   DISPENSA diálogos, então o clique era cancelado em silêncio (TimeoutError
+   em `input.qq-upload-input`). Corrigido em `_garantir_apoio_ia`: clique com
+   `_com_dialogo_aceito`, espera o reload, para se aparecer o termo (aceite é
+   do Defensor) e confere o campo de upload. Testado ao vivo.
 2. **Documentos** — mesmo widget do peticionamento geral (Fine Uploader,
    ver `eproc_client.py` §"Peticionamento real"):
    - `input.qq-upload-input` aceita `multiple`: mandar os 17 arquivos de uma vez
