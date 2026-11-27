@@ -8,14 +8,37 @@ mora aqui: o front reaproveita os módulos já existentes
 
 import re
 
-from fastapi import APIRouter, Body
-from fastapi.responses import JSONResponse
+from fastapi import APIRouter, Body, Request
+from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse
 
 from ingestao import eproc_peticao_inicial
 from services import peticao_inicial_service
 from services.paj_service import PajNorm
 
 router = APIRouter()
+
+
+@router.get("/paj/{paj_norm}/peticao-inicial", response_class=HTMLResponse)
+async def pagina(request: Request, paj_norm: PajNorm):
+    """Página própria "Preparar petição inicial" (27/11/2026): o mesmo conteúdo
+    do modal + visualizador lateral dos PDFs da pasta Ajuizamento, para conferir,
+    reclassificar e tirar documentos do envio sem sair do painel."""
+    from services.paj_service import ler_paj
+    dados = ler_paj(paj_norm)
+    if not dados:
+        return RedirectResponse(f"/paj/{paj_norm}")
+    template = request.app.state.jinja.get_template("peticao_inicial_pagina.html")
+    return HTMLResponse(template.render(request=request, dados=dados, paj_norm=paj_norm,
+                                        ambiente=getattr(request.app.state, "ambiente", {})))
+
+
+@router.post("/api/peticao-inicial/conferencia/{paj_norm}")
+async def conferencia(paj_norm: PajNorm, payload: dict = Body(...)):
+    """Body: {"excluidos": [nome...], "tipos": {nome: tipo}} — grava o estado
+    da conferência (nada é apagado da pasta)."""
+    conf = peticao_inicial_service.gravar_conferencia(
+        paj_norm, payload.get("excluidos") or [], payload.get("tipos") or {})
+    return JSONResponse({"ok": True, "conferencia": conf})
 
 
 @router.get("/api/peticao-inicial/plano/{paj_norm}")

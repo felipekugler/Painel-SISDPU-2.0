@@ -17,11 +17,16 @@
 const DESC_TRAM_COM_CHAVE = 'Processo ajuizado. Cadastrar chave. Comunicar assistido';
 const DESC_TRAM_SEM_CHAVE = 'Processo ajuizado. Comunicar assistido';
 
-function peticaoInicialApp(pajNorm, pajLabel) {
+function peticaoInicialApp(pajNorm, pajLabel, modoPagina = false) {
     const CHAVE_FIM = 'painel_peticao_inicial_fim_' + pajNorm;
+    // Página própria → página do PAJ: a petição já preparada no e-proc segue
+    // para o ajuizamento lá (o console "Ações no SISDPU" do pós-ajuizamento
+    // mora na página do PAJ). 27/11/2026.
+    const CHAVE_PREPARADO = 'painel_peticao_inicial_preparado_' + pajNorm;
     return {
+        modoPagina, visor: null, visorExpandido: false, _tSalvar: null,
         aberto: false, fase: 'plano', carregando: false, erro: '',
-        arquivos: [], dados: null, tiposTodos: [], estadosCivis: [], especialidadesConhecidas: [],
+        arquivos: [], renomeados: [], dados: null, tiposTodos: [], estadosCivis: [], especialidadesConhecidas: [],
         representados: [], representantes: [], entidades: [], entidadesEm: '', infoAdicionaisOpcoes: [],
         assuntos: { principais: [], complementares: [], principais_em: '', complementares_em: '' }, buscaCompl: '',
         localidades: [], jaAjuizada: null, novoAjuizamento: false, passos: [], etapaFinal: '', resultado: null, posLog: [], posErro: '',
@@ -32,6 +37,28 @@ function peticaoInicialApp(pajNorm, pajLabel) {
         init() {
             if (this._iniciado) return;
             this._iniciado = true;
+            if (this.modoPagina) {
+                this.abrir();
+                window.addEventListener('keydown', (ev) => {
+                    if (!this.visor || ev.altKey || ev.ctrlKey || ev.metaKey) return;
+                    if (/^(INPUT|SELECT|TEXTAREA)$/.test((ev.target && ev.target.tagName) || '') || (ev.target && ev.target.isContentEditable)) return;
+                    if (ev.key === 'ArrowLeft') { ev.preventDefault(); this.navegar(-1); }
+                    if (ev.key === 'ArrowRight') { ev.preventDefault(); this.navegar(1); }
+                });
+                return;
+            }
+            try {
+                const prep = sessionStorage.getItem(CHAVE_PREPARADO);
+                if (prep) {
+                    sessionStorage.removeItem(CHAVE_PREPARADO);
+                    const s = JSON.parse(prep);
+                    Object.assign(this, { arquivos: s.arquivos || [], dados: s.dados, passos: s.passos || [],
+                                          etapaFinal: s.etapaFinal || '', novoAjuizamento: !!s.novoAjuizamento,
+                                          jaAjuizada: s.jaAjuizada || null });
+                    this.fase = 'preparado'; this.aberto = true;
+                    return;
+                }
+            } catch (e) {}
             try {
                 const salvo = sessionStorage.getItem(CHAVE_FIM);
                 if (salvo) {
@@ -54,7 +81,8 @@ function peticaoInicialApp(pajNorm, pajLabel) {
                 const resp = await fetch('/api/peticao-inicial/plano/' + encodeURIComponent(pajNorm));
                 const j = await resp.json();
                 if (!j.ok) { this.erro = j.erro || 'Falha ao montar o plano.'; return; }
-                this.arquivos = j.arquivos.map((a) => ({ ...a, incluir: true }));
+                this.arquivos = j.arquivos.map((a) => ({ ...a, incluir: a.incluir !== false }));
+                this.renomeados = j.renomeados || [];
                 this.dados = j.dados;
                 this.tiposTodos = j.tipos_todos || [];
                 this.estadosCivis = j.estados_civis || [];
@@ -76,8 +104,44 @@ function peticaoInicialApp(pajNorm, pajLabel) {
             }
         },
         fechar() {
-            if (this.fase === 'preparando' || this.fase === 'pos' || this.fase === 'revisao') return;
+            if (this.fase === 'preparando' || this.fase === 'conectando' || this.fase === 'pos' || this.fase === 'revisao') return;
+            if (this.modoPagina) { window.location.href = '/paj/' + encodeURIComponent(pajNorm); return; }
             this.aberto = false;
+        },
+
+        // Visualizador lateral + conferência (página própria, 27/11/2026)
+        arqVisor() { return this.arquivos.find((a) => a.caminho === this.visor) || null; },
+        idxVisor() { return this.arquivos.findIndex((a) => a.caminho === this.visor); },
+        ver(a) { if (a) { this.visor = a.caminho; this._rolarLinha(); } },
+        navegar(d) {
+            const i = this.idxVisor() + d;
+            if (i >= 0 && i < this.arquivos.length) { this.visor = this.arquivos[i].caminho; this._rolarLinha(); }
+        },
+        // mantém à vista, na tabela, a linha do documento aberto no visualizador
+        _rolarLinha() {
+            this.$nextTick(() => {
+                const tr = [...document.querySelectorAll('tr[data-caminho]')].find((t) => t.dataset.caminho === this.visor);
+                if (tr) tr.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+            });
+        },
+        excluirArq(a) { a.incluir = false; this.salvarConferencia(); },
+        recuperarArq(a) { a.incluir = true; this.salvarConferencia(); },
+        // Grava o que saiu do envio e os tipos escolhidos (nada é apagado da pasta).
+        salvarConferencia() {
+            clearTimeout(this._tSalvar);
+            this._tSalvar = setTimeout(async () => {
+                const tipos = {};
+                this.arquivos.forEach((a) => { if (a.tipo) tipos[a.nome] = a.tipo; });
+                try {
+                    const r = await fetch('/api/peticao-inicial/conferencia/' + encodeURIComponent(pajNorm), {
+                        method: 'POST', headers: { 'Content-Type': 'application/json' },
+                        body: JSON.stringify({ excluidos: this.arquivos.filter((a) => !a.incluir).map((a) => a.nome), tipos }),
+                    });
+                    if (!r.ok) throw new Error('HTTP ' + r.status);
+                } catch (e) {
+                    if (typeof showToast === 'function') showToast('Não consegui gravar a conferência dos documentos: ' + e, 'error');
+                }
+            }, 400);
         },
         linkArquivo(a) { return '/files/' + pajNorm + '/' + a.caminho; },
         opcoesTipo(atual) {
@@ -146,6 +210,15 @@ function peticaoInicialApp(pajNorm, pajLabel) {
         },
 
         async prosseguir() {
+            if (this.modoPagina) {
+                try {
+                    sessionStorage.setItem(CHAVE_PREPARADO, JSON.stringify({
+                        arquivos: this.arquivos, dados: this.dados, passos: this.passos, etapaFinal: this.etapaFinal,
+                        novoAjuizamento: this.novoAjuizamento, jaAjuizada: this.jaAjuizada }));
+                } catch (e) {}
+                window.location.href = '/paj/' + encodeURIComponent(pajNorm);
+                return;
+            }
             if (!confirm('Distribuir o processo agora no e-proc?\n\n"Finalizar" + "Confirmar ajuizamento" — irreversível.\n'
                 + 'Depois: gerenciamento do processo e, no SISDPU, UM resumo para conferir e confirmar de uma vez '
                 + 'o cadastro do processo, a movimentação "Petição inicial" e a tramitação para AJUIZADOS.')) return;

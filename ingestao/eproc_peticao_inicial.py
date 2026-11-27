@@ -285,13 +285,18 @@ async def _upload_e_tipos(page, documentos: list[dict], passos: list) -> str:
         return f"Tipo não registrado pelo e-proc no(s) documento(s) {vazios}."
     _log_passo(passos, "Tipos de documento preenchidos.")
 
+    page._eproc_ultimo_dialogo = ""
     await page.locator("#btnEnviarArquivos").click()
     for _ in range(60):
         if await page.locator("#selLocalidadeJudicial").is_visible():
             break
+        if getattr(page, "_eproc_ultimo_dialogo", ""):
+            break  # alert do e-proc (ex.: "Nome do documento ... inválido") — não vai avançar
         await page.wait_for_timeout(500)
-    else:
-        return "Os campos de endereçamento não apareceram após \"Confirmar seleção de documentos\"."
+    if not await page.locator("#selLocalidadeJudicial").is_visible():
+        aviso = getattr(page, "_eproc_ultimo_dialogo", "")
+        return ("Os campos de endereçamento não apareceram após \"Confirmar seleção de documentos\""
+                + (f' — aviso do e-proc: "{aviso}"' if aviso else "") + ".")
     n_tabela = await page.evaluate(
         "() => [...document.querySelectorAll('table tr')].filter(tr => tr.cells.length > 5 && /\\.pdf/i.test(tr.innerText)).length")
     if n_tabela != len(documentos):
@@ -1112,11 +1117,21 @@ async def ajuizar() -> dict:
 def resolver_documentos(paj_norm: str, arquivos: list[dict]) -> list[dict]:
     """[{caminho: "Ajuizamento/x.pdf", tipo}] → com caminho absoluto, restrito
     à pasta do PAJ."""
+    from services.peticao_inicial_service import nome_aceito_eproc
     base = (Path(config.PAJS_DIR) / paj_norm).resolve()
     docs = []
     for a in arquivos:
         p = (base / a["caminho"]).resolve()
         if base not in p.parents:
             raise ValueError(f"Caminho fora do PAJ: {a['caminho']}")
+        # rede de segurança: nome que o e-proc recusa (ex.: parênteses) é
+        # renomeado aqui também — o modal pode ter sido aberto antes da correção
+        novo = p.with_name(nome_aceito_eproc(p.name))
+        if novo != p:
+            if p.exists() and not novo.exists():
+                p.rename(novo)
+            if novo.exists():
+                _log_passo([], f"Arquivo renomeado para o e-proc: {p.name} → {novo.name}")
+                p = novo
         docs.append({"caminho_abs": str(p), "tipo": a["tipo"]})
     return docs

@@ -33,9 +33,12 @@ import contextlib
 import json
 import re
 import unicodedata
+import logging
 from pathlib import Path
 
 import config
+
+_log = logging.getLogger("peticao_inicial")
 
 # Salário mínimo vigente por ano (para o teto de 60 SM do JEF). O cálculo do
 # valor da causa do caso-escola (2026) usa R$ 1.621,00.
@@ -233,6 +236,102 @@ def sugerir_tipo(nome_arquivo: str, catalogo: list[str] | None = None) -> str:
             if not cat_norm or _norm(tipo) in cat_norm:
                 return cat_norm.get(_norm(tipo), tipo)
     return cat_norm.get(_norm(TIPO_FALLBACK), TIPO_FALLBACK) if (not cat_norm or _norm(TIPO_FALLBACK) in cat_norm) else ""
+
+
+# Regra do PRÓPRIO e-proc (validaSubmit() da tela de peticionamento, JFPR
+# v9.24.3, lida em 27/11/2026): o nome do arquivo só pode ter
+#   /[^a-z.\-_0-9\sáàãâäéèêëíìîïóòõôöúùûüç]/gi  → nada fora disso.
+# Ou seja: letras (com esses acentos e ç), números, espaço, ponto, "-" e "_".
+# Fora disso (parênteses, colchetes, vírgula, º/ª, &, travessão "–", ñ…) o
+# e-proc dá alert "Nome do documento ... inválido" e não avança — foi o que
+# travou a preparação do PAJ 2026/029-03948 ("... (Parte 1).pdf").
+_ACENTOS_EPROC = "áàãâäéèêëíìîïóòõôöúùûüç"
+_CHAR_EPROC = re.compile(rf"[a-z0-9.\-_\s{_ACENTOS_EPROC}]", re.I)
+
+
+def nome_aceito_eproc(nome: str) -> str:
+    """Corrige só o que o e-proc recusa, mantendo o resto do nome como está:
+    "28 - Dossie (Parte 1).pdf" → "28 - Dossie Parte 1.pdf"."""
+    if not nome:
+        return "documento.pdf"
+    saida = []
+    for ch in nome:
+        if _CHAR_EPROC.fullmatch(ch):
+            saida.append(" " if ch.isspace() else ch)
+        elif ch in "‐‑‒–—―−":
+            saida.append("-")                                      # travessões → hífen
+        else:
+            base = unicodedata.normalize("NFKD", ch)[:1]           # ñ → n, Ý → Y
+            saida.append(base if base.isascii() and base.isalnum() else " ")
+    p = Path(re.sub(r"\s+", " ", "".join(saida)))
+    stem = p.stem.strip(" .") or "documento"
+    return f"{stem}{p.suffix.lower() or '.pdf'}"
+
+
+def sanear_nomes_ajuizamento(paj_norm: str) -> list[dict]:
+    """Renomeia, na pasta Ajuizamento, os PDFs com nome que o e-proc recusa.
+    Roda antes da preparação (montar_plano). Devolve [{de, para}]."""
+    pasta = _pasta(paj_norm) / "Ajuizamento"
+    if not pasta.is_dir():
+        return []
+    trocas = []
+    existentes = {p.name.lower() for p in pasta.iterdir()}
+    for p in sorted(pasta.iterdir(), key=lambda x: x.name.lower()):
+        if not p.is_file() or p.suffix.lower() != ".pdf":
+            continue
+        novo = nome_aceito_eproc(p.name)
+        if novo == p.name:
+            continue
+        base, n = Path(novo).stem, 2
+        while novo.lower() in existentes and novo.lower() != p.name.lower():
+            novo = f"{base} {n}.pdf"
+            n += 1
+        try:
+            p.rename(p.with_name(novo))
+        except OSError as e:
+            _log.warning("não renomeei %s → %s: %s", p.name, novo, e)
+            continue
+        existentes.discard(p.name.lower())
+        existentes.add(novo.lower())
+        trocas.append({"de": p.name, "para": novo})
+    return trocas
+
+
+# Conferência dos documentos (página própria "Preparar petição inicial",
+# 27/11/2026): o que o Defensor tirou do peticionamento (✕, reversível ↶) e o
+# tipo que ele escolheu para cada arquivo ficam gravados no PAJ — a conferência
+# pode ser feita aos poucos, e o modal da página do PAJ enxerga o mesmo estado.
+# Nada é apagado da pasta Ajuizamento: "excluir" só tira do envio ao e-proc.
+_ARQ_CONFERENCIA = "peticao_inicial_conferencia.json"
+
+
+def ler_conferencia(paj_norm: str) -> dict:
+    with contextlib.suppress(Exception):
+        d = json.loads((_pasta(paj_norm) / _ARQ_CONFERENCIA).read_text(encoding="utf-8"))
+        if isinstance(d, dict):
+            return {"excluidos": [str(x) for x in d.get("excluidos") or []],
+                    "tipos": {str(k): str(v) for k, v in (d.get("tipos") or {}).items()}}
+    return {"excluidos": [], "tipos": {}}
+
+
+def gravar_conferencia(paj_norm: str, excluidos: list, tipos: dict) -> dict:
+    pasta_aj = _pasta(paj_norm) / "Ajuizamento"
+    existentes = {p.name for p in pasta_aj.glob("*.pdf")} if pasta_aj.is_dir() else set()
+    conf = {"excluidos": sorted({str(n) for n in excluidos or [] if str(n) in existentes}),
+            "tipos": {str(k): str(v) for k, v in (tipos or {}).items() if str(k) in existentes and str(v).strip()}}
+    (_pasta(paj_norm) / _ARQ_CONFERENCIA).write_text(json.dumps(conf, ensure_ascii=False, indent=1), encoding="utf-8")
+    return conf
+
+
+def _renomear_na_conferencia(paj_norm: str, trocas: list[dict]) -> None:
+    if not trocas:
+        return
+    conf = ler_conferencia(paj_norm)
+    mapa = {t["de"]: t["para"] for t in trocas}
+    conf["excluidos"] = [mapa.get(n, n) for n in conf["excluidos"]]
+    conf["tipos"] = {mapa.get(k, k): v for k, v in conf["tipos"].items()}
+    with contextlib.suppress(Exception):
+        gravar_conferencia(paj_norm, conf["excluidos"], conf["tipos"])
 
 
 def listar_arquivos(paj_norm: str) -> list[dict]:
@@ -885,11 +984,20 @@ def montar_plano(paj_norm: str) -> dict:
     pasta = _pasta(paj_norm)
     if not pasta.is_dir():
         return {"ok": False, "erro": "Pasta do PAJ não encontrada."}
+    renomeados = sanear_nomes_ajuizamento(paj_norm)
+    _renomear_na_conferencia(paj_norm, renomeados)
     arquivos = listar_arquivos(paj_norm)
+    conf = ler_conferencia(paj_norm)
+    fora = set(conf["excluidos"])
+    for a in arquivos:
+        a["incluir"] = a["nome"] not in fora
+        if conf["tipos"].get(a["nome"]):
+            a["tipo"] = conf["tipos"][a["nome"]]
     if not arquivos:
         return {"ok": False, "erro": "Pasta \"Ajuizamento\" vazia ou inexistente — organize os documentos antes."}
     dados = extrair_dados(paj_norm)
-    return {"ok": True, "arquivos": arquivos, "dados": dados, "ja_ajuizada": ajuizamento_anterior(paj_norm),
+    return {"ok": True, "arquivos": arquivos, "renomeados": renomeados,
+            "dados": dados, "ja_ajuizada": ajuizamento_anterior(paj_norm),
             "tipos_todos": _catalogo_tipos(), "estados_civis": ESTADOS_CIVIS,
             "especialidades_conhecidas": sorted({e for _, e in ESPECIALIDADES}),
             "representados": REPRESENTADOS_EPROC, "representantes": REPRESENTANTES_EPROC,

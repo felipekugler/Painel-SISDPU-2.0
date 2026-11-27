@@ -1,0 +1,24 @@
+{% extends "base.html" %}
+{# Página própria "Preparar petição inicial" (27/11/2026) — o conteúdo do modal
+   da página do PAJ + visualizador lateral dos PDFs (ver
+   partials/peticao_inicial_modal.html com modo_pagina e
+   partials/peticao_inicial_visor.html). #}
+{% set meta = dados.metadata %}
+{% block title %}Petição inicial — PAJ {{ meta.paj }}{% endblock %}
+
+{% block content_class %}p-4 lg:p-6 w-full{% endblock %}
+
+{% block content %}
+<div class="flex flex-col gap-3">
+    <div class="flex items-center justify-between gap-3">
+        <div class="flex items-center gap-2 min-w-0">
+            <a href="/paj/{{ paj_norm }}" class="btn btn-ghost btn-sm">← PAJ {{ meta.paj }}</a>
+            <span class="text-sm text-base-content/60 truncate">{{ meta.assistido_caixa }}</span>
+        </div>
+        <span class="text-xs text-base-content/50">Clique num documento para conferi-lo ao lado · ← → navegam entre os documentos</span>
+    </div>
+    {% with modo_pagina = true %}
+        {% include "partials/peticao_inicial_modal.html" %}
+    {% endwith %}
+</div>
+{% endblock %}
