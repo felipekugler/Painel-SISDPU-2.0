@@ -117,11 +117,17 @@ function peticaoInicialApp(pajNorm, pajLabel, modoPagina = false) {
             const i = this.idxVisor() + d;
             if (i >= 0 && i < this.arquivos.length) { this.visor = this.arquivos[i].caminho; this._rolarLinha(); }
         },
-        // mantém à vista, na tabela, a linha do documento aberto no visualizador
+        // Linha do documento aberto sempre perto do CENTRO vertical da tela (=
+        // meio do visualizador, que é fixo): a página rola junto com Anterior/
+        // Próximo — nos últimos documentos a tabela não some mais (27/11/2026).
         _rolarLinha() {
             this.$nextTick(() => {
+                if (this.visorExpandido) return;  // tabela oculta
                 const tr = [...document.querySelectorAll('tr[data-caminho]')].find((t) => t.dataset.caminho === this.visor);
-                if (tr) tr.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+                if (!tr) return;
+                const r = tr.getBoundingClientRect();
+                const alvo = window.scrollY + r.top + r.height / 2 - window.innerHeight / 2;
+                window.scrollTo({ top: Math.max(0, alvo) });  // imediato: o 'smooth' se perde com Anterior/Próximo seguidos
             });
         },
         excluirArq(a) { a.incluir = false; this.salvarConferencia(); },

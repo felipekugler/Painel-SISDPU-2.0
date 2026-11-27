@@ -6,7 +6,7 @@
    na conferência do PAJ. `visorExpandido` oculta a coluna da esquerda e dá a
    largura toda ao documento. #}
 <aside class="shrink-0 sticky top-4 self-start rounded-xl border border-base-300 bg-base-100 shadow-sm flex flex-col overflow-hidden"
-       :style="'height: calc(100vh - 6rem); width: ' + (visorExpandido ? '100%' : '48%')">
+       :style="'height: calc(100vh - 2.5rem); width: ' + (visorExpandido ? '100%' : '48%')">
     <template x-if="!arqVisor()">
         <div class="flex-1 flex flex-col items-center justify-center gap-2 text-sm text-base-content/50 p-6 text-center">
             <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.4" stroke="currentColor" class="w-10 h-10">
@@ -27,7 +27,7 @@
                               :title="arqVisor().nome" x-text="arqVisor().nome"></span>
                     </div>
                     <button type="button" class="btn btn-xs shrink-0" @click="navegar(1)" :disabled="idxVisor() >= arquivos.length - 1" title="Próximo documento (tecla →)">Próximo ▶</button>
-                    <button type="button" class="btn btn-ghost btn-xs px-1 ml-1" @click="visorExpandido = !visorExpandido"
+                    <button type="button" class="btn btn-ghost btn-xs px-1 ml-1" @click="visorExpandido = !visorExpandido; _rolarLinha()"
                             :title="visorExpandido ? 'Retrair o visualizador (volta a mostrar a lista de documentos)' : 'Expandir o visualizador para a tela toda (oculta a lista de documentos)'">
                         <svg x-show="!visorExpandido" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" stroke-width="1.8" stroke="currentColor" class="w-4 h-4">
                             <path stroke-linecap="round" stroke-linejoin="round" d="M3.75 3.75v4.5m0-4.5h4.5m-4.5 0L9 9M3.75 20.25v-4.5m0 4.5h4.5m-4.5 0L9 15M20.25 3.75h-4.5m4.5 0v4.5m0-4.5L15 9m5.25 11.25h-4.5m4.5 0v-4.5m0 4.5L15 15"/>

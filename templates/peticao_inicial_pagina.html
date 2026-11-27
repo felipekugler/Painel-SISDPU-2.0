@@ -8,6 +8,15 @@
 
 {% block content_class %}p-4 lg:p-6 w-full{% endblock %}
 
+{# Sem a barra superior fixa (pesquisas + selos) nesta página — ela ficava por
+   cima da tabela e do visualizador (Defensor, 27/11/2026). Só ESCONDE: os
+   scripts dos selos (garantirEproc etc.) continuam achando os elementos. #}
+{% block head %}
+<style>
+    .main-content > .toggle-sidebar { display: none !important; }
+</style>
+{% endblock %}
+
 {% block content %}
 <div class="flex flex-col gap-3">
     <div class="flex items-center justify-between gap-3">
